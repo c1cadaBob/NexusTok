@@ -144,6 +144,9 @@ func (c *Sub2APIClient) BeginPreview(ctx context.Context, credential Credential)
 	if snapshot, ok := c.fetchSnapshotWithSavedSession(ctx, api, credential.Session); ok {
 		return snapshot, nil, nil
 	}
+	if credentialRequiresImportedSession(credential, AuthModeAccessToken) {
+		return nil, nil, fmt.Errorf("sub2api Access Token 登录态不可用：请确认 token 未过期并具备读取分组、密钥和余额的权限")
+	}
 	login, err := c.login(ctx, api, credential)
 	if err != nil {
 		return nil, nil, err
@@ -217,9 +220,11 @@ func (c *Sub2APIClient) fetchSnapshotWithSavedSession(ctx context.Context, api *
 		return nil, false
 	}
 	snapshot.AuthSession = &AuthenticatedSession{
-		Platform:  PlatformSub2API,
-		BaseURL:   api.baseURL,
-		UpdatedAt: common.GetTimestamp(),
+		Platform:   PlatformSub2API,
+		BaseURL:    api.baseURL,
+		AuthMode:   NormalizeAuthMode(firstNonEmpty(session.AuthMode, AuthModeAccessToken)),
+		ImportedAt: session.ImportedAt,
+		UpdatedAt:  common.GetTimestamp(),
 		Sub2API: &Sub2APISessionData{
 			AccessToken:  token,
 			RefreshToken: session.Sub2API.RefreshToken,
@@ -240,6 +245,7 @@ func buildSub2APIAuthenticatedSession(baseURL string, login *sub2APILoginRespons
 	return &AuthenticatedSession{
 		Platform:  PlatformSub2API,
 		BaseURL:   baseURL,
+		AuthMode:  AuthModePassword,
 		UpdatedAt: common.GetTimestamp(),
 		Sub2API: &Sub2APISessionData{
 			AccessToken:  strings.TrimSpace(login.AccessToken),

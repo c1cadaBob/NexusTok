@@ -25,6 +25,7 @@ import type {
   UpstreamAccountRefreshRequest,
   UpstreamAccountRatioConversion,
   UpstreamAccountPlatform,
+  UpstreamAccountAuthMode,
   UpstreamAccountTwoFactorChallenge,
 } from '../types'
 import { formatGroups } from './channel-form'
@@ -56,6 +57,12 @@ export type BuildUpstreamAccountPreviewRequestOptions = {
   baseUrl: string
   username?: string
   password?: string
+  authMode?: UpstreamAccountAuthMode
+  sessionCookie?: string
+  userId?: string
+  accessToken?: string
+  refreshToken?: string
+  expiresAt?: number
   useSavedCredential: boolean
   ratioConversion?: UpstreamAccountRatioConversion
 }
@@ -159,6 +166,12 @@ export function buildUpstreamAccountPreviewRequest({
   baseUrl,
   username = '',
   password = '',
+  authMode = 'password',
+  sessionCookie = '',
+  userId = '',
+  accessToken = '',
+  refreshToken = '',
+  expiresAt,
   useSavedCredential,
   ratioConversion,
 }: BuildUpstreamAccountPreviewRequestOptions): UpstreamAccountPreviewRequest {
@@ -172,12 +185,21 @@ export function buildUpstreamAccountPreviewRequest({
   }
 
   if (!useSavedCredential) {
-    if (platform === 'new-api') {
+    payload.auth_mode = authMode
+    if (authMode === 'session_cookie') {
+      payload.session_cookie = sessionCookie
+      payload.user_id = userId.trim() || undefined
+    } else if (authMode === 'access_token') {
+      payload.access_token = accessToken.trim()
+      payload.refresh_token = refreshToken.trim() || undefined
+      payload.expires_at = expiresAt
+    } else if (platform === 'new-api') {
       payload.username = username.trim()
+      payload.password = password
     } else if (platform === 'sub2api') {
       payload.email = username.trim()
+      payload.password = password
     }
-    payload.password = password
   }
 
   if (ratioConversion) {

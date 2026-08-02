@@ -129,6 +129,9 @@ func (c *NewAPIClient) BeginPreview(ctx context.Context, credential Credential) 
 	if snapshot, ok := c.fetchSnapshotWithSavedSession(ctx, api, status.QuotaPerUnit, credential.Session); ok {
 		return snapshot, nil, nil
 	}
+	if credentialRequiresImportedSession(credential, AuthModeSessionCookie) {
+		return nil, nil, fmt.Errorf("new-api Cookie 登录态不可用：请确认 Cookie 未过期；如果目标站要求 New-Api-User 头，请填写 user_id / New-Api-User 后重试")
+	}
 	user, headers, needs2FA, err := c.login(ctx, api, credential)
 	if err != nil {
 		return nil, nil, err
@@ -192,12 +195,21 @@ func (c *NewAPIClient) fetchSnapshotWithSavedSession(ctx context.Context, api *h
 		return nil, false
 	}
 	userID := strings.TrimSpace(session.NewAPI.UserID)
+	user := &newAPIUser{ID: userID}
 	if userID == "" {
-		return nil, false
+		self, err := c.fetchSelf(ctx, api, http.Header{})
+		if err != nil || stringValue(self.ID) == "" {
+			return nil, false
+		}
+		user = &self
 	}
-	snapshot, err := c.fetchSnapshotWithAuthenticatedSession(ctx, api, quotaPerUnit, &newAPIUser{ID: userID}, http.Header{})
+	snapshot, err := c.fetchSnapshotWithAuthenticatedSession(ctx, api, quotaPerUnit, user, http.Header{})
 	if err != nil {
 		return nil, false
+	}
+	if snapshot.AuthSession != nil {
+		snapshot.AuthSession.AuthMode = NormalizeAuthMode(firstNonEmpty(session.AuthMode, AuthModeSessionCookie))
+		snapshot.AuthSession.ImportedAt = session.ImportedAt
 	}
 	return snapshot, true
 }
@@ -259,6 +271,7 @@ func buildNewAPIAuthenticatedSession(api *httpClient, snapshot *Snapshot) *Authe
 	return &AuthenticatedSession{
 		Platform:  PlatformNewAPI,
 		BaseURL:   api.baseURL,
+		AuthMode:  AuthModePassword,
 		UpdatedAt: common.GetTimestamp(),
 		NewAPI: &NewAPISessionData{
 			UserID:  userID,

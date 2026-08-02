@@ -351,6 +351,71 @@ func TestNewAPIPreviewUsesSavedAuthenticatedSession(t *testing.T) {
 	require.NotEmpty(t, record.Snapshot.StoredCredential.Session)
 }
 
+func TestNewAPIPreviewImportsSessionCookieAndAutoDetectsUser(t *testing.T) {
+	selfCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/status":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"quota_per_unit":100}}`))
+		case "/api/user/login":
+			t.Fatalf("导入 Cookie 时不应调用 new-api 账号密码登录接口")
+		case "/api/user/self":
+			cookie, err := r.Cookie("session")
+			require.NoError(t, err)
+			require.Equal(t, "imported-session", cookie.Value)
+			selfCalls++
+			if r.Header.Get("New-Api-User") == "" {
+				_, _ = w.Write([]byte(`{"success":true,"data":{"id":7,"username":"alice","group":"default"}}`))
+				return
+			}
+			require.Equal(t, "7", r.Header.Get("New-Api-User"))
+			_, _ = w.Write([]byte(`{"success":true,"data":{"id":7,"username":"alice","group":"default","quota":250,"used_quota":50}}`))
+		case "/api/user/self/groups":
+			require.Equal(t, "7", r.Header.Get("New-Api-User"))
+			_, _ = w.Write([]byte(`{"success":true,"data":{"default":{"ratio":1,"desc":"Default"}}}`))
+		case "/api/ratio_config":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"model_ratio":{"gpt-4o":2},"completion_ratio":{},"cache_ratio":{},"create_cache_ratio":{},"model_price":{}}}`))
+		case "/api/token/":
+			require.Equal(t, "7", r.Header.Get("New-Api-User"))
+			_, _ = w.Write([]byte(`{"success":true,"data":{"items":[{"id":11,"name":"key-a","key":"sk-***abcd","group":"default","status":1,"model_limits":"gpt-4o","remain_quota":120,"used_quota":30}],"total":1}}`))
+		case "/api/token/batch/keys":
+			require.Equal(t, "7", r.Header.Get("New-Api-User"))
+			_, _ = w.Write([]byte(`{"success":true,"data":{"11":"sk-cookie-full-key"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	result, err := Preview(context.Background(), PreviewRequest{Credential: Credential{
+		Platform:      PlatformNewAPI,
+		BaseURL:       server.URL,
+		AuthMode:      AuthModeSessionCookie,
+		SessionCookie: "session=imported-session; theme=dark",
+	}})
+
+	require.NoError(t, err)
+	require.Equal(t, 2, selfCalls)
+	require.NotEmpty(t, result.PreviewID)
+	require.Len(t, result.Snapshot.Keys, 1)
+	require.Empty(t, result.Snapshot.Keys[0].Key)
+	require.Equal(t, "sk-coo...-key", result.Snapshot.Keys[0].MaskedKey)
+
+	record, err := GetPreviewRecord(result.PreviewID)
+	require.NoError(t, err)
+	require.Equal(t, "sk-cookie-full-key", record.Snapshot.Keys[0].Key)
+	require.NotNil(t, record.Snapshot.StoredCredential)
+	require.Equal(t, AuthModeSessionCookie, record.Snapshot.StoredCredential.AuthMode)
+	require.Empty(t, record.Snapshot.StoredCredential.Password)
+	authSession, err := decryptAuthenticatedSession(record.Snapshot.StoredCredential.Session)
+	require.NoError(t, err)
+	require.NotNil(t, authSession)
+	require.Equal(t, AuthModeSessionCookie, authSession.AuthMode)
+	require.Equal(t, "7", authSession.NewAPI.UserID)
+	require.Len(t, authSession.NewAPI.Cookies, 2)
+}
+
 func TestCompletePreview2FARejectsExpiredChallenge(t *testing.T) {
 	_, err := CompletePreview2FA(context.Background(), Preview2FARequest{
 		ChallengeID: "missing",
@@ -430,6 +495,61 @@ func TestSub2APIPreviewFetchesKeysRatesAndBalance(t *testing.T) {
 	record, err := GetPreviewRecord(result.PreviewID)
 	require.NoError(t, err)
 	require.Equal(t, "sk-sub2-full-key", record.Snapshot.Keys[0].Key)
+}
+
+func TestSub2APIPreviewImportsAccessToken(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/auth/login" {
+			require.Equal(t, "Bearer imported-sub2-token", r.Header.Get("Authorization"))
+		}
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			t.Fatalf("导入 Access Token 时不应调用 sub2api 账号密码登录接口")
+		case "/api/v1/auth/me":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":10}}`))
+		case "/api/v1/user/profile":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":12.5}}`))
+		case "/api/v1/groups/available":
+			_, _ = w.Write([]byte(`{"code":0,"data":[{"id":3,"name":"vip","platform":"openai","rate_multiplier":0.25}]}`))
+		case "/api/v1/groups/rates":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"3":0.25}}`))
+		case "/api/v1/usage/dashboard/stats":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"total_actual_cost":4.75}}`))
+		case "/api/v1/keys":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"items":[{"id":9,"name":"sub-key","key":"sk-sub2-full-key","status":"active","group_id":3,"group":{"id":3,"name":"vip"},"models":["gpt-4o"],"quota":20,"quota_used":3}],"total":1}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	result, err := Preview(context.Background(), PreviewRequest{Credential: Credential{
+		Platform:     PlatformSub2API,
+		BaseURL:      server.URL,
+		AuthMode:     AuthModeAccessToken,
+		AccessToken:  "imported-sub2-token",
+		RefreshToken: "imported-refresh-token",
+		ExpiresAt:    common.GetTimestamp() + 3600,
+	}})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, result.PreviewID)
+	require.Len(t, result.Snapshot.Keys, 1)
+	require.Equal(t, "sk-sub...-key", result.Snapshot.Keys[0].MaskedKey)
+
+	record, err := GetPreviewRecord(result.PreviewID)
+	require.NoError(t, err)
+	require.Equal(t, "sk-sub2-full-key", record.Snapshot.Keys[0].Key)
+	require.NotNil(t, record.Snapshot.StoredCredential)
+	require.Equal(t, AuthModeAccessToken, record.Snapshot.StoredCredential.AuthMode)
+	require.Empty(t, record.Snapshot.StoredCredential.Password)
+	authSession, err := decryptAuthenticatedSession(record.Snapshot.StoredCredential.Session)
+	require.NoError(t, err)
+	require.NotNil(t, authSession)
+	require.Equal(t, AuthModeAccessToken, authSession.AuthMode)
+	require.Equal(t, "imported-sub2-token", authSession.Sub2API.AccessToken)
+	require.Equal(t, "imported-refresh-token", authSession.Sub2API.RefreshToken)
 }
 
 func TestSub2APIPreviewCompletesTwoFAChallenge(t *testing.T) {
@@ -756,4 +876,21 @@ func TestNewAPITokenKeysResponseAcceptsWrappedAndDirectMaps(t *testing.T) {
 	var direct newAPITokenKeysResponse
 	require.NoError(t, common.Unmarshal([]byte(`{"51":"sk-direct-key"}`), &direct))
 	require.Equal(t, "sk-direct-key", direct.Keys["51"])
+}
+
+func TestParseImportedCookiesAcceptsHeaderAndJSONFormats(t *testing.T) {
+	headerCookies, err := ParseImportedCookies("session=abc; theme=dark; empty")
+	require.NoError(t, err)
+	require.Len(t, headerCookies, 2)
+	require.Equal(t, "session", headerCookies[0].Name)
+	require.Equal(t, "abc", headerCookies[0].Value)
+
+	arrayCookies, err := ParseImportedCookies(`[{"name":"session","value":"abc","path":"/"},{"name":"theme","value":"dark"}]`)
+	require.NoError(t, err)
+	require.Len(t, arrayCookies, 2)
+	require.Equal(t, "/", arrayCookies[1].Path)
+
+	mapCookies, err := ParseImportedCookies(`{"session":"abc","theme":"dark"}`)
+	require.NoError(t, err)
+	require.Len(t, mapCookies, 2)
 }

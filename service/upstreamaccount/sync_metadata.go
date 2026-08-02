@@ -268,6 +268,7 @@ func ReadChannelSyncCredential(settings string) (Credential, bool, error) {
 		BaseURL:  firstNonEmpty(metadata.Credentials.BaseURL, metadata.BaseURL),
 		Username: metadata.Credentials.Username,
 		Email:    metadata.Credentials.Email,
+		AuthMode: metadata.Credentials.AuthMode,
 		Password: password,
 		Session:  session,
 	}
@@ -477,12 +478,14 @@ func buildStoredCredentialWithBase(platform string, baseURL string, credential C
 		}
 	}
 	stored := &StoredCredential{
-		Platform:  NormalizePlatform(platform),
-		BaseURL:   normalizeSyncMetadataBaseURL(platform, baseURL),
-		Username:  strings.TrimSpace(credential.Username),
-		Email:     strings.TrimSpace(credential.Email),
-		Password:  encryptedPassword,
-		UpdatedAt: common.GetTimestamp(),
+		Platform:   NormalizePlatform(platform),
+		BaseURL:    normalizeSyncMetadataBaseURL(platform, baseURL),
+		Username:   strings.TrimSpace(credential.Username),
+		Email:      strings.TrimSpace(credential.Email),
+		AuthMode:   NormalizeAuthMode(credential.AuthMode),
+		Password:   encryptedPassword,
+		ImportedAt: credentialImportedAt(credential),
+		UpdatedAt:  common.GetTimestamp(),
 	}
 	if stored.Platform == "" {
 		stored.Platform = NormalizePlatform(platform)
@@ -594,8 +597,12 @@ func normalizeAuthenticatedSession(platform string, baseURL string, session *Aut
 	prepared := *session
 	prepared.Platform = NormalizePlatform(firstNonEmpty(prepared.Platform, platform))
 	prepared.BaseURL = normalizeSyncMetadataBaseURL(prepared.Platform, firstNonEmpty(prepared.BaseURL, baseURL))
+	prepared.AuthMode = NormalizeAuthMode(prepared.AuthMode)
 	if prepared.UpdatedAt <= 0 {
 		prepared.UpdatedAt = common.GetTimestamp()
+	}
+	if prepared.ImportedAt <= 0 && prepared.AuthMode != "" && prepared.AuthMode != AuthModePassword {
+		prepared.ImportedAt = prepared.UpdatedAt
 	}
 	return &prepared
 }
@@ -607,7 +614,6 @@ func hasReusableAuthSession(session *AuthenticatedSession) bool {
 	switch NormalizePlatform(session.Platform) {
 	case PlatformNewAPI:
 		return session.NewAPI != nil &&
-			strings.TrimSpace(session.NewAPI.UserID) != "" &&
 			len(session.NewAPI.Cookies) > 0
 	case PlatformSub2API:
 		return session.Sub2API != nil &&
@@ -615,6 +621,16 @@ func hasReusableAuthSession(session *AuthenticatedSession) bool {
 	default:
 		return false
 	}
+}
+
+func credentialImportedAt(credential Credential) int64 {
+	if credential.Session != nil && credential.Session.ImportedAt > 0 {
+		return credential.Session.ImportedAt
+	}
+	if NormalizeAuthMode(credential.AuthMode) != AuthModePassword {
+		return common.GetTimestamp()
+	}
+	return 0
 }
 
 func authSessionMatches(session *AuthenticatedSession, platform string, baseURL string) bool {

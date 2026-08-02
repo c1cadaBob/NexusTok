@@ -49,7 +49,8 @@ func RefreshChannelFromCredential(ctx context.Context, req RefreshRequest) (*Ref
 		applySnapshotRatioConversionForRequest(record.Snapshot, req.RatioConversion)
 		return RefreshChannelFromSnapshot(req.ChannelID, record.Snapshot, req)
 	}
-	if strings.TrimSpace(req.Password) == "" {
+	req.AuthMode = NormalizeAuthMode(req.AuthMode)
+	if req.AuthMode == AuthModePassword && strings.TrimSpace(req.Password) == "" {
 		credential, ok, err := loadChannelSyncCredential(req.ChannelID)
 		if err != nil {
 			return nil, err
@@ -58,6 +59,11 @@ func RefreshChannelFromCredential(ctx context.Context, req RefreshRequest) (*Ref
 			req.Credential = credential
 		}
 	}
+	var err error
+	req.Credential, err = PrepareImportedCredential(req.Credential)
+	if err != nil {
+		return nil, err
+	}
 	req.Platform = NormalizePlatform(req.Platform)
 	if strings.TrimSpace(req.Platform) == "" {
 		return nil, fmt.Errorf("上游平台不能为空")
@@ -65,7 +71,7 @@ func RefreshChannelFromCredential(ctx context.Context, req RefreshRequest) (*Ref
 	if strings.TrimSpace(req.BaseURL) == "" {
 		return nil, fmt.Errorf("上游平台地址不能为空")
 	}
-	if strings.TrimSpace(req.Password) == "" && !hasReusableAuthSession(req.Session) {
+	if credentialNeedsPassword(req.Credential) {
 		return nil, fmt.Errorf("上游平台密码不能为空")
 	}
 	client, err := NewPlatformClient(req.Platform)

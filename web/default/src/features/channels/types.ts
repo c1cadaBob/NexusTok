@@ -221,6 +221,11 @@ export interface CopyChannelResponse {
 }
 
 export type UpstreamAccountPlatform = 'new-api' | 'sub2api'
+export type UpstreamAccountAuthMode =
+  | 'password'
+  | 'session_cookie'
+  | 'access_token'
+  | 'oauth_browser'
 
 export interface UpstreamAccountBalanceSnapshot {
   balance_usd?: number
@@ -287,6 +292,12 @@ export interface UpstreamAccountPreviewRequest {
   username?: string
   email?: string
   password?: string
+  auth_mode?: UpstreamAccountAuthMode
+  session_cookie?: string
+  user_id?: string
+  access_token?: string
+  refresh_token?: string
+  expires_at?: number
   channel_id?: number
   ratio_conversion?: UpstreamAccountRatioConversion
 }
@@ -377,6 +388,12 @@ export interface UpstreamAccountRefreshRequest {
   username?: string
   email?: string
   password?: string
+  auth_mode?: UpstreamAccountAuthMode
+  session_cookie?: string
+  user_id?: string
+  access_token?: string
+  refresh_token?: string
+  expires_at?: number
   apply_suggested: boolean
   disable_missing_key?: boolean
   ratio_conversion?: UpstreamAccountRatioConversion

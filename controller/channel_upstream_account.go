@@ -108,3 +108,37 @@ func RefreshUpstreamAccountChannel(c *gin.Context) {
 	}
 	common.ApiSuccess(c, result)
 }
+
+// StartUpstreamAccountBrowserAuth 是目标站 OAuth 自动化的预留入口。
+//
+// 第一版不模拟 new-api/sub2api 站点中的 GitHub、LinuxDO/L 站等第三方登录流程；这些
+// 目标站常常叠加验证码、人机验证、站点自定义回调和同源策略。这里先保留稳定 API
+// 形状，后续按具体平台实现 provider 时不需要再调整前端调用位置。
+func StartUpstreamAccountBrowserAuth(c *gin.Context) {
+	var req upstreamaccount.BrowserAuthRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		common.ApiErrorMsg(c, "无效的请求参数: "+err.Error())
+		return
+	}
+	result, err := upstreamaccount.StartBrowserAuth(c.Request.Context(), req)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, result)
+}
+
+// CompleteUpstreamAccountBrowserAuth 是目标站 OAuth 自动化的预留完成入口。
+func CompleteUpstreamAccountBrowserAuth(c *gin.Context) {
+	var req upstreamaccount.BrowserAuthRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		common.ApiErrorMsg(c, "无效的请求参数: "+err.Error())
+		return
+	}
+	result, err := upstreamaccount.CompleteBrowserAuth(c.Request.Context(), req)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, result)
+}

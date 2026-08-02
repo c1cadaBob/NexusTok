@@ -19,14 +19,31 @@ const (
 	PlatformSub2API = "sub2api"
 )
 
+const (
+	// AuthModePassword 表示使用目标站账号密码登录，兼容既有同步流程。
+	AuthModePassword = "password"
+	// AuthModeSessionCookie 表示管理员从已登录浏览器导入目标站 Cookie。
+	AuthModeSessionCookie = "session_cookie"
+	// AuthModeAccessToken 表示管理员从目标站导入 API 或浏览器登录 access token。
+	AuthModeAccessToken = "access_token"
+	// AuthModeOAuthBrowser 是站内 OAuth 自动化的预留模式，第一版不绑定具体站点实现。
+	AuthModeOAuthBrowser = "oauth_browser"
+)
+
 // Credential 是管理员发起同步时输入的临时凭证。
 type Credential struct {
-	Platform string                `json:"platform"`
-	BaseURL  string                `json:"base_url"`
-	Username string                `json:"username"`
-	Password string                `json:"password,omitempty"`
-	Email    string                `json:"email,omitempty"`
-	Session  *AuthenticatedSession `json:"-"`
+	Platform      string                `json:"platform"`
+	BaseURL       string                `json:"base_url"`
+	Username      string                `json:"username"`
+	Password      string                `json:"password,omitempty"`
+	Email         string                `json:"email,omitempty"`
+	AuthMode      string                `json:"auth_mode,omitempty"`
+	SessionCookie string                `json:"session_cookie,omitempty"`
+	UserID        string                `json:"user_id,omitempty"`
+	AccessToken   string                `json:"access_token,omitempty"`
+	RefreshToken  string                `json:"refresh_token,omitempty"`
+	ExpiresAt     int64                 `json:"expires_at,omitempty"`
+	Session       *AuthenticatedSession `json:"-"`
 }
 
 // StoredCredential 是保存到渠道 settings 的上游账号登录凭据。
@@ -41,8 +58,10 @@ type StoredCredential struct {
 	BaseURL          string `json:"base_url,omitempty"`
 	Username         string `json:"username,omitempty"`
 	Email            string `json:"email,omitempty"`
+	AuthMode         string `json:"auth_mode,omitempty"`
 	Password         string `json:"password,omitempty"`
 	Session          string `json:"session,omitempty"`
+	ImportedAt       int64  `json:"imported_at,omitempty"`
 	SessionUpdatedAt int64  `json:"session_updated_at,omitempty"`
 	UpdatedAt        int64  `json:"updated_at,omitempty"`
 }
@@ -53,11 +72,13 @@ type StoredCredential struct {
 // 它的安全边界等同于上游账号密码，因此任何 controller 返回 settings 前都必须继续
 // 通过 SanitizeChannelSyncSettings 移除 credentials。
 type AuthenticatedSession struct {
-	Platform  string              `json:"platform,omitempty"`
-	BaseURL   string              `json:"base_url,omitempty"`
-	UpdatedAt int64               `json:"updated_at,omitempty"`
-	NewAPI    *NewAPISessionData  `json:"new_api,omitempty"`
-	Sub2API   *Sub2APISessionData `json:"sub2api,omitempty"`
+	Platform   string              `json:"platform,omitempty"`
+	BaseURL    string              `json:"base_url,omitempty"`
+	AuthMode   string              `json:"auth_mode,omitempty"`
+	ImportedAt int64               `json:"imported_at,omitempty"`
+	UpdatedAt  int64               `json:"updated_at,omitempty"`
+	NewAPI     *NewAPISessionData  `json:"new_api,omitempty"`
+	Sub2API    *Sub2APISessionData `json:"sub2api,omitempty"`
 }
 
 // NewAPISessionData 保存 new-api 登录后的 session cookie 和用户 ID。
