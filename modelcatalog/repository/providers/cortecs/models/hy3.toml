@@ -1,0 +1,16 @@
+id = 'hy3'
+status = 'active'
+structured_output = true
+
+[limit]
+context = 262144
+
+[cost]
+input = 0.41
+output = 1.025
+cache_read = 0.103
+
+[source]
+origin = 'models_dev_github'
+provider = 'cortecs'
+

@@ -1,0 +1,10 @@
+id = 'grok-imagine-video-1.5'
+status = 'active'
+
+[modalities]
+input = ['text', 'image', 'audio', 'pdf']
+
+[source]
+origin = 'models_dev_github'
+provider = 'xai'
+

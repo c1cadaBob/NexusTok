@@ -1,0 +1,15 @@
+id = 'gpt-image-2'
+status = 'active'
+
+[limit]
+context = 272000
+output = 16384
+
+[cost]
+input = 0.0
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'kenari'
+

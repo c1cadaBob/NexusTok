@@ -1,0 +1,25 @@
+id = 'code-max'
+name = 'Code Max'
+description = 'Frontier models for complex research, architectural decisions, debugging, and multi-file development. Any model that meets the contract spec can serve your request.'
+status = 'beta'
+attachment = true
+reasoning = true
+temperature = false
+tool_call = true
+structured_output = true
+release_date = '2026-05-04'
+last_updated = '2026-07-24'
+
+[limit]
+context = 1000000
+input = 922000
+output = 128000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+provider = 'the-grid-ai'
+

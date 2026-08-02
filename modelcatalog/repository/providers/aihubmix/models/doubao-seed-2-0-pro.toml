@@ -1,0 +1,30 @@
+id = 'doubao-seed-2-0-pro'
+name = 'Doubao Seed 2.0 Pro'
+description = 'Multimodal reasoning model for visual analysis, planning, and tool use'
+family = 'seed'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+structured_output = true
+release_date = '2026-02-14'
+last_updated = '2026-02-14'
+
+[limit]
+context = 256000
+output = 128000
+
+[modalities]
+input = ['text', 'image', 'video']
+output = ['text']
+
+[cost]
+input = 0.48
+output = 2.41
+cache_read = 0.09644
+
+[source]
+origin = 'models_dev_github'
+provider = 'aihubmix'
+

@@ -1,0 +1,6 @@
+id = 'regolo-ai'
+name = 'Regolo AI'
+icon = 'Regolo AI'
+doc = 'https://docs.regolo.ai/'
+status = 'active'
+

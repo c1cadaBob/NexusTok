@@ -1,0 +1,12 @@
+id = 'gpt-5-nano'
+status = 'active'
+
+[cost]
+input = 0.05
+output = 0.4
+cache_read = 0.005
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

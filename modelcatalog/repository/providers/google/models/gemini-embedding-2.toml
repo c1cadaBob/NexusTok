@@ -1,0 +1,15 @@
+id = 'gemini-embedding-2'
+status = 'active'
+
+[limit]
+output = 1
+
+[cost]
+input = 0.2
+output = 0.0
+input_audio = 6.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'google'
+

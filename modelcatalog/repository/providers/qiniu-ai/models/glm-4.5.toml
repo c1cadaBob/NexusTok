@@ -1,0 +1,22 @@
+id = 'glm-4.5'
+name = 'GLM 4.5'
+description = 'Flagship GLM model for hybrid reasoning, coding, and agentic engineering'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+release_date = '2025-08-05'
+last_updated = '2025-08-05'
+
+[limit]
+context = 131072
+output = 98304
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+provider = 'qiniu-ai'
+

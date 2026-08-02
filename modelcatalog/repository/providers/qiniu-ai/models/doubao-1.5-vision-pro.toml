@@ -1,0 +1,21 @@
+id = 'doubao-1.5-vision-pro'
+name = 'Doubao 1.5 Vision Pro'
+description = 'Flagship model for demanding analysis, coding, and production agent workflows'
+status = 'active'
+attachment = true
+temperature = true
+release_date = '2025-08-05'
+last_updated = '2025-08-05'
+
+[limit]
+context = 128000
+output = 16000
+
+[modalities]
+input = ['text', 'image', 'video']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+provider = 'qiniu-ai'
+

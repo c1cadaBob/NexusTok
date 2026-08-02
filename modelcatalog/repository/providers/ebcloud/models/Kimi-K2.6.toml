@@ -1,0 +1,15 @@
+id = 'Kimi-K2.6'
+status = 'active'
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.9286
+output = 3.8571
+
+[source]
+origin = 'models_dev_github'
+provider = 'ebcloud'
+

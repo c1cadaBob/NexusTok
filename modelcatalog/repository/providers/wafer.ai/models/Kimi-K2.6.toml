@@ -1,0 +1,18 @@
+id = 'Kimi-K2.6'
+description = 'Kimi K2.6 sparse MoE model with a 262K context window. Available serverless and not included in standard Wafer Pass. Non-ZDR only: requests with `Wafer-ZDR: required` are rejected.'
+status = 'active'
+temperature = false
+
+[limit]
+output = 65536
+
+[cost]
+input = 1.14
+output = 4.8
+cache_read = 0.19
+cache_write = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'wafer.ai'
+

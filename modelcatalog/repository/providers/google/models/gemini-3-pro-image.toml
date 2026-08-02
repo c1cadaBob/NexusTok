@@ -1,0 +1,14 @@
+id = 'gemini-3-pro-image'
+status = 'active'
+
+[limit]
+context = 131072
+
+[cost]
+input = 2.0
+output = 120.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'google'
+

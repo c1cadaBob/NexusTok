@@ -1,0 +1,27 @@
+id = 'gemma-3-27b'
+name = 'Gemma 3 27B'
+description = 'Open Gemma instruction model for efficient chat and self-hosted deployments'
+family = 'gemma'
+status = 'active'
+attachment = true
+temperature = true
+tool_call = true
+release_date = '2025-03-12'
+last_updated = '2025-03-12'
+
+[limit]
+context = 110000
+output = 110000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.1
+output = 0.3
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

@@ -1,0 +1,26 @@
+id = 'gte-large-en-v1.5'
+name = 'GTE Large (v1.5)'
+description = 'Embedding model for semantic search, retrieval, clustering, and ranking pipelines'
+family = 'text-embedding'
+status = 'active'
+temperature = false
+open_weights = true
+release_date = '2024-03-27'
+last_updated = '2026-04-16'
+
+[limit]
+context = 8192
+output = 1024
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.09
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'digitalocean'
+

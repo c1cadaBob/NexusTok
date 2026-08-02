@@ -1,0 +1,20 @@
+id = 'whisper-large-v3-turbo'
+name = 'Whisper Large v3 Turbo'
+description = 'Speech transcription model for accurate audio-to-text and captioning workflows'
+family = 'whisper'
+status = 'active'
+open_weights = true
+release_date = '2024-10-01'
+last_updated = '2024-10-01'
+
+[limit]
+context = 448
+output = 448
+
+[modalities]
+input = ['audio']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

@@ -1,5 +1,6 @@
 id = 'alibaba'
 name = 'Alibaba'
-doc = 'https://help.aliyun.com/zh/model-studio/'
+icon = 'Qwen.Color'
+doc = 'https://www.alibabacloud.com/help/en/model-studio/models'
 status = 'active'
 

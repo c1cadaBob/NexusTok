@@ -1,0 +1,6 @@
+id = 'stepfun-step-plan'
+name = 'StepFun Step Plan (China)'
+icon = 'StepFun Step Plan (China)'
+doc = 'https://platform.stepfun.com/docs/zh/step-plan/integrations/reasoning-api'
+status = 'active'
+

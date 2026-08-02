@@ -1,0 +1,23 @@
+id = 'mistral-7b-instruct-v0.3'
+name = 'Mistral 7B Instruct v0.3'
+description = 'Mistral model for multilingual chat, reasoning, and tool-assisted workflows'
+family = 'mistral'
+status = 'active'
+temperature = true
+tool_call = true
+open_weights = true
+release_date = '2024-05-22'
+last_updated = '2024-05-22'
+
+[limit]
+context = 32768
+output = 32768
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+provider = 'digitalocean'
+

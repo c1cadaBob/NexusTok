@@ -1,0 +1,32 @@
+id = 'GLM-5.1'
+name = 'GLM-5.1'
+description = 'General Language Model 5.1 — high-quality bilingual (EN/ZH) generation with strong coding and reasoning capabilities.'
+family = 'glm'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+structured_output = true
+open_weights = true
+knowledge = '2025-04'
+release_date = '2026-04-07'
+last_updated = '2026-06-01'
+
+[limit]
+context = 202752
+output = 131072
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 1.0
+output = 3.2
+cache_read = 0.1
+cache_write = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'wafer.ai'
+

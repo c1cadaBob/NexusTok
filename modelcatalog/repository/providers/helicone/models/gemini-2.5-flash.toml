@@ -1,0 +1,30 @@
+id = 'gemini-2.5-flash'
+name = 'Google Gemini 2.5 Flash'
+description = 'Fast Gemini model balancing multimodal reasoning, tool use, and cost'
+family = 'gemini-flash'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+knowledge = '2025-06'
+release_date = '2025-06-17'
+last_updated = '2025-06-17'
+
+[limit]
+context = 1048576
+output = 65535
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.3
+output = 2.5
+cache_read = 0.075
+cache_write = 0.3
+
+[source]
+origin = 'models_dev_github'
+provider = 'helicone'
+

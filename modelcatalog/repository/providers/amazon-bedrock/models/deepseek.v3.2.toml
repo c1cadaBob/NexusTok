@@ -1,0 +1,30 @@
+id = 'deepseek.v3.2'
+name = 'DeepSeek-V3.2'
+description = 'DeepSeek chat model for instruction following, coding, and analysis'
+family = 'deepseek'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+structured_output = true
+open_weights = true
+knowledge = '2024-07'
+release_date = '2026-02-06'
+last_updated = '2026-02-06'
+
+[limit]
+context = 163840
+output = 81920
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.62
+output = 1.85
+
+[source]
+origin = 'models_dev_github'
+provider = 'amazon-bedrock'
+

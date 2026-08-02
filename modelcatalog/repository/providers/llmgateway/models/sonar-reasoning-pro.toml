@@ -1,0 +1,11 @@
+id = 'sonar-reasoning-pro'
+status = 'active'
+
+[cost]
+input = 2.0
+output = 8.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

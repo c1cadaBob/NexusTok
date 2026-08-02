@@ -1,0 +1,6 @@
+id = 'ollama-cloud'
+name = 'Ollama Cloud'
+icon = 'Ollama Cloud'
+doc = 'https://docs.ollama.com/cloud'
+status = 'active'
+

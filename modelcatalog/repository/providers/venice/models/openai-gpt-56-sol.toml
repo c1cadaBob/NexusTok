@@ -1,0 +1,20 @@
+id = 'openai-gpt-56-sol'
+description = 'GPT model for general reasoning, writing, coding, and tool-assisted tasks'
+status = 'active'
+
+[limit]
+context = 1000000
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 6.25
+output = 37.5
+cache_read = 0.625
+cache_write = 7.8125
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

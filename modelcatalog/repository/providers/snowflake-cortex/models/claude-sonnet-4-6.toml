@@ -1,0 +1,10 @@
+id = 'claude-sonnet-4-6'
+status = 'active'
+
+[limit]
+output = 16384
+
+[source]
+origin = 'models_dev_github'
+provider = 'snowflake-cortex'
+

@@ -1,0 +1,6 @@
+id = 'vultr'
+name = 'Vultr'
+icon = 'Vultr'
+doc = 'https://api.vultrinference.com/'
+status = 'active'
+

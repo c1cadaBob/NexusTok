@@ -1,0 +1,20 @@
+id = 'minimax-m3'
+status = 'active'
+release_date = '2026-07-30'
+last_updated = '2026-07-31'
+
+[limit]
+output = 512000
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 0.32664
+output = 1.30656
+cache_read = 0.064239
+
+[source]
+origin = 'models_dev_github'
+provider = 'hyper'
+

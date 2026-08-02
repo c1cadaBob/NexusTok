@@ -1,0 +1,15 @@
+id = 'kimi-k3-fast'
+status = 'active'
+
+[limit]
+context = 1040384
+
+[cost]
+input = 4.5
+output = 22.5
+cache_read = 0.45
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

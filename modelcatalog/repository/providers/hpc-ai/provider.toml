@@ -1,0 +1,6 @@
+id = 'hpc-ai'
+name = 'HPC-AI'
+icon = 'HPC-AI'
+doc = 'https://www.hpc-ai.com/doc/docs/quickstart/'
+status = 'active'
+

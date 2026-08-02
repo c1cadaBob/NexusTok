@@ -1,0 +1,24 @@
+id = 'inkling-small'
+name = 'Inkling Small'
+description = 'Multimodal MoE reasoning model (276B total, 12B active) for text, image, and audio'
+family = 'ling'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+open_weights = true
+release_date = '2026-07-30'
+last_updated = '2026-07-30'
+
+[limit]
+context = 1048576
+output = 1048576
+
+[modalities]
+input = ['text', 'image', 'audio']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

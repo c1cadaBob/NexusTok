@@ -1,0 +1,24 @@
+id = 'mai-code-1-flash'
+name = 'MAI-Code-1-Flash'
+description = 'Microsoft coding model built for fast, efficient assistance in everyday developer workflows'
+family = 'mai'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+structured_output = true
+knowledge = '2025-12'
+release_date = '2026-06-02'
+last_updated = '2026-06-08'
+
+[limit]
+context = 256000
+output = 128000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

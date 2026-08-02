@@ -1,0 +1,27 @@
+id = 'mistral.voxtral-mini-3b-2507'
+name = 'Voxtral Mini 3B 2507'
+description = 'Efficient Mistral model for fast chat, extraction, and production assistants'
+family = 'mistral'
+status = 'active'
+temperature = true
+tool_call = true
+structured_output = true
+release_date = '2024-12-01'
+last_updated = '2024-12-01'
+
+[limit]
+context = 128000
+output = 4096
+
+[modalities]
+input = ['audio', 'text']
+output = ['text']
+
+[cost]
+input = 0.04
+output = 0.04
+
+[source]
+origin = 'models_dev_github'
+provider = 'amazon-bedrock'
+

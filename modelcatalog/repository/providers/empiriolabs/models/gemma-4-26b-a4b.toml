@@ -1,0 +1,17 @@
+id = 'gemma-4-26b-a4b'
+name = 'Gemma 4 26B-A4B'
+status = 'active'
+last_updated = '2026-06-12'
+
+[modalities]
+input = ['text', 'image', 'video']
+
+[cost]
+input = 0.05
+output = 0.29
+cache_read = 0.025
+
+[source]
+origin = 'models_dev_github'
+provider = 'empiriolabs'
+

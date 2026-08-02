@@ -1,0 +1,28 @@
+id = 'gpt-4.1-mini'
+name = 'OpenAI GPT-4.1 Mini'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+family = 'gpt-mini'
+status = 'active'
+temperature = true
+tool_call = true
+knowledge = '2025-04'
+release_date = '2025-04-14'
+last_updated = '2025-04-14'
+
+[limit]
+context = 1047576
+output = 32768
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.39999999999999997
+output = 1.5999999999999999
+cache_read = 0.09999999999999999
+
+[source]
+origin = 'models_dev_github'
+provider = 'helicone'
+

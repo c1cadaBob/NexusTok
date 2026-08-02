@@ -1,0 +1,17 @@
+id = 'llama-3.3-70b-instruct'
+name = 'Llama 3.3 70B Instruct'
+status = 'active'
+reasoning = true
+
+[limit]
+context = 131000
+output = 131000
+
+[cost]
+input = 0.089
+output = 0.275
+
+[source]
+origin = 'models_dev_github'
+provider = 'cortecs'
+

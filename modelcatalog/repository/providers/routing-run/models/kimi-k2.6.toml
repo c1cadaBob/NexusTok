@@ -1,0 +1,15 @@
+id = 'kimi-k2.6'
+status = 'active'
+
+[limit]
+context = 200000
+output = 32000
+
+[cost]
+input = 0.275
+output = 1.1
+
+[source]
+origin = 'models_dev_github'
+provider = 'routing-run'
+

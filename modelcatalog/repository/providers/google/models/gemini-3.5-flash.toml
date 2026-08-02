@@ -1,0 +1,32 @@
+id = 'gemini-3.5-flash'
+name = 'Gemini 3.5 Flash'
+description = 'Fast Gemini model balancing multimodal reasoning, tool use, and cost'
+family = 'gemini-flash'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+structured_output = true
+knowledge = '2025-01'
+release_date = '2026-05-19'
+last_updated = '2026-05-19'
+
+[limit]
+context = 1048576
+output = 65536
+
+[modalities]
+input = ['text', 'image', 'video', 'audio', 'pdf']
+output = ['text']
+
+[cost]
+input = 1.5
+output = 9.0
+cache_read = 0.15
+input_audio = 1.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'google'
+

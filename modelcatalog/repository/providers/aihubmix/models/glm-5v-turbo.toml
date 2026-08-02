@@ -1,0 +1,30 @@
+id = 'glm-5v-turbo'
+name = 'GLM 5 Vision Turbo'
+description = 'GLM vision model for visual reasoning, documents, and multimodal agents'
+family = 'glmv'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+structured_output = true
+release_date = '2026-05-09'
+last_updated = '2026-05-09'
+
+[limit]
+context = 200000
+output = 128000
+
+[modalities]
+input = ['text', 'image', 'video']
+output = ['text']
+
+[cost]
+input = 0.7042
+output = 3.09848
+cache_read = 0.169008
+
+[source]
+origin = 'models_dev_github'
+provider = 'aihubmix'
+

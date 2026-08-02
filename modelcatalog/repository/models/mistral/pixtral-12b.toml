@@ -1,0 +1,24 @@
+id = 'pixtral-12b'
+name = 'Pixtral 12B'
+description = 'Mistral vision-language model for image understanding and multimodal chat'
+family = 'pixtral'
+status = 'active'
+attachment = true
+temperature = true
+tool_call = true
+open_weights = true
+knowledge = '2024-09'
+release_date = '2024-09-01'
+last_updated = '2024-09-01'
+
+[limit]
+context = 128000
+output = 128000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

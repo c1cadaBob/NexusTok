@@ -1,0 +1,6 @@
+id = 'deepinfra'
+name = 'Deep Infra'
+icon = 'Deep Infra'
+doc = 'https://deepinfra.com/models'
+status = 'active'
+

@@ -1,0 +1,11 @@
+id = 'minimax-m2.7'
+status = 'active'
+
+[cost]
+input = 0.819
+output = 3.276
+
+[source]
+origin = 'models_dev_github'
+provider = 'unorouter'
+

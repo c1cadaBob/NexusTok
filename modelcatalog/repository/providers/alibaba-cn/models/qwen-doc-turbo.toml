@@ -1,0 +1,27 @@
+id = 'qwen-doc-turbo'
+name = 'Qwen Doc Turbo'
+description = 'Efficient Qwen model for fast chat, extraction, and high-volume workloads'
+family = 'qwen'
+status = 'active'
+temperature = true
+tool_call = true
+knowledge = '2024-04'
+release_date = '2024-01'
+last_updated = '2024-01'
+
+[limit]
+context = 131072
+output = 8192
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.087
+output = 0.144
+
+[source]
+origin = 'models_dev_github'
+provider = 'alibaba-cn'
+

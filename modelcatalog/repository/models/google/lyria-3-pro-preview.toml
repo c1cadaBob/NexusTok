@@ -1,0 +1,21 @@
+id = 'lyria-3-pro-preview'
+name = 'Lyria 3 Pro Preview'
+description = 'Music generation model for full-length songs from text or images with vocals and structure'
+family = 'lyria'
+status = 'active'
+attachment = true
+temperature = true
+release_date = '2026-03-25'
+last_updated = '2026-03-25'
+
+[limit]
+context = 131072
+output = 8192
+
+[modalities]
+input = ['text', 'image']
+output = ['text', 'audio']
+
+[source]
+origin = 'models_dev_github'
+

@@ -1,0 +1,16 @@
+id = 'green-r'
+name = 'Green R'
+status = 'active'
+attachment = true
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 0.399
+output = 1.083
+
+[source]
+origin = 'models_dev_github'
+provider = 'greenpt'
+

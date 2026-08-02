@@ -1,6 +1,9 @@
 package modelcatalog
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -49,6 +52,60 @@ func TestFetchModelsDevCatalogWithWebSuccess(t *testing.T) {
 	require.Equal(t, 1, result.Catalog.Manifest.ModelCount)
 }
 
+func TestFetchModelsDevCatalogWithGitHubTarFallback(t *testing.T) {
+	var archive bytes.Buffer
+	gzipWriter := gzip.NewWriter(&archive)
+	tarWriter := tar.NewWriter(gzipWriter)
+	writeTarFile := func(name string, body string) {
+		t.Helper()
+		data := []byte(body)
+		require.NoError(t, tarWriter.WriteHeader(&tar.Header{Name: "models.dev-dev/" + name, Mode: 0o644, Size: int64(len(data))}))
+		_, err := tarWriter.Write(data)
+		require.NoError(t, err)
+	}
+	writeTarFile("models/openai/gpt-tar.toml", `id = "gpt-tar"
+name = "GPT Tar"
+`)
+	writeTarFile("providers/openai/provider.toml", `id = "openai"
+name = "OpenAI"
+`)
+	writeTarFile("providers/openai/models/gpt-tar.toml", `id = "gpt-tar"
+
+[cost]
+input = 1
+output = 4
+`)
+	require.NoError(t, tarWriter.Close())
+	require.NoError(t, gzipWriter.Close())
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/catalog.json":
+			http.Error(w, "web down", http.StatusBadGateway)
+		case "/tarball":
+			w.Header().Set("Content-Type", "application/gzip")
+			_, _ = w.Write(archive.Bytes())
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	result, err := FetchModelsDevCatalogWithFallback(context.Background(), ModelsDevFetchOptions{
+		CatalogURL: server.URL + "/catalog.json",
+		TarURL:     server.URL + "/tarball",
+		ZipURL:     "-",
+		TreeURL:    server.URL + "/tree",
+		RawBaseURL: server.URL + "/raw",
+	})
+
+	require.NoError(t, err)
+	require.True(t, result.FallbackUsed)
+	require.Equal(t, CatalogOriginModelsDevGitHub, result.CatalogOrigin)
+	require.Contains(t, result.Catalog.Models, "openai/gpt-tar")
+	require.Contains(t, result.Catalog.Providers["openai"].Models, "gpt-tar")
+}
+
 func TestFetchModelsDevCatalogWithGitHubFallback(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -91,6 +148,8 @@ output = 8
 
 	result, err := FetchModelsDevCatalogWithFallback(context.Background(), ModelsDevFetchOptions{
 		CatalogURL: server.URL + "/catalog.json",
+		TarURL:     "-",
+		ZipURL:     "-",
 		TreeURL:    server.URL + "/tree",
 		RawBaseURL: server.URL + "/raw",
 	})

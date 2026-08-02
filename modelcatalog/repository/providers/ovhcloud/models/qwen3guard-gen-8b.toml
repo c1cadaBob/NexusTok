@@ -1,0 +1,21 @@
+id = 'qwen3guard-gen-8b'
+name = 'Qwen3Guard-Gen-8B'
+description = 'Open-weight instruction model for adaptable chat and self-hosted production workloads'
+status = 'active'
+temperature = true
+open_weights = true
+release_date = '2026-01-22'
+last_updated = '2026-01-22'
+
+[limit]
+context = 32768
+output = 16384
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+provider = 'ovhcloud'
+

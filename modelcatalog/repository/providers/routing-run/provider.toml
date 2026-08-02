@@ -1,0 +1,6 @@
+id = 'routing-run'
+name = 'routing.run'
+icon = 'routing.run'
+doc = 'https://docs.routing.run/api-reference/models'
+status = 'active'
+

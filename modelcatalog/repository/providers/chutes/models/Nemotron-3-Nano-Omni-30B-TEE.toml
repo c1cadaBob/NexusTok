@@ -1,0 +1,26 @@
+id = 'Nemotron-3-Nano-Omni-30B-TEE'
+name = 'Nemotron 3 Nano Omni 30B TEE'
+description = 'Omni-modal model for text, vision, audio, and multimodal agent tasks'
+family = 'nemotron'
+status = 'active'
+temperature = true
+open_weights = true
+release_date = '2026-07-23'
+last_updated = '2026-07-23'
+
+[limit]
+context = 131072
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.0245
+output = 0.0978
+cache_read = 0.01225
+
+[source]
+origin = 'models_dev_github'
+provider = 'chutes'
+

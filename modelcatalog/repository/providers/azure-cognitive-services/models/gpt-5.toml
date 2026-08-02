@@ -1,0 +1,7 @@
+id = 'gpt-5'
+status = 'active'
+
+[source]
+origin = 'models_dev_github'
+provider = 'azure-cognitive-services'
+

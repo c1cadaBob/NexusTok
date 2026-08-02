@@ -1,0 +1,27 @@
+id = 'gpt-oss-120b'
+name = 'GPT-OSS-120B'
+description = 'Open-weight GPT model for self-hosted reasoning and instruction-following workloads'
+family = 'gpt-oss'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+release_date = '2025-08-05'
+last_updated = '2025-08-05'
+
+[limit]
+context = 128000
+output = 16384
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 1.0
+output = 4.2
+
+[source]
+origin = 'models_dev_github'
+provider = 'regolo-ai'
+

@@ -1,0 +1,7 @@
+id = 'text-embedding-ada-002'
+status = 'active'
+
+[source]
+origin = 'models_dev_github'
+provider = 'azure-cognitive-services'
+

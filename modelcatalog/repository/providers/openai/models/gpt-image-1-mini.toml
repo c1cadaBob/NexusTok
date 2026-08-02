@@ -1,0 +1,18 @@
+id = 'gpt-image-1-mini'
+name = 'gpt-image-1-mini'
+description = 'Image model for prompt-driven generation, editing, and visual design workflows'
+family = 'gpt-image'
+status = 'active'
+attachment = true
+temperature = false
+release_date = '2025-09-26'
+last_updated = '2025-09-26'
+
+[modalities]
+input = ['text', 'image']
+output = ['text', 'image']
+
+[source]
+origin = 'models_dev_github'
+provider = 'openai'
+

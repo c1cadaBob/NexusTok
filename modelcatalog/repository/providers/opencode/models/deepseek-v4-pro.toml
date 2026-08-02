@@ -1,0 +1,12 @@
+id = 'deepseek-v4-pro'
+status = 'active'
+
+[cost]
+input = 1.74
+output = 3.84
+cache_read = 0.145
+
+[source]
+origin = 'models_dev_github'
+provider = 'opencode'
+

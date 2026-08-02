@@ -1,0 +1,29 @@
+id = 'gemma-4-31B-it'
+name = 'Gemma 4 31B'
+description = 'Open Gemma instruction model for efficient chat and self-hosted deployments'
+family = 'gemma'
+status = 'active'
+attachment = true
+temperature = true
+tool_call = true
+structured_output = true
+open_weights = true
+release_date = '2026-04-22'
+last_updated = '2026-04-30'
+
+[limit]
+context = 256000
+output = 8192
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.18
+output = 0.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'digitalocean'
+

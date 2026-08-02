@@ -1,0 +1,17 @@
+id = 'zai-org-glm-5-1'
+name = 'GLM 5.1'
+status = 'active'
+last_updated = '2026-06-11'
+
+[limit]
+output = 80000
+
+[cost]
+input = 1.54
+output = 4.84
+cache_read = 0.286
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

@@ -1,0 +1,19 @@
+id = 'qwen35-122b-a10b'
+status = 'active'
+
+[limit]
+context = 262144
+output = 8000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.22
+output = 2.2
+
+[source]
+origin = 'models_dev_github'
+provider = 'neon'
+

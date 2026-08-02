@@ -1,0 +1,13 @@
+id = 'gpt-5.3-codex'
+status = 'active'
+
+[cost]
+input = 1.75
+output = 14.0
+cache_read = 0.175
+cache_write = 1.75
+
+[source]
+origin = 'models_dev_github'
+provider = 'pioneer'
+

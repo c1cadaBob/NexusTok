@@ -1,0 +1,26 @@
+id = 'owl'
+name = 'OWL'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+tool_call = true
+structured_output = true
+release_date = '2026-05-01'
+last_updated = '2026-05-01'
+
+[limit]
+context = 1048756
+input = 1048756
+output = 262144
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.1
+output = 0.3
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

@@ -1,0 +1,28 @@
+id = 'open-mistral-7b'
+name = 'Mistral 7B'
+description = 'Mistral model for multilingual chat, reasoning, and tool-assisted workflows'
+family = 'mistral'
+status = 'active'
+temperature = true
+tool_call = true
+open_weights = true
+knowledge = '2023-12'
+release_date = '2023-09-27'
+last_updated = '2023-09-27'
+
+[limit]
+context = 8000
+output = 8000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.25
+output = 0.25
+
+[source]
+origin = 'models_dev_github'
+provider = 'mistral'
+

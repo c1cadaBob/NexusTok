@@ -1,0 +1,29 @@
+id = 'claude-3.5-sonnet-v2'
+name = 'Anthropic: Claude 3.5 Sonnet v2'
+description = 'Balanced Claude model for coding, analysis, agent workflows, and cost control'
+family = 'claude-sonnet'
+status = 'active'
+temperature = true
+tool_call = true
+knowledge = '2024-10'
+release_date = '2024-10-22'
+last_updated = '2024-10-22'
+
+[limit]
+context = 200000
+output = 8192
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 3.0
+output = 15.0
+cache_read = 0.30000000000000004
+cache_write = 3.75
+
+[source]
+origin = 'models_dev_github'
+provider = 'helicone'
+

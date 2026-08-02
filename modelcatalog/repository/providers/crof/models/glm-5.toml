@@ -1,0 +1,17 @@
+id = 'glm-5'
+status = 'active'
+
+[limit]
+context = 202752
+output = 202752
+
+[cost]
+input = 0.48
+output = 1.9
+cache_read = 0.1
+cache_write = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'crof'
+

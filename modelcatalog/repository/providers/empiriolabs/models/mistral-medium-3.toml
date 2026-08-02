@@ -1,0 +1,16 @@
+id = 'mistral-medium-3'
+status = 'active'
+structured_output = true
+
+[limit]
+context = 130000
+output = 40000
+
+[cost]
+input = 0.0
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'empiriolabs'
+

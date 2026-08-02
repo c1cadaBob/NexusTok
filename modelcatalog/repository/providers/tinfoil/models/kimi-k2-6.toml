@@ -1,0 +1,14 @@
+id = 'kimi-k2-6'
+status = 'active'
+
+[limit]
+context = 256000
+
+[cost]
+input = 1.5
+output = 5.25
+
+[source]
+origin = 'models_dev_github'
+provider = 'tinfoil'
+

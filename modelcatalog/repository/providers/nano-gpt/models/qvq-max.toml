@@ -1,0 +1,25 @@
+id = 'qvq-max'
+name = 'Qwen: QvQ Max'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+attachment = true
+release_date = '2025-03-28'
+last_updated = '2025-03-28'
+
+[limit]
+context = 128000
+input = 128000
+output = 8192
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 1.4
+output = 5.3
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

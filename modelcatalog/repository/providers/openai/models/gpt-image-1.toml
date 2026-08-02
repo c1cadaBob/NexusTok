@@ -1,0 +1,8 @@
+id = 'gpt-image-1'
+name = 'gpt-image-1'
+status = 'deprecated'
+
+[source]
+origin = 'models_dev_github'
+provider = 'openai'
+

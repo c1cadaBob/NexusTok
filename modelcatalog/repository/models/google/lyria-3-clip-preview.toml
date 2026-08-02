@@ -1,0 +1,21 @@
+id = 'lyria-3-clip-preview'
+name = 'Lyria 3 Clip Preview'
+description = 'Music generation model for short 30-second clips, loops, and previews from text or image prompts'
+family = 'lyria'
+status = 'active'
+attachment = true
+temperature = true
+release_date = '2026-03-25'
+last_updated = '2026-03-25'
+
+[limit]
+context = 131072
+output = 65536
+
+[modalities]
+input = ['text', 'image']
+output = ['text', 'audio']
+
+[source]
+origin = 'models_dev_github'
+

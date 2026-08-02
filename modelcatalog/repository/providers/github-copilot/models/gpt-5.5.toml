@@ -1,0 +1,16 @@
+id = 'gpt-5.5'
+status = 'active'
+
+[limit]
+context = 1050000
+input = 922000
+
+[cost]
+input = 5.0
+output = 30.0
+cache_read = 0.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'github-copilot'
+

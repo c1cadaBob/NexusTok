@@ -1,0 +1,28 @@
+id = 'phi-4-mini'
+name = 'Phi-4-mini'
+description = 'Efficient model for low-latency assistance, extraction, and routine automation'
+family = 'phi'
+status = 'active'
+temperature = true
+tool_call = true
+open_weights = true
+knowledge = '2023-10'
+release_date = '2024-12-11'
+last_updated = '2024-12-11'
+
+[limit]
+context = 128000
+output = 4096
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.075
+output = 0.3
+
+[source]
+origin = 'models_dev_github'
+provider = 'azure'
+

@@ -1,0 +1,16 @@
+id = 'glm-5'
+status = 'active'
+
+[limit]
+context = 203000
+
+[cost]
+input = 0.72
+output = 2.3
+cache_read = 0.144
+cache_write = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

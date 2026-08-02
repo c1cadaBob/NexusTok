@@ -1,0 +1,26 @@
+id = 'deepseek-v3'
+name = 'DeepSeek V3'
+description = 'DeepSeek chat model for instruction following, coding, and analysis'
+family = 'deepseek'
+status = 'active'
+temperature = true
+tool_call = true
+release_date = '2024-12-01'
+last_updated = '2024-12-01'
+
+[limit]
+context = 65536
+output = 8192
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.287
+output = 1.147
+
+[source]
+origin = 'models_dev_github'
+provider = 'alibaba-cn'
+

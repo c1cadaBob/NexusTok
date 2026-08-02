@@ -1,0 +1,12 @@
+id = 'o1'
+status = 'active'
+
+[cost]
+input = 15.0
+output = 60.0
+cache_read = 7.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

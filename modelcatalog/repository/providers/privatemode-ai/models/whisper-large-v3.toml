@@ -1,0 +1,27 @@
+id = 'whisper-large-v3'
+name = 'Whisper large-v3'
+description = 'Speech transcription model for accurate audio-to-text and captioning workflows'
+family = 'whisper'
+status = 'active'
+attachment = true
+temperature = true
+open_weights = true
+knowledge = '2023-09'
+release_date = '2023-09-01'
+last_updated = '2023-09-01'
+
+[limit]
+output = 4096
+
+[modalities]
+input = ['audio']
+output = ['text']
+
+[cost]
+input = 0.0
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'privatemode-ai'
+

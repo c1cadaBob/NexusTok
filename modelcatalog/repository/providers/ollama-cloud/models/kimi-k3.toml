@@ -1,0 +1,12 @@
+id = 'kimi-k3'
+name = 'kimi-k3'
+status = 'active'
+last_updated = '2026-07-27'
+
+[modalities]
+input = ['text', 'image']
+
+[source]
+origin = 'models_dev_github'
+provider = 'ollama-cloud'
+

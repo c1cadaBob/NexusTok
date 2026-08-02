@@ -1,0 +1,17 @@
+id = 'gpt-4.1'
+status = 'active'
+
+[limit]
+context = 128000
+input = 128000
+output = 16384
+
+[cost]
+input = 2.0
+output = 8.0
+cache_read = 0.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'github-copilot'
+

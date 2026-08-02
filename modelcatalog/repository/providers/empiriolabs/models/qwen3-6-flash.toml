@@ -1,0 +1,12 @@
+id = 'qwen3-6-flash'
+status = 'active'
+
+[cost]
+input = 0.25
+output = 1.5
+cache_read = 0.25
+
+[source]
+origin = 'models_dev_github'
+provider = 'empiriolabs'
+

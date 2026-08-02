@@ -1,0 +1,13 @@
+id = 'claude-opus4-8'
+status = 'active'
+
+[cost]
+input = 5.64
+output = 28.198
+cache_read = 0.563
+cache_write = 7.049
+
+[source]
+origin = 'models_dev_github'
+provider = 'cortecs'
+

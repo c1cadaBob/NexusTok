@@ -1,0 +1,17 @@
+id = 'kimi-k2-6'
+status = 'active'
+last_updated = '2026-06-12'
+
+[limit]
+context = 256000
+output = 16000
+
+[cost]
+input = 0.8939
+output = 3.7131
+cache_read = 0.1788
+
+[source]
+origin = 'models_dev_github'
+provider = 'empiriolabs'
+

@@ -1,0 +1,25 @@
+id = 'qwen-flash'
+name = 'Qwen-Flash'
+description = 'Efficient Qwen model for fast chat, extraction, and high-volume workloads'
+status = 'active'
+temperature = true
+tool_call = true
+release_date = '2025-07-28'
+last_updated = '2025-07-28'
+
+[limit]
+context = 1000000
+output = 32768
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.022
+output = 0.22
+
+[source]
+origin = 'models_dev_github'
+provider = '302ai'
+

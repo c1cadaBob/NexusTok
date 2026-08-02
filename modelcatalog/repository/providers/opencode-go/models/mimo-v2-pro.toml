@@ -1,0 +1,31 @@
+id = 'mimo-v2-pro'
+name = 'MiMo V2 Pro'
+description = 'Legacy model retained for compatibility with older integrations'
+family = 'mimo-v2-pro'
+status = 'deprecated'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+open_weights = true
+knowledge = '2024-12'
+release_date = '2026-03-18'
+last_updated = '2026-03-18'
+
+[limit]
+context = 1048576
+output = 128000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 1.0
+output = 3.0
+cache_read = 0.2
+
+[source]
+origin = 'models_dev_github'
+provider = 'opencode-go'
+

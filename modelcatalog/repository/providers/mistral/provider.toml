@@ -1,0 +1,6 @@
+id = 'mistral'
+name = 'Mistral'
+icon = 'Mistral.Color'
+doc = 'https://docs.mistral.ai/getting-started/models/'
+status = 'active'
+

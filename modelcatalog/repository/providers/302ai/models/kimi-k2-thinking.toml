@@ -1,0 +1,27 @@
+id = 'kimi-k2-thinking'
+name = 'kimi-k2-thinking'
+description = 'Kimi reasoning model for long-horizon research, planning, and tool use'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+knowledge = '2025-06'
+release_date = '2025-09-05'
+last_updated = '2025-09-05'
+
+[limit]
+context = 262144
+output = 262144
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.575
+output = 2.3
+
+[source]
+origin = 'models_dev_github'
+provider = '302ai'
+

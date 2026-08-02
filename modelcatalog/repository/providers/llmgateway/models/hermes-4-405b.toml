@@ -1,0 +1,27 @@
+id = 'hermes-4-405b'
+name = 'Hermes 4 405B'
+description = 'Reasoning model for deliberate analysis, multi-step problem solving, and tool use'
+family = 'hermes'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+release_date = '2025-08-26'
+last_updated = '2025-08-26'
+
+[limit]
+context = 131072
+output = 131072
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 1.0
+output = 3.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

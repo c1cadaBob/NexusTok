@@ -1,0 +1,23 @@
+id = 'MiniMax-M2.7'
+name = 'MiniMax-M2.7'
+description = 'Open MiniMax flagship for coding agents, office automation, and complex environments'
+family = 'minimax'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+open_weights = true
+release_date = '2026-03-18'
+last_updated = '2026-03-18'
+
+[limit]
+context = 204800
+output = 131072
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

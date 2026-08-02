@@ -1,0 +1,23 @@
+id = 'gemini-3.1-flash-image-preview'
+name = 'Nano Banana 2'
+description = 'Image model for prompt-driven generation, editing, and visual design workflows'
+family = 'gemini-flash'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+knowledge = '2025-01'
+release_date = '2026-02-26'
+last_updated = '2026-02-26'
+
+[limit]
+context = 65536
+output = 65536
+
+[modalities]
+input = ['text', 'image', 'pdf']
+output = ['text', 'image']
+
+[source]
+origin = 'models_dev_github'
+

@@ -1,0 +1,18 @@
+id = 'mimo-v2-5-pro'
+name = 'MiMo V2.5 Pro'
+status = 'active'
+structured_output = true
+
+[limit]
+context = 1000000
+output = 128000
+
+[cost]
+input = 2.175
+output = 4.35
+cache_read = 0.018
+
+[source]
+origin = 'models_dev_github'
+provider = 'empiriolabs'
+

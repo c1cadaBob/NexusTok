@@ -1,0 +1,26 @@
+id = 'cohere-embed-v3-english'
+name = 'Embed v3 English'
+description = 'Embedding model for semantic search, retrieval, clustering, and ranking pipelines'
+family = 'cohere-embed'
+status = 'active'
+temperature = false
+open_weights = true
+release_date = '2023-11-07'
+last_updated = '2023-11-07'
+
+[limit]
+context = 512
+output = 1024
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.1
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'azure'
+

@@ -1,0 +1,15 @@
+id = 'gemma-4-31b-it'
+status = 'active'
+
+[limit]
+output = 262144
+
+[cost]
+input = 0.1
+output = 0.3
+cache_read = 0.02
+
+[source]
+origin = 'models_dev_github'
+provider = 'crof'
+

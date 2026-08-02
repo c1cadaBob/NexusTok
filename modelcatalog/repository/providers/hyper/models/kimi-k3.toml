@@ -1,0 +1,17 @@
+id = 'kimi-k3'
+status = 'active'
+release_date = '2026-07-27'
+last_updated = '2026-07-30'
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 3.2664
+output = 16.332
+cache_read = 0.32664
+
+[source]
+origin = 'models_dev_github'
+provider = 'hyper'
+

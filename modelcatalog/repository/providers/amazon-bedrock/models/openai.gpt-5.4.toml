@@ -1,0 +1,17 @@
+id = 'openai.gpt-5.4'
+status = 'active'
+last_updated = '2026-06-01'
+
+[limit]
+context = 272000
+output = 128000
+
+[cost]
+input = 2.75
+output = 16.5
+cache_read = 0.275
+
+[source]
+origin = 'models_dev_github'
+provider = 'amazon-bedrock'
+

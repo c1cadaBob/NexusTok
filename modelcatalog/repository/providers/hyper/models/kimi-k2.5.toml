@@ -1,0 +1,20 @@
+id = 'kimi-k2.5'
+status = 'active'
+release_date = '2026-04-13'
+last_updated = '2026-07-22'
+
+[limit]
+output = 26214
+
+[modalities]
+input = ['text']
+
+[cost]
+input = 0.528
+output = 2.79
+cache_write = 0.264
+
+[source]
+origin = 'models_dev_github'
+provider = 'hyper'
+

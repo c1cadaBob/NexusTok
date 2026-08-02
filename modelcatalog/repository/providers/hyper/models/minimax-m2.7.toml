@@ -1,0 +1,17 @@
+id = 'minimax-m2.7'
+status = 'active'
+release_date = '2026-06-05'
+last_updated = '2026-07-22'
+
+[limit]
+output = 20480
+
+[cost]
+input = 0.42
+output = 1.62
+cache_write = 0.21
+
+[source]
+origin = 'models_dev_github'
+provider = 'hyper'
+

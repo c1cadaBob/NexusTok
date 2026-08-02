@@ -1,0 +1,6 @@
+id = 'io-net'
+name = 'IO.NET'
+icon = 'IO.NET'
+doc = 'https://io.net/docs/guides/intelligence/io-intelligence'
+status = 'active'
+

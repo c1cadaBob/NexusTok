@@ -1,0 +1,17 @@
+id = 'databricks-gpt-5-6-luna'
+status = 'active'
+
+[limit]
+context = 400000
+input = 272000
+output = 128000
+
+[cost]
+input = 1.0
+output = 6.0
+cache_read = 0.1
+
+[source]
+origin = 'models_dev_github'
+provider = 'databricks'
+

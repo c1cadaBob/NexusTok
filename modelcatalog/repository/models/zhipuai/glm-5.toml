@@ -1,0 +1,23 @@
+id = 'glm-5'
+name = 'GLM-5'
+description = 'General GLM flagship for coding, analysis, and tool-heavy engineering workflows'
+family = 'glm'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+open_weights = true
+release_date = '2026-02-12'
+last_updated = '2026-02-12'
+
+[limit]
+context = 204800
+output = 131072
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

@@ -1,0 +1,11 @@
+id = 'gemini-3.5-flash'
+status = 'active'
+
+[cost]
+input = 0.1857
+output = 1.1142
+
+[source]
+origin = 'models_dev_github'
+provider = 'unorouter'
+

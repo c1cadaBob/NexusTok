@@ -1,0 +1,16 @@
+id = 'gemini-omni-flash-preview'
+status = 'active'
+temperature = true
+
+[limit]
+context = 131072
+output = 65536
+
+[cost]
+input = 1.5
+output = 17.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'google'
+

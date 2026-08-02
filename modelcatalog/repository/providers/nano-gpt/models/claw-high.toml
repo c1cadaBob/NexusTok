@@ -1,0 +1,28 @@
+id = 'claw-high'
+name = 'Claw High'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+attachment = true
+reasoning = true
+tool_call = true
+structured_output = true
+release_date = '2026-05-11'
+last_updated = '2026-05-11'
+
+[limit]
+context = 1000000
+input = 1000000
+output = 128000
+
+[modalities]
+input = ['text', 'image', 'pdf']
+output = ['text']
+
+[cost]
+input = 4.998
+output = 25.007
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

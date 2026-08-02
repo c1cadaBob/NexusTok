@@ -1,0 +1,6 @@
+id = 'minimax'
+name = 'MiniMax (minimax.io)'
+icon = 'MiniMax (minimax.io)'
+doc = 'https://platform.minimax.io/docs/guides/quickstart'
+status = 'active'
+

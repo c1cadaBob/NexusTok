@@ -1,0 +1,24 @@
+id = 'qwen3-30b-a3b-instruct-2507'
+name = 'Qwen3 30B A3B Instruct 2507'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+release_date = '2025-02-20'
+last_updated = '2025-02-20'
+
+[limit]
+context = 256000
+input = 256000
+output = 32768
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.2
+output = 0.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

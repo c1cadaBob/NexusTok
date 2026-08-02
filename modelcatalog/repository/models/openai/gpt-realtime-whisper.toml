@@ -1,0 +1,16 @@
+id = 'gpt-realtime-whisper'
+name = 'GPT Realtime Whisper'
+description = 'Streaming speech-to-text model for low-latency transcript deltas from live audio'
+family = 'whisper'
+status = 'active'
+temperature = true
+release_date = '2026-05-07'
+last_updated = '2026-05-07'
+
+[modalities]
+input = ['audio']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

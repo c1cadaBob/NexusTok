@@ -1,0 +1,6 @@
+id = 'tencent-token-plan'
+name = 'Tencent Token Plan'
+icon = 'Tencent Token Plan'
+doc = 'https://cloud.tencent.com/document/product/1823/130060'
+status = 'active'
+

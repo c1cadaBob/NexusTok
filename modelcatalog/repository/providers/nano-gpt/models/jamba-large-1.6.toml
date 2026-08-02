@@ -1,0 +1,24 @@
+id = 'jamba-large-1.6'
+name = 'Jamba Large 1.6'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+release_date = '2025-03-12'
+last_updated = '2025-03-12'
+
+[limit]
+context = 256000
+input = 256000
+output = 4096
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 1.989
+output = 7.99
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

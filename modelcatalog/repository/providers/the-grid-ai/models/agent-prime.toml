@@ -1,0 +1,24 @@
+id = 'agent-prime'
+name = 'Agent Prime'
+description = 'Reliable models for dependable agentic applications, multi-step tool use, and reasoning workflows. Any model that meets the contract spec can serve your request.'
+status = 'beta'
+reasoning = true
+temperature = true
+tool_call = true
+structured_output = true
+release_date = '2026-05-04'
+last_updated = '2026-07-15'
+
+[limit]
+context = 196608
+input = 120000
+output = 30000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+provider = 'the-grid-ai'
+

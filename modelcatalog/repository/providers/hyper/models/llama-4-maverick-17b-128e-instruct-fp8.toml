@@ -1,0 +1,21 @@
+id = 'llama-4-maverick-17b-128e-instruct-fp8'
+status = 'active'
+release_date = '2026-04-30'
+last_updated = '2026-07-22'
+
+[limit]
+context = 430000
+output = 43000
+
+[modalities]
+input = ['text']
+
+[cost]
+input = 0.284
+output = 0.934
+cache_write = 0.142
+
+[source]
+origin = 'models_dev_github'
+provider = 'hyper'
+

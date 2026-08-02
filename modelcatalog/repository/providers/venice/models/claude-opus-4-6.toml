@@ -1,0 +1,18 @@
+id = 'claude-opus-4-6'
+status = 'active'
+structured_output = true
+last_updated = '2026-06-11'
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 6.0
+output = 30.0
+cache_read = 0.6
+cache_write = 7.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

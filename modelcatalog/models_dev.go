@@ -1,6 +1,10 @@
 package modelcatalog
 
 import (
+	"archive/tar"
+	"archive/zip"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -10,6 +14,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/c1cada/NexusTok/common"
@@ -24,6 +29,10 @@ const (
 	ModelsDevGitHubDefaultTreeURL = "https://api.github.com/repos/anomalyco/models.dev/git/trees/dev?recursive=1"
 	// ModelsDevGitHubDefaultRawBase 是 models.dev dev 分支 raw 文件根路径。
 	ModelsDevGitHubDefaultRawBase = "https://raw.githubusercontent.com/anomalyco/models.dev/dev"
+	// ModelsDevGitHubDefaultZipURL 是 models.dev dev 分支 zipball，用于减少几百个 raw 请求。
+	ModelsDevGitHubDefaultZipURL = "https://github.com/anomalyco/models.dev/archive/refs/heads/dev.zip"
+	// ModelsDevGitHubDefaultTarURL 是 models.dev dev 分支 tarball，部分服务器访问 codeload 比 zip/raw 更稳定。
+	ModelsDevGitHubDefaultTarURL = "https://api.github.com/repos/anomalyco/models.dev/tarball/dev"
 
 	defaultModelsDevFetchTimeout = 20 * time.Second
 	defaultModelsDevMaxBytes     = int64(25 << 20)
@@ -35,6 +44,8 @@ const (
 // 测试中注入本地 URL，也可以在 CLI 中沿用默认公网入口。
 type ModelsDevFetchOptions struct {
 	CatalogURL string
+	TarURL     string
+	ZipURL     string
 	TreeURL    string
 	RawBaseURL string
 	Timeout    time.Duration
@@ -136,6 +147,16 @@ func FetchModelsDevCatalog(ctx context.Context, opts ModelsDevFetchOptions) (*Ca
 // CI、脚本或文档文件带入 NexusTok 内置仓库。
 func FetchModelsDevCatalogFromGitHub(ctx context.Context, opts ModelsDevFetchOptions) (*Catalog, error) {
 	opts = normalizeModelsDevFetchOptions(opts)
+	if strings.TrimSpace(opts.TarURL) != "-" {
+		if catalog, err := fetchModelsDevCatalogFromGitHubTar(ctx, opts); err == nil {
+			return catalog, nil
+		}
+	}
+	if strings.TrimSpace(opts.ZipURL) != "-" {
+		if catalog, err := fetchModelsDevCatalogFromGitHubZip(ctx, opts); err == nil {
+			return catalog, nil
+		}
+	}
 	buf, err := fetchModelsDevBytes(ctx, opts.Client, opts.TreeURL, opts.MaxBytes)
 	if err != nil {
 		return nil, err
@@ -144,20 +165,187 @@ func FetchModelsDevCatalogFromGitHub(ctx context.Context, opts ModelsDevFetchOpt
 	if err := commonUnmarshal(buf, &tree); err != nil {
 		return nil, err
 	}
-	files := make(map[string][]byte)
+	paths := make([]string, 0)
 	for _, item := range tree.Tree {
 		path := strings.TrimSpace(item.Path)
 		if item.Type != "blob" || !IsModelsDevCatalogTOMLPath(path) {
 			continue
 		}
-		fileBuf, err := fetchModelsDevBytes(ctx, opts.Client, BuildModelsDevGitHubRawURL(opts.RawBaseURL, path), opts.MaxBytes)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", path, err)
-		}
-		files[path] = fileBuf
+		paths = append(paths, path)
+	}
+	files, err := fetchModelsDevGitHubRawFiles(ctx, opts, paths)
+	if err != nil {
+		return nil, err
 	}
 	if len(files) == 0 {
 		return nil, errors.New("models.dev GitHub fallback has no catalog TOML files")
+	}
+	catalog, err := ParseRepositoryFiles(files)
+	if err != nil {
+		return nil, err
+	}
+	normalized := normalizeCatalogForSource(catalog, CatalogOriginModelsDevGitHub)
+	normalized.Manifest = BuildManifest(&normalized, "")
+	return &normalized, nil
+}
+
+func fetchModelsDevGitHubRawFiles(ctx context.Context, opts ModelsDevFetchOptions, paths []string) (map[string][]byte, error) {
+	sort.Strings(paths)
+	files := make(map[string][]byte)
+	if len(paths) == 0 {
+		return files, nil
+	}
+	workerCount := 16
+	if len(paths) < workerCount {
+		workerCount = len(paths)
+	}
+	jobs := make(chan string)
+	errCh := make(chan error, 1)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for path := range jobs {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+				fileBuf, err := fetchModelsDevBytes(ctx, opts.Client, BuildModelsDevGitHubRawURL(opts.RawBaseURL, path), opts.MaxBytes)
+				if err != nil {
+					select {
+					case errCh <- fmt.Errorf("%s: %w", path, err):
+					default:
+					}
+					return
+				}
+				mu.Lock()
+				files[path] = fileBuf
+				mu.Unlock()
+			}
+		}()
+	}
+dispatch:
+	for _, path := range paths {
+		select {
+		case <-ctx.Done():
+			break dispatch
+		case jobs <- path:
+		}
+		select {
+		case err := <-errCh:
+			close(jobs)
+			wg.Wait()
+			return nil, err
+		default:
+		}
+	}
+	close(jobs)
+	wg.Wait()
+	select {
+	case err := <-errCh:
+		return nil, err
+	default:
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return files, nil
+}
+
+func fetchModelsDevCatalogFromGitHubTar(ctx context.Context, opts ModelsDevFetchOptions) (*Catalog, error) {
+	if strings.TrimSpace(opts.TarURL) == "" {
+		return nil, errors.New("models.dev GitHub tar URL is empty")
+	}
+	buf, err := fetchModelsDevBytes(ctx, opts.Client, opts.TarURL, opts.MaxBytes)
+	if err != nil {
+		return nil, err
+	}
+	gzipReader, err := gzip.NewReader(bytes.NewReader(buf))
+	if err != nil {
+		return nil, err
+	}
+	defer gzipReader.Close()
+	reader := tar.NewReader(gzipReader)
+	files := make(map[string][]byte)
+	for {
+		header, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		if header == nil || header.FileInfo().IsDir() {
+			continue
+		}
+		rel := stripArchiveRoot(header.Name)
+		if !IsModelsDevCatalogTOMLPath(rel) {
+			continue
+		}
+		fileBuf, err := io.ReadAll(io.LimitReader(reader, opts.MaxBytes+1))
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", header.Name, err)
+		}
+		if int64(len(fileBuf)) > opts.MaxBytes {
+			return nil, fmt.Errorf("%s exceeds %d bytes", header.Name, opts.MaxBytes)
+		}
+		files[rel] = fileBuf
+	}
+	if len(files) == 0 {
+		return nil, errors.New("models.dev GitHub tarball has no catalog TOML files")
+	}
+	catalog, err := ParseRepositoryFiles(files)
+	if err != nil {
+		return nil, err
+	}
+	normalized := normalizeCatalogForSource(catalog, CatalogOriginModelsDevGitHub)
+	normalized.Manifest = BuildManifest(&normalized, "")
+	return &normalized, nil
+}
+
+func fetchModelsDevCatalogFromGitHubZip(ctx context.Context, opts ModelsDevFetchOptions) (*Catalog, error) {
+	if strings.TrimSpace(opts.ZipURL) == "" {
+		return nil, errors.New("models.dev GitHub zip URL is empty")
+	}
+	buf, err := fetchModelsDevBytes(ctx, opts.Client, opts.ZipURL, opts.MaxBytes)
+	if err != nil {
+		return nil, err
+	}
+	reader, err := zip.NewReader(bytes.NewReader(buf), int64(len(buf)))
+	if err != nil {
+		return nil, err
+	}
+	files := make(map[string][]byte)
+	for _, item := range reader.File {
+		if item.FileInfo().IsDir() {
+			continue
+		}
+		rel := stripArchiveRoot(item.Name)
+		if !IsModelsDevCatalogTOMLPath(rel) {
+			continue
+		}
+		rc, err := item.Open()
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", item.Name, err)
+		}
+		fileBuf, readErr := io.ReadAll(io.LimitReader(rc, opts.MaxBytes+1))
+		closeErr := rc.Close()
+		if readErr != nil {
+			return nil, fmt.Errorf("%s: %w", item.Name, readErr)
+		}
+		if closeErr != nil {
+			return nil, fmt.Errorf("%s: %w", item.Name, closeErr)
+		}
+		if int64(len(fileBuf)) > opts.MaxBytes {
+			return nil, fmt.Errorf("%s exceeds %d bytes", item.Name, opts.MaxBytes)
+		}
+		files[rel] = fileBuf
+	}
+	if len(files) == 0 {
+		return nil, errors.New("models.dev GitHub zip has no catalog TOML files")
 	}
 	catalog, err := ParseRepositoryFiles(files)
 	if err != nil {
@@ -217,6 +405,12 @@ func normalizeModelsDevFetchOptions(opts ModelsDevFetchOptions) ModelsDevFetchOp
 	if strings.TrimSpace(opts.CatalogURL) == "" {
 		opts.CatalogURL = ModelsDevDefaultCatalogURL
 	}
+	if strings.TrimSpace(opts.TarURL) == "" {
+		opts.TarURL = ModelsDevGitHubDefaultTarURL
+	}
+	if strings.TrimSpace(opts.ZipURL) == "" {
+		opts.ZipURL = ModelsDevGitHubDefaultZipURL
+	}
 	if strings.TrimSpace(opts.TreeURL) == "" {
 		opts.TreeURL = ModelsDevGitHubDefaultTreeURL
 	}
@@ -233,6 +427,14 @@ func normalizeModelsDevFetchOptions(opts ModelsDevFetchOptions) ModelsDevFetchOp
 		opts.Client = NewModelsDevHTTPClient(opts.Timeout)
 	}
 	return opts
+}
+
+func stripArchiveRoot(name string) string {
+	name = strings.Trim(strings.ReplaceAll(name, "\\", "/"), "/")
+	if _, rel, ok := strings.Cut(name, "/"); ok {
+		return rel
+	}
+	return name
 }
 
 func fetchModelsDevBytes(ctx context.Context, client *http.Client, targetURL string, maxBytes int64) ([]byte, error) {

@@ -1,0 +1,26 @@
+id = 'ernie-5.1'
+name = 'ERNIE 5.1'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+attachment = true
+release_date = '2026-05-10'
+last_updated = '2026-05-10'
+
+[limit]
+context = 119000
+input = 119000
+output = 64000
+
+[modalities]
+input = ['text', 'image', 'video']
+output = ['text']
+
+[cost]
+input = 0.75
+output = 3.0
+cache_read = 0.75
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

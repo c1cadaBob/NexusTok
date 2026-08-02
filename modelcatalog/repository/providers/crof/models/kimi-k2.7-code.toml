@@ -1,0 +1,12 @@
+id = 'kimi-k2.7-code'
+status = 'active'
+
+[cost]
+input = 0.55
+output = 2.25
+cache_read = 0.05
+
+[source]
+origin = 'models_dev_github'
+provider = 'crof'
+

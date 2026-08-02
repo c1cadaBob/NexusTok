@@ -1,0 +1,24 @@
+id = 'v0-1.0-md'
+name = 'v0 1.0 MD'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+release_date = '2025-07-04'
+last_updated = '2025-07-04'
+
+[limit]
+context = 200000
+input = 200000
+output = 64000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 3.0
+output = 15.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

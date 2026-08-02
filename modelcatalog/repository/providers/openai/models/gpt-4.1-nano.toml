@@ -1,0 +1,30 @@
+id = 'gpt-4.1-nano'
+name = 'GPT-4.1 nano'
+description = 'Tiny GPT-4.1 option for classification, routing, and very high-volume tasks'
+family = 'gpt-nano'
+status = 'deprecated'
+attachment = true
+temperature = true
+tool_call = true
+structured_output = true
+knowledge = '2024-04'
+release_date = '2025-04-14'
+last_updated = '2025-04-14'
+
+[limit]
+context = 1047576
+output = 32768
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.1
+output = 0.4
+cache_read = 0.025
+
+[source]
+origin = 'models_dev_github'
+provider = 'openai'
+

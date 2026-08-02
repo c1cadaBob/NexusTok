@@ -1,0 +1,14 @@
+id = 'pixtral-12b-2409'
+status = 'active'
+
+[limit]
+output = 4096
+
+[cost]
+input = 0.285
+output = 0.285
+
+[source]
+origin = 'models_dev_github'
+provider = 'greenpt'
+

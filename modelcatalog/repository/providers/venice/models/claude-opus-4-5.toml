@@ -1,0 +1,24 @@
+id = 'claude-opus-4-5'
+name = 'Claude Opus 4.5'
+status = 'active'
+structured_output = true
+release_date = '2025-12-06'
+last_updated = '2026-06-11'
+
+[limit]
+context = 198000
+output = 32768
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 6.0
+output = 30.0
+cache_read = 0.6
+cache_write = 7.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

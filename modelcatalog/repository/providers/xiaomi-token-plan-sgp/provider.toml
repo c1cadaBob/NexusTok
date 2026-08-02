@@ -1,0 +1,6 @@
+id = 'xiaomi-token-plan-sgp'
+name = 'Xiaomi Token Plan (Singapore)'
+icon = 'Xiaomi Token Plan (Singapore)'
+doc = 'https://platform.xiaomimimo.com/#/docs'
+status = 'active'
+

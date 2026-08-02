@@ -1,0 +1,19 @@
+id = 'minimax-m3'
+name = 'MiniMax M3'
+status = 'active'
+structured_output = true
+last_updated = '2026-06-12'
+
+[limit]
+context = 1000000
+output = 524288
+
+[cost]
+input = 0.225
+output = 0.9
+cache_read = 0.045
+
+[source]
+origin = 'models_dev_github'
+provider = 'empiriolabs'
+

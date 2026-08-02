@@ -1,0 +1,6 @@
+id = 'ofox'
+name = 'Ofox'
+icon = 'Ofox'
+doc = 'https://ofox.ai/docs'
+status = 'active'
+

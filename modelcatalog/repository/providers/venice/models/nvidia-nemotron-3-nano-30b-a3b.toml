@@ -1,0 +1,19 @@
+id = 'nvidia-nemotron-3-nano-30b-a3b'
+name = 'NVIDIA Nemotron 3 Nano 30B'
+status = 'active'
+structured_output = true
+release_date = '2026-01-27'
+last_updated = '2026-06-11'
+
+[limit]
+context = 128000
+output = 16384
+
+[cost]
+input = 0.075
+output = 0.3
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

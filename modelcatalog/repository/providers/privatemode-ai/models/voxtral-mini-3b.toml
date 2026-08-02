@@ -1,0 +1,27 @@
+id = 'voxtral-mini-3b'
+name = 'Voxtral Mini 3B'
+description = 'Speech-to-text model for audio transcription, translation, and audio understanding'
+family = 'voxtral'
+status = 'active'
+attachment = true
+temperature = true
+open_weights = true
+release_date = '2025-07'
+last_updated = '2025-07'
+
+[limit]
+context = 32000
+output = 32000
+
+[modalities]
+input = ['audio']
+output = ['text']
+
+[cost]
+input = 0.0
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'privatemode-ai'
+

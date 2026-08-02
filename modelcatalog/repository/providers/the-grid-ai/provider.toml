@@ -1,0 +1,6 @@
+id = 'the-grid-ai'
+name = 'The Grid AI'
+icon = 'The Grid AI'
+doc = 'https://thegrid.ai/docs'
+status = 'active'
+

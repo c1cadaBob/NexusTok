@@ -1,0 +1,19 @@
+id = 'openai-gpt-4o-mini-2024-07-18'
+name = 'GPT-4o Mini'
+family = 'gpt'
+status = 'active'
+release_date = '2026-02-28'
+last_updated = '2026-06-11'
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 0.1875
+output = 0.75
+cache_read = 0.09375
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

@@ -1,0 +1,27 @@
+id = 'qwen3-coder-30b-a3b-instruct'
+name = 'Qwen3 Coder 30B A3B Instruct'
+description = 'Qwen coding model for software agents, repository edits, and code reasoning'
+family = 'qwen'
+status = 'active'
+temperature = true
+tool_call = true
+knowledge = '2025-07'
+release_date = '2025-07-31'
+last_updated = '2025-07-31'
+
+[limit]
+context = 262144
+output = 262144
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.09999999999999999
+output = 0.3
+
+[source]
+origin = 'models_dev_github'
+provider = 'helicone'
+

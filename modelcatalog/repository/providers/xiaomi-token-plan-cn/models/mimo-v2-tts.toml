@@ -1,0 +1,25 @@
+id = 'mimo-v2-tts'
+name = 'MiMo-V2-TTS'
+description = 'Speech generation model for controllable voice, narration, and audio delivery'
+family = 'mimo'
+status = 'active'
+open_weights = true
+release_date = '2026-03-18'
+last_updated = '2026-03-18'
+
+[limit]
+context = 8192
+output = 8192
+
+[modalities]
+input = ['text']
+output = ['audio']
+
+[cost]
+input = 0.0
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'xiaomi-token-plan-cn'
+

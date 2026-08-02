@@ -1,0 +1,28 @@
+id = 'kimi-k2-instruct'
+name = 'Kimi K2 Instruct'
+description = 'Kimi model for long-context chat, coding, and agentic reasoning'
+family = 'kimi-k2'
+status = 'active'
+temperature = true
+tool_call = true
+open_weights = true
+knowledge = '2024-07'
+release_date = '2025-07-11'
+last_updated = '2025-09-05'
+
+[limit]
+context = 131000
+output = 131000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.551
+output = 2.646
+
+[source]
+origin = 'models_dev_github'
+provider = 'cortecs'
+

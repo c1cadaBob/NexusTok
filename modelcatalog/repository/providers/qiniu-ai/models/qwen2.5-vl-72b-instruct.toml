@@ -1,0 +1,22 @@
+id = 'qwen2.5-vl-72b-instruct'
+name = 'Qwen 2.5 VL 72B Instruct'
+description = 'Qwen vision-language model for visual reasoning, documents, and agent tasks'
+status = 'active'
+attachment = true
+temperature = true
+tool_call = true
+release_date = '2025-08-05'
+last_updated = '2025-08-05'
+
+[limit]
+context = 128000
+output = 8192
+
+[modalities]
+input = ['text', 'image', 'audio', 'video']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+provider = 'qiniu-ai'
+

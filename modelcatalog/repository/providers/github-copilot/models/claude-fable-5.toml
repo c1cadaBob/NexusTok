@@ -1,0 +1,17 @@
+id = 'claude-fable-5'
+status = 'active'
+
+[limit]
+context = 1000000
+output = 128000
+
+[cost]
+input = 10.0
+output = 50.0
+cache_read = 1.0
+cache_write = 12.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'github-copilot'
+

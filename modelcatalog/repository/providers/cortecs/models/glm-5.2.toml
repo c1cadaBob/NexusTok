@@ -1,0 +1,12 @@
+id = 'glm-5.2'
+status = 'active'
+
+[cost]
+input = 1.44
+output = 4.53
+cache_read = 0.39
+
+[source]
+origin = 'models_dev_github'
+provider = 'cortecs'
+

@@ -1,0 +1,21 @@
+id = 'c4ai-aya-vision-8b'
+name = 'Aya Vision 8B'
+description = 'Compact open multilingual vision model for OCR and visual question answering'
+status = 'active'
+attachment = true
+temperature = true
+open_weights = true
+release_date = '2025-03-04'
+last_updated = '2025-05-14'
+
+[limit]
+context = 16000
+output = 4000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

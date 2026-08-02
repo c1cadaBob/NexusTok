@@ -1,0 +1,13 @@
+id = 'step-3.7-flash'
+status = 'active'
+last_updated = '2026-06-29'
+
+[cost]
+input = 0.185
+output = 1.11
+cache_read = 0.037
+
+[source]
+origin = 'models_dev_github'
+provider = 'stepfun'
+

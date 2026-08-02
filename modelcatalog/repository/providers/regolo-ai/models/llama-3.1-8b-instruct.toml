@@ -1,0 +1,26 @@
+id = 'llama-3.1-8b-instruct'
+name = 'Llama 3.1 8B Instruct'
+description = 'Open Llama instruction model for multilingual chat, reasoning, and coding'
+family = 'llama'
+status = 'active'
+temperature = true
+tool_call = true
+release_date = '2025-04-07'
+last_updated = '2025-04-07'
+
+[limit]
+context = 120000
+output = 120000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.05
+output = 0.25
+
+[source]
+origin = 'models_dev_github'
+provider = 'regolo-ai'
+

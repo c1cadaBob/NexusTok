@@ -1,0 +1,28 @@
+id = 'venice-uncensored-role-play'
+name = 'Venice Role Play Uncensored'
+description = 'Multimodal model for analyzing text, images, documents, and rich media'
+family = 'venice'
+status = 'active'
+attachment = true
+tool_call = true
+structured_output = true
+open_weights = true
+release_date = '2026-02-20'
+last_updated = '2026-06-11'
+
+[limit]
+context = 128000
+output = 4096
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.5
+output = 2.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

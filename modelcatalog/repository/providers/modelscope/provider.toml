@@ -1,0 +1,6 @@
+id = 'modelscope'
+name = 'ModelScope'
+icon = 'ModelScope'
+doc = 'https://modelscope.cn/docs/model-service/API-Inference/intro'
+status = 'active'
+

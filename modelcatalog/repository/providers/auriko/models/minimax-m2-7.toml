@@ -1,0 +1,12 @@
+id = 'minimax-m2-7'
+status = 'active'
+
+[cost]
+input = 0.3
+output = 1.2
+cache_write = 0.375
+
+[source]
+origin = 'models_dev_github'
+provider = 'auriko'
+

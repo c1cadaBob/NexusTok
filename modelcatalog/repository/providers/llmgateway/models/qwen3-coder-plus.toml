@@ -1,0 +1,16 @@
+id = 'qwen3-coder-plus'
+status = 'active'
+
+[limit]
+context = 1000000
+
+[cost]
+input = 6.0
+output = 60.0
+cache_read = 1.2
+cache_write = 7.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

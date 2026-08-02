@@ -1,0 +1,6 @@
+id = 'wandb'
+name = 'Weights & Biases'
+icon = 'Weights & Biases'
+doc = 'https://docs.wandb.ai/guides/integrations/inference/'
+status = 'active'
+

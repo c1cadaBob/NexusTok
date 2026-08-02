@@ -1,9 +1,30 @@
 id = 'gpt-4o'
 name = 'GPT-4o'
+description = 'Omni-era GPT for multimodal chat, practical coding, and general assistants'
+family = 'gpt'
 status = 'active'
+attachment = true
+temperature = true
+tool_call = true
+structured_output = true
+knowledge = '2023-09'
+release_date = '2024-05-13'
+last_updated = '2024-08-06'
+
+[limit]
+context = 128000
+output = 16384
+
+[modalities]
+input = ['text', 'image', 'pdf']
+output = ['text']
 
 [cost]
 input = 2.5
 output = 10.0
 cache_read = 1.25
+
+[source]
+origin = 'models_dev_github'
+provider = 'openai'
 

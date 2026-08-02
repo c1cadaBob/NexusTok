@@ -1,0 +1,6 @@
+id = 'digitalocean'
+name = 'DigitalOcean'
+icon = 'DigitalOcean'
+doc = 'https://docs.digitalocean.com/products/gradient-ai-platform/details/models/'
+status = 'active'
+

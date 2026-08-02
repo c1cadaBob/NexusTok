@@ -1,0 +1,18 @@
+id = 'glm5.2-fast'
+name = 'GLM5.2-Fast'
+description = 'The same model served for high TPS.'
+status = 'active'
+
+[limit]
+context = 1048576
+
+[cost]
+input = 3.0
+output = 10.25
+cache_read = 0.5
+cache_write = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'wafer.ai'
+

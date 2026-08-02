@@ -1,0 +1,6 @@
+id = 'empiriolabs'
+name = 'EmpirioLabs AI'
+icon = 'EmpirioLabs AI'
+doc = 'https://docs.empiriolabs.ai'
+status = 'active'
+

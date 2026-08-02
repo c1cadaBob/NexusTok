@@ -1,0 +1,7 @@
+id = 'kimi-k2.5'
+status = 'active'
+
+[source]
+origin = 'models_dev_github'
+provider = 'moonshotai-cn'
+

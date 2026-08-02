@@ -1,0 +1,11 @@
+id = 'gemini-2.5-flash-image'
+status = 'active'
+
+[cost]
+input = 0.3
+output = 30.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'google-vertex'
+

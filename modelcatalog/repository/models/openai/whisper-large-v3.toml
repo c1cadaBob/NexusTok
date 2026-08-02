@@ -1,0 +1,20 @@
+id = 'whisper-large-v3'
+name = 'Whisper 3 Large'
+description = 'Open Whisper checkpoint for robust multilingual transcription and captioning'
+family = 'whisper'
+status = 'active'
+open_weights = true
+release_date = '2024-10-01'
+last_updated = '2024-10-01'
+
+[limit]
+context = 448
+output = 4096
+
+[modalities]
+input = ['audio']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

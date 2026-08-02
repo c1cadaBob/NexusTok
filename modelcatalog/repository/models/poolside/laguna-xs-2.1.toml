@@ -1,0 +1,23 @@
+id = 'laguna-xs-2.1'
+name = 'Laguna XS 2.1'
+description = 'Agentic coding model from Poolside in the XS size class for local deployment'
+family = 'laguna'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+open_weights = true
+release_date = '2026-07-02'
+last_updated = '2026-07-02'
+
+[limit]
+context = 262144
+output = 32768
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

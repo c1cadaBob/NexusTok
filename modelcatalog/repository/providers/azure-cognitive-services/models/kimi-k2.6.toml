@@ -1,0 +1,14 @@
+id = 'kimi-k2.6'
+status = 'active'
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 0.95
+output = 4.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'azure-cognitive-services'
+

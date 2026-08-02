@@ -1,0 +1,19 @@
+id = 'nvidia-nemotron-3-ultra-550b-a55b'
+name = 'NVIDIA Nemotron 3 Ultra'
+status = 'active'
+structured_output = true
+last_updated = '2026-06-11'
+
+[limit]
+context = 256000
+output = 32768
+
+[cost]
+input = 0.625
+output = 3.125
+cache_read = 0.1875
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

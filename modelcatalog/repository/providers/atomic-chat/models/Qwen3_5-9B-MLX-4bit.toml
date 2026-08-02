@@ -1,0 +1,28 @@
+id = 'Qwen3_5-9B-MLX-4bit'
+name = 'Qwen 3.5 9B (MLX 4-bit)'
+description = 'Qwen vision-language model for visual reasoning, documents, and agent tasks'
+family = 'qwen'
+status = 'active'
+attachment = true
+temperature = true
+tool_call = true
+open_weights = true
+release_date = '2026-03-05'
+last_updated = '2026-04-04'
+
+[limit]
+context = 32768
+output = 8192
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.0
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'atomic-chat'
+

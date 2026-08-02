@@ -1,0 +1,24 @@
+id = 'brave'
+name = 'Brave (Answers)'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+release_date = '2023-03-02'
+last_updated = '2024-01-01'
+
+[limit]
+context = 8192
+input = 8192
+output = 8192
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 5.0
+output = 5.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

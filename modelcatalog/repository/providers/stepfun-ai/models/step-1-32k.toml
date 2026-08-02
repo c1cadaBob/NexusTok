@@ -1,0 +1,7 @@
+id = 'step-1-32k'
+status = 'active'
+
+[source]
+origin = 'models_dev_github'
+provider = 'stepfun-ai'
+

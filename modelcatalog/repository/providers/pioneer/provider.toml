@@ -1,0 +1,6 @@
+id = 'pioneer'
+name = 'Pioneer'
+icon = 'Pioneer'
+doc = 'https://agent.pioneer.ai/llms.txt'
+status = 'active'
+

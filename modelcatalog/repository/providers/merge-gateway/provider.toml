@@ -1,0 +1,6 @@
+id = 'merge-gateway'
+name = 'Merge Gateway'
+icon = 'Merge Gateway'
+doc = 'https://docs.merge.dev/merge-gateway'
+status = 'active'
+

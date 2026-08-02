@@ -1,0 +1,19 @@
+id = 'gpt-oss-120b'
+name = 'gpt-oss-120b'
+status = 'active'
+knowledge = '2025-08'
+release_date = '2025-08-04'
+last_updated = '2025-08-14'
+
+[limit]
+context = 128000
+output = 128000
+
+[cost]
+input = 0.0
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'privatemode-ai'
+

@@ -1,0 +1,28 @@
+id = 'gpt-5.2'
+name = 'gpt-5.2'
+description = 'GPT model for general reasoning, writing, coding, and tool-assisted tasks'
+family = 'gpt'
+status = 'active'
+attachment = true
+temperature = true
+tool_call = true
+structured_output = true
+release_date = '2026-01'
+last_updated = '2026-01'
+
+[limit]
+context = 400000
+output = 128000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 1.575
+output = 12.6
+
+[source]
+origin = 'models_dev_github'
+provider = 'jiekou'
+

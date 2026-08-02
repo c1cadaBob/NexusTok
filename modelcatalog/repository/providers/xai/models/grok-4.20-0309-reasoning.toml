@@ -1,0 +1,30 @@
+id = 'grok-4.20-0309-reasoning'
+name = 'Grok 4.20 (Reasoning)'
+description = 'Reasoning Grok for document-heavy analysis and long-horizon tool use'
+family = 'grok'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+structured_output = true
+release_date = '2026-03-09'
+last_updated = '2026-03-09'
+
+[limit]
+context = 1000000
+output = 30000
+
+[modalities]
+input = ['text', 'image', 'pdf']
+output = ['text']
+
+[cost]
+input = 1.25
+output = 2.5
+cache_read = 0.2
+
+[source]
+origin = 'models_dev_github'
+provider = 'xai'
+

@@ -1,0 +1,30 @@
+id = 'zai-glm-4.7'
+name = 'Z.AI GLM-4.7'
+description = 'Flagship GLM model for hybrid reasoning, coding, and agentic engineering'
+status = 'beta'
+reasoning = true
+temperature = true
+tool_call = true
+structured_output = true
+open_weights = true
+release_date = '2026-01-07'
+last_updated = '2026-06-10'
+
+[limit]
+context = 131072
+output = 40960
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 2.25
+output = 2.75
+cache_read = 2.25
+cache_write = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'cerebras'
+

@@ -1,0 +1,29 @@
+id = 'meta.llama4-maverick-17b-instruct-v1:0'
+name = 'Llama 4 Maverick 17B Instruct'
+description = 'Open multimodal Llama model for strong reasoning and fast responses'
+family = 'llama'
+status = 'active'
+attachment = true
+temperature = true
+tool_call = true
+open_weights = true
+knowledge = '2024-08'
+release_date = '2025-04-05'
+last_updated = '2025-04-05'
+
+[limit]
+context = 1000000
+output = 16384
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.24
+output = 0.97
+
+[source]
+origin = 'models_dev_github'
+provider = 'amazon-bedrock'
+

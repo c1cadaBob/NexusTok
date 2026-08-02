@@ -1,0 +1,23 @@
+id = 'claude-sonnet-5'
+status = 'active'
+temperature = false
+structured_output = true
+
+[limit]
+context = 1000000
+output = 128000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 2.0
+output = 10.0
+cache_read = 0.2
+cache_write = 2.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'aihubmix'
+

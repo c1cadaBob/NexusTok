@@ -1,0 +1,19 @@
+id = 'umans-glm-5.2'
+name = 'GLM 5.2'
+status = 'active'
+
+[limit]
+context = 405504
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 1.4
+output = 4.4
+cache_read = 0.26
+
+[source]
+origin = 'models_dev_github'
+provider = 'umans-ai'
+

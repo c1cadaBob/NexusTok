@@ -1,0 +1,28 @@
+id = 'amazon--nova-lite'
+name = 'amazon--nova-lite'
+description = 'Efficient model for low-latency assistance, extraction, and routine automation'
+family = 'nova-lite'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+release_date = '2025-12-02'
+last_updated = '2025-12-02'
+
+[limit]
+context = 1000000
+output = 64000
+
+[modalities]
+input = ['text', 'image', 'video']
+output = ['text']
+
+[cost]
+input = 0.3
+output = 2.37
+
+[source]
+origin = 'models_dev_github'
+provider = 'sap-ai-core'
+

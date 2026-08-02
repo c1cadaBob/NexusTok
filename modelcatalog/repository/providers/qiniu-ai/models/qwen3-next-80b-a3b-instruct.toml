@@ -1,0 +1,21 @@
+id = 'qwen3-next-80b-a3b-instruct'
+name = 'Qwen3 Next 80B A3B Instruct'
+description = 'Tool-capable chat model for instruction following and agentic application workflows'
+status = 'active'
+temperature = true
+tool_call = true
+release_date = '2025-09-12'
+last_updated = '2025-09-12'
+
+[limit]
+context = 131072
+output = 32768
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+provider = 'qiniu-ai'
+

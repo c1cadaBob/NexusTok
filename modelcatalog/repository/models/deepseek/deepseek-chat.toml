@@ -1,14 +1,24 @@
 id = 'deepseek-chat'
 name = 'DeepSeek Chat'
+description = 'DeepSeek chat model for instruction following, coding, and analysis'
+family = 'deepseek'
 status = 'active'
+attachment = true
+temperature = true
 tool_call = true
+open_weights = true
+knowledge = '2025-09'
+release_date = '2025-12-01'
+last_updated = '2026-02-28'
 
 [limit]
-context = 64000
-input = 64000
-output = 8192
+context = 1000000
+output = 384000
 
 [modalities]
 input = ['text']
 output = ['text']
+
+[source]
+origin = 'models_dev_github'
 

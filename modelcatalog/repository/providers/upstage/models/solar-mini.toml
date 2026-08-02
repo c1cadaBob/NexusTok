@@ -1,0 +1,27 @@
+id = 'solar-mini'
+name = 'solar-mini'
+description = 'Efficient model for low-latency assistance, extraction, and routine automation'
+family = 'solar-mini'
+status = 'active'
+temperature = true
+tool_call = true
+knowledge = '2024-09'
+release_date = '2024-06-12'
+last_updated = '2025-04-22'
+
+[limit]
+context = 32768
+output = 4096
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.15
+output = 0.15
+
+[source]
+origin = 'models_dev_github'
+provider = 'upstage'
+

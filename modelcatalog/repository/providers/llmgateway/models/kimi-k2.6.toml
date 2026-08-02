@@ -1,0 +1,12 @@
+id = 'kimi-k2.6'
+status = 'active'
+
+[cost]
+input = 0.22
+output = 1.137
+cache_read = 0.048
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

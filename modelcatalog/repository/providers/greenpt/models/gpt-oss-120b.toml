@@ -1,0 +1,15 @@
+id = 'gpt-oss-120b'
+status = 'active'
+attachment = true
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 0.228
+output = 0.798
+
+[source]
+origin = 'models_dev_github'
+provider = 'greenpt'
+

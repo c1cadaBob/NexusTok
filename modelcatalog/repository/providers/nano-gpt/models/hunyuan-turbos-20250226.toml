@@ -1,0 +1,24 @@
+id = 'hunyuan-turbos-20250226'
+name = 'Hunyuan Turbo S'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+release_date = '2025-02-27'
+last_updated = '2025-02-27'
+
+[limit]
+context = 24000
+input = 24000
+output = 8192
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.187
+output = 0.374
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

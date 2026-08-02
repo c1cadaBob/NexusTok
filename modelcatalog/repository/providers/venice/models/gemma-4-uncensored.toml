@@ -1,0 +1,28 @@
+id = 'gemma-4-uncensored'
+name = 'Gemma 4 Uncensored'
+description = 'Open Gemma instruction model for efficient chat and self-hosted deployments'
+family = 'gemma'
+status = 'active'
+attachment = true
+tool_call = true
+structured_output = true
+open_weights = true
+release_date = '2026-04-13'
+last_updated = '2026-06-11'
+
+[limit]
+context = 256000
+output = 8192
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.1625
+output = 0.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

@@ -1,0 +1,12 @@
+id = 'databricks-gpt-5-2'
+status = 'active'
+
+[cost]
+input = 1.75
+output = 14.0
+cache_read = 0.175
+
+[source]
+origin = 'models_dev_github'
+provider = 'databricks'
+

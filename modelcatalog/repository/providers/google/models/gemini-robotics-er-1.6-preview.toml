@@ -1,0 +1,12 @@
+id = 'gemini-robotics-er-1.6-preview'
+status = 'active'
+
+[cost]
+input = 1.0
+output = 5.0
+input_audio = 2.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'google'
+

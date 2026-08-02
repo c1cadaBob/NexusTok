@@ -1,0 +1,28 @@
+id = 'claudius'
+name = 'Claudius'
+description = 'Multimodal reasoning model for visual analysis, planning, and tool use'
+status = 'active'
+attachment = true
+reasoning = true
+tool_call = true
+knowledge = '2026-05'
+release_date = '2026-05-12'
+last_updated = '2026-05-12'
+
+[limit]
+context = 256000
+output = 64000
+
+[modalities]
+input = ['text', 'image', 'audio', 'video']
+output = ['text']
+
+[cost]
+input = 3.0
+output = 8.0
+cache_read = 0.9
+
+[source]
+origin = 'models_dev_github'
+provider = 'claudinio'
+

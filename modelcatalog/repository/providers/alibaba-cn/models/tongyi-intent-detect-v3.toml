@@ -1,0 +1,26 @@
+id = 'tongyi-intent-detect-v3'
+name = 'Tongyi Intent Detect V3'
+description = 'General-purpose chat model for instruction following, writing, and analysis'
+family = 'yi'
+status = 'active'
+temperature = true
+knowledge = '2024-04'
+release_date = '2024-01'
+last_updated = '2024-01'
+
+[limit]
+context = 8192
+output = 1024
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.058
+output = 0.144
+
+[source]
+origin = 'models_dev_github'
+provider = 'alibaba-cn'
+

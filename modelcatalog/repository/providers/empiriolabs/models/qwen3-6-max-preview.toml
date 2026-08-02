@@ -1,0 +1,16 @@
+id = 'qwen3-6-max-preview'
+status = 'active'
+structured_output = true
+
+[limit]
+context = 256000
+
+[cost]
+input = 1.31
+output = 7.88
+cache_read = 1.31
+
+[source]
+origin = 'models_dev_github'
+provider = 'empiriolabs'
+

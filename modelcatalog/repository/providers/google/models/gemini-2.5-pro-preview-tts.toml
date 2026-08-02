@@ -1,0 +1,26 @@
+id = 'gemini-2.5-pro-preview-tts'
+name = 'Gemini 2.5 Pro Preview TTS'
+description = 'Speech generation model for controllable voice, narration, and audio delivery'
+family = 'gemini-flash'
+status = 'active'
+temperature = true
+knowledge = '2025-01'
+release_date = '2025-05-01'
+last_updated = '2025-05-01'
+
+[limit]
+context = 8192
+output = 16384
+
+[modalities]
+input = ['text']
+output = ['audio']
+
+[cost]
+input = 1.0
+output = 20.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'google'
+

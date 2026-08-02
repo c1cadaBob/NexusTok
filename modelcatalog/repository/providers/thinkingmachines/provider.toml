@@ -1,0 +1,6 @@
+id = 'thinkingmachines'
+name = 'Thinking Machines'
+icon = 'Thinking Machines'
+doc = 'https://tinker-docs.thinkingmachines.ai/tinker/compatible-apis/anthropic/'
+status = 'active'
+

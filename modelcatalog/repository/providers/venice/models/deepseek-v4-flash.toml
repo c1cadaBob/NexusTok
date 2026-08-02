@@ -1,0 +1,17 @@
+id = 'deepseek-v4-flash'
+family = 'deepseek'
+status = 'active'
+last_updated = '2026-06-11'
+
+[limit]
+output = 32768
+
+[cost]
+input = 0.138
+output = 0.275
+cache_read = 0.028
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

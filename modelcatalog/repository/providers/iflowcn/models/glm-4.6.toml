@@ -1,0 +1,28 @@
+id = 'glm-4.6'
+name = 'GLM-4.6'
+description = 'Flagship GLM model for hybrid reasoning, coding, and agentic engineering'
+family = 'glm'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+knowledge = '2024-10'
+release_date = '2024-12-01'
+last_updated = '2025-11-13'
+
+[limit]
+context = 200000
+output = 128000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.0
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'iflowcn'
+

@@ -1,0 +1,24 @@
+id = 'phi-4-mini-instruct'
+name = 'Phi 4 Mini'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+release_date = '2025-07-26'
+last_updated = '2025-07-26'
+
+[limit]
+context = 128000
+input = 128000
+output = 16384
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.17
+output = 0.68
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

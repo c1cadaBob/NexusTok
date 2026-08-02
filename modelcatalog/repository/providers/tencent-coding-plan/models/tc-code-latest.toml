@@ -1,0 +1,28 @@
+id = 'tc-code-latest'
+name = 'Auto'
+description = 'Automatic model router for matching prompts to suitable backends and budgets'
+family = 'auto'
+status = 'active'
+temperature = true
+tool_call = true
+release_date = '2026-03-08'
+last_updated = '2026-03-08'
+
+[limit]
+context = 131072
+output = 16384
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.0
+output = 0.0
+cache_read = 0.0
+cache_write = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'tencent-coding-plan'
+

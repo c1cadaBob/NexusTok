@@ -1,0 +1,17 @@
+id = 'llama-3.3-70b-instruct'
+status = 'active'
+release_date = '2026-04-30'
+last_updated = '2026-07-22'
+
+[limit]
+output = 12800
+
+[cost]
+input = 0.5126
+output = 1.0446
+cache_write = 0.2563
+
+[source]
+origin = 'models_dev_github'
+provider = 'hyper'
+

@@ -1,0 +1,11 @@
+id = 'nemotron-3-ultra'
+name = 'nemotron-3-ultra'
+status = 'active'
+
+[limit]
+context = 262144
+
+[source]
+origin = 'models_dev_github'
+provider = 'ollama-cloud'
+

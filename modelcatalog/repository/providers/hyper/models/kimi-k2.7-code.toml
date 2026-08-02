@@ -1,0 +1,21 @@
+id = 'kimi-k2.7-code'
+status = 'active'
+release_date = '2026-07-03'
+last_updated = '2026-07-22'
+
+[limit]
+context = 256000
+output = 16000
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 0.95
+output = 4.0
+cache_read = 0.19
+
+[source]
+origin = 'models_dev_github'
+provider = 'hyper'
+

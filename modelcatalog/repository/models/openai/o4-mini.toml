@@ -1,0 +1,25 @@
+id = 'o4-mini'
+name = 'o4-mini'
+description = 'Fast o-series model for compact reasoning, coding, and tool use'
+family = 'o-mini'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = false
+tool_call = true
+structured_output = true
+knowledge = '2024-05'
+release_date = '2025-04-16'
+last_updated = '2025-04-16'
+
+[limit]
+context = 200000
+output = 100000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

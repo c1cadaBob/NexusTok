@@ -1,0 +1,18 @@
+id = 'gemini-3.5-live-translate-preview'
+status = 'active'
+temperature = true
+
+[limit]
+context = 16384
+output = 32768
+
+[cost]
+input = 3.5
+output = 21.0
+input_audio = 3.5
+output_audio = 21.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'google'
+

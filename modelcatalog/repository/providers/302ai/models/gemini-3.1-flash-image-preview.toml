@@ -1,0 +1,26 @@
+id = 'gemini-3.1-flash-image-preview'
+name = 'gemini-3.1-flash-image-preview'
+description = 'Image model for prompt-driven generation, editing, and visual design workflows'
+status = 'active'
+attachment = true
+temperature = true
+knowledge = '2025-01'
+release_date = '2026-02-27'
+last_updated = '2026-02-27'
+
+[limit]
+context = 131072
+output = 32768
+
+[modalities]
+input = ['text', 'image', 'pdf']
+output = ['text', 'image']
+
+[cost]
+input = 0.5
+output = 60.0
+
+[source]
+origin = 'models_dev_github'
+provider = '302ai'
+

@@ -1,0 +1,6 @@
+id = 'cloudflare-ai-gateway'
+name = 'Cloudflare AI Gateway'
+icon = 'Cloudflare AI Gateway'
+doc = 'https://developers.cloudflare.com/ai-gateway/'
+status = 'active'
+

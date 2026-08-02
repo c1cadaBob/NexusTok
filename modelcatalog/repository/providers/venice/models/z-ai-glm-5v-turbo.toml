@@ -1,0 +1,21 @@
+id = 'z-ai-glm-5v-turbo'
+name = 'GLM 5V Turbo'
+status = 'active'
+structured_output = true
+last_updated = '2026-06-11'
+
+[limit]
+output = 32768
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 1.5
+output = 5.0
+cache_read = 0.3
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

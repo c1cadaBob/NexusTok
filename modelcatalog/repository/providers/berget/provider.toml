@@ -1,0 +1,6 @@
+id = 'berget'
+name = 'Berget.AI'
+icon = 'Berget.AI'
+doc = 'https://api.berget.ai'
+status = 'active'
+

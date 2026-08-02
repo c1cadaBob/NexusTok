@@ -1,0 +1,21 @@
+id = 'mimo-v2-pro'
+status = 'active'
+reasoning = true
+
+[limit]
+context = 1048576
+output = 131072
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 1.0
+output = 3.0
+cache_read = 0.2
+
+[source]
+origin = 'models_dev_github'
+provider = 'abacus'
+

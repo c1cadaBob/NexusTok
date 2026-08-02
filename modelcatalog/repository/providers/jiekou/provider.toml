@@ -1,0 +1,6 @@
+id = 'jiekou'
+name = 'Jiekou.AI'
+icon = 'Jiekou.AI'
+doc = 'https://docs.jiekou.ai/docs/support/quickstart?utm_source=github_models.dev'
+status = 'active'
+

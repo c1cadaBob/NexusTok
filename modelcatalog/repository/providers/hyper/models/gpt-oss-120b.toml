@@ -1,0 +1,17 @@
+id = 'gpt-oss-120b'
+status = 'active'
+release_date = '2026-04-13'
+last_updated = '2026-07-22'
+
+[limit]
+output = 13107
+
+[cost]
+input = 0.188
+output = 0.7
+cache_write = 0.094
+
+[source]
+origin = 'models_dev_github'
+provider = 'hyper'
+

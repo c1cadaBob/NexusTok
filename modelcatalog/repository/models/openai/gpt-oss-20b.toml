@@ -1,0 +1,24 @@
+id = 'gpt-oss-20b'
+name = 'GPT OSS 20B'
+description = 'Open GPT reasoning model for self-hosted agents and controllable deployments'
+family = 'gpt-oss'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+structured_output = true
+open_weights = true
+release_date = '2025-08-05'
+last_updated = '2025-08-05'
+
+[limit]
+context = 131072
+output = 32768
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

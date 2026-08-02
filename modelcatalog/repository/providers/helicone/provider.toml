@@ -1,0 +1,6 @@
+id = 'helicone'
+name = 'Helicone'
+icon = 'Helicone'
+doc = 'https://helicone.ai/models'
+status = 'active'
+

@@ -1,0 +1,23 @@
+id = 'xpersona-gpt-5.5'
+status = 'active'
+knowledge = '2025-12-30'
+release_date = '2026-05-29'
+last_updated = '2026-05-29'
+
+[limit]
+context = 1000000
+output = 128000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 3.0
+output = 18.0
+cache_read = 0.3
+
+[source]
+origin = 'models_dev_github'
+provider = 'xpersona'
+

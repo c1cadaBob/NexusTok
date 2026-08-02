@@ -1,0 +1,20 @@
+id = 'gpt-5.6-terra'
+status = 'active'
+
+[limit]
+context = 372000
+output = 128000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 1.5
+output = 2.0
+cache_read = 0.15
+
+[source]
+origin = 'models_dev_github'
+provider = 'xpersona'
+

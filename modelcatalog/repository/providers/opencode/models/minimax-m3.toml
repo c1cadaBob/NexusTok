@@ -1,0 +1,16 @@
+id = 'minimax-m3'
+status = 'active'
+
+[limit]
+context = 512000
+output = 128000
+
+[cost]
+input = 0.3
+output = 1.2
+cache_read = 0.06
+
+[source]
+origin = 'models_dev_github'
+provider = 'opencode'
+

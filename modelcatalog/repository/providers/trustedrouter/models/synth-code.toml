@@ -1,0 +1,24 @@
+id = 'synth-code'
+name = 'Synth Code'
+description = 'TrustedRouter code synthesis orchestration alias that combines multiple model responses into one answer.'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+structured_output = true
+release_date = '2026-06-20'
+last_updated = '2026-06-27'
+
+[limit]
+context = 1000000
+output = 131072
+
+[modalities]
+input = ['text', 'image', 'pdf']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+provider = 'trustedrouter'
+

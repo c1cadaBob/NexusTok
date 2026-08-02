@@ -1,0 +1,11 @@
+id = 'step-3.7-flash:free'
+status = 'active'
+
+[cost]
+input = 0.0
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'unorouter'
+

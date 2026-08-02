@@ -1,0 +1,6 @@
+id = 'inferx'
+name = 'InferX'
+icon = 'InferX'
+doc = 'https://model.inferx.net/endpoints'
+status = 'active'
+

@@ -1,8 +1,13 @@
 id = 'gemini-2.5-flash'
-name = 'Gemini 2.5 Flash'
 status = 'active'
 
 [cost]
 input = 0.3
 output = 2.5
+cache_read = 0.03
+input_audio = 1.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'google'
 

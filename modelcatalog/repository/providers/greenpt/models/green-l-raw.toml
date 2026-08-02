@@ -1,0 +1,16 @@
+id = 'green-l-raw'
+name = 'Green L Raw'
+status = 'active'
+attachment = true
+
+[limit]
+output = 32768
+
+[cost]
+input = 0.285
+output = 0.912
+
+[source]
+origin = 'models_dev_github'
+provider = 'greenpt'
+

@@ -1,0 +1,7 @@
+id = 'text-embedding-3-small'
+status = 'active'
+
+[source]
+origin = 'models_dev_github'
+provider = 'azure-cognitive-services'
+

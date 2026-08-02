@@ -1,0 +1,28 @@
+id = 'mistral-medium-2505'
+name = 'Mistral Medium 3'
+description = 'Mistral model for multilingual chat, reasoning, and tool-assisted workflows'
+family = 'mistral-medium'
+status = 'active'
+attachment = true
+temperature = true
+tool_call = true
+knowledge = '2025-05'
+release_date = '2025-05-07'
+last_updated = '2025-05-07'
+
+[limit]
+context = 128000
+output = 128000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.4
+output = 2.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'azure'
+

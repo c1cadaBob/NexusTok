@@ -1,0 +1,25 @@
+id = 'gemini-3-pro-image-preview'
+name = 'Gemini 3 Pro Image'
+description = 'Image model for prompt-driven generation, editing, and visual design workflows'
+status = 'active'
+attachment = true
+release_date = '2025-11-18'
+last_updated = '2025-11-18'
+
+[limit]
+context = 1048756
+input = 1048756
+output = 65536
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 2.0
+output = 12.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

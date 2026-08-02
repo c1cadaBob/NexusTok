@@ -1,0 +1,12 @@
+id = 'kimi-k2-7-code:free'
+name = 'Kimi K2.7 Code (Free)'
+status = 'active'
+
+[cost]
+input = 0.0
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'kenari'
+

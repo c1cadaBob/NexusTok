@@ -1,0 +1,29 @@
+id = 'qwen3.6-27b'
+name = 'Qwen3.6-27B'
+description = 'Multimodal reasoning model for visual analysis, planning, and tool use'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+structured_output = true
+open_weights = true
+release_date = '2026-06-01'
+last_updated = '2026-06-01'
+
+[limit]
+context = 262144
+output = 262144
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.47
+output = 3.19
+
+[source]
+origin = 'models_dev_github'
+provider = 'ovhcloud'
+

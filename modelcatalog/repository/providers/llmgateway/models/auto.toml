@@ -1,0 +1,28 @@
+id = 'auto'
+name = 'Auto Route'
+description = 'Automatic model router for matching prompts to suitable backends and budgets'
+family = 'auto'
+status = 'active'
+attachment = true
+temperature = true
+tool_call = true
+structured_output = true
+release_date = '2024-01-01'
+last_updated = '2024-01-01'
+
+[limit]
+context = 128000
+output = 16384
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.0
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

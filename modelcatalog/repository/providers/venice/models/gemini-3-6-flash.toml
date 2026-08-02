@@ -1,0 +1,19 @@
+id = 'gemini-3-6-flash'
+status = 'active'
+release_date = '2026-07-09'
+
+[limit]
+context = 1000000
+
+[modalities]
+input = ['text', 'image', 'audio', 'video']
+
+[cost]
+input = 1.875
+output = 9.375
+cache_read = 0.1875
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

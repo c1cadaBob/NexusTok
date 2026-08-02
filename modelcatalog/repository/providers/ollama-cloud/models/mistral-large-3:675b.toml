@@ -1,0 +1,23 @@
+id = 'mistral-large-3:675b'
+name = 'mistral-large-3:675b'
+description = 'Flagship Mistral model for advanced reasoning, coding, and multilingual work'
+family = 'mistral-large'
+status = 'active'
+attachment = true
+tool_call = true
+open_weights = true
+release_date = '2025-12-02'
+last_updated = '2026-01-19'
+
+[limit]
+context = 262144
+output = 262144
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+provider = 'ollama-cloud'
+

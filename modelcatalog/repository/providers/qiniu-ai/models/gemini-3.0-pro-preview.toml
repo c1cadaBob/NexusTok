@@ -1,0 +1,23 @@
+id = 'gemini-3.0-pro-preview'
+name = 'Gemini 3.0 Pro Preview'
+description = 'Advanced Gemini model for complex reasoning, coding, and multimodal analysis'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+release_date = '2025-11-19'
+last_updated = '2025-11-19'
+
+[limit]
+context = 1000000
+output = 64000
+
+[modalities]
+input = ['text', 'image', 'video', 'pdf', 'audio']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+provider = 'qiniu-ai'
+

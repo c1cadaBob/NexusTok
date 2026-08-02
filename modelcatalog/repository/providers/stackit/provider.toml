@@ -1,0 +1,6 @@
+id = 'stackit'
+name = 'STACKIT'
+icon = 'STACKIT'
+doc = 'https://docs.stackit.cloud/products/data-and-ai/ai-model-serving/basics/available-shared-models'
+status = 'active'
+

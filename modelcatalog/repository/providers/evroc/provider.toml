@@ -1,0 +1,6 @@
+id = 'evroc'
+name = 'evroc'
+icon = 'evroc'
+doc = 'https://docs.evroc.com/products/think/overview.html'
+status = 'active'
+

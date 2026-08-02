@@ -1,0 +1,6 @@
+id = 'stepfun-ai-step-plan'
+name = 'StepFun Step Plan (Global)'
+icon = 'StepFun Step Plan (Global)'
+doc = 'https://platform.stepfun.ai/docs/en/step-plan/integrations/reasoning-api'
+status = 'active'
+

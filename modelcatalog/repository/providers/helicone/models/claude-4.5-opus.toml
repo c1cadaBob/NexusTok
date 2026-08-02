@@ -1,0 +1,30 @@
+id = 'claude-4.5-opus'
+name = 'Anthropic: Claude Opus 4.5'
+description = 'Flagship Claude model for deep reasoning, coding, and long-horizon agents'
+family = 'claude-opus'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+knowledge = '2025-11'
+release_date = '2025-11-24'
+last_updated = '2025-11-24'
+
+[limit]
+context = 200000
+output = 64000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 5.0
+output = 25.0
+cache_read = 0.5
+cache_write = 6.25
+
+[source]
+origin = 'models_dev_github'
+provider = 'helicone'
+

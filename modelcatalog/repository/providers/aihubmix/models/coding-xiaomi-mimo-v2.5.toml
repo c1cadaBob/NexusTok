@@ -1,0 +1,15 @@
+id = 'coding-xiaomi-mimo-v2.5'
+name = 'Coding Xiaomi MiMo-V2.5'
+family = 'mimo-v2.5'
+status = 'active'
+last_updated = '2026-05-13'
+
+[cost]
+input = 0.08
+output = 0.4
+cache_read = 0.016
+
+[source]
+origin = 'models_dev_github'
+provider = 'aihubmix'
+

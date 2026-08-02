@@ -1,0 +1,6 @@
+id = 'perplexity'
+name = 'Perplexity'
+icon = 'Perplexity.Color'
+doc = 'https://docs.perplexity.ai'
+status = 'active'
+

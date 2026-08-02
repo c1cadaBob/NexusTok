@@ -1,0 +1,22 @@
+id = 'gemini-3-5-flash'
+family = 'gemini'
+status = 'active'
+release_date = '2026-05-22'
+last_updated = '2026-06-11'
+
+[limit]
+context = 1000000
+
+[modalities]
+input = ['text', 'image', 'audio', 'video']
+
+[cost]
+input = 1.55
+output = 9.45
+cache_read = 0.155
+cache_write = 0.086
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

@@ -1,0 +1,7 @@
+id = 'mistral-large2'
+status = 'active'
+
+[source]
+origin = 'models_dev_github'
+provider = 'snowflake-cortex'
+

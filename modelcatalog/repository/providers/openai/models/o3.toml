@@ -1,0 +1,31 @@
+id = 'o3'
+name = 'o3'
+description = 'Deliberate o-series reasoner for hard math, coding, and multi-step analysis'
+family = 'o'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = false
+tool_call = true
+structured_output = true
+knowledge = '2024-05'
+release_date = '2025-04-16'
+last_updated = '2025-04-16'
+
+[limit]
+context = 200000
+output = 100000
+
+[modalities]
+input = ['text', 'image', 'pdf']
+output = ['text']
+
+[cost]
+input = 2.0
+output = 8.0
+cache_read = 0.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'openai'
+

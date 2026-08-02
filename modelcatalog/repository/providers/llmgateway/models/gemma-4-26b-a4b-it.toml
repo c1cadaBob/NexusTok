@@ -1,0 +1,11 @@
+id = 'gemma-4-26b-a4b-it'
+status = 'active'
+
+[cost]
+input = 0.07
+output = 0.34
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

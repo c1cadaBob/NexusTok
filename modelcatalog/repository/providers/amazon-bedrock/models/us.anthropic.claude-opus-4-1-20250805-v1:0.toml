@@ -1,0 +1,14 @@
+id = 'us.anthropic.claude-opus-4-1-20250805-v1:0'
+name = 'Claude Opus 4.1 (US)'
+status = 'deprecated'
+
+[cost]
+input = 15.0
+output = 75.0
+cache_read = 1.5
+cache_write = 18.75
+
+[source]
+origin = 'models_dev_github'
+provider = 'amazon-bedrock'
+

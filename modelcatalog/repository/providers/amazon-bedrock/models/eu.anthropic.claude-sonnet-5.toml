@@ -1,0 +1,15 @@
+id = 'eu.anthropic.claude-sonnet-5'
+name = 'Claude Sonnet 5 (EU)'
+status = 'active'
+structured_output = true
+
+[cost]
+input = 2.2
+output = 11.0
+cache_read = 0.22
+cache_write = 2.75
+
+[source]
+origin = 'models_dev_github'
+provider = 'amazon-bedrock'
+

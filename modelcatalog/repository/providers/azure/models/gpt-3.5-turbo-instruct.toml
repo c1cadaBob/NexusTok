@@ -1,0 +1,26 @@
+id = 'gpt-3.5-turbo-instruct'
+name = 'GPT-3.5 Turbo Instruct'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+family = 'gpt'
+status = 'deprecated'
+temperature = true
+knowledge = '2021-08'
+release_date = '2023-09-21'
+last_updated = '2023-09-21'
+
+[limit]
+context = 4096
+output = 4096
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 1.5
+output = 2.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'azure'
+

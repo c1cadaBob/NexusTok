@@ -1,0 +1,26 @@
+id = 'kimi-k2-0905-preview'
+name = 'kimi-k2-0905-preview'
+description = 'Kimi model for long-context chat, coding, and agentic reasoning'
+status = 'active'
+temperature = true
+tool_call = true
+knowledge = '2025-06'
+release_date = '2025-09-05'
+last_updated = '2025-09-05'
+
+[limit]
+context = 262144
+output = 262144
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.632
+output = 2.53
+
+[source]
+origin = 'models_dev_github'
+provider = '302ai'
+

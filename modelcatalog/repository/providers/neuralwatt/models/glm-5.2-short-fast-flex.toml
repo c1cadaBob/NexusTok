@@ -1,0 +1,28 @@
+id = 'glm-5.2-short-fast-flex'
+name = 'GLM 5.2 Short Fast Flex'
+description = 'Efficient GLM model for fast reasoning, coding, and agent workflows'
+family = 'glm'
+status = 'active'
+temperature = true
+tool_call = true
+open_weights = true
+release_date = '2026-06-17'
+last_updated = '2026-06-17'
+
+[limit]
+context = 199984
+output = 199984
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.725
+output = 2.25
+cache_read = 0.18125
+
+[source]
+origin = 'models_dev_github'
+provider = 'neuralwatt'
+

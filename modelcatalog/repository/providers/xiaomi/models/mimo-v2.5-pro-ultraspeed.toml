@@ -1,0 +1,30 @@
+id = 'mimo-v2.5-pro-ultraspeed'
+name = 'MiMo-V2.5-Pro-UltraSpeed'
+description = 'MiMo pro model for strong multimodal reasoning and agent execution'
+family = 'mimo'
+status = 'beta'
+reasoning = true
+temperature = true
+tool_call = true
+open_weights = true
+knowledge = '2024-12'
+release_date = '2026-06-08'
+last_updated = '2026-06-09'
+
+[limit]
+context = 1048576
+output = 131072
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 1.305
+output = 2.61
+cache_read = 0.0108
+
+[source]
+origin = 'models_dev_github'
+provider = 'xiaomi'
+

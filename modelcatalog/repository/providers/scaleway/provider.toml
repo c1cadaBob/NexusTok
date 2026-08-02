@@ -1,0 +1,6 @@
+id = 'scaleway'
+name = 'Scaleway'
+icon = 'Scaleway'
+doc = 'https://www.scaleway.com/en/docs/generative-apis/'
+status = 'active'
+

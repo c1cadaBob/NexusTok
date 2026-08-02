@@ -1,0 +1,28 @@
+id = 'gpt-5-mini'
+name = 'OpenAI GPT-5 Mini'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+family = 'gpt-mini'
+status = 'active'
+temperature = false
+tool_call = true
+knowledge = '2025-01'
+release_date = '2025-01-01'
+last_updated = '2025-01-01'
+
+[limit]
+context = 400000
+output = 128000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.25
+output = 2.0
+cache_read = 0.024999999999999998
+
+[source]
+origin = 'models_dev_github'
+provider = 'helicone'
+

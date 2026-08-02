@@ -1,0 +1,16 @@
+id = 'anthropic--claude-4.6-sonnet'
+name = 'anthropic--claude-4.6-sonnet'
+description = 'Balanced Claude model for coding, analysis, agent workflows, and cost control'
+status = 'active'
+knowledge = '2025-08'
+
+[cost]
+input = 3.0
+output = 15.0
+cache_read = 0.3
+cache_write = 3.75
+
+[source]
+origin = 'models_dev_github'
+provider = 'sap-ai-core'
+

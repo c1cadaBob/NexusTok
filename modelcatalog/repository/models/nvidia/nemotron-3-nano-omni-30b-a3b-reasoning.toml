@@ -1,0 +1,24 @@
+id = 'nemotron-3-nano-omni-30b-a3b-reasoning'
+name = 'Nemotron 3 Nano Omni 30B A3B Reasoning'
+description = 'Open Nemotron omni model combining reasoning with text, vision, and audio'
+family = 'nemotron'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+open_weights = true
+release_date = '2026-04-28'
+last_updated = '2026-04-28'
+
+[limit]
+context = 256000
+output = 65536
+
+[modalities]
+input = ['text', 'image', 'video', 'audio']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

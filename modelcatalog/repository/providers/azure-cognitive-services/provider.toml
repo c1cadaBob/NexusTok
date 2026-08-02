@@ -1,0 +1,6 @@
+id = 'azure-cognitive-services'
+name = 'Azure Cognitive Services'
+icon = 'Azure Cognitive Services'
+doc = 'https://learn.microsoft.com/en-us/azure/ai-services/openai/concepts/models'
+status = 'active'
+

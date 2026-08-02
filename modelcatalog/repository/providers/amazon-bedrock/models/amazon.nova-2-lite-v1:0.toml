@@ -1,0 +1,27 @@
+id = 'amazon.nova-2-lite-v1:0'
+name = 'Nova 2 Lite'
+description = 'Multimodal reasoning model for visual analysis, planning, and tool use'
+family = 'nova'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+release_date = '2024-12-01'
+last_updated = '2024-12-01'
+
+[limit]
+context = 128000
+output = 4096
+
+[modalities]
+input = ['text', 'image', 'video']
+output = ['text']
+
+[cost]
+input = 0.33
+output = 2.75
+
+[source]
+origin = 'models_dev_github'
+provider = 'amazon-bedrock'
+

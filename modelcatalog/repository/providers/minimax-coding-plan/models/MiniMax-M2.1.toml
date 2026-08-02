@@ -1,0 +1,30 @@
+id = 'MiniMax-M2.1'
+name = 'MiniMax-M2.1'
+description = 'MiniMax model for chat, coding, office work, and agentic tasks'
+family = 'minimax'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+open_weights = true
+release_date = '2025-12-23'
+last_updated = '2025-12-23'
+
+[limit]
+context = 204800
+output = 131072
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.0
+output = 0.0
+cache_read = 0.0
+cache_write = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'minimax-coding-plan'
+

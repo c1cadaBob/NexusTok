@@ -1,0 +1,6 @@
+id = 'vivgrid'
+name = 'Vivgrid'
+icon = 'Vivgrid'
+doc = 'https://docs.vivgrid.com/models'
+status = 'active'
+

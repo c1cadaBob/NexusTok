@@ -1,0 +1,30 @@
+id = 'grok-build-0.1'
+name = 'Grok Build 0.1'
+description = 'Grok coding model for agentic engineering, edits, and codebase workflows'
+family = 'grok-build'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+structured_output = true
+release_date = '2026-05-20'
+last_updated = '2026-05-20'
+
+[limit]
+context = 256000
+output = 256000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 1.0
+output = 2.0
+cache_read = 0.2
+
+[source]
+origin = 'models_dev_github'
+provider = 'opencode'
+

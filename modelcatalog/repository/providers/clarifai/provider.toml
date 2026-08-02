@@ -1,0 +1,6 @@
+id = 'clarifai'
+name = 'Clarifai'
+icon = 'Clarifai'
+doc = 'https://docs.clarifai.com/compute/inference/'
+status = 'active'
+

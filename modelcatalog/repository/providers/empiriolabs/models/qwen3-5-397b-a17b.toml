@@ -1,0 +1,19 @@
+id = 'qwen3-5-397b-a17b'
+status = 'active'
+
+[limit]
+context = 256000
+output = 64000
+
+[modalities]
+input = ['text', 'image', 'video']
+
+[cost]
+input = 0.172
+output = 1.032
+cache_read = 0.172
+
+[source]
+origin = 'models_dev_github'
+provider = 'empiriolabs'
+

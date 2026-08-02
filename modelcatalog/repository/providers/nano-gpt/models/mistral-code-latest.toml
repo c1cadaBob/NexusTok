@@ -1,0 +1,26 @@
+id = 'mistral-code-latest'
+name = 'Mistral Code Latest'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+tool_call = true
+structured_output = true
+release_date = '2026-06-02'
+last_updated = '2026-06-02'
+
+[limit]
+context = 256000
+input = 256000
+output = 32768
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.3
+output = 0.9
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

@@ -1,0 +1,23 @@
+id = 'gpt-4-turbo'
+name = 'GPT-4 Turbo'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+family = 'gpt'
+status = 'active'
+attachment = true
+temperature = true
+tool_call = true
+knowledge = '2023-12'
+release_date = '2023-11-06'
+last_updated = '2024-04-09'
+
+[limit]
+context = 128000
+output = 4096
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

@@ -1,0 +1,6 @@
+id = 'upstage'
+name = 'Upstage'
+icon = 'Upstage'
+doc = 'https://developers.upstage.ai/docs/apis/chat'
+status = 'active'
+

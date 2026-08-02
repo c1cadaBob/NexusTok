@@ -1,0 +1,26 @@
+id = 'text-embedding-ada-002'
+name = 'text-embedding-ada-002'
+description = 'Embedding model for semantic search, retrieval, clustering, and ranking pipelines'
+family = 'text-embedding'
+status = 'active'
+temperature = false
+knowledge = '2022-12'
+release_date = '2022-12-15'
+last_updated = '2022-12-15'
+
+[limit]
+context = 8192
+output = 1536
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.1
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'openai'
+

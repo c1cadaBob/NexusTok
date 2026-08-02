@@ -1,0 +1,21 @@
+id = 'qwen3-5-397b-a17b'
+name = 'Qwen 3.5 397B'
+status = 'active'
+release_date = '2026-02-16'
+last_updated = '2026-06-11'
+
+[limit]
+context = 128000
+output = 32768
+
+[modalities]
+input = ['text', 'image', 'video']
+
+[cost]
+input = 0.75
+output = 4.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

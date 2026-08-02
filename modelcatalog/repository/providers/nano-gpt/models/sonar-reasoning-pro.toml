@@ -1,0 +1,25 @@
+id = 'sonar-reasoning-pro'
+name = 'Perplexity Reasoning Pro'
+description = 'O-series reasoning model for hard analysis, math, coding, and planning'
+status = 'active'
+reasoning = true
+release_date = '2025-02-19'
+last_updated = '2025-02-19'
+
+[limit]
+context = 127000
+input = 127000
+output = 128000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 2.006
+output = 7.9985
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

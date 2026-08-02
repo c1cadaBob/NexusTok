@@ -1,0 +1,12 @@
+id = 'nemotron-3-super-120b-a12b:free'
+name = 'Nemotron 3 Super 120B A12B (Free)'
+status = 'active'
+
+[cost]
+input = 0.0
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'kenari'
+

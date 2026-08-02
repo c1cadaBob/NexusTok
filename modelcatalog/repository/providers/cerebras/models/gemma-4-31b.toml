@@ -1,0 +1,16 @@
+id = 'gemma-4-31b'
+status = 'beta'
+last_updated = '2026-07-01'
+
+[limit]
+context = 131072
+output = 40960
+
+[cost]
+input = 0.99
+output = 1.49
+
+[source]
+origin = 'models_dev_github'
+provider = 'cerebras'
+

@@ -1,0 +1,13 @@
+id = 'glm-4.7'
+status = 'active'
+
+[cost]
+input = 0.38
+output = 1.98
+cache_read = 0.19
+cache_write = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

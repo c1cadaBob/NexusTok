@@ -1,0 +1,6 @@
+id = 'ovhcloud'
+name = 'OVHcloud AI Endpoints'
+icon = 'OVHcloud AI Endpoints'
+doc = 'https://www.ovhcloud.com/en/public-cloud/ai-endpoints/catalog//'
+status = 'active'
+

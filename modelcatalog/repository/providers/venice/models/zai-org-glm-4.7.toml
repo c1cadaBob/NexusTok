@@ -1,0 +1,20 @@
+id = 'zai-org-glm-4.7'
+name = 'GLM 4.7'
+status = 'active'
+structured_output = true
+release_date = '2025-12-24'
+last_updated = '2026-06-11'
+
+[limit]
+context = 198000
+output = 16384
+
+[cost]
+input = 0.55
+output = 2.65
+cache_read = 0.11
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

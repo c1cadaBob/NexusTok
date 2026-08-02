@@ -1,0 +1,20 @@
+id = 'gemini-3.5-flash'
+status = 'active'
+
+[limit]
+context = 1000000
+output = 64000
+
+[modalities]
+input = ['text', 'image', 'audio', 'video']
+output = ['text']
+
+[cost]
+input = 1.5
+output = 9.0
+cache_read = 1.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'aihubmix'
+

@@ -1,0 +1,27 @@
+id = 'qwen-max'
+name = 'Qwen Max'
+description = 'Flagship Qwen model for complex reasoning, coding, and agentic workflows'
+family = 'qwen'
+status = 'active'
+temperature = true
+tool_call = true
+knowledge = '2024-04'
+release_date = '2024-04-03'
+last_updated = '2025-01-25'
+
+[limit]
+context = 131072
+output = 8192
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.345
+output = 1.377
+
+[source]
+origin = 'models_dev_github'
+provider = 'alibaba-cn'
+

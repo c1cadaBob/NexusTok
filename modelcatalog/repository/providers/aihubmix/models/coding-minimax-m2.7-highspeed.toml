@@ -1,0 +1,29 @@
+id = 'coding-minimax-m2.7-highspeed'
+name = 'Coding MiniMax M2.7 Highspeed'
+description = 'High-speed MiniMax model for low-latency coding and agent workflows'
+family = 'minimax'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+structured_output = true
+open_weights = true
+release_date = '2026-03-18'
+last_updated = '2026-03-18'
+
+[limit]
+context = 204800
+output = 128100
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.2
+output = 0.2
+
+[source]
+origin = 'models_dev_github'
+provider = 'aihubmix'
+

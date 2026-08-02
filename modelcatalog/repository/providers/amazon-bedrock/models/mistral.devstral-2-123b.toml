@@ -1,0 +1,28 @@
+id = 'mistral.devstral-2-123b'
+name = 'Devstral 2 123B'
+description = 'Mistral coding agent model for repository tasks and software engineering workflows'
+family = 'devstral'
+status = 'active'
+temperature = true
+tool_call = true
+structured_output = true
+open_weights = true
+release_date = '2026-02-17'
+last_updated = '2026-02-17'
+
+[limit]
+context = 256000
+output = 8192
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.4
+output = 2.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'amazon-bedrock'
+

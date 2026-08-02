@@ -1,0 +1,17 @@
+id = 'stepaudio-2.5-asr'
+name = 'StepAudio 2.5 ASR'
+description = 'Speech transcription model for accurate audio-to-text and captioning workflows'
+family = 'step'
+status = 'active'
+temperature = false
+release_date = '2026-04-24'
+last_updated = '2026-07-02'
+
+[modalities]
+input = ['audio']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+provider = 'stepfun'
+

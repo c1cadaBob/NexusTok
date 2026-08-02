@@ -1,0 +1,20 @@
+id = 'grok-build-0-1'
+status = 'active'
+release_date = '2026-05-21'
+last_updated = '2026-06-11'
+
+[limit]
+output = 65536
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 1.0
+output = 2.0
+cache_read = 0.2
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

@@ -1,0 +1,20 @@
+id = 'claude-haiku-4-5'
+status = 'active'
+
+[limit]
+context = 200000
+output = 128000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.6
+output = 3.7
+cache_read = 0.06
+
+[source]
+origin = 'models_dev_github'
+provider = 'xpersona'
+

@@ -1,0 +1,12 @@
+id = 'qwen-3.6-plus'
+status = 'active'
+
+[cost]
+input = 0.5
+output = 3.0
+cache_read = 0.1
+
+[source]
+origin = 'models_dev_github'
+provider = 'auriko'
+

@@ -1,0 +1,28 @@
+id = 'mistral-small-3.2-24b-instruct-2506'
+name = 'Mistral-Small-3.2-24B-Instruct-2506'
+description = 'Efficient Mistral model for fast chat, extraction, and production assistants'
+status = 'active'
+attachment = true
+temperature = true
+tool_call = true
+structured_output = true
+open_weights = true
+release_date = '2025-07-16'
+last_updated = '2025-07-16'
+
+[limit]
+context = 131072
+output = 131072
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.1
+output = 0.31
+
+[source]
+origin = 'models_dev_github'
+provider = 'ovhcloud'
+

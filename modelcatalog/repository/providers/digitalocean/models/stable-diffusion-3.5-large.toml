@@ -1,0 +1,26 @@
+id = 'stable-diffusion-3.5-large'
+name = 'Stable Diffusion 3.5 Large'
+description = 'Image model for prompt-driven generation, editing, and visual design workflows'
+family = 'stable-diffusion'
+status = 'active'
+temperature = false
+open_weights = true
+release_date = '2024-10-22'
+last_updated = '2026-04-30'
+
+[limit]
+context = 256
+output = 1
+
+[modalities]
+input = ['text']
+output = ['image']
+
+[cost]
+input = 0.08
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'digitalocean'
+

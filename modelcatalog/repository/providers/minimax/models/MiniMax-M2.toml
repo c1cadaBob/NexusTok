@@ -1,0 +1,28 @@
+id = 'MiniMax-M2'
+name = 'MiniMax-M2'
+description = 'Efficient open MiniMax model built for coding agents and tool-heavy workflows'
+family = 'minimax'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+open_weights = true
+release_date = '2025-10-27'
+last_updated = '2025-10-27'
+
+[limit]
+context = 196608
+output = 128000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.3
+output = 1.2
+
+[source]
+origin = 'models_dev_github'
+provider = 'minimax'
+

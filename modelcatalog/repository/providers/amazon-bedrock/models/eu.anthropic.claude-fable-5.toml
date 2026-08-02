@@ -1,0 +1,14 @@
+id = 'eu.anthropic.claude-fable-5'
+name = 'Claude Fable 5 (EU)'
+status = 'active'
+
+[cost]
+input = 11.0
+output = 55.0
+cache_read = 1.1
+cache_write = 13.75
+
+[source]
+origin = 'models_dev_github'
+provider = 'amazon-bedrock'
+

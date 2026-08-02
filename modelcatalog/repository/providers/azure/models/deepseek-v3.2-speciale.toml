@@ -1,0 +1,28 @@
+id = 'deepseek-v3.2-speciale'
+name = 'DeepSeek-V3.2-Speciale'
+description = 'DeepSeek chat model for instruction following, coding, and analysis'
+family = 'deepseek'
+status = 'active'
+reasoning = true
+temperature = true
+open_weights = true
+knowledge = '2024-07'
+release_date = '2025-12-01'
+last_updated = '2025-12-01'
+
+[limit]
+context = 128000
+output = 128000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.58
+output = 1.68
+
+[source]
+origin = 'models_dev_github'
+provider = 'azure'
+

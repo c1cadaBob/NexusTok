@@ -1,0 +1,6 @@
+id = 'minimax-cn-coding-plan'
+name = 'MiniMax Token Plan (minimaxi.com)'
+icon = 'MiniMax Token Plan (minimaxi.com)'
+doc = 'https://platform.minimaxi.com/docs/token-plan/intro'
+status = 'active'
+

@@ -1,5 +1,6 @@
 id = 'anthropic'
 name = 'Anthropic'
-doc = 'https://docs.anthropic.com/'
+icon = 'Claude.Color'
+doc = 'https://docs.anthropic.com/en/docs/about-claude/models'
 status = 'active'
 

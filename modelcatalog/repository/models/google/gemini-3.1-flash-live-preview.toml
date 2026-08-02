@@ -1,0 +1,24 @@
+id = 'gemini-3.1-flash-live-preview'
+name = 'Gemini 3.1 Flash Live Preview'
+description = 'High-quality, low-latency Live API model for real-time dialogue and voice-first AI applications'
+family = 'gemini-flash'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+knowledge = '2025-01'
+release_date = '2026-03-26'
+last_updated = '2026-03-26'
+
+[limit]
+context = 131072
+output = 65536
+
+[modalities]
+input = ['text', 'image', 'video', 'audio']
+output = ['text', 'audio']
+
+[source]
+origin = 'models_dev_github'
+

@@ -1,0 +1,6 @@
+id = 'stepfun'
+name = 'StepFun (China)'
+icon = 'StepFun (China)'
+doc = 'https://platform.stepfun.com/docs/zh/overview/concept'
+status = 'active'
+

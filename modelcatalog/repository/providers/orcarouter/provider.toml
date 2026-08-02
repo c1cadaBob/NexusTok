@@ -1,0 +1,6 @@
+id = 'orcarouter'
+name = 'OrcaRouter'
+icon = 'OrcaRouter'
+doc = 'https://docs.orcarouter.ai'
+status = 'active'
+

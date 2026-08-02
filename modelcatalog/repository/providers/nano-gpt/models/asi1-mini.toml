@@ -1,0 +1,25 @@
+id = 'asi1-mini'
+name = 'ASI1 Mini'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+attachment = true
+release_date = '2025-03-25'
+last_updated = '2025-03-25'
+
+[limit]
+context = 128000
+input = 128000
+output = 16384
+
+[modalities]
+input = ['text', 'pdf']
+output = ['text']
+
+[cost]
+input = 1.0
+output = 1.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

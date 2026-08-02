@@ -1,0 +1,22 @@
+id = 'gemini-3-1-pro-preview'
+family = 'gemini'
+status = 'active'
+last_updated = '2026-06-11'
+
+[limit]
+context = 1000000
+output = 32768
+
+[modalities]
+input = ['text', 'image', 'audio', 'video']
+
+[cost]
+input = 2.5
+output = 15.0
+cache_read = 0.5
+cache_write = 0.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

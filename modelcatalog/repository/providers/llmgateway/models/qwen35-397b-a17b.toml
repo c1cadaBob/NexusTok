@@ -1,0 +1,11 @@
+id = 'qwen35-397b-a17b'
+status = 'active'
+
+[cost]
+input = 0.6
+output = 3.6
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

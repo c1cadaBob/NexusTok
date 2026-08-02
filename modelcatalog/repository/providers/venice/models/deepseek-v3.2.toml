@@ -1,0 +1,29 @@
+id = 'deepseek-v3.2'
+name = 'DeepSeek V3.2'
+description = 'DeepSeek chat model for instruction following, coding, and analysis'
+family = 'deepseek'
+status = 'active'
+reasoning = true
+tool_call = true
+structured_output = true
+open_weights = true
+release_date = '2025-12-04'
+last_updated = '2026-06-11'
+
+[limit]
+context = 160000
+output = 32768
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.33
+output = 0.48
+cache_read = 0.16
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

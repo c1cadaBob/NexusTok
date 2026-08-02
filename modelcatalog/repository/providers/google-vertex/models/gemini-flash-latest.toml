@@ -1,0 +1,13 @@
+id = 'gemini-flash-latest'
+status = 'active'
+
+[cost]
+input = 1.5
+output = 9.0
+cache_read = 0.15
+input_audio = 1.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'google-vertex'
+

@@ -1,0 +1,7 @@
+id = 'codex-mini'
+status = 'active'
+
+[source]
+origin = 'models_dev_github'
+provider = 'azure-cognitive-services'
+

@@ -1,0 +1,27 @@
+id = 'mistral-large-2411'
+name = 'Mistral-Large'
+description = 'Flagship Mistral model for advanced reasoning, coding, and multilingual work'
+family = 'mistral-large'
+status = 'active'
+temperature = true
+tool_call = true
+knowledge = '2024-07'
+release_date = '2024-07-24'
+last_updated = '2024-07-24'
+
+[limit]
+context = 128000
+output = 32768
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 2.0
+output = 6.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'helicone'
+

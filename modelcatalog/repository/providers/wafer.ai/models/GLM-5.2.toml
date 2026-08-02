@@ -1,0 +1,18 @@
+id = 'GLM-5.2'
+status = 'active'
+last_updated = '2026-06-22'
+
+[limit]
+context = 1048576
+output = 131072
+
+[cost]
+input = 1.2
+output = 4.1
+cache_read = 0.2
+cache_write = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'wafer.ai'
+

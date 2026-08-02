@@ -1,0 +1,6 @@
+id = 'lmstudio'
+name = 'LMStudio'
+icon = 'LMStudio'
+doc = 'https://lmstudio.ai/models'
+status = 'active'
+

@@ -1,0 +1,6 @@
+id = 'alibaba-token-plan-cn'
+name = 'Alibaba Token Plan (China)'
+icon = 'Alibaba Token Plan (China)'
+doc = 'https://www.alibabacloud.com/help/zh/model-studio/token-plan-overview'
+status = 'active'
+

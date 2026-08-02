@@ -1,0 +1,28 @@
+id = 'claude-3-5-haiku-latest'
+name = 'claude-3-5-haiku-latest'
+description = 'Fast Claude model for responsive assistance, classification, and lightweight agents'
+family = 'claude-haiku'
+status = 'active'
+attachment = true
+temperature = true
+tool_call = true
+knowledge = '2024-07-31'
+release_date = '2024-10-22'
+last_updated = '2024-10-22'
+
+[limit]
+context = 200000
+output = 8192
+
+[modalities]
+input = ['text', 'image', 'pdf']
+output = ['text']
+
+[cost]
+input = 0.8
+output = 4.0
+
+[source]
+origin = 'models_dev_github'
+provider = '302ai'
+

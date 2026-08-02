@@ -1,0 +1,27 @@
+id = 'writer.palmyra-x4-v1:0'
+name = 'Palmyra X4'
+description = 'Reasoning model for deliberate analysis, multi-step problem solving, and tool use'
+family = 'palmyra'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+release_date = '2025-04-28'
+last_updated = '2025-04-28'
+
+[limit]
+context = 122880
+output = 8192
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 2.5
+output = 10.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'amazon-bedrock'
+

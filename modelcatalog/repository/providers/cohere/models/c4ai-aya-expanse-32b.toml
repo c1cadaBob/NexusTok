@@ -1,0 +1,7 @@
+id = 'c4ai-aya-expanse-32b'
+status = 'active'
+
+[source]
+origin = 'models_dev_github'
+provider = 'cohere'
+

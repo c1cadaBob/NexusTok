@@ -1,0 +1,20 @@
+id = 'grok-build-0.1'
+status = 'active'
+
+[limit]
+context = 256000
+output = 256000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 1.0
+output = 2.0
+cache_read = 0.2
+
+[source]
+origin = 'models_dev_github'
+provider = 'aihubmix'
+

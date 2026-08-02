@@ -1,0 +1,6 @@
+id = 'tencent-tokenhub'
+name = 'Tencent TokenHub'
+icon = 'Tencent TokenHub'
+doc = 'https://cloud.tencent.com/document/product/1823/130050'
+status = 'active'
+

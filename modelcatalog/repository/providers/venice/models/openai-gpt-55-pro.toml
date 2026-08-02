@@ -1,0 +1,20 @@
+id = 'openai-gpt-55-pro'
+family = 'gpt'
+status = 'active'
+release_date = '2026-04-24'
+last_updated = '2026-06-11'
+
+[limit]
+context = 1000000
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 37.5
+output = 225.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

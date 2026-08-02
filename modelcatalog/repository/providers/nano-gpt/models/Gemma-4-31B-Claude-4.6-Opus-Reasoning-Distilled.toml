@@ -1,0 +1,27 @@
+id = 'Gemma-4-31B-Claude-4.6-Opus-Reasoning-Distilled'
+name = 'Gemma 4 31B Claude 4.6 Opus Reasoning Distilled'
+description = 'O-series reasoning model for hard analysis, math, coding, and planning'
+status = 'active'
+attachment = true
+reasoning = true
+release_date = '2026-05-01'
+last_updated = '2026-05-01'
+
+[limit]
+context = 262144
+input = 262144
+output = 16384
+
+[modalities]
+input = ['text', 'image', 'video']
+output = ['text']
+
+[cost]
+input = 0.306
+output = 0.306
+cache_read = 0.0306
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

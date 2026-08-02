@@ -1,0 +1,27 @@
+id = 'llama-4-maverick-17b-instruct'
+name = 'Llama 4 Maverick 17B Instruct'
+description = 'Open multimodal Llama model for strong reasoning and fast responses'
+family = 'llama'
+status = 'active'
+attachment = true
+temperature = true
+open_weights = true
+release_date = '2025-04-05'
+last_updated = '2025-04-05'
+
+[limit]
+context = 1048576
+output = 2048
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.27
+output = 0.85
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

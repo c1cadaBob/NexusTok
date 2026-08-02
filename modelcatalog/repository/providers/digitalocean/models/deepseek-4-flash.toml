@@ -1,0 +1,22 @@
+id = 'deepseek-4-flash'
+name = 'Deepseek V4 Flash'
+description = 'Fast DeepSeek model for efficient chat, coding help, and agent loops'
+family = 'deepseek'
+status = 'active'
+temperature = true
+tool_call = true
+release_date = '2026-05-27'
+last_updated = '2026-05-29'
+
+[limit]
+context = 262144
+output = 8192
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+provider = 'digitalocean'
+

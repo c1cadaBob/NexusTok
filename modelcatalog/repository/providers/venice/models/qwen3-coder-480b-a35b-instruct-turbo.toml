@@ -1,0 +1,28 @@
+id = 'qwen3-coder-480b-a35b-instruct-turbo'
+name = 'Qwen 3 Coder 480B Turbo'
+description = 'Qwen coding model for software agents, repository edits, and code reasoning'
+family = 'qwen'
+status = 'active'
+tool_call = true
+structured_output = true
+open_weights = true
+release_date = '2026-01-27'
+last_updated = '2026-06-11'
+
+[limit]
+context = 256000
+output = 65536
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.35
+output = 1.5
+cache_read = 0.04
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

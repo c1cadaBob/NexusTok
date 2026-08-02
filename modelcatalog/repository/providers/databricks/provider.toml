@@ -1,0 +1,6 @@
+id = 'databricks'
+name = 'Databricks'
+icon = 'Databricks'
+doc = 'https://docs.databricks.com/aws/en/machine-learning/foundation-models/'
+status = 'active'
+

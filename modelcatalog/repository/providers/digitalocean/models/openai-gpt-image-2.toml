@@ -1,0 +1,18 @@
+id = 'openai-gpt-image-2'
+name = 'GPT Image 2'
+description = 'Image model for prompt-driven generation, editing, and visual design workflows'
+family = 'gpt-image'
+status = 'active'
+attachment = true
+temperature = false
+release_date = '2025-04-24'
+last_updated = '2025-04-24'
+
+[modalities]
+input = ['text', 'image']
+output = ['image']
+
+[source]
+origin = 'models_dev_github'
+provider = 'digitalocean'
+

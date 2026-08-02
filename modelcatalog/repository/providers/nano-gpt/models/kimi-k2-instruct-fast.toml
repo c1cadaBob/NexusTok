@@ -1,0 +1,25 @@
+id = 'kimi-k2-instruct-fast'
+name = 'Kimi K2 0711 Fast'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+attachment = true
+release_date = '2025-07-15'
+last_updated = '2025-07-15'
+
+[limit]
+context = 131072
+input = 131072
+output = 16384
+
+[modalities]
+input = ['text', 'pdf']
+output = ['text']
+
+[cost]
+input = 0.1
+output = 2.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

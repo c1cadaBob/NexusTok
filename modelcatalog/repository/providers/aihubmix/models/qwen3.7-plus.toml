@@ -1,0 +1,22 @@
+id = 'qwen3.7-plus'
+status = 'active'
+structured_output = true
+
+[limit]
+context = 991000
+output = 64000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.282
+output = 1.128
+cache_read = 0.0564
+cache_write = 0.3525
+
+[source]
+origin = 'models_dev_github'
+provider = 'aihubmix'
+

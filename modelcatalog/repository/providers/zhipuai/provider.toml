@@ -1,0 +1,6 @@
+id = 'zhipuai'
+name = 'Zhipu AI'
+icon = 'Zhipu AI'
+doc = 'https://docs.z.ai/guides/overview/pricing'
+status = 'active'
+

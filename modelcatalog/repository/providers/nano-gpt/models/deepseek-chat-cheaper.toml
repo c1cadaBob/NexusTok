@@ -1,0 +1,27 @@
+id = 'deepseek-chat-cheaper'
+name = 'DeepSeek V3/Chat Cheaper'
+description = 'Chat-tuned GPT model for conversational assistance, writing, and tool workflows'
+status = 'active'
+attachment = true
+tool_call = true
+structured_output = true
+release_date = '2025-04-15'
+last_updated = '2025-04-15'
+
+[limit]
+context = 128000
+input = 128000
+output = 8192
+
+[modalities]
+input = ['text', 'pdf']
+output = ['text']
+
+[cost]
+input = 0.25
+output = 0.7
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

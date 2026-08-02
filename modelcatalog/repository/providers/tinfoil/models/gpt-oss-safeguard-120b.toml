@@ -1,0 +1,16 @@
+id = 'gpt-oss-safeguard-120b'
+name = 'gpt-oss-safeguard-120b'
+status = 'active'
+knowledge = '2024-06'
+
+[limit]
+context = 131000
+
+[cost]
+input = 0.15
+output = 0.6
+
+[source]
+origin = 'models_dev_github'
+provider = 'tinfoil'
+

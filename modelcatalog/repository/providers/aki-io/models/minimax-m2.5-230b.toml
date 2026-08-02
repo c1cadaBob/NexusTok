@@ -1,0 +1,15 @@
+id = 'minimax-m2.5-230b'
+status = 'active'
+
+[limit]
+context = 196608
+output = 65536
+
+[cost]
+input = 0.25
+output = 1.2
+
+[source]
+origin = 'models_dev_github'
+provider = 'aki-io'
+

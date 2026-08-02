@@ -1,0 +1,6 @@
+id = 'perplexity-agent'
+name = 'Perplexity Agent'
+icon = 'Perplexity Agent'
+doc = 'https://docs.perplexity.ai/docs/agent-api/models'
+status = 'active'
+

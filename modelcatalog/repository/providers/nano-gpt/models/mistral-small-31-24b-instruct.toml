@@ -1,0 +1,25 @@
+id = 'mistral-small-31-24b-instruct'
+name = 'Mistral Small 31 24b Instruct'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+attachment = true
+release_date = '2025-04-15'
+last_updated = '2025-04-15'
+
+[limit]
+context = 128000
+input = 128000
+output = 131072
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.1
+output = 0.3
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

@@ -1,0 +1,15 @@
+id = 'llama-3.3-70b-instruct'
+status = 'active'
+
+[limit]
+context = 100000
+output = 16384
+
+[cost]
+input = 1.254
+output = 1.254
+
+[source]
+origin = 'models_dev_github'
+provider = 'greenpt'
+

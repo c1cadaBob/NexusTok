@@ -1,0 +1,24 @@
+id = 'ernie-4.5-8k-preview'
+name = 'Ernie 4.5 8k Preview'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+release_date = '2025-03-25'
+last_updated = '2025-03-25'
+
+[limit]
+context = 8000
+input = 8000
+output = 16384
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.66
+output = 2.6
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

@@ -1,0 +1,15 @@
+id = 'minimax-m2.5'
+status = 'active'
+
+[limit]
+context = 200000
+output = 32000
+
+[cost]
+input = 0.22
+output = 0.88
+
+[source]
+origin = 'models_dev_github'
+provider = 'dinference'
+

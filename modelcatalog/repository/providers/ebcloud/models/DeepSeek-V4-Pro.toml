@@ -1,0 +1,11 @@
+id = 'DeepSeek-V4-Pro'
+status = 'active'
+
+[cost]
+input = 0.4286
+output = 0.8571
+
+[source]
+origin = 'models_dev_github'
+provider = 'ebcloud'
+

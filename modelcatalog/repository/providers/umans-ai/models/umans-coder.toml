@@ -1,0 +1,20 @@
+id = 'umans-coder'
+name = 'Umans Coder'
+status = 'active'
+temperature = false
+
+[limit]
+output = 32768
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 0.95
+output = 4.0
+cache_read = 0.19
+
+[source]
+origin = 'models_dev_github'
+provider = 'umans-ai'
+

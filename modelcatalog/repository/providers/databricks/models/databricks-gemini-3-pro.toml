@@ -1,0 +1,12 @@
+id = 'databricks-gemini-3-pro'
+status = 'active'
+
+[cost]
+input = 2.0
+output = 12.0
+cache_read = 0.2
+
+[source]
+origin = 'models_dev_github'
+provider = 'databricks'
+

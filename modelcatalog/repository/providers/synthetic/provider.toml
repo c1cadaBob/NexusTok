@@ -1,0 +1,6 @@
+id = 'synthetic'
+name = 'Synthetic'
+icon = 'Synthetic'
+doc = 'https://synthetic.new/pricing'
+status = 'active'
+

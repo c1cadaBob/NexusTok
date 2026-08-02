@@ -1,0 +1,6 @@
+id = 'friendli'
+name = 'Friendli'
+icon = 'Friendli'
+doc = 'https://friendli.ai/docs/guides/serverless_endpoints/introduction'
+status = 'active'
+

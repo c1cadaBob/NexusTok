@@ -1,0 +1,16 @@
+id = 'step-3-7-flash'
+status = 'active'
+structured_output = true
+
+[limit]
+output = 131072
+
+[cost]
+input = 0.2
+output = 1.15
+cache_read = 0.04
+
+[source]
+origin = 'models_dev_github'
+provider = 'empiriolabs'
+

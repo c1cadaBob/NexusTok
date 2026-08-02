@@ -1,0 +1,29 @@
+id = 'deepseek-v4-pro'
+name = 'DeepSeek v4 Pro'
+description = 'Flagship DeepSeek model for coding, reasoning, and agentic work'
+family = 'deepseek'
+status = 'active'
+attachment = true
+temperature = true
+tool_call = true
+knowledge = '2026-01'
+release_date = '2026-04-24'
+last_updated = '2026-04-24'
+
+[limit]
+context = 128000
+output = 8192
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 1.74
+output = 3.48
+cache_read = 0.14
+
+[source]
+origin = 'models_dev_github'
+provider = 'frogbot'
+

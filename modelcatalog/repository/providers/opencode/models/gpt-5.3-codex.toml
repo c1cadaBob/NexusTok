@@ -1,0 +1,32 @@
+id = 'gpt-5.3-codex'
+name = 'GPT-5.3 Codex'
+description = 'Coding-optimized GPT model for repository edits, reviews, and agentic software work'
+family = 'gpt-codex'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = false
+tool_call = true
+structured_output = true
+knowledge = '2025-08-31'
+release_date = '2026-02-24'
+last_updated = '2026-02-24'
+
+[limit]
+context = 400000
+input = 272000
+output = 128000
+
+[modalities]
+input = ['text', 'image', 'pdf']
+output = ['text']
+
+[cost]
+input = 1.75
+output = 14.0
+cache_read = 0.175
+
+[source]
+origin = 'models_dev_github'
+provider = 'opencode'
+

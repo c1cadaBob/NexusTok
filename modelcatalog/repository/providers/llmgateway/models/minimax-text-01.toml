@@ -1,0 +1,27 @@
+id = 'minimax-text-01'
+name = 'MiniMax Text 01'
+description = 'MiniMax model for chat, coding, office work, and agentic tasks'
+family = 'minimax'
+status = 'active'
+reasoning = true
+temperature = true
+open_weights = true
+release_date = '2025-01-15'
+last_updated = '2025-01-15'
+
+[limit]
+context = 1000000
+output = 131072
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.2
+output = 1.1
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

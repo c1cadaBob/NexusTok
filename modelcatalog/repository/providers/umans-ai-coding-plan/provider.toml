@@ -1,0 +1,6 @@
+id = 'umans-ai-coding-plan'
+name = 'Umans AI Coding Plan'
+icon = 'Umans AI Coding Plan'
+doc = 'https://app.umans.ai/offers/code/docs'
+status = 'active'
+

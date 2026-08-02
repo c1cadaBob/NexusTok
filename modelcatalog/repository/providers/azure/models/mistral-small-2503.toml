@@ -1,0 +1,28 @@
+id = 'mistral-small-2503'
+name = 'Mistral Small 3.1'
+description = 'Efficient Mistral model for fast chat, extraction, and production assistants'
+family = 'mistral-small'
+status = 'active'
+attachment = true
+temperature = true
+tool_call = true
+knowledge = '2024-09'
+release_date = '2025-03-01'
+last_updated = '2025-03-01'
+
+[limit]
+context = 128000
+output = 32768
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.1
+output = 0.3
+
+[source]
+origin = 'models_dev_github'
+provider = 'azure'
+

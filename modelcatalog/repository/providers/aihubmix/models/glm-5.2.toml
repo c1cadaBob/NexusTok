@@ -1,0 +1,20 @@
+id = 'glm-5.2'
+status = 'active'
+
+[limit]
+context = 1000000
+output = 128000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 1.1268
+output = 3.9438
+cache_read = 0.2817
+
+[source]
+origin = 'models_dev_github'
+provider = 'aihubmix'
+

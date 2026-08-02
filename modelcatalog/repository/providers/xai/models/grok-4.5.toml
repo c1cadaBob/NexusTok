@@ -1,0 +1,15 @@
+id = 'grok-4.5'
+status = 'active'
+
+[modalities]
+input = ['text', 'image', 'pdf']
+
+[cost]
+input = 2.0
+output = 6.0
+cache_read = 0.3
+
+[source]
+origin = 'models_dev_github'
+provider = 'xai'
+

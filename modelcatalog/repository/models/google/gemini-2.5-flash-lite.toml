@@ -1,0 +1,25 @@
+id = 'gemini-2.5-flash-lite'
+name = 'Gemini 2.5 Flash-Lite'
+description = 'Lean Gemini 2.5 lane for cheap multimodal traffic and quick agents'
+family = 'gemini-flash-lite'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+structured_output = true
+knowledge = '2025-01'
+release_date = '2025-06-17'
+last_updated = '2025-06-17'
+
+[limit]
+context = 1048576
+output = 65536
+
+[modalities]
+input = ['text', 'image', 'audio', 'video', 'pdf']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

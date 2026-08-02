@@ -1,0 +1,12 @@
+id = 'kimi-k2.7-code'
+name = 'kimi-k2.7-code'
+status = 'active'
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+provider = 'ollama-cloud'
+

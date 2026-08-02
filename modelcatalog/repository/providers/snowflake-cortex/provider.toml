@@ -1,0 +1,6 @@
+id = 'snowflake-cortex'
+name = 'Snowflake Cortex'
+icon = 'Snowflake Cortex'
+doc = 'https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-rest-api'
+status = 'active'
+

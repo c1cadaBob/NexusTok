@@ -1,0 +1,25 @@
+id = 'MiniMax-M2.7-highspeed'
+name = 'MiniMax-M2.7-highspeed'
+description = 'High-speed MiniMax model for low-latency coding and agent workflows'
+status = 'active'
+temperature = true
+tool_call = true
+release_date = '2026-03-19'
+last_updated = '2026-03-19'
+
+[limit]
+context = 204800
+output = 131072
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.6
+output = 4.8
+
+[source]
+origin = 'models_dev_github'
+provider = '302ai'
+

@@ -1,0 +1,24 @@
+id = 'doubao-seed-2-0-lite-260215'
+name = 'Doubao Seed 2.0 Lite'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+release_date = '2026-02-14'
+last_updated = '2026-02-14'
+
+[limit]
+context = 256000
+input = 256000
+output = 32000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.1462
+output = 0.8738
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

@@ -1,0 +1,23 @@
+id = 'claude-sonnet-4-5'
+name = 'Claude Sonnet 4.5'
+status = 'active'
+structured_output = true
+release_date = '2025-01-15'
+last_updated = '2026-06-11'
+
+[limit]
+context = 198000
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 3.75
+output = 18.75
+cache_read = 0.375
+cache_write = 4.69
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

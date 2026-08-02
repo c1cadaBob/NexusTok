@@ -1,0 +1,20 @@
+id = 'kimi-k3'
+description = 'Kimi multimodal agent model for visual understanding, coding, and planning'
+status = 'active'
+last_updated = '2026-07-17'
+
+[limit]
+context = 1000000
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 3.75
+output = 18.75
+cache_read = 0.375
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

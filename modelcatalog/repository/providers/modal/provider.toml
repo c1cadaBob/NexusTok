@@ -1,0 +1,6 @@
+id = 'modal'
+name = 'Modal'
+icon = 'Modal'
+doc = 'https://modal.com/docs/guide/endpoints'
+status = 'active'
+

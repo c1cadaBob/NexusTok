@@ -1,0 +1,7 @@
+id = 'step-tts-2'
+status = 'active'
+
+[source]
+origin = 'models_dev_github'
+provider = 'stepfun-ai'
+

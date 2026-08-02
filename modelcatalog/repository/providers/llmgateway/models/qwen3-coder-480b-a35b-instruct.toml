@@ -1,0 +1,11 @@
+id = 'qwen3-coder-480b-a35b-instruct'
+status = 'active'
+
+[cost]
+input = 0.3
+output = 1.3
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

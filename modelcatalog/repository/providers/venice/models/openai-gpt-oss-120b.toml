@@ -1,0 +1,18 @@
+id = 'openai-gpt-oss-120b'
+name = 'OpenAI GPT OSS 120B'
+status = 'active'
+release_date = '2025-11-06'
+last_updated = '2026-06-11'
+
+[limit]
+context = 128000
+output = 16384
+
+[cost]
+input = 0.07
+output = 0.3
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

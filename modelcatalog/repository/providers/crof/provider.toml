@@ -1,0 +1,6 @@
+id = 'crof'
+name = 'CrofAI'
+icon = 'CrofAI'
+doc = 'https://crof.ai/docs'
+status = 'active'
+

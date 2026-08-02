@@ -1,0 +1,27 @@
+id = 'sarvam-30b'
+name = 'Sarvam 30B'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+reasoning = true
+tool_call = true
+release_date = '2026-05-12'
+last_updated = '2026-05-12'
+
+[limit]
+context = 65536
+input = 65536
+output = 4096
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.028
+output = 0.111
+cache_read = 0.017
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

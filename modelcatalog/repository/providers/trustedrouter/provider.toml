@@ -1,0 +1,6 @@
+id = 'trustedrouter'
+name = 'TrustedRouter'
+icon = 'TrustedRouter'
+doc = 'https://trustedrouter.com/docs'
+status = 'active'
+

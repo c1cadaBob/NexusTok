@@ -1,0 +1,22 @@
+id = 'kimi-k2-5'
+status = 'active'
+knowledge = '2024-04'
+release_date = '2026-01-27'
+last_updated = '2026-06-11'
+
+[limit]
+context = 256000
+output = 65536
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 0.56
+output = 3.5
+cache_read = 0.22
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

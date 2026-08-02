@@ -33,6 +33,8 @@ type modelsDevCatalogFetchResult struct {
 func fetchModelsDevCatalogWithFallback(ctx context.Context, catalogURL string) (modelsDevCatalogFetchResult, error) {
 	fetchResult, err := modelcatalog.FetchModelsDevCatalogWithFallback(ctx, modelcatalog.ModelsDevFetchOptions{
 		CatalogURL: catalogURL,
+		TarURL:     getModelsDevGitHubTarURL(),
+		ZipURL:     getModelsDevGitHubZipURL(),
 		TreeURL:    getModelsDevGitHubTreeURL(),
 		RawBaseURL: getModelsDevGitHubRawBase(),
 		Client:     getHTTPClient(),

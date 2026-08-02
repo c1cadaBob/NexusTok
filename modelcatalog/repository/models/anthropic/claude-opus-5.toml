@@ -1,0 +1,24 @@
+id = 'claude-opus-5'
+name = 'Claude Opus 5'
+description = 'Strongest Claude Opus model for coding, agents, and professional work'
+family = 'claude-opus'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = false
+tool_call = true
+knowledge = '2026-05'
+release_date = '2026-07-24'
+last_updated = '2026-07-24'
+
+[limit]
+context = 1000000
+output = 128000
+
+[modalities]
+input = ['text', 'image', 'pdf']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

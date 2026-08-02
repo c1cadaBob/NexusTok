@@ -1,0 +1,15 @@
+id = 'qwen3-5-9b'
+status = 'active'
+
+[limit]
+output = 32768
+
+[cost]
+input = 0.09
+output = 0.13
+cache_read = 0.045
+
+[source]
+origin = 'models_dev_github'
+provider = 'empiriolabs'
+

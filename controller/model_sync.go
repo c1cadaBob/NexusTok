@@ -130,6 +130,14 @@ func getModelsDevGitHubTreeURL() string {
 	return common.GetEnvOrDefaultString("MODELS_DEV_GITHUB_TREE_URL", modelsDevGitHubDefaultTreeURL)
 }
 
+func getModelsDevGitHubTarURL() string {
+	return common.GetEnvOrDefaultString("MODELS_DEV_GITHUB_TAR_URL", modelcatalog.ModelsDevGitHubDefaultTarURL)
+}
+
+func getModelsDevGitHubZipURL() string {
+	return common.GetEnvOrDefaultString("MODELS_DEV_GITHUB_ZIP_URL", modelcatalog.ModelsDevGitHubDefaultZipURL)
+}
+
 func getModelsDevGitHubRawBase() string {
 	return strings.TrimRight(common.GetEnvOrDefaultString("MODELS_DEV_GITHUB_RAW_BASE", modelsDevGitHubDefaultRawBase), "/")
 }

@@ -1,0 +1,18 @@
+id = 'openai-gpt-53-codex'
+family = 'gpt'
+status = 'active'
+release_date = '2026-02-24'
+last_updated = '2026-06-11'
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 2.19
+output = 17.5
+cache_read = 0.219
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

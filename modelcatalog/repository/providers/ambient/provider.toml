@@ -1,0 +1,6 @@
+id = 'ambient'
+name = 'Ambient'
+icon = 'Ambient'
+doc = 'https://ambient.xyz'
+status = 'active'
+

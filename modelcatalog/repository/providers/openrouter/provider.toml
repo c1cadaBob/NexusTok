@@ -1,0 +1,6 @@
+id = 'openrouter'
+name = 'OpenRouter'
+icon = 'OpenRouter.Color'
+doc = 'https://openrouter.ai/models'
+status = 'active'
+

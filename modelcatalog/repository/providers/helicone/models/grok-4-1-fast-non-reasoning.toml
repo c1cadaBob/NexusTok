@@ -1,0 +1,28 @@
+id = 'grok-4-1-fast-non-reasoning'
+name = 'xAI Grok 4.1 Fast Non-Reasoning'
+description = 'Image model for prompt-driven generation, editing, and visual design workflows'
+family = 'grok'
+status = 'active'
+temperature = true
+tool_call = true
+knowledge = '2025-11'
+release_date = '2025-11-17'
+last_updated = '2025-11-17'
+
+[limit]
+context = 2000000
+output = 30000
+
+[modalities]
+input = ['text', 'image']
+output = ['text', 'image']
+
+[cost]
+input = 0.19999999999999998
+output = 0.5
+cache_read = 0.049999999999999996
+
+[source]
+origin = 'models_dev_github'
+provider = 'helicone'
+

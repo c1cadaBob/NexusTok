@@ -1,0 +1,27 @@
+id = 'llama-3.3-70b-versatile'
+name = 'Meta Llama 3.3 70B Versatile'
+description = 'Open Llama instruction model for multilingual chat, reasoning, and coding'
+family = 'llama'
+status = 'active'
+temperature = true
+tool_call = true
+knowledge = '2024-12'
+release_date = '2024-12-06'
+last_updated = '2024-12-06'
+
+[limit]
+context = 131072
+output = 32678
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.59
+output = 0.7899999999999999
+
+[source]
+origin = 'models_dev_github'
+provider = 'helicone'
+

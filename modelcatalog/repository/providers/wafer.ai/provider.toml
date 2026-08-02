@@ -1,0 +1,6 @@
+id = 'wafer.ai'
+name = 'Wafer'
+icon = 'Wafer'
+doc = 'https://docs.wafer.ai/wafer-pass'
+status = 'active'
+

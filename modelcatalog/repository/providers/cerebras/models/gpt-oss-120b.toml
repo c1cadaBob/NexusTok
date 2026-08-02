@@ -1,0 +1,15 @@
+id = 'gpt-oss-120b'
+status = 'active'
+last_updated = '2026-06-10'
+
+[limit]
+output = 40960
+
+[cost]
+input = 0.35
+output = 0.75
+
+[source]
+origin = 'models_dev_github'
+provider = 'cerebras'
+

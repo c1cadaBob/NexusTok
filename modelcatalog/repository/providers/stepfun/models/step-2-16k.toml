@@ -1,0 +1,28 @@
+id = 'step-2-16k'
+name = 'Step 2 (16K)'
+description = 'StepFun flash model for efficient multimodal reasoning, coding, and tool use'
+status = 'active'
+temperature = true
+tool_call = true
+knowledge = '2024-06'
+release_date = '2025-01-01'
+last_updated = '2026-02-13'
+
+[limit]
+context = 16384
+input = 16384
+output = 8192
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 5.21
+output = 16.44
+cache_read = 1.04
+
+[source]
+origin = 'models_dev_github'
+provider = 'stepfun'
+

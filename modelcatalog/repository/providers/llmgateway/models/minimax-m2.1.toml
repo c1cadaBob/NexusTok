@@ -1,0 +1,11 @@
+id = 'minimax-m2.1'
+status = 'active'
+
+[cost]
+input = 0.27
+output = 1.1
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

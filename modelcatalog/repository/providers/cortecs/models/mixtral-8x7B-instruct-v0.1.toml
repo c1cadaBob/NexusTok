@@ -1,0 +1,27 @@
+id = 'mixtral-8x7B-instruct-v0.1'
+name = 'Mixtral 8x7B Instruct v0.1'
+description = 'Reasoning model for deliberate analysis, multi-step problem solving, and tool use'
+status = 'active'
+reasoning = true
+temperature = true
+open_weights = true
+knowledge = '2023-09'
+release_date = '2023-12-11'
+last_updated = '2023-12-11'
+
+[limit]
+context = 32000
+output = 32000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.438
+output = 0.68
+
+[source]
+origin = 'models_dev_github'
+provider = 'cortecs'
+

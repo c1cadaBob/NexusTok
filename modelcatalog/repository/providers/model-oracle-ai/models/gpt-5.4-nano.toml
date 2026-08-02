@@ -1,0 +1,7 @@
+id = 'gpt-5.4-nano'
+status = 'active'
+
+[source]
+origin = 'models_dev_github'
+provider = 'model-oracle-ai'
+

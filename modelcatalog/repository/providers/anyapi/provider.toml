@@ -1,0 +1,6 @@
+id = 'anyapi'
+name = 'AnyAPI'
+icon = 'AnyAPI'
+doc = 'https://docs.anyapi.ai'
+status = 'active'
+

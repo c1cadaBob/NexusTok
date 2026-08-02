@@ -1,0 +1,28 @@
+id = 'qvq-max'
+name = 'QVQ Max'
+description = 'Multimodal reasoning model for visual analysis, planning, and tool use'
+family = 'qvq'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+knowledge = '2024-04'
+release_date = '2025-03-25'
+last_updated = '2025-03-25'
+
+[limit]
+context = 131072
+output = 8192
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 1.147
+output = 4.588
+
+[source]
+origin = 'models_dev_github'
+provider = 'alibaba-cn'
+

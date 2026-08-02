@@ -1,0 +1,17 @@
+id = 'gemini-2.5-flash'
+name = 'gemini-2.5-flash'
+description = 'Fast Gemini model balancing multimodal reasoning, tool use, and cost'
+status = 'active'
+release_date = '2025-04-17'
+last_updated = '2025-06-05'
+
+[cost]
+input = 0.3
+output = 2.5
+cache_read = 0.03
+input_audio = 1.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'sap-ai-core'
+

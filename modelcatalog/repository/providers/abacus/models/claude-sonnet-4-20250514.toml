@@ -1,0 +1,28 @@
+id = 'claude-sonnet-4-20250514'
+name = 'Claude Sonnet 4'
+description = 'Balanced Claude model for coding, analysis, agent workflows, and cost control'
+family = 'claude-sonnet'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+release_date = '2025-05-14'
+last_updated = '2025-05-14'
+
+[limit]
+context = 200000
+output = 64000
+
+[modalities]
+input = ['text', 'image', 'pdf']
+output = ['text']
+
+[cost]
+input = 3.0
+output = 15.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'abacus'
+

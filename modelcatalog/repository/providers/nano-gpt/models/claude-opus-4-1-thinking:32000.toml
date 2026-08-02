@@ -1,0 +1,28 @@
+id = 'claude-opus-4-1-thinking:32000'
+name = 'Claude 4.1 Opus Thinking (32K)'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+attachment = true
+reasoning = true
+tool_call = true
+structured_output = true
+release_date = '2025-05-22'
+last_updated = '2025-05-22'
+
+[limit]
+context = 200000
+input = 200000
+output = 32000
+
+[modalities]
+input = ['text', 'image', 'pdf']
+output = ['text']
+
+[cost]
+input = 14.994
+output = 75.004
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

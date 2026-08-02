@@ -1,0 +1,7 @@
+id = 'claude-opus-4-7'
+status = 'beta'
+
+[source]
+origin = 'models_dev_github'
+provider = 'snowflake-cortex'
+

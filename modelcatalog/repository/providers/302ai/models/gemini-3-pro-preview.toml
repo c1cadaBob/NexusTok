@@ -1,0 +1,27 @@
+id = 'gemini-3-pro-preview'
+name = 'gemini-3-pro-preview'
+description = 'Advanced Gemini model for complex reasoning, coding, and multimodal analysis'
+status = 'active'
+attachment = true
+temperature = true
+tool_call = true
+knowledge = '2025-06'
+release_date = '2025-11-19'
+last_updated = '2025-11-19'
+
+[limit]
+context = 1000000
+output = 64000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 2.0
+output = 12.0
+
+[source]
+origin = 'models_dev_github'
+provider = '302ai'
+

@@ -1,0 +1,29 @@
+id = 'nemotron-3-ultra-free'
+name = 'Nemotron 3 Ultra Free'
+family = 'nemotron-free'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+open_weights = true
+knowledge = '2026-02'
+release_date = '2026-06-04'
+last_updated = '2026-06-04'
+
+[limit]
+context = 1000000
+output = 128000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.0
+output = 0.0
+cache_read = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'opencode'
+

@@ -1,0 +1,25 @@
+id = 'qwen3.7-max'
+name = 'Qwen3.7 Max'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+release_date = '2026-05-21'
+last_updated = '2026-05-21'
+
+[limit]
+context = 1000000
+input = 1000000
+output = 65536
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 2.5
+output = 7.5
+cache_read = 0.25
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

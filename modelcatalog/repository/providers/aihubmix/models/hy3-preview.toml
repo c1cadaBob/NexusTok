@@ -1,0 +1,22 @@
+id = 'hy3-preview'
+name = 'Hy3 Preview'
+status = 'active'
+structured_output = true
+
+[limit]
+context = 256000
+output = 128000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.17
+output = 0.566661
+cache_read = 0.051
+
+[source]
+origin = 'models_dev_github'
+provider = 'aihubmix'
+

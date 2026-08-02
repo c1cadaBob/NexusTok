@@ -1,0 +1,18 @@
+id = 'gemma-4-26b-a4b-it'
+status = 'beta'
+knowledge = '2025-04'
+release_date = '2026-04-01'
+last_updated = '2026-05-22'
+
+[limit]
+context = 256000
+output = 16384
+
+[cost]
+input = 0.25
+output = 0.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'scaleway'
+

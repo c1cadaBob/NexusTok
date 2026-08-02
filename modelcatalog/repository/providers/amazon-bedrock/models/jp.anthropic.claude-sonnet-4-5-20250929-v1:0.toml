@@ -1,0 +1,15 @@
+id = 'jp.anthropic.claude-sonnet-4-5-20250929-v1:0'
+name = 'Claude Sonnet 4.5 (JP)'
+status = 'active'
+structured_output = true
+
+[cost]
+input = 3.0
+output = 15.0
+cache_read = 0.3
+cache_write = 3.75
+
+[source]
+origin = 'models_dev_github'
+provider = 'amazon-bedrock'
+

@@ -1,0 +1,26 @@
+id = 'gpt-5-pro'
+name = 'OpenAI: GPT-5 Pro'
+description = 'Frontier GPT model for professional reasoning, coding, and multimodal work'
+family = 'gpt-pro'
+status = 'active'
+temperature = false
+knowledge = '2025-01'
+release_date = '2025-01-01'
+last_updated = '2025-01-01'
+
+[limit]
+context = 128000
+output = 32768
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 15.0
+output = 120.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'helicone'
+

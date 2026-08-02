@@ -1,0 +1,11 @@
+id = 'gemini-2-5-flash'
+status = 'active'
+
+[cost]
+input = 0.0
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'kenari'
+

@@ -1,0 +1,12 @@
+id = 'gpt-5.4-mini'
+status = 'active'
+
+[cost]
+input = 0.75
+output = 4.5
+cache_read = 0.075
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

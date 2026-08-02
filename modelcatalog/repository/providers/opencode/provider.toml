@@ -1,0 +1,6 @@
+id = 'opencode'
+name = 'OpenCode Zen'
+icon = 'OpenCode Zen'
+doc = 'https://opencode.ai/docs/zen'
+status = 'active'
+

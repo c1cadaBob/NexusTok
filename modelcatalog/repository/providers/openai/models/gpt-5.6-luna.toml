@@ -1,0 +1,13 @@
+id = 'gpt-5.6-luna'
+status = 'active'
+
+[cost]
+input = 0.2
+output = 1.2
+cache_read = 0.02
+cache_write = 0.25
+
+[source]
+origin = 'models_dev_github'
+provider = 'openai'
+

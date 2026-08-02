@@ -1,5 +1,6 @@
 id = 'deepseek'
 name = 'DeepSeek'
-doc = 'https://api-docs.deepseek.com/'
+icon = 'DeepSeek.Color'
+doc = 'https://api-docs.deepseek.com/quick_start/pricing'
 status = 'active'
 

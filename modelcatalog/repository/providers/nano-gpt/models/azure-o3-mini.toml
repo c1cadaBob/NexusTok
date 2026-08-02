@@ -1,0 +1,24 @@
+id = 'azure-o3-mini'
+name = 'Azure o3-mini'
+description = 'O-series reasoning model for hard analysis, math, coding, and planning'
+status = 'active'
+release_date = '2025-01-31'
+last_updated = '2025-01-31'
+
+[limit]
+context = 200000
+input = 200000
+output = 65536
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 1.088
+output = 4.3996
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

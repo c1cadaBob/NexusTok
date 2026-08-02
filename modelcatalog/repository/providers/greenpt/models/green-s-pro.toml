@@ -1,0 +1,23 @@
+id = 'green-s-pro'
+name = 'Green S Pro'
+description = 'GreenPT advanced speech-to-text model with multilingual transcription support'
+status = 'active'
+temperature = false
+release_date = '2025-02'
+last_updated = '2025-02'
+
+[limit]
+output = 8192
+
+[modalities]
+input = ['audio']
+output = ['text']
+
+[cost]
+input = 0.00437
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'greenpt'
+

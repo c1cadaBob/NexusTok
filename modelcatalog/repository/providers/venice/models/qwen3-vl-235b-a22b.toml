@@ -1,0 +1,28 @@
+id = 'qwen3-vl-235b-a22b'
+name = 'Qwen3 VL 235B'
+description = 'Multimodal model for analyzing text, images, documents, and rich media'
+status = 'active'
+attachment = true
+tool_call = true
+structured_output = true
+open_weights = true
+release_date = '2026-01-16'
+last_updated = '2026-06-11'
+
+[limit]
+context = 128000
+output = 16384
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.21
+output = 1.9
+cache_read = 0.1
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

@@ -1,0 +1,23 @@
+id = 'nemotron-3-super-120b-a12b'
+name = 'Nemotron 3 Super 120B A12B'
+description = 'Nemotron middle tier for collaborative agents and high-volume reasoning workloads'
+family = 'nemotron'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+open_weights = true
+release_date = '2026-03-11'
+last_updated = '2026-03-11'
+
+[limit]
+context = 262144
+output = 262144
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

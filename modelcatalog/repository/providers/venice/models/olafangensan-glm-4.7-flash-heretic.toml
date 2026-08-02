@@ -1,0 +1,29 @@
+id = 'olafangensan-glm-4.7-flash-heretic'
+name = 'GLM 4.7 Flash Heretic'
+description = 'Efficient GLM model for fast reasoning, coding, and agent workflows'
+family = 'glm'
+status = 'active'
+reasoning = true
+tool_call = true
+structured_output = true
+open_weights = true
+release_date = '2026-02-04'
+last_updated = '2026-06-11'
+
+[limit]
+context = 200000
+output = 24000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.07
+output = 0.4
+cache_read = 0.035
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

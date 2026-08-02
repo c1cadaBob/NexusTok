@@ -1,0 +1,6 @@
+id = 'alibaba-coding-plan'
+name = 'Alibaba Coding Plan'
+icon = 'Alibaba Coding Plan'
+doc = 'https://www.alibabacloud.com/help/en/model-studio/coding-plan'
+status = 'active'
+

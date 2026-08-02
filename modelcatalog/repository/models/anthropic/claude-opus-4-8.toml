@@ -1,0 +1,24 @@
+id = 'claude-opus-4-8'
+name = 'Claude Opus 4.8'
+description = 'Top Claude Opus tier for the hardest reasoning, coding, and long-horizon agents'
+family = 'claude-opus'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = false
+tool_call = true
+knowledge = '2026-01'
+release_date = '2026-05-28'
+last_updated = '2026-05-28'
+
+[limit]
+context = 1000000
+output = 128000
+
+[modalities]
+input = ['text', 'image', 'pdf']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

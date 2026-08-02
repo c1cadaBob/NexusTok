@@ -1,0 +1,6 @@
+id = 'fireworks-ai'
+name = 'Fireworks AI'
+icon = 'Fireworks AI'
+doc = 'https://fireworks.ai/docs/'
+status = 'active'
+

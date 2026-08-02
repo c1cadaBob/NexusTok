@@ -1,0 +1,11 @@
+id = 'command-a-reasoning-08-2025'
+status = 'active'
+
+[cost]
+input = 2.5
+output = 10.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'cohere'
+

@@ -1,0 +1,26 @@
+id = 'qwen3-embedding-8b'
+name = 'Qwen3-Embedding-8B'
+description = 'Embedding model for semantic search, retrieval, clustering, and ranking pipelines'
+family = 'qwen'
+status = 'active'
+temperature = false
+open_weights = true
+release_date = '2026-02-01'
+last_updated = '2026-02-01'
+
+[limit]
+context = 32768
+output = 8192
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.1
+output = 0.1
+
+[source]
+origin = 'models_dev_github'
+provider = 'regolo-ai'
+

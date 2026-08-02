@@ -1,0 +1,24 @@
+id = 'sonar-deep-research'
+name = 'Perplexity Deep Research'
+description = 'Research model for long-horizon investigation, synthesis, and analytical reports'
+status = 'active'
+release_date = '2025-02-25'
+last_updated = '2025-02-25'
+
+[limit]
+context = 60000
+input = 60000
+output = 128000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 3.4
+output = 13.6
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

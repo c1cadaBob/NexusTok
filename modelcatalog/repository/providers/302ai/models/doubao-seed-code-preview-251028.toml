@@ -1,0 +1,26 @@
+id = 'doubao-seed-code-preview-251028'
+name = 'doubao-seed-code-preview-251028'
+description = 'Coding model for repository understanding, refactors, and agentic engineering tasks'
+status = 'active'
+attachment = true
+temperature = true
+tool_call = true
+release_date = '2025-11-11'
+last_updated = '2025-11-11'
+
+[limit]
+context = 256000
+output = 32000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.17
+output = 1.14
+
+[source]
+origin = 'models_dev_github'
+provider = '302ai'
+

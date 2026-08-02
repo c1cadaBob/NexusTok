@@ -1,0 +1,24 @@
+id = 'deepseek-reasoner-cheaper'
+name = 'Deepseek R1 Cheaper'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+release_date = '2025-01-20'
+last_updated = '2025-01-20'
+
+[limit]
+context = 128000
+input = 128000
+output = 65536
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.4
+output = 1.7
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

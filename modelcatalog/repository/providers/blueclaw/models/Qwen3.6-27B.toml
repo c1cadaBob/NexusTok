@@ -1,0 +1,13 @@
+id = 'Qwen3.6-27B'
+status = 'beta'
+
+[limit]
+context = 196608
+
+[modalities]
+input = ['text']
+
+[source]
+origin = 'models_dev_github'
+provider = 'blueclaw'
+

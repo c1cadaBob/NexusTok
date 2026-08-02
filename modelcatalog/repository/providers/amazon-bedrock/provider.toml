@@ -1,0 +1,6 @@
+id = 'amazon-bedrock'
+name = 'Amazon Bedrock'
+icon = 'Amazon Bedrock'
+doc = 'https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html'
+status = 'active'
+

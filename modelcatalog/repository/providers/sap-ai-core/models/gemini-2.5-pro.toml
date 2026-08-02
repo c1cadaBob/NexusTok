@@ -1,0 +1,16 @@
+id = 'gemini-2.5-pro'
+name = 'gemini-2.5-pro'
+description = 'Advanced Gemini model for complex reasoning, coding, and multimodal analysis'
+status = 'active'
+release_date = '2025-03-25'
+last_updated = '2025-06-05'
+
+[cost]
+input = 1.25
+output = 10.0
+cache_read = 0.125
+
+[source]
+origin = 'models_dev_github'
+provider = 'sap-ai-core'
+

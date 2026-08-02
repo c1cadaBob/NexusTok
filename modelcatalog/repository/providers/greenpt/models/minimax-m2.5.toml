@@ -1,0 +1,11 @@
+id = 'minimax-m2.5'
+status = 'active'
+
+[cost]
+input = 0.188
+output = 1.129
+
+[source]
+origin = 'models_dev_github'
+provider = 'greenpt'
+

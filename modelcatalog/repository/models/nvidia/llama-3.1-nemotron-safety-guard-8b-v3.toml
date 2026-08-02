@@ -1,0 +1,21 @@
+id = 'llama-3.1-nemotron-safety-guard-8b-v3'
+name = 'Llama 3.1 Nemotron Safety Guard 8B v3'
+description = 'Safety model for policy screening, moderation, and risk-aware routing workflows'
+family = 'nemotron'
+status = 'active'
+temperature = false
+open_weights = true
+release_date = '2025-10-28'
+last_updated = '2025-10-28'
+
+[limit]
+context = 128000
+output = 4096
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

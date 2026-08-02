@@ -1,0 +1,30 @@
+id = 'kimi-k2-thinking'
+name = 'Kimi K2 Thinking'
+description = 'Thinking Kimi model for slower research passes, planning, and hard technical questions'
+family = 'kimi-thinking'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+open_weights = true
+knowledge = '2024-08'
+release_date = '2025-11-06'
+last_updated = '2025-11-06'
+
+[limit]
+context = 262144
+output = 262144
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.6
+output = 2.5
+cache_read = 0.15
+
+[source]
+origin = 'models_dev_github'
+provider = 'moonshotai'
+

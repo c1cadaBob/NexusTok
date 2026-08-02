@@ -1,0 +1,27 @@
+id = 'moonshot-kimi-k2-instruct'
+name = 'Moonshot Kimi K2 Instruct'
+description = 'Kimi model for long-context chat, coding, and agentic reasoning'
+family = 'kimi-k2'
+status = 'active'
+temperature = true
+tool_call = true
+open_weights = true
+release_date = '2025-01-01'
+last_updated = '2025-01-01'
+
+[limit]
+context = 131072
+output = 8192
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.574
+output = 2.294
+
+[source]
+origin = 'models_dev_github'
+provider = 'alibaba-cn'
+

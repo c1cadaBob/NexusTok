@@ -1,5 +1,6 @@
 id = 'google'
 name = 'Google'
-doc = 'https://ai.google.dev/'
+icon = 'Gemini.Color'
+doc = 'https://ai.google.dev/gemini-api/docs/models'
 status = 'active'
 

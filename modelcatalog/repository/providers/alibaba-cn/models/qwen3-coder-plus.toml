@@ -1,0 +1,7 @@
+id = 'qwen3-coder-plus'
+status = 'active'
+
+[source]
+origin = 'models_dev_github'
+provider = 'alibaba-cn'
+

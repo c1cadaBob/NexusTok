@@ -1,0 +1,25 @@
+id = 'glm-4.1v-thinking-flashx'
+name = 'GLM 4.1V Thinking FlashX'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+attachment = true
+release_date = '2025-07-09'
+last_updated = '2025-07-09'
+
+[limit]
+context = 64000
+input = 64000
+output = 8192
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.3
+output = 0.3
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

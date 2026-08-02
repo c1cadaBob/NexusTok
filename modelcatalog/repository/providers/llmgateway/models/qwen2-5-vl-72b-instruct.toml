@@ -1,0 +1,14 @@
+id = 'qwen2-5-vl-72b-instruct'
+status = 'active'
+
+[limit]
+context = 32000
+
+[cost]
+input = 0.25
+output = 0.75
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

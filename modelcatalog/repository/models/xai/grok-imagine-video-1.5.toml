@@ -1,0 +1,20 @@
+id = 'grok-imagine-video-1.5'
+name = 'Grok Imagine Video 1.5'
+description = 'Video model for image-to-video generation, editing, and extension workflows'
+family = 'grok'
+status = 'active'
+attachment = true
+temperature = false
+release_date = '2026-05-30'
+last_updated = '2026-05-30'
+
+[limit]
+context = 1024
+
+[modalities]
+input = ['text', 'image', 'video']
+output = ['video']
+
+[source]
+origin = 'models_dev_github'
+

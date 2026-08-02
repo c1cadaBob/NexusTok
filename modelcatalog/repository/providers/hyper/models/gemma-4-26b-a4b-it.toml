@@ -1,0 +1,21 @@
+id = 'gemma-4-26b-a4b-it'
+status = 'active'
+release_date = '2026-04-30'
+last_updated = '2026-07-22'
+
+[limit]
+context = 256000
+output = 25600
+
+[modalities]
+input = ['text']
+
+[cost]
+input = 0.122
+output = 0.388
+cache_write = 0.061
+
+[source]
+origin = 'models_dev_github'
+provider = 'hyper'
+

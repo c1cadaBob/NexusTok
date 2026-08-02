@@ -1,0 +1,6 @@
+id = 'llmtr'
+name = 'LLMTR'
+icon = 'LLMTR'
+doc = 'https://llmtr.com/docs'
+status = 'active'
+

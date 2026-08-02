@@ -1,0 +1,29 @@
+id = 'openai-gpt-5.4-pro'
+name = 'GPT-5.4 pro'
+description = 'Frontier GPT model for professional reasoning, coding, and multimodal work'
+family = 'gpt-pro'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = false
+tool_call = true
+knowledge = '2025-08-31'
+release_date = '2026-03-05'
+last_updated = '2026-03-05'
+
+[limit]
+context = 400000
+output = 128000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 30.0
+output = 180.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'digitalocean'
+

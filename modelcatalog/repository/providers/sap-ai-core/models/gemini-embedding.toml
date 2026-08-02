@@ -1,0 +1,7 @@
+id = 'gemini-embedding'
+status = 'active'
+
+[source]
+origin = 'models_dev_github'
+provider = 'sap-ai-core'
+

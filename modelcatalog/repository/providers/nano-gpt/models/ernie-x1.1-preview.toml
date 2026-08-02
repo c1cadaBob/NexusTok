@@ -1,0 +1,25 @@
+id = 'ernie-x1.1-preview'
+name = 'ERNIE X1.1'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+attachment = true
+release_date = '2025-09-10'
+last_updated = '2025-09-10'
+
+[limit]
+context = 64000
+input = 64000
+output = 8192
+
+[modalities]
+input = ['text', 'pdf']
+output = ['text']
+
+[cost]
+input = 0.15
+output = 0.6
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

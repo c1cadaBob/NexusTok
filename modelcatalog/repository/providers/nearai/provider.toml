@@ -1,0 +1,6 @@
+id = 'nearai'
+name = 'NEAR AI Cloud'
+icon = 'NEAR AI Cloud'
+doc = 'https://docs.near.ai/'
+status = 'active'
+

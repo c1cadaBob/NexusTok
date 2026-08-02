@@ -1,0 +1,11 @@
+id = 'command-r7b-arabic-02-2025'
+status = 'active'
+
+[cost]
+input = 0.0375
+output = 0.15
+
+[source]
+origin = 'models_dev_github'
+provider = 'cohere'
+

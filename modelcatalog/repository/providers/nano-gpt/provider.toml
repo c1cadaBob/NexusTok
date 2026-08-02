@@ -1,0 +1,6 @@
+id = 'nano-gpt'
+name = 'NanoGPT'
+icon = 'NanoGPT'
+doc = 'https://docs.nano-gpt.com'
+status = 'active'
+

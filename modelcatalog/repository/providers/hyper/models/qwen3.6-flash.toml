@@ -1,0 +1,21 @@
+id = 'qwen3.6-flash'
+status = 'active'
+release_date = '2026-05-20'
+last_updated = '2026-07-22'
+
+[limit]
+output = 64000
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 1.0
+output = 4.0
+cache_read = 0.1
+cache_write = 1.25
+
+[source]
+origin = 'models_dev_github'
+provider = 'hyper'
+

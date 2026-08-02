@@ -1,0 +1,6 @@
+id = 'cortecs'
+name = 'Cortecs'
+icon = 'Cortecs'
+doc = 'https://api.cortecs.ai/v1/models'
+status = 'active'
+

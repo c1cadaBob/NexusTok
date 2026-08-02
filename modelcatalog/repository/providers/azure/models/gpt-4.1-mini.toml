@@ -1,0 +1,15 @@
+id = 'gpt-4.1-mini'
+status = 'deprecated'
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 0.4
+output = 1.6
+cache_read = 0.1
+
+[source]
+origin = 'models_dev_github'
+provider = 'azure'
+

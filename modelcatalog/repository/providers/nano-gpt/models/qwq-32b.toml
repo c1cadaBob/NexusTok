@@ -1,0 +1,24 @@
+id = 'qwq-32b'
+name = 'Qwen: QwQ 32B'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+release_date = '2025-04-15'
+last_updated = '2025-04-15'
+
+[limit]
+context = 128000
+input = 128000
+output = 32768
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.25599999
+output = 0.30499999
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

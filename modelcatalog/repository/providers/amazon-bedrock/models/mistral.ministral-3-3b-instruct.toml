@@ -1,0 +1,28 @@
+id = 'mistral.ministral-3-3b-instruct'
+name = 'Ministral 3 3B'
+description = 'Compact Mistral model for edge, latency-sensitive, and cost-efficient workloads'
+family = 'ministral'
+status = 'active'
+temperature = true
+tool_call = true
+structured_output = true
+open_weights = true
+release_date = '2025-12-02'
+last_updated = '2025-12-02'
+
+[limit]
+context = 256000
+output = 8192
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.1
+output = 0.1
+
+[source]
+origin = 'models_dev_github'
+provider = 'amazon-bedrock'
+

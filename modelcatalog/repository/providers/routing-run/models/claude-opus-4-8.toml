@@ -1,0 +1,15 @@
+id = 'claude-opus-4-8'
+status = 'active'
+
+[limit]
+context = 1000000
+output = 32000
+
+[cost]
+input = 5.0
+output = 25.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'routing-run'
+

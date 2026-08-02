@@ -1,0 +1,12 @@
+id = 'cohere--command-a-reasoning'
+name = 'cohere--command-a-reasoning'
+status = 'active'
+
+[cost]
+input = 0.63
+output = 5.05
+
+[source]
+origin = 'models_dev_github'
+provider = 'sap-ai-core'
+

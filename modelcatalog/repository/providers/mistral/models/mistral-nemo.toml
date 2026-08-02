@@ -1,0 +1,28 @@
+id = 'mistral-nemo'
+name = 'Mistral Nemo'
+description = 'Efficient Mistral-NVIDIA open model for multilingual chat and local deployment'
+family = 'mistral-nemo'
+status = 'active'
+temperature = true
+tool_call = true
+open_weights = true
+knowledge = '2024-07'
+release_date = '2024-07-01'
+last_updated = '2024-07-01'
+
+[limit]
+context = 128000
+output = 128000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.15
+output = 0.15
+
+[source]
+origin = 'models_dev_github'
+provider = 'mistral'
+

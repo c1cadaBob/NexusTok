@@ -1,0 +1,6 @@
+id = 'mixlayer'
+name = 'Mixlayer'
+icon = 'Mixlayer'
+doc = 'https://docs.mixlayer.com'
+status = 'active'
+

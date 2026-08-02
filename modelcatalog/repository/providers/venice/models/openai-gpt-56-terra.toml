@@ -1,0 +1,20 @@
+id = 'openai-gpt-56-terra'
+description = 'GPT model for general reasoning, writing, coding, and tool-assisted tasks'
+status = 'active'
+
+[limit]
+context = 1000000
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 3.125
+output = 18.75
+cache_read = 0.3125
+cache_write = 3.90625
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

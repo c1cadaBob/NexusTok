@@ -1,0 +1,28 @@
+id = 'claude-opus-4-5-20251101'
+name = 'Claude 4.5 Opus'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+attachment = true
+reasoning = true
+tool_call = true
+structured_output = true
+release_date = '2025-11-01'
+last_updated = '2025-11-01'
+
+[limit]
+context = 200000
+input = 200000
+output = 32000
+
+[modalities]
+input = ['text', 'image', 'pdf']
+output = ['text']
+
+[cost]
+input = 4.998
+output = 25.007
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

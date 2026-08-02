@@ -1,0 +1,16 @@
+id = 'mistral-medium-3.5-128b'
+name = 'Mistral Medium 3.5 128B'
+status = 'active'
+
+[limit]
+context = 256000
+output = 16384
+
+[cost]
+input = 1.5
+output = 7.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'scaleway'
+

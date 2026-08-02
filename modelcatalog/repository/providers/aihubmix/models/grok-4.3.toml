@@ -1,0 +1,30 @@
+id = 'grok-4.3'
+name = 'Grok 4.3'
+description = 'Grok model for agentic tool use, reasoning, coding, and live assistance'
+family = 'grok'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+structured_output = true
+release_date = '2026-05-01'
+last_updated = '2026-05-01'
+
+[limit]
+context = 1000000
+output = 1000000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 1.25
+output = 2.5
+cache_read = 0.2
+
+[source]
+origin = 'models_dev_github'
+provider = 'aihubmix'
+

@@ -1,0 +1,6 @@
+id = 'github-copilot'
+name = 'GitHub Copilot'
+icon = 'GitHub Copilot'
+doc = 'https://docs.github.com/en/copilot'
+status = 'active'
+

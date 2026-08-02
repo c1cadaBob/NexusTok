@@ -1,0 +1,6 @@
+id = 'baseten'
+name = 'Baseten'
+icon = 'Baseten'
+doc = 'https://docs.baseten.co/inference/model-apis/overview'
+status = 'active'
+

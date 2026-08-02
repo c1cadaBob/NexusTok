@@ -1,0 +1,22 @@
+id = 'claude-3.5-haiku'
+name = 'Claude 3.5 Haiku'
+description = 'Fast Claude model for responsive assistance, classification, and lightweight agents'
+status = 'active'
+attachment = true
+temperature = true
+tool_call = true
+release_date = '2025-08-26'
+last_updated = '2025-08-26'
+
+[limit]
+context = 200000
+output = 8192
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+provider = 'qiniu-ai'
+

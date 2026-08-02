@@ -1,0 +1,6 @@
+id = 'alibaba-coding-plan-cn'
+name = 'Alibaba Coding Plan (China)'
+icon = 'Alibaba Coding Plan (China)'
+doc = 'https://help.aliyun.com/zh/model-studio/coding-plan'
+status = 'active'
+

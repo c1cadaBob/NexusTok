@@ -1,0 +1,6 @@
+id = 'kuae-cloud-coding-plan'
+name = 'KUAE Cloud Coding Plan'
+icon = 'KUAE Cloud Coding Plan'
+doc = 'https://docs.mthreads.com/kuaecloud/kuaecloud-doc-online/coding_plan/'
+status = 'active'
+

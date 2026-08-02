@@ -1,0 +1,6 @@
+id = 'nova'
+name = 'Nova'
+icon = 'Nova'
+doc = 'https://nova.amazon.com/dev/documentation'
+status = 'active'
+

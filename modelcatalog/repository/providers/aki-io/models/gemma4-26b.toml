@@ -1,0 +1,16 @@
+id = 'gemma4-26b'
+status = 'active'
+reasoning = true
+
+[limit]
+context = 256000
+output = 32768
+
+[cost]
+input = 0.1
+output = 0.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'aki-io'
+

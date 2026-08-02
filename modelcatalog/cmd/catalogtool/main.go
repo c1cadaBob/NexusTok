@@ -70,41 +70,67 @@ func runGenerate(args []string) {
 func runSyncModelsDev(args []string) {
 	fs := flag.NewFlagSet("sync-models-dev", flag.ExitOnError)
 	repoDir := fs.String("repo", modelcatalog.RepositoryDefaultDir, "target model catalog repository dir")
+	sourceRepo := fs.String("source-repo", "", "local models.dev style repository dir; when set, skip network fetch")
 	catalogURL := fs.String("catalog-url", modelcatalog.ModelsDevDefaultCatalogURL, "models.dev catalog URL")
+	tarURL := fs.String("github-tar-url", modelcatalog.ModelsDevGitHubDefaultTarURL, "models.dev GitHub tar URL, use '-' to disable")
+	zipURL := fs.String("github-zip-url", modelcatalog.ModelsDevGitHubDefaultZipURL, "models.dev GitHub zip URL, use '-' to disable")
 	treeURL := fs.String("github-tree-url", modelcatalog.ModelsDevGitHubDefaultTreeURL, "models.dev GitHub tree API URL")
 	rawBase := fs.String("github-raw-base", modelcatalog.ModelsDevGitHubDefaultRawBase, "models.dev GitHub raw base URL")
 	timeout := fs.Duration("timeout", 30*time.Second, "HTTP timeout")
 	_ = fs.Parse(args)
 
-	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
-	defer cancel()
-	result, err := modelcatalog.FetchModelsDevCatalogWithFallback(ctx, modelcatalog.ModelsDevFetchOptions{
-		CatalogURL: *catalogURL,
-		TreeURL:    *treeURL,
-		RawBaseURL: *rawBase,
-		Timeout:    *timeout,
-	})
-	if err != nil {
-		fatalf("sync models.dev catalog: %v", err)
+	totalTimeout := *timeout * 3
+	var catalog *modelcatalog.Catalog
+	var origin string
+	var fallbackUsed bool
+	var fallbackStage string
+	var fallbackReason string
+	if *sourceRepo != "" {
+		loaded, err := modelcatalog.LoadRepository(*sourceRepo)
+		if err != nil {
+			fatalf("load source repository: %v", err)
+		}
+		catalog = loaded
+		origin = modelcatalog.CatalogOriginModelsDevGitHub
+		fallbackStage = "local"
+	} else {
+		ctx, cancel := context.WithTimeout(context.Background(), totalTimeout)
+		defer cancel()
+		result, err := modelcatalog.FetchModelsDevCatalogWithFallback(ctx, modelcatalog.ModelsDevFetchOptions{
+			CatalogURL: *catalogURL,
+			TarURL:     *tarURL,
+			ZipURL:     *zipURL,
+			TreeURL:    *treeURL,
+			RawBaseURL: *rawBase,
+			Timeout:    *timeout,
+		})
+		if err != nil {
+			fatalf("sync models.dev catalog: %v", err)
+		}
+		if result.Catalog == nil {
+			fatalf("sync models.dev catalog: empty catalog")
+		}
+		catalog = result.Catalog
+		origin = result.CatalogOrigin
+		fallbackUsed = result.FallbackUsed
+		fallbackStage = result.FallbackStage
+		fallbackReason = result.FallbackReason
 	}
-	if result.Catalog == nil {
-		fatalf("sync models.dev catalog: empty catalog")
-	}
-	if err := modelcatalog.WriteCatalogToRepository(*repoDir, result.Catalog); err != nil {
+	if err := modelcatalog.WriteCatalogToRepository(*repoDir, catalog); err != nil {
 		fatalf("write repository: %v", err)
 	}
-	manifest := result.Catalog.Manifest
+	manifest := catalog.Manifest
 	fmt.Printf("synced models.dev catalog into %s\n", *repoDir)
 	fmt.Printf("origin=%s fallback=%t stage=%s models=%d providers=%d version=%s\n",
-		result.CatalogOrigin,
-		result.FallbackUsed,
-		result.FallbackStage,
+		origin,
+		fallbackUsed,
+		fallbackStage,
 		manifest.ModelCount,
 		manifest.ProviderCount,
 		manifest.Version,
 	)
-	if result.FallbackReason != "" {
-		fmt.Printf("fallback_reason=%s\n", result.FallbackReason)
+	if fallbackReason != "" {
+		fmt.Printf("fallback_reason=%s\n", fallbackReason)
 	}
 }
 

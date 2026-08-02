@@ -1,0 +1,6 @@
+id = 'zenmux'
+name = 'ZenMux'
+icon = 'ZenMux'
+doc = 'https://docs.zenmux.ai'
+status = 'active'
+

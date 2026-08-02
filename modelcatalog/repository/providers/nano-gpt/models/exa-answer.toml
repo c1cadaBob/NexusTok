@@ -1,0 +1,24 @@
+id = 'exa-answer'
+name = 'Exa (Answer)'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+release_date = '2025-06-04'
+last_updated = '2025-06-04'
+
+[limit]
+context = 4096
+input = 4096
+output = 4096
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 2.5
+output = 2.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

@@ -1,0 +1,22 @@
+id = 'mistralai--mistral-small'
+name = 'mistralai--mistral-small'
+status = 'active'
+attachment = true
+open_weights = true
+
+[limit]
+context = 128000
+output = 128000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.07
+output = 0.28
+
+[source]
+origin = 'models_dev_github'
+provider = 'sap-ai-core'
+

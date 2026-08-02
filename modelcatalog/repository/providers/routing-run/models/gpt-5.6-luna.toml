@@ -1,0 +1,15 @@
+id = 'gpt-5.6-luna'
+status = 'active'
+
+[limit]
+context = 1000000
+output = 128000
+
+[cost]
+input = 0.7
+output = 4.2
+
+[source]
+origin = 'models_dev_github'
+provider = 'routing-run'
+

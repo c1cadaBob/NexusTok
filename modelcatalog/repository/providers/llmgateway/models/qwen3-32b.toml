@@ -1,0 +1,14 @@
+id = 'qwen3-32b'
+status = 'active'
+
+[limit]
+context = 40960
+
+[cost]
+input = 0.1
+output = 0.3
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

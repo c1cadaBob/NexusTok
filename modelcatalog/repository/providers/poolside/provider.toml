@@ -1,0 +1,6 @@
+id = 'poolside'
+name = 'Poolside'
+icon = 'Poolside'
+doc = 'https://platform.poolside.ai'
+status = 'active'
+

@@ -1,0 +1,6 @@
+id = 'fastrouter'
+name = 'FastRouter'
+icon = 'FastRouter'
+doc = 'https://fastrouter.ai/models'
+status = 'active'
+

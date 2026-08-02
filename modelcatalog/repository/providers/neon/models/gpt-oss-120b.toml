@@ -1,0 +1,11 @@
+id = 'gpt-oss-120b'
+status = 'active'
+
+[cost]
+input = 0.072
+output = 0.28
+
+[source]
+origin = 'models_dev_github'
+provider = 'neon'
+

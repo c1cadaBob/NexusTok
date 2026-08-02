@@ -1,0 +1,14 @@
+id = 'gpt-5.5'
+status = 'active'
+release_date = '2026-04-24'
+last_updated = '2026-04-24'
+
+[cost]
+input = 5.0
+output = 30.0
+cache_read = 0.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'azure'
+

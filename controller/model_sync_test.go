@@ -112,12 +112,26 @@ func withModelsDevTestServer(t *testing.T, payload string) {
 	t.Cleanup(server.Close)
 
 	originalBase, hadBase := os.LookupEnv("MODELS_DEV_SYNC_BASE")
+	originalTar, hadTar := os.LookupEnv("MODELS_DEV_GITHUB_TAR_URL")
+	originalZip, hadZip := os.LookupEnv("MODELS_DEV_GITHUB_ZIP_URL")
 	require.NoError(t, os.Setenv("MODELS_DEV_SYNC_BASE", server.URL))
+	require.NoError(t, os.Setenv("MODELS_DEV_GITHUB_TAR_URL", "-"))
+	require.NoError(t, os.Setenv("MODELS_DEV_GITHUB_ZIP_URL", "-"))
 	t.Cleanup(func() {
 		if hadBase {
 			require.NoError(t, os.Setenv("MODELS_DEV_SYNC_BASE", originalBase))
 		} else {
 			require.NoError(t, os.Unsetenv("MODELS_DEV_SYNC_BASE"))
+		}
+		if hadTar {
+			require.NoError(t, os.Setenv("MODELS_DEV_GITHUB_TAR_URL", originalTar))
+		} else {
+			require.NoError(t, os.Unsetenv("MODELS_DEV_GITHUB_TAR_URL"))
+		}
+		if hadZip {
+			require.NoError(t, os.Setenv("MODELS_DEV_GITHUB_ZIP_URL", originalZip))
+		} else {
+			require.NoError(t, os.Unsetenv("MODELS_DEV_GITHUB_ZIP_URL"))
 		}
 	})
 
@@ -136,14 +150,28 @@ func withFailingModelsDevTestServer(t *testing.T, statusCode int) {
 	t.Cleanup(server.Close)
 
 	originalBase, hadBase := os.LookupEnv("MODELS_DEV_SYNC_BASE")
+	originalTar, hadTar := os.LookupEnv("MODELS_DEV_GITHUB_TAR_URL")
+	originalZip, hadZip := os.LookupEnv("MODELS_DEV_GITHUB_ZIP_URL")
 	originalTree, hadTree := os.LookupEnv("MODELS_DEV_GITHUB_TREE_URL")
 	require.NoError(t, os.Setenv("MODELS_DEV_SYNC_BASE", server.URL))
+	require.NoError(t, os.Setenv("MODELS_DEV_GITHUB_TAR_URL", "-"))
+	require.NoError(t, os.Setenv("MODELS_DEV_GITHUB_ZIP_URL", "-"))
 	require.NoError(t, os.Setenv("MODELS_DEV_GITHUB_TREE_URL", server.URL+"/github-tree"))
 	t.Cleanup(func() {
 		if hadBase {
 			require.NoError(t, os.Setenv("MODELS_DEV_SYNC_BASE", originalBase))
 		} else {
 			require.NoError(t, os.Unsetenv("MODELS_DEV_SYNC_BASE"))
+		}
+		if hadTar {
+			require.NoError(t, os.Setenv("MODELS_DEV_GITHUB_TAR_URL", originalTar))
+		} else {
+			require.NoError(t, os.Unsetenv("MODELS_DEV_GITHUB_TAR_URL"))
+		}
+		if hadZip {
+			require.NoError(t, os.Setenv("MODELS_DEV_GITHUB_ZIP_URL", originalZip))
+		} else {
+			require.NoError(t, os.Unsetenv("MODELS_DEV_GITHUB_ZIP_URL"))
 		}
 		if hadTree {
 			require.NoError(t, os.Setenv("MODELS_DEV_GITHUB_TREE_URL", originalTree))
@@ -162,6 +190,8 @@ func withModelsDevEnv(t *testing.T, baseURL, treeURL, rawBase string) {
 	t.Helper()
 	envs := map[string]string{
 		"MODELS_DEV_SYNC_BASE":       baseURL,
+		"MODELS_DEV_GITHUB_TAR_URL":  "-",
+		"MODELS_DEV_GITHUB_ZIP_URL":  "-",
 		"MODELS_DEV_GITHUB_TREE_URL": treeURL,
 		"MODELS_DEV_GITHUB_RAW_BASE": rawBase,
 	}

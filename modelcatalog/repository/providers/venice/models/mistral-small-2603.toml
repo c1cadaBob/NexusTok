@@ -1,0 +1,16 @@
+id = 'mistral-small-2603'
+status = 'active'
+structured_output = true
+last_updated = '2026-06-11'
+
+[limit]
+output = 65536
+
+[cost]
+input = 0.1875
+output = 0.75
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

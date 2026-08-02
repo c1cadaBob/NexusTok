@@ -1,0 +1,12 @@
+id = 'kimi-k2-thinking'
+status = 'active'
+
+[cost]
+input = 0.6
+output = 2.5
+cache_read = 0.06
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

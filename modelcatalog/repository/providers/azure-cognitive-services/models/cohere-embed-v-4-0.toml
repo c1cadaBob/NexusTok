@@ -1,0 +1,7 @@
+id = 'cohere-embed-v-4-0'
+status = 'active'
+
+[source]
+origin = 'models_dev_github'
+provider = 'azure-cognitive-services'
+

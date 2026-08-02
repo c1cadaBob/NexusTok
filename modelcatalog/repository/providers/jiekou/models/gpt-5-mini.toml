@@ -1,0 +1,29 @@
+id = 'gpt-5-mini'
+name = 'gpt-5-mini'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+family = 'gpt-mini'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+structured_output = true
+release_date = '2026-01'
+last_updated = '2026-01'
+
+[limit]
+context = 400000
+output = 128000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.225
+output = 1.8
+
+[source]
+origin = 'models_dev_github'
+provider = 'jiekou'
+

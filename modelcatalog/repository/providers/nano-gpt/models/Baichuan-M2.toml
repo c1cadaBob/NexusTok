@@ -1,0 +1,24 @@
+id = 'Baichuan-M2'
+name = 'Baichuan M2 32B Medical'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+release_date = '2025-08-19'
+last_updated = '2025-08-19'
+
+[limit]
+context = 32768
+input = 32768
+output = 32768
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 15.73
+output = 15.73
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

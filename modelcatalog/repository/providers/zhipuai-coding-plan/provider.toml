@@ -1,0 +1,6 @@
+id = 'zhipuai-coding-plan'
+name = 'Zhipu AI Coding Plan'
+icon = 'Zhipu AI Coding Plan'
+doc = 'https://docs.bigmodel.cn/cn/coding-plan/overview'
+status = 'active'
+

@@ -1,0 +1,16 @@
+id = 'kimi-k2-7-code'
+status = 'active'
+
+[limit]
+context = 256000
+output = 131072
+
+[cost]
+input = 0.95
+output = 4.0
+cache_read = 0.95
+
+[source]
+origin = 'models_dev_github'
+provider = 'empiriolabs'
+

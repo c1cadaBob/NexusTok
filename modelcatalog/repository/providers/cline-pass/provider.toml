@@ -1,0 +1,6 @@
+id = 'cline-pass'
+name = 'ClinePass'
+icon = 'ClinePass'
+doc = 'https://docs.cline.bot/getting-started/clinepass'
+status = 'active'
+

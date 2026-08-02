@@ -1,0 +1,25 @@
+id = 'step-3'
+name = 'Step-3'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+attachment = true
+release_date = '2025-07-31'
+last_updated = '2025-07-31'
+
+[limit]
+context = 65536
+input = 65536
+output = 8192
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.2499
+output = 0.6494
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

@@ -1,0 +1,11 @@
+id = 'GLM-5.1'
+status = 'active'
+
+[cost]
+input = 0.8571
+output = 3.4286
+
+[source]
+origin = 'models_dev_github'
+provider = 'ebcloud'
+

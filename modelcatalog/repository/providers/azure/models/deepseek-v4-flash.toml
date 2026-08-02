@@ -1,0 +1,12 @@
+id = 'deepseek-v4-flash'
+name = 'DeepSeek-V4-Flash'
+status = 'active'
+
+[cost]
+input = 0.19
+output = 0.51
+
+[source]
+origin = 'models_dev_github'
+provider = 'azure'
+

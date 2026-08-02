@@ -1,0 +1,14 @@
+id = 'qwen3-6-35b'
+status = 'active'
+
+[limit]
+context = 16384
+
+[cost]
+input = 5.0
+output = 10.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmtr'
+

@@ -1,0 +1,14 @@
+id = 'gpt-5.5'
+name = 'gpt-5.5'
+description = 'Frontier GPT model for professional reasoning, coding, and multimodal work'
+status = 'active'
+
+[cost]
+input = 5.0
+output = 30.0
+cache_read = 0.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'sap-ai-core'
+

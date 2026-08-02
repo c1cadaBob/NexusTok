@@ -1,0 +1,6 @@
+id = 'poe'
+name = 'Poe'
+icon = 'Poe'
+doc = 'https://creator.poe.com/docs/external-applications/openai-compatible-api'
+status = 'active'
+

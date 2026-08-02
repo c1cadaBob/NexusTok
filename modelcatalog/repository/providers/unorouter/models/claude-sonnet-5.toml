@@ -1,0 +1,11 @@
+id = 'claude-sonnet-5'
+status = 'active'
+
+[cost]
+input = 1.44
+output = 7.2
+
+[source]
+origin = 'models_dev_github'
+provider = 'unorouter'
+

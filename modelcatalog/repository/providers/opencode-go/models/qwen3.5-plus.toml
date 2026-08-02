@@ -1,0 +1,31 @@
+id = 'qwen3.5-plus'
+name = 'Qwen3.5 Plus'
+description = 'Legacy model retained for compatibility with older integrations'
+family = 'qwen3.5'
+status = 'deprecated'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+knowledge = '2025-04'
+release_date = '2026-02-16'
+last_updated = '2026-02-16'
+
+[limit]
+context = 262144
+output = 65536
+
+[modalities]
+input = ['text', 'image', 'video']
+output = ['text']
+
+[cost]
+input = 0.2
+output = 1.2
+cache_read = 0.02
+cache_write = 0.25
+
+[source]
+origin = 'models_dev_github'
+provider = 'opencode-go'
+

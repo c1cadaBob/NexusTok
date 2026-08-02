@@ -1,0 +1,15 @@
+id = 'glm-5.2'
+status = 'active'
+
+[limit]
+output = 128000
+
+[cost]
+input = 1.2
+output = 4.2
+cache_read = 0.3
+
+[source]
+origin = 'models_dev_github'
+provider = 'vivgrid'
+

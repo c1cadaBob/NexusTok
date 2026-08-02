@@ -1,0 +1,6 @@
+id = 'qvac'
+name = 'QVAC'
+icon = 'QVAC'
+doc = 'https://www.npmjs.com/package/@qvac/ai-sdk-provider'
+status = 'active'
+

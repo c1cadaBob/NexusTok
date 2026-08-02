@@ -1,0 +1,11 @@
+id = 'gemini-2.5-pro-tts'
+status = 'active'
+
+[cost]
+input = 1.0
+output = 20.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'google-vertex'
+

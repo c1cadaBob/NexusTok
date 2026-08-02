@@ -1,0 +1,21 @@
+id = 'kimi-k2'
+name = 'Kimi K2'
+description = 'Kimi model for long-context chat, coding, and agentic reasoning'
+status = 'active'
+temperature = true
+tool_call = true
+release_date = '2025-08-05'
+last_updated = '2025-08-05'
+
+[limit]
+context = 128000
+output = 128000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+provider = 'qiniu-ai'
+

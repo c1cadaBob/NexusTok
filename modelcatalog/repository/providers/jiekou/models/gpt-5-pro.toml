@@ -1,0 +1,29 @@
+id = 'gpt-5-pro'
+name = 'gpt-5-pro'
+description = 'Frontier GPT model for professional reasoning, coding, and multimodal work'
+family = 'gpt-pro'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+structured_output = true
+release_date = '2026-01'
+last_updated = '2026-01'
+
+[limit]
+context = 400000
+output = 272000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 13.5
+output = 108.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'jiekou'
+

@@ -1,0 +1,29 @@
+id = 'hy3-free'
+name = 'Hy3 Free'
+description = 'Tencent Hy reasoning model for coding, instruction following, and agent tasks'
+family = 'hy3-free'
+status = 'deprecated'
+reasoning = true
+temperature = true
+tool_call = true
+open_weights = true
+release_date = '2026-06-26'
+last_updated = '2026-06-26'
+
+[limit]
+context = 190000
+output = 64000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.0
+output = 0.0
+cache_read = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'opencode'
+

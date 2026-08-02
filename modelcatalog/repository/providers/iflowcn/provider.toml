@@ -1,0 +1,6 @@
+id = 'iflowcn'
+name = 'iFlow'
+icon = 'iFlow'
+doc = 'https://platform.iflow.cn/en/docs'
+status = 'active'
+

@@ -1,0 +1,12 @@
+id = 'deepseek-v4-pro'
+name = 'DeepSeek-V4-Pro'
+status = 'active'
+
+[cost]
+input = 1.74
+output = 3.48
+
+[source]
+origin = 'models_dev_github'
+provider = 'azure'
+

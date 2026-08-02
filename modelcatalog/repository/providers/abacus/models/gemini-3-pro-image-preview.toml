@@ -1,0 +1,21 @@
+id = 'gemini-3-pro-image-preview'
+status = 'active'
+reasoning = true
+
+[limit]
+context = 65536
+output = 32768
+
+[modalities]
+input = ['text', 'image']
+output = ['text', 'image']
+
+[cost]
+input = 2.0
+output = 12.0
+cache_read = 0.2
+
+[source]
+origin = 'models_dev_github'
+provider = 'abacus'
+

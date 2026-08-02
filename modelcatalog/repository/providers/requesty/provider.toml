@@ -1,0 +1,6 @@
+id = 'requesty'
+name = 'Requesty'
+icon = 'Requesty'
+doc = 'https://requesty.ai/solution/llm-routing/models'
+status = 'active'
+

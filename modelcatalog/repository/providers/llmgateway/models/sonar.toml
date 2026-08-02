@@ -1,0 +1,14 @@
+id = 'sonar'
+status = 'active'
+
+[limit]
+context = 130000
+
+[cost]
+input = 1.0
+output = 1.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

@@ -1,0 +1,17 @@
+id = 'kimi-k2.7-code-flex'
+name = 'Kimi K2.7 Code Flex'
+status = 'active'
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.475
+output = 2.0
+cache_read = 0.11875
+
+[source]
+origin = 'models_dev_github'
+provider = 'neuralwatt'
+

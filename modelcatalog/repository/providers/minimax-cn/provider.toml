@@ -1,0 +1,6 @@
+id = 'minimax-cn'
+name = 'MiniMax (minimaxi.com)'
+icon = 'MiniMax (minimaxi.com)'
+doc = 'https://platform.minimaxi.com/docs/guides/quickstart'
+status = 'active'
+

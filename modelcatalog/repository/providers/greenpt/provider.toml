@@ -1,0 +1,6 @@
+id = 'greenpt'
+name = 'GreenPT'
+icon = 'GreenPT'
+doc = 'https://docs.greenpt.ai'
+status = 'active'
+

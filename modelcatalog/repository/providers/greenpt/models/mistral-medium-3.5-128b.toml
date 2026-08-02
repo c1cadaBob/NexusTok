@@ -1,0 +1,14 @@
+id = 'mistral-medium-3.5-128b'
+status = 'active'
+
+[limit]
+output = 16384
+
+[cost]
+input = 2.052
+output = 10.26
+
+[source]
+origin = 'models_dev_github'
+provider = 'greenpt'
+

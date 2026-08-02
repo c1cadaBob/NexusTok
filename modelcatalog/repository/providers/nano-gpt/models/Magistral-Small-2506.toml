@@ -1,0 +1,24 @@
+id = 'Magistral-Small-2506'
+name = 'Magistral Small 2506'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+release_date = '2025-09-25'
+last_updated = '2025-09-25'
+
+[limit]
+context = 32768
+input = 32768
+output = 32768
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.4
+output = 1.4
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

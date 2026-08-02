@@ -1,0 +1,6 @@
+id = 'zai-coding-plan'
+name = 'Z.AI Coding Plan'
+icon = 'Z.AI Coding Plan'
+doc = 'https://docs.z.ai/devpack/overview'
+status = 'active'
+

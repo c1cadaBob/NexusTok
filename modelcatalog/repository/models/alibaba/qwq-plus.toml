@@ -1,0 +1,23 @@
+id = 'qwq-plus'
+name = 'QwQ Plus'
+description = 'Qwen reasoning model for deliberate problem solving, math, and coding'
+family = 'qwen'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+knowledge = '2024-04'
+release_date = '2025-03-05'
+last_updated = '2025-03-05'
+
+[limit]
+context = 131072
+output = 8192
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

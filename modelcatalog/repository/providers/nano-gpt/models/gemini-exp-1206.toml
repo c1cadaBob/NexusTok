@@ -1,0 +1,25 @@
+id = 'gemini-exp-1206'
+name = 'Gemini 2.0 Pro 1206'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+attachment = true
+release_date = '2024-12-06'
+last_updated = '2024-12-06'
+
+[limit]
+context = 2097152
+input = 2097152
+output = 8192
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 1.258
+output = 4.998
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

@@ -1,0 +1,14 @@
+id = 'qwen3-7-max'
+status = 'active'
+structured_output = true
+last_updated = '2026-06-12'
+
+[cost]
+input = 2.5
+output = 7.5
+cache_read = 2.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'empiriolabs'
+

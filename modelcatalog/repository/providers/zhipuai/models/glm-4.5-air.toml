@@ -1,0 +1,7 @@
+id = 'glm-4.5-air'
+status = 'active'
+
+[source]
+origin = 'models_dev_github'
+provider = 'zhipuai'
+

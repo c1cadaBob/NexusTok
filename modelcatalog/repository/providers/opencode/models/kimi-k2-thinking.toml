@@ -1,0 +1,30 @@
+id = 'kimi-k2-thinking'
+name = 'Kimi K2 Thinking'
+description = 'Legacy model retained for compatibility with older integrations'
+family = 'kimi-thinking'
+status = 'deprecated'
+reasoning = true
+temperature = true
+tool_call = true
+open_weights = true
+knowledge = '2024-10'
+release_date = '2025-09-05'
+last_updated = '2025-09-05'
+
+[limit]
+context = 262144
+output = 262144
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.4
+output = 2.5
+cache_read = 0.4
+
+[source]
+origin = 'models_dev_github'
+provider = 'opencode'
+

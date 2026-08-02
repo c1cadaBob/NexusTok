@@ -1,0 +1,28 @@
+id = 'solar-pro2'
+name = 'solar-pro2'
+description = 'Flagship model for demanding analysis, coding, and production agent workflows'
+family = 'solar-pro'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+knowledge = '2025-03'
+release_date = '2025-05-20'
+last_updated = '2025-05-20'
+
+[limit]
+context = 65536
+output = 8192
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.25
+output = 0.25
+
+[source]
+origin = 'models_dev_github'
+provider = 'upstage'
+

@@ -1,0 +1,23 @@
+id = 'green-s'
+name = 'Green S'
+description = 'GreenPT speech-to-text model for pre-recorded and live transcription'
+status = 'active'
+temperature = false
+release_date = '2025-01'
+last_updated = '2025-01'
+
+[limit]
+output = 8192
+
+[modalities]
+input = ['audio']
+output = ['text']
+
+[cost]
+input = 0.00437
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'greenpt'
+

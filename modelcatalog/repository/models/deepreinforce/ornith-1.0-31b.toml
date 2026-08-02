@@ -1,0 +1,23 @@
+id = 'ornith-1.0-31b'
+name = 'Ornith 1.0 31B'
+description = 'Open coding-reasoning model for repository tasks and self-improving agents'
+family = 'ornith'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+open_weights = true
+release_date = '2026-06-25'
+last_updated = '2026-06-25'
+
+[limit]
+context = 262144
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

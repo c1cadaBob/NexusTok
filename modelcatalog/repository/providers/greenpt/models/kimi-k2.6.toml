@@ -1,0 +1,14 @@
+id = 'kimi-k2.6'
+status = 'active'
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 0.828
+output = 4.389
+
+[source]
+origin = 'models_dev_github'
+provider = 'greenpt'
+

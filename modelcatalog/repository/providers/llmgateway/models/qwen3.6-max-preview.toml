@@ -1,0 +1,13 @@
+id = 'qwen3.6-max-preview'
+status = 'active'
+
+[cost]
+input = 1.3
+output = 7.8
+cache_read = 0.13
+cache_write = 1.625
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

@@ -1,0 +1,19 @@
+id = 'claude-opus-5'
+description = 'Flagship Claude model for deep reasoning, coding, and long-horizon agents'
+status = 'active'
+structured_output = true
+release_date = '2026-07-23'
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 6.0
+output = 30.0
+cache_read = 0.6
+cache_write = 7.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

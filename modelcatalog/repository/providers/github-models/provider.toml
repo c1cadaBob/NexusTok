@@ -1,0 +1,6 @@
+id = 'github-models'
+name = 'GitHub Models'
+icon = 'GitHub Models'
+doc = 'https://docs.github.com/en/github-models'
+status = 'active'
+

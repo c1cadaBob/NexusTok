@@ -1,0 +1,13 @@
+id = 'kimi-k2.7-code-highspeed'
+name = 'Kimi K2.7 Code HighSpeed'
+status = 'active'
+
+[cost]
+input = 1.9
+output = 8.0
+cache_read = 0.38
+
+[source]
+origin = 'models_dev_github'
+provider = 'moonshotai'
+

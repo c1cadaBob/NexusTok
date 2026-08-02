@@ -1,0 +1,16 @@
+id = 'minimax-m2.5'
+status = 'active'
+
+[limit]
+context = 228700
+
+[cost]
+input = 0.3
+output = 1.2
+cache_read = 0.03
+cache_write = 0.375
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

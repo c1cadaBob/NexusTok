@@ -1,0 +1,26 @@
+id = 'gpt-5-pro'
+name = 'GPT-5 Pro'
+description = 'Higher-accuracy GPT-5 tier for tough analysis, coding reviews, and planning'
+family = 'gpt-pro'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = false
+tool_call = true
+structured_output = true
+knowledge = '2024-09-30'
+release_date = '2025-10-06'
+last_updated = '2025-10-06'
+
+[limit]
+context = 400000
+input = 272000
+output = 272000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

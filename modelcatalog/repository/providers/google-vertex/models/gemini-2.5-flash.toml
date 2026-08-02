@@ -1,0 +1,31 @@
+id = 'gemini-2.5-flash'
+name = 'Gemini 2.5 Flash'
+description = 'Fast Gemini model balancing multimodal reasoning, tool use, and cost'
+family = 'gemini-flash'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+knowledge = '2025-01'
+release_date = '2025-06-17'
+last_updated = '2025-06-17'
+
+[limit]
+context = 1048576
+output = 65536
+
+[modalities]
+input = ['text', 'image', 'audio', 'video', 'pdf']
+output = ['text']
+
+[cost]
+input = 0.3
+output = 2.5
+cache_read = 0.075
+cache_write = 0.383
+
+[source]
+origin = 'models_dev_github'
+provider = 'google-vertex'
+

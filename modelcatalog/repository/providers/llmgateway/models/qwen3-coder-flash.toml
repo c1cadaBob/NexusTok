@@ -1,0 +1,13 @@
+id = 'qwen3-coder-flash'
+status = 'active'
+
+[cost]
+input = 0.3
+output = 1.5
+cache_read = 0.06
+cache_write = 0.375
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

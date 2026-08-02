@@ -1,0 +1,16 @@
+id = 'gpt-5'
+status = 'active'
+
+[modalities]
+input = ['text', 'image']
+output = ['text', 'image']
+
+[cost]
+input = 1.25
+output = 10.0
+cache_read = 0.125
+
+[source]
+origin = 'models_dev_github'
+provider = 'neon'
+

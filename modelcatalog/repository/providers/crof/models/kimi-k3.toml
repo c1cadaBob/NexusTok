@@ -1,0 +1,16 @@
+id = 'kimi-k3'
+status = 'active'
+
+[limit]
+context = 1000000
+output = 262144
+
+[cost]
+input = 2.0
+output = 8.0
+cache_read = 0.25
+
+[source]
+origin = 'models_dev_github'
+provider = 'crof'
+

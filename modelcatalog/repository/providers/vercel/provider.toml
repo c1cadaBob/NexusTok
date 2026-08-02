@@ -1,0 +1,6 @@
+id = 'vercel'
+name = 'Vercel AI Gateway'
+icon = 'Vercel AI Gateway'
+doc = 'https://github.com/vercel/ai/tree/5eb85cc45a259553501f535b8ac79a77d0e79223/packages/gateway'
+status = 'active'
+

@@ -1,0 +1,26 @@
+id = 'model-router'
+name = 'Model Router'
+description = 'Automatic model router for matching prompts to suitable backends and budgets'
+family = 'model-router'
+status = 'active'
+attachment = true
+tool_call = true
+release_date = '2025-05-19'
+last_updated = '2025-11-18'
+
+[limit]
+context = 200000
+output = 16384
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.14
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'azure'
+

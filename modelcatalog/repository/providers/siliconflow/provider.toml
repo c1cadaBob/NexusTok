@@ -1,0 +1,6 @@
+id = 'siliconflow'
+name = 'SiliconFlow'
+icon = 'SiliconCloud.Color'
+doc = 'https://cloud.siliconflow.com/models'
+status = 'active'
+

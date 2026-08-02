@@ -1,0 +1,28 @@
+id = 'gpt-oss-20b'
+name = 'OpenAI GPT-OSS 20b'
+description = 'Open-weight GPT model for self-hosted reasoning and instruction-following workloads'
+family = 'gpt-oss'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+knowledge = '2024-06'
+release_date = '2024-06-01'
+last_updated = '2024-06-01'
+
+[limit]
+context = 131072
+output = 131072
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.049999999999999996
+output = 0.19999999999999998
+
+[source]
+origin = 'models_dev_github'
+provider = 'helicone'
+

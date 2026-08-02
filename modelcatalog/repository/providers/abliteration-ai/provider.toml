@@ -1,0 +1,6 @@
+id = 'abliteration-ai'
+name = 'abliteration.ai'
+icon = 'abliteration.ai'
+doc = 'https://docs.abliteration.ai/models'
+status = 'active'
+

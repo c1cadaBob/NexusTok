@@ -1,0 +1,19 @@
+id = 'qwen-3-7-plus'
+name = 'Qwen 3.7 Plus'
+status = 'active'
+structured_output = true
+last_updated = '2026-06-11'
+
+[limit]
+output = 65536
+
+[cost]
+input = 0.5
+output = 2.0
+cache_read = 0.05
+cache_write = 0.625
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

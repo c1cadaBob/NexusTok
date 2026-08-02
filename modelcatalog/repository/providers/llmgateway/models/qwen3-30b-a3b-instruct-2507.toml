@@ -1,0 +1,28 @@
+id = 'qwen3-30b-a3b-instruct-2507'
+name = 'Qwen3 30B A3B Instruct (2507)'
+description = 'Qwen instruction model for multilingual chat, reasoning, and tool use'
+family = 'qwen'
+status = 'active'
+temperature = true
+tool_call = true
+structured_output = true
+open_weights = true
+release_date = '2025-07-08'
+last_updated = '2025-07-08'
+
+[limit]
+context = 262000
+output = 8192
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.1
+output = 0.3
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

@@ -1,0 +1,29 @@
+id = 'mistral.magistral-small-2509'
+name = 'Magistral Small 1.2'
+description = 'Mistral reasoning model for transparent analysis, math, and complex decisions'
+family = 'magistral'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+structured_output = true
+open_weights = true
+release_date = '2025-12-02'
+last_updated = '2025-12-02'
+
+[limit]
+context = 128000
+output = 40000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.5
+output = 1.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'amazon-bedrock'
+

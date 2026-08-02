@@ -1,0 +1,29 @@
+id = 'meta.llama4-scout-17b-instruct-v1:0'
+name = 'Llama 4 Scout 17B Instruct'
+description = 'Open multimodal Llama model for long-context analysis and efficient agents'
+family = 'llama'
+status = 'active'
+attachment = true
+temperature = true
+tool_call = true
+open_weights = true
+knowledge = '2024-08'
+release_date = '2025-04-05'
+last_updated = '2025-04-05'
+
+[limit]
+context = 3500000
+output = 16384
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.17
+output = 0.66
+
+[source]
+origin = 'models_dev_github'
+provider = 'amazon-bedrock'
+

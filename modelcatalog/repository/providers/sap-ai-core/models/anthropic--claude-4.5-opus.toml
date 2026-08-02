@@ -1,0 +1,14 @@
+id = 'anthropic--claude-4.5-opus'
+name = 'anthropic--claude-4.5-opus'
+status = 'active'
+
+[cost]
+input = 5.0
+output = 25.0
+cache_read = 0.5
+cache_write = 6.25
+
+[source]
+origin = 'models_dev_github'
+provider = 'sap-ai-core'
+

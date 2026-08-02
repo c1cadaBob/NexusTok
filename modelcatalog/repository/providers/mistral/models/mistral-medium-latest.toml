@@ -1,0 +1,12 @@
+id = 'mistral-medium-latest'
+name = 'Mistral Medium (latest)'
+status = 'active'
+
+[cost]
+input = 1.5
+output = 7.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'mistral'
+

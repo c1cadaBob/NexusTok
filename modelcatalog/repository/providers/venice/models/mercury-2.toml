@@ -1,0 +1,28 @@
+id = 'mercury-2'
+name = 'Mercury 2'
+description = 'Reasoning model for deliberate analysis, multi-step problem solving, and tool use'
+family = 'mercury'
+status = 'active'
+reasoning = true
+tool_call = true
+structured_output = true
+release_date = '2026-02-20'
+last_updated = '2026-06-11'
+
+[limit]
+context = 128000
+output = 50000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.3125
+output = 0.9375
+cache_read = 0.03125
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

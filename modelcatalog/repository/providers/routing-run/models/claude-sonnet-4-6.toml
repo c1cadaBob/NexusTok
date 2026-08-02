@@ -1,0 +1,15 @@
+id = 'claude-sonnet-4-6'
+status = 'active'
+
+[limit]
+context = 1000000
+output = 64000
+
+[cost]
+input = 3.0
+output = 15.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'routing-run'
+

@@ -1,0 +1,22 @@
+id = 'qwen3.5-397b-a17b'
+name = 'Qwen3.5 397B A17B'
+status = 'active'
+knowledge = '2026-01'
+release_date = '2026-02-16'
+last_updated = '2026-02-16'
+
+[limit]
+context = 250000
+output = 250000
+
+[modalities]
+input = ['text']
+
+[cost]
+input = 0.6
+output = 3.6
+
+[source]
+origin = 'models_dev_github'
+provider = 'cortecs'
+

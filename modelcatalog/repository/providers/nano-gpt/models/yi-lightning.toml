@@ -1,0 +1,24 @@
+id = 'yi-lightning'
+name = 'Yi Lightning'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+release_date = '2024-10-16'
+last_updated = '2024-10-16'
+
+[limit]
+context = 12000
+input = 12000
+output = 4096
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.2006
+output = 0.2006
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

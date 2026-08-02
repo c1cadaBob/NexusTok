@@ -1,0 +1,16 @@
+id = 'deepseek-v4-pro'
+status = 'active'
+last_updated = '2026-06-12'
+
+[limit]
+output = 393216
+
+[cost]
+input = 1.65
+output = 3.3
+cache_read = 1.65
+
+[source]
+origin = 'models_dev_github'
+provider = 'empiriolabs'
+

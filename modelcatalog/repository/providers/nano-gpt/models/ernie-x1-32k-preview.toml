@@ -1,0 +1,24 @@
+id = 'ernie-x1-32k-preview'
+name = 'Ernie X1 32k'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+release_date = '2025-04-03'
+last_updated = '2025-04-03'
+
+[limit]
+context = 32000
+input = 32000
+output = 16384
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.33
+output = 1.32
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

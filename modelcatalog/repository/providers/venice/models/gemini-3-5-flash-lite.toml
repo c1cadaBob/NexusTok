@@ -1,0 +1,21 @@
+id = 'gemini-3-5-flash-lite'
+name = 'Gemini 3.5 Flash-Lite'
+description = 'Low-latency Gemini model for high-volume multimodal and agent workloads'
+status = 'active'
+release_date = '2026-07-09'
+
+[limit]
+context = 1000000
+
+[modalities]
+input = ['text', 'image', 'audio', 'video']
+
+[cost]
+input = 0.375
+output = 3.125
+cache_read = 0.0375
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

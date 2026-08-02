@@ -1,0 +1,25 @@
+id = 'ernie-4.5-turbo-128k'
+name = 'Ernie 4.5 Turbo 128k'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+attachment = true
+release_date = '2025-05-08'
+last_updated = '2025-05-08'
+
+[limit]
+context = 128000
+input = 128000
+output = 16384
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.132
+output = 0.55
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

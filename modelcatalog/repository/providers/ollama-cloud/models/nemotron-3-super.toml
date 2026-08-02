@@ -1,0 +1,22 @@
+id = 'nemotron-3-super'
+name = 'nemotron-3-super'
+family = 'nemotron'
+status = 'active'
+reasoning = true
+tool_call = true
+open_weights = true
+release_date = '2026-03-11'
+last_updated = '2026-03-12'
+
+[limit]
+context = 262144
+output = 65536
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+provider = 'ollama-cloud'
+

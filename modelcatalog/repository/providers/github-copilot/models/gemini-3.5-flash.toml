@@ -1,0 +1,18 @@
+id = 'gemini-3.5-flash'
+status = 'active'
+
+[limit]
+context = 200000
+input = 128000
+output = 64000
+
+[cost]
+input = 1.5
+output = 9.0
+cache_read = 0.15
+input_audio = 1.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'github-copilot'
+

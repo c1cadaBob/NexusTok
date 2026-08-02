@@ -1,0 +1,15 @@
+id = 'grok-4-20-beta-0309-reasoning'
+status = 'active'
+
+[limit]
+context = 2000000
+
+[cost]
+input = 2.0
+output = 6.0
+cache_read = 0.2
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

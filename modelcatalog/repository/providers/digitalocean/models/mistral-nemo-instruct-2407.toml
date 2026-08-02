@@ -1,0 +1,27 @@
+id = 'mistral-nemo-instruct-2407'
+name = 'Mistral Nemo Instruct'
+description = 'Legacy model retained for compatibility with older integrations'
+family = 'mistral'
+status = 'deprecated'
+temperature = true
+tool_call = true
+open_weights = true
+release_date = '2024-07-18'
+last_updated = '2024-07-18'
+
+[limit]
+context = 128000
+output = 16384
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.3
+output = 0.3
+
+[source]
+origin = 'models_dev_github'
+provider = 'digitalocean'
+

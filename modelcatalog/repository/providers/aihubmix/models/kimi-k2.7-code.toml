@@ -1,0 +1,20 @@
+id = 'kimi-k2.7-code'
+status = 'active'
+
+[limit]
+context = 262144
+output = 32768
+
+[modalities]
+input = ['text', 'image', 'video']
+output = ['text']
+
+[cost]
+input = 0.95
+output = 3.9995
+cache_read = 0.160835
+
+[source]
+origin = 'models_dev_github'
+provider = 'aihubmix'
+

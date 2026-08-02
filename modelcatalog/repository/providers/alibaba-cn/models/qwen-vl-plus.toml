@@ -1,0 +1,27 @@
+id = 'qwen-vl-plus'
+name = 'Qwen-VL Plus'
+description = 'Qwen vision-language model for visual reasoning, documents, and agent tasks'
+family = 'qwen'
+status = 'active'
+temperature = true
+tool_call = true
+knowledge = '2024-04'
+release_date = '2024-01-25'
+last_updated = '2025-08-15'
+
+[limit]
+context = 131072
+output = 8192
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.115
+output = 0.287
+
+[source]
+origin = 'models_dev_github'
+provider = 'alibaba-cn'
+

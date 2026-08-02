@@ -1,0 +1,21 @@
+id = 'nemotron-3-content-safety'
+name = 'Nemotron 3 Content Safety'
+description = 'Safety model for policy screening, moderation, and risk-aware routing workflows'
+family = 'nemotron'
+status = 'active'
+temperature = false
+open_weights = true
+release_date = '2026-04-16'
+last_updated = '2026-04-16'
+
+[limit]
+context = 128000
+output = 4096
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

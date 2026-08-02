@@ -1,0 +1,6 @@
+id = 'kilo'
+name = 'Kilo Gateway'
+icon = 'Kilo Gateway'
+doc = 'https://kilo.ai'
+status = 'active'
+

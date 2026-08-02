@@ -1,0 +1,21 @@
+id = 'openai-gpt-52'
+status = 'active'
+release_date = '2025-12-13'
+last_updated = '2026-06-11'
+
+[limit]
+context = 256000
+output = 65536
+
+[modalities]
+input = ['text']
+
+[cost]
+input = 2.19
+output = 17.5
+cache_read = 0.219
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

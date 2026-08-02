@@ -1,0 +1,6 @@
+id = 'abacus'
+name = 'Abacus'
+icon = 'Abacus'
+doc = 'https://abacus.ai/help/api'
+status = 'active'
+

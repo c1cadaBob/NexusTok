@@ -1,0 +1,20 @@
+id = 'openai-gpt-54'
+status = 'active'
+last_updated = '2026-06-11'
+
+[limit]
+context = 1000000
+output = 131072
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 3.13
+output = 18.8
+cache_read = 0.313
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

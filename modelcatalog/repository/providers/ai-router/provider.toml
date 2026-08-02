@@ -1,0 +1,6 @@
+id = 'ai-router'
+name = 'AI-ROUTER'
+icon = 'AI-ROUTER'
+doc = 'https://ai-router.dev/openai-compatible-api-gateway/'
+status = 'active'
+

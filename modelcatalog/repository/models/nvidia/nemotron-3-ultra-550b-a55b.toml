@@ -1,0 +1,23 @@
+id = 'nemotron-3-ultra-550b-a55b'
+name = 'Nemotron 3 Ultra 550B A55B'
+description = 'Largest Nemotron 3 model for maximum open-weight reasoning and agent accuracy'
+family = 'nemotron'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+open_weights = true
+release_date = '2026-06-04'
+last_updated = '2026-06-04'
+
+[limit]
+context = 1000000
+output = 128000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

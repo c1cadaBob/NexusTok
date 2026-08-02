@@ -1,0 +1,21 @@
+id = 'grok-imagine-video'
+name = 'Grok Imagine Video'
+description = 'Image model for prompt-driven generation, editing, and visual design workflows'
+family = 'grok'
+status = 'active'
+attachment = true
+temperature = false
+release_date = '2026-01-28'
+last_updated = '2026-01-28'
+
+[limit]
+context = 1024
+
+[modalities]
+input = ['text', 'image', 'video', 'pdf']
+output = ['video']
+
+[source]
+origin = 'models_dev_github'
+provider = 'xai'
+

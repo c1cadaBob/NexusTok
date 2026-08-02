@@ -1,0 +1,19 @@
+id = 'qwen3.6-35b'
+status = 'active'
+reasoning = true
+
+[limit]
+context = 256000
+output = 32768
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 0.15
+output = 0.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'aki-io'
+

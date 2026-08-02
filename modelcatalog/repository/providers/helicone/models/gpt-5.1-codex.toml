@@ -1,0 +1,28 @@
+id = 'gpt-5.1-codex'
+name = 'OpenAI: GPT-5.1 Codex'
+description = 'Image model for prompt-driven generation, editing, and visual design workflows'
+family = 'gpt-codex'
+status = 'active'
+temperature = false
+tool_call = true
+knowledge = '2025-01'
+release_date = '2025-01-01'
+last_updated = '2025-01-01'
+
+[limit]
+context = 400000
+output = 128000
+
+[modalities]
+input = ['text', 'image']
+output = ['text', 'image']
+
+[cost]
+input = 1.25
+output = 10.0
+cache_read = 0.12500000000000003
+
+[source]
+origin = 'models_dev_github'
+provider = 'helicone'
+

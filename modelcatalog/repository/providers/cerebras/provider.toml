@@ -1,0 +1,6 @@
+id = 'cerebras'
+name = 'Cerebras'
+icon = 'Cerebras'
+doc = 'https://inference-docs.cerebras.ai/models/overview'
+status = 'active'
+

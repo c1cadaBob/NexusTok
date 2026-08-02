@@ -1,0 +1,24 @@
+id = 'magibu-11b-v8'
+name = 'Magibu 11B v8'
+description = 'General-purpose chat model for instruction following, writing, and analysis'
+status = 'active'
+temperature = true
+release_date = '2026-06-05'
+last_updated = '2026-06-05'
+
+[limit]
+context = 8192
+output = 4096
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.0
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmtr'
+

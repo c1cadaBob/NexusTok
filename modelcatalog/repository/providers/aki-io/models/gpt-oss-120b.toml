@@ -1,0 +1,16 @@
+id = 'gpt-oss-120b'
+status = 'active'
+reasoning = true
+
+[limit]
+context = 128000
+output = 32768
+
+[cost]
+input = 0.15
+output = 0.55
+
+[source]
+origin = 'models_dev_github'
+provider = 'aki-io'
+

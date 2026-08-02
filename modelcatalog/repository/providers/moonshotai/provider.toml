@@ -1,0 +1,6 @@
+id = 'moonshotai'
+name = 'Moonshot AI'
+icon = 'Moonshot.Color'
+doc = 'https://platform.moonshot.ai/docs/api/chat'
+status = 'active'
+

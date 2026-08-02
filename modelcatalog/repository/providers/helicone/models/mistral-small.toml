@@ -1,0 +1,11 @@
+id = 'mistral-small'
+status = 'active'
+
+[cost]
+input = 0.075
+output = 0.2
+
+[source]
+origin = 'models_dev_github'
+provider = 'helicone'
+

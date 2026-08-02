@@ -1,0 +1,6 @@
+id = 'frogbot'
+name = 'FrogBot'
+icon = 'FrogBot'
+doc = 'https://docs.frogbot.ai'
+status = 'active'
+

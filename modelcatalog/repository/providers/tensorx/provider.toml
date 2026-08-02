@@ -1,0 +1,6 @@
+id = 'tensorx'
+name = 'TensorX'
+icon = 'TensorX'
+doc = 'https://docs.tensorx.ai/'
+status = 'active'
+

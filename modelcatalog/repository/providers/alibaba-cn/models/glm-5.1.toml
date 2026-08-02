@@ -1,0 +1,30 @@
+id = 'glm-5.1'
+name = 'GLM-5.1'
+description = 'Flagship GLM model for hybrid reasoning, coding, and agentic engineering'
+family = 'glm'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+structured_output = true
+open_weights = true
+release_date = '2026-04-14'
+last_updated = '2026-04-14'
+
+[limit]
+context = 202752
+output = 128000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.87
+output = 3.48
+cache_read = 0.17
+
+[source]
+origin = 'models_dev_github'
+provider = 'alibaba-cn'
+

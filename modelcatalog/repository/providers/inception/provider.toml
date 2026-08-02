@@ -1,0 +1,6 @@
+id = 'inception'
+name = 'Inception'
+icon = 'Inception'
+doc = 'https://platform.inceptionlabs.ai/docs'
+status = 'active'
+

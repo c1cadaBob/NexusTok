@@ -1,0 +1,21 @@
+id = 'zai-org-glm-4.7-flash'
+name = 'GLM 4.7 Flash'
+family = 'glm'
+status = 'active'
+structured_output = true
+release_date = '2026-01-29'
+last_updated = '2026-06-11'
+
+[limit]
+context = 128000
+output = 16384
+
+[cost]
+input = 0.06
+output = 0.4
+cache_read = 0.01
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

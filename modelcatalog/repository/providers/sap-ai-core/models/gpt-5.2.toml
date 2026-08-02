@@ -1,0 +1,17 @@
+id = 'gpt-5.2'
+name = 'gpt-5.2'
+status = 'active'
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 1.25
+output = 9.44
+cache_read = 0.12
+
+[source]
+origin = 'models_dev_github'
+provider = 'sap-ai-core'
+

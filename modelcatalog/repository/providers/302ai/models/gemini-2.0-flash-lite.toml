@@ -1,0 +1,27 @@
+id = 'gemini-2.0-flash-lite'
+name = 'gemini-2.0-flash-lite'
+description = 'Low-latency Gemini model for high-volume multimodal and agent workloads'
+family = 'gemini-flash-lite'
+status = 'active'
+attachment = true
+temperature = true
+knowledge = '2024-11'
+release_date = '2025-06-16'
+last_updated = '2025-06-16'
+
+[limit]
+context = 2000000
+output = 8192
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.075
+output = 0.3
+
+[source]
+origin = 'models_dev_github'
+provider = '302ai'
+

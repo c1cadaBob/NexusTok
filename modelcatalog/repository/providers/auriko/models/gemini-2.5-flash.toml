@@ -1,0 +1,12 @@
+id = 'gemini-2.5-flash'
+status = 'active'
+
+[cost]
+input = 0.3
+output = 2.5
+cache_read = 0.03
+
+[source]
+origin = 'models_dev_github'
+provider = 'auriko'
+

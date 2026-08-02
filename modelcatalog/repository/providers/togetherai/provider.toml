@@ -1,0 +1,6 @@
+id = 'togetherai'
+name = 'Together AI'
+icon = 'Together AI'
+doc = 'https://docs.together.ai/docs/serverless-models'
+status = 'active'
+

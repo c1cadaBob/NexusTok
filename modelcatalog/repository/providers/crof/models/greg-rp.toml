@@ -1,0 +1,25 @@
+id = 'greg-rp'
+name = 'Greg (Roleplay)'
+description = 'General-purpose chat model for instruction following, writing, and analysis'
+status = 'active'
+temperature = true
+release_date = '2026-01-27'
+last_updated = '2026-01-27'
+
+[limit]
+context = 229376
+output = 229376
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.1
+output = 0.3
+cache_read = 0.02
+
+[source]
+origin = 'models_dev_github'
+provider = 'crof'
+

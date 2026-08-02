@@ -1,0 +1,11 @@
+id = 'claude-opus-4-8'
+status = 'active'
+
+[cost]
+input = 0.0
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'kenari'
+

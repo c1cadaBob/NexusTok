@@ -1,0 +1,17 @@
+id = 'openai.gpt-5.6-terra'
+status = 'active'
+
+[limit]
+context = 272000
+output = 128000
+
+[cost]
+input = 2.2
+output = 13.2
+cache_read = 0.22
+cache_write = 2.75
+
+[source]
+origin = 'models_dev_github'
+provider = 'amazon-bedrock'
+

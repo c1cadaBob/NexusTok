@@ -1,0 +1,20 @@
+id = 'deepseek-v3'
+name = 'DeepSeek-V3'
+description = 'DeepSeek chat model for instruction following, coding, and analysis'
+status = 'active'
+temperature = true
+release_date = '2025-08-13'
+last_updated = '2025-08-13'
+
+[limit]
+context = 128000
+output = 16000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+provider = 'qiniu-ai'
+

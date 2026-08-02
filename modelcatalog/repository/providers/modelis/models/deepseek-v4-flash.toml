@@ -1,0 +1,11 @@
+id = 'deepseek-v4-flash'
+status = 'active'
+
+[cost]
+input = 0.0983
+output = 0.1966
+
+[source]
+origin = 'models_dev_github'
+provider = 'modelis'
+

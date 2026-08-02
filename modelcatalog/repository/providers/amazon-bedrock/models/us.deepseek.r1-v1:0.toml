@@ -1,0 +1,12 @@
+id = 'us.deepseek.r1-v1:0'
+name = 'DeepSeek-R1 (US)'
+status = 'active'
+
+[cost]
+input = 1.35
+output = 5.4
+
+[source]
+origin = 'models_dev_github'
+provider = 'amazon-bedrock'
+

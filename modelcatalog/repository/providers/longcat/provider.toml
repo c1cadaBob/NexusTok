@@ -1,0 +1,6 @@
+id = 'longcat'
+name = 'LongCat'
+icon = 'LongCat'
+doc = 'https://longcat.chat/platform/docs/'
+status = 'active'
+

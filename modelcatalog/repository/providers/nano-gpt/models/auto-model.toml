@@ -1,0 +1,24 @@
+id = 'auto-model'
+name = 'Auto model'
+description = 'Automatic model router for matching prompts to suitable backends and budgets'
+status = 'active'
+release_date = '2024-06-01'
+last_updated = '2024-06-01'
+
+[limit]
+context = 1000000
+input = 1000000
+output = 1000000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.0
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

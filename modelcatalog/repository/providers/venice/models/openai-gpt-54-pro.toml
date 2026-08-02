@@ -1,0 +1,17 @@
+id = 'openai-gpt-54-pro'
+family = 'gpt'
+status = 'active'
+structured_output = true
+last_updated = '2026-06-11'
+
+[limit]
+context = 1000000
+
+[cost]
+input = 37.5
+output = 225.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

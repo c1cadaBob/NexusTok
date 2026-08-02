@@ -1,0 +1,27 @@
+id = 'hermes-2-pro-llama-3-8b'
+name = 'Hermes 2 Pro Llama 3 8B'
+description = 'Open Llama instruction model for multilingual chat, reasoning, and coding'
+family = 'llama'
+status = 'active'
+temperature = true
+tool_call = true
+knowledge = '2024-05'
+release_date = '2024-05-27'
+last_updated = '2024-05-27'
+
+[limit]
+context = 131072
+output = 131072
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.14
+output = 0.14
+
+[source]
+origin = 'models_dev_github'
+provider = 'helicone'
+

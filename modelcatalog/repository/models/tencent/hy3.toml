@@ -1,0 +1,23 @@
+id = 'hy3'
+name = 'Hy3'
+description = 'Tencent Hy reasoning model for coding, instruction following, and agent tasks'
+family = 'Hy'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+open_weights = true
+release_date = '2026-07-06'
+last_updated = '2026-07-06'
+
+[limit]
+context = 256000
+output = 64000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

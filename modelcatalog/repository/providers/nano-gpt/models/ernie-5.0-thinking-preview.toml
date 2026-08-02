@@ -1,0 +1,26 @@
+id = 'ernie-5.0-thinking-preview'
+name = 'Ernie 5.0 Thinking Preview'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+attachment = true
+reasoning = true
+release_date = '2025-11-18'
+last_updated = '2025-11-18'
+
+[limit]
+context = 128000
+input = 128000
+output = 16384
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 1.1
+output = 2.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

@@ -1,0 +1,6 @@
+id = 'gmicloud'
+name = 'GMI Cloud'
+icon = 'GMI Cloud'
+doc = 'https://docs.gmicloud.ai/inference-engine/api-reference/llm-api-reference'
+status = 'active'
+

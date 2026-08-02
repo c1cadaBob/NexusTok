@@ -1,0 +1,25 @@
+id = 'text-max'
+name = 'Text Max'
+description = 'Frontier models for deep reasoning, long context, and complex workflows. Any model that meets the contract spec can serve your request.'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = false
+tool_call = true
+structured_output = true
+release_date = '2026-02-26'
+last_updated = '2026-07-24'
+
+[limit]
+context = 1000000
+input = 922000
+output = 128000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+provider = 'the-grid-ai'
+

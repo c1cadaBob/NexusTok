@@ -1,0 +1,23 @@
+id = 'command-r7b-arabic-02-2025'
+name = 'Command R7B Arabic'
+description = 'Open Command R model optimized for Arabic enterprise chat, RAG, and cultural knowledge'
+family = 'command-r'
+status = 'active'
+temperature = true
+tool_call = true
+open_weights = true
+knowledge = '2024-06-01'
+release_date = '2025-02-27'
+last_updated = '2025-02-27'
+
+[limit]
+context = 128000
+output = 4000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

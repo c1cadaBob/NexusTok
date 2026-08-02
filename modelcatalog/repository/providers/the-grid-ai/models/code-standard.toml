@@ -1,0 +1,24 @@
+id = 'code-standard'
+name = 'Code Standard'
+description = 'Price-optimized models for rapid autocomplete, linting, high-frequency suggestions, and batch edits. Any model that meets the contract spec can serve your request.'
+status = 'beta'
+reasoning = true
+temperature = true
+tool_call = true
+structured_output = true
+release_date = '2026-05-04'
+last_updated = '2026-07-15'
+
+[limit]
+context = 128000
+input = 120000
+output = 16000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+provider = 'the-grid-ai'
+

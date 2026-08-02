@@ -1,0 +1,6 @@
+id = 'xai'
+name = 'xAI'
+icon = 'XAI.Color'
+doc = 'https://docs.x.ai/docs/models'
+status = 'active'
+

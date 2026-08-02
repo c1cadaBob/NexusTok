@@ -1,0 +1,24 @@
+id = 'deepseek-r1'
+name = 'DeepSeek-R1'
+description = 'Classic open reasoning model for transparent math, coding, and deliberate problem solving'
+family = 'deepseek-thinking'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+open_weights = true
+knowledge = '2024-07'
+release_date = '2025-01-20'
+last_updated = '2025-05-29'
+
+[limit]
+context = 128000
+output = 32768
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

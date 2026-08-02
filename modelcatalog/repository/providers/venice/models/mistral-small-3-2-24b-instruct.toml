@@ -1,0 +1,27 @@
+id = 'mistral-small-3-2-24b-instruct'
+name = 'Mistral Small 3.2 24B Instruct'
+description = 'Efficient Mistral model for fast chat, extraction, and production assistants'
+family = 'mistral-small'
+status = 'active'
+tool_call = true
+structured_output = true
+open_weights = true
+release_date = '2026-01-15'
+last_updated = '2026-06-11'
+
+[limit]
+context = 256000
+output = 16384
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.09375
+output = 0.25
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

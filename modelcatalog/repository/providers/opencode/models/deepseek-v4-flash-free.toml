@@ -1,0 +1,17 @@
+id = 'deepseek-v4-flash-free'
+name = 'DeepSeek V4 Flash Free (New)'
+status = 'active'
+
+[limit]
+context = 200000
+output = 128000
+
+[cost]
+input = 0.0
+output = 0.0
+cache_read = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'opencode'
+

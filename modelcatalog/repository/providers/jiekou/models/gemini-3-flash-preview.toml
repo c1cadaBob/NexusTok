@@ -1,0 +1,28 @@
+id = 'gemini-3-flash-preview'
+name = 'gemini-3-flash-preview'
+description = 'Fast Gemini model balancing multimodal reasoning, tool use, and cost'
+family = 'gemini-flash'
+status = 'active'
+attachment = true
+temperature = true
+tool_call = true
+structured_output = true
+release_date = '2026-01'
+last_updated = '2026-01'
+
+[limit]
+context = 1048576
+output = 65536
+
+[modalities]
+input = ['text', 'image', 'video', 'audio']
+output = ['text']
+
+[cost]
+input = 0.5
+output = 3.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'jiekou'
+

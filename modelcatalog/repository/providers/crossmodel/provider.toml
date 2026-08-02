@@ -1,0 +1,6 @@
+id = 'crossmodel'
+name = 'CrossModel'
+icon = 'CrossModel'
+doc = 'https://www.crossmodel.ai/docs'
+status = 'active'
+

@@ -1,0 +1,7 @@
+id = 'gpt-4.1'
+status = 'active'
+
+[source]
+origin = 'models_dev_github'
+provider = 'model-oracle-ai'
+

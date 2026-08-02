@@ -1,0 +1,30 @@
+id = 'openai-gpt-oss-120b'
+name = 'gpt-oss-120b'
+description = 'Open-weight GPT model for self-hosted reasoning and instruction-following workloads'
+family = 'gpt-oss'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+structured_output = true
+open_weights = true
+knowledge = '2024-06'
+release_date = '2025-08-05'
+last_updated = '2026-04-16'
+
+[limit]
+context = 131072
+output = 131072
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.1
+output = 0.7
+
+[source]
+origin = 'models_dev_github'
+provider = 'digitalocean'
+

@@ -1,0 +1,6 @@
+id = 'moonshotai-cn'
+name = 'Moonshot AI (China)'
+icon = 'Moonshot AI (China)'
+doc = 'https://platform.moonshot.cn/docs/api/chat'
+status = 'active'
+

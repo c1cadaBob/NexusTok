@@ -1,0 +1,6 @@
+id = 'cloudflare-workers-ai'
+name = 'Cloudflare Workers AI'
+icon = 'Cloudflare Workers AI'
+doc = 'https://developers.cloudflare.com/workers-ai/models/'
+status = 'active'
+

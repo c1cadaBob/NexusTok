@@ -1,0 +1,15 @@
+id = 'deepseek-v4-flash'
+status = 'active'
+
+[limit]
+context = 1050000
+
+[cost]
+input = 0.076
+output = 0.153
+cache_read = 0.014
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

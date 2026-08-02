@@ -1,0 +1,27 @@
+id = 'gpt-3.5-turbo'
+name = 'GPT-3.5-turbo'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+family = 'gpt'
+status = 'deprecated'
+temperature = true
+knowledge = '2021-09-01'
+release_date = '2023-03-01'
+last_updated = '2023-11-06'
+
+[limit]
+context = 16385
+output = 4096
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.5
+output = 1.5
+cache_read = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'openai'
+

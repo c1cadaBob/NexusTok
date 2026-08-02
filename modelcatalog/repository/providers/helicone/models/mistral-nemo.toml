@@ -1,0 +1,26 @@
+id = 'mistral-nemo'
+name = 'Mistral Nemo'
+description = 'Mistral model for multilingual chat, reasoning, and tool-assisted workflows'
+family = 'mistral-nemo'
+status = 'active'
+temperature = true
+knowledge = '2024-07'
+release_date = '2024-07-18'
+last_updated = '2024-07-18'
+
+[limit]
+context = 128000
+output = 16400
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 20.0
+output = 40.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'helicone'
+

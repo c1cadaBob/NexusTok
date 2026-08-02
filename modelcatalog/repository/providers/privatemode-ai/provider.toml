@@ -1,0 +1,6 @@
+id = 'privatemode-ai'
+name = 'Privatemode AI'
+icon = 'Privatemode AI'
+doc = 'https://docs.privatemode.ai/api/overview'
+status = 'active'
+

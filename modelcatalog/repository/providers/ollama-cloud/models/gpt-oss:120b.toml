@@ -1,0 +1,23 @@
+id = 'gpt-oss:120b'
+name = 'gpt-oss:120b'
+description = 'Open-weight GPT model for self-hosted reasoning and instruction-following workloads'
+family = 'gpt-oss'
+status = 'active'
+reasoning = true
+tool_call = true
+open_weights = true
+release_date = '2025-08-05'
+last_updated = '2026-01-19'
+
+[limit]
+context = 131072
+output = 32768
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+provider = 'ollama-cloud'
+

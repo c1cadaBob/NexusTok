@@ -1,0 +1,20 @@
+id = 'claude-fable-5'
+status = 'active'
+reasoning = true
+
+[limit]
+context = 1000000
+output = 128000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 10.0
+output = 50.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'abacus'
+

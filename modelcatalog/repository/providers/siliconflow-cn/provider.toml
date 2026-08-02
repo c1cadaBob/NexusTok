@@ -1,0 +1,6 @@
+id = 'siliconflow-cn'
+name = 'SiliconFlow (China)'
+icon = 'SiliconFlow (China)'
+doc = 'https://cloud.siliconflow.com/models'
+status = 'active'
+

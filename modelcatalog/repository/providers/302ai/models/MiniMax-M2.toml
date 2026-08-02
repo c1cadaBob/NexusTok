@@ -1,0 +1,25 @@
+id = 'MiniMax-M2'
+name = 'MiniMax-M2'
+description = 'MiniMax model for chat, coding, office work, and agentic tasks'
+status = 'active'
+temperature = true
+tool_call = true
+release_date = '2025-10-26'
+last_updated = '2025-10-26'
+
+[limit]
+context = 1000000
+output = 128000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.33
+output = 1.32
+
+[source]
+origin = 'models_dev_github'
+provider = '302ai'
+

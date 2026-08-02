@@ -1,0 +1,6 @@
+id = 'sarvam'
+name = 'Sarvam AI'
+icon = 'Sarvam AI'
+doc = 'https://docs.sarvam.ai/api-reference-docs/getting-started/models'
+status = 'active'
+

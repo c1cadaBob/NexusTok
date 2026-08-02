@@ -1,0 +1,30 @@
+id = 'qwen3-5-4b'
+name = 'Qwen3.5 4B'
+description = 'Qwen3.5 4B is a low-cost multimodal reasoning model with 256K context, image and video input, function tools, and structured output.'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+structured_output = true
+open_weights = true
+release_date = '2026-03-02'
+last_updated = '2026-03-02'
+
+[limit]
+context = 262144
+output = 32768
+
+[modalities]
+input = ['text', 'image', 'video']
+output = ['text']
+
+[cost]
+input = 0.04
+output = 0.07
+cache_read = 0.02
+
+[source]
+origin = 'models_dev_github'
+provider = 'empiriolabs'
+

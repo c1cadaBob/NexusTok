@@ -1,0 +1,23 @@
+id = 'claude-4.1-opus'
+name = 'Claude 4.1 Opus'
+description = 'Flagship Claude model for deep reasoning, coding, and long-horizon agents'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+release_date = '2025-08-06'
+last_updated = '2025-08-06'
+
+[limit]
+context = 200000
+output = 32000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+provider = 'qiniu-ai'
+

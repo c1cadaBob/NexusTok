@@ -1,0 +1,16 @@
+id = 'deepseek-v4-pro-lightning'
+name = 'DeepSeek V4 Pro Lightning'
+status = 'active'
+
+[limit]
+output = 131072
+
+[cost]
+input = 0.8
+output = 1.6
+cache_read = 0.02
+
+[source]
+origin = 'models_dev_github'
+provider = 'crof'
+

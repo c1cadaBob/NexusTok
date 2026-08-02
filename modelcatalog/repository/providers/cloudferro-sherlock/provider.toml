@@ -1,0 +1,6 @@
+id = 'cloudferro-sherlock'
+name = 'CloudFerro Sherlock'
+icon = 'CloudFerro Sherlock'
+doc = 'https://docs.sherlock.cloudferro.com/'
+status = 'active'
+

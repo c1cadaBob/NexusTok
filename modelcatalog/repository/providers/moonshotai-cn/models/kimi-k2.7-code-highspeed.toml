@@ -1,0 +1,7 @@
+id = 'kimi-k2.7-code-highspeed'
+status = 'active'
+
+[source]
+origin = 'models_dev_github'
+provider = 'moonshotai-cn'
+

@@ -1,0 +1,15 @@
+id = 'kimi-k2.6-fast'
+name = 'Kimi K2.6 Fast'
+status = 'active'
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 1.655
+output = 8.778
+
+[source]
+origin = 'models_dev_github'
+provider = 'greenpt'
+

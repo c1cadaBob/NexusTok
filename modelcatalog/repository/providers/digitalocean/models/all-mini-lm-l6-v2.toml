@@ -1,0 +1,26 @@
+id = 'all-mini-lm-l6-v2'
+name = 'All-MiniLM-L6-v2'
+description = 'Embedding model for semantic search, retrieval, clustering, and ranking pipelines'
+family = 'text-embedding'
+status = 'active'
+temperature = false
+open_weights = true
+release_date = '2021-08-30'
+last_updated = '2026-04-16'
+
+[limit]
+context = 256
+output = 384
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.009
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'digitalocean'
+

@@ -1,0 +1,17 @@
+id = 'qwen3.6-35b-a3b'
+status = 'active'
+
+[limit]
+output = 32768
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 0.342
+output = 2.052
+
+[source]
+origin = 'models_dev_github'
+provider = 'greenpt'
+

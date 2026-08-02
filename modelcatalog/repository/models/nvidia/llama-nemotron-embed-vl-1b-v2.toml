@@ -1,0 +1,22 @@
+id = 'llama-nemotron-embed-vl-1b-v2'
+name = 'Llama Nemotron Embed VL 1B v2'
+description = 'Embedding model for semantic search, retrieval, clustering, and ranking pipelines'
+family = 'nemotron'
+status = 'active'
+attachment = true
+temperature = false
+open_weights = true
+release_date = '2026-02-10'
+last_updated = '2026-02-10'
+
+[limit]
+context = 32768
+output = 2048
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

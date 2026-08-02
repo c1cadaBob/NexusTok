@@ -1,0 +1,26 @@
+id = 'medgemma-4b'
+name = 'MedGemma 4B'
+description = 'Multimodal model for analyzing text, images, documents, and rich media'
+status = 'active'
+attachment = true
+temperature = true
+open_weights = true
+release_date = '2026-04-26'
+last_updated = '2026-04-26'
+
+[limit]
+context = 8192
+output = 4096
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 3.0
+output = 5.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmtr'
+

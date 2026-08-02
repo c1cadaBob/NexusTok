@@ -1,0 +1,20 @@
+id = 'c4ai-aya-expanse-32b'
+name = 'Aya Expanse 32B'
+description = 'Open multilingual model optimized for generation across 23 languages'
+status = 'active'
+temperature = true
+open_weights = true
+release_date = '2024-10-24'
+last_updated = '2024-10-24'
+
+[limit]
+context = 128000
+output = 4000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

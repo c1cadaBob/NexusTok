@@ -1,0 +1,27 @@
+id = 'qwen3-embedding-4b'
+name = 'Qwen3-Embedding 4B'
+description = 'Embedding model for semantic search, retrieval, clustering, and ranking pipelines'
+family = 'qwen'
+status = 'active'
+temperature = true
+open_weights = true
+knowledge = '2025-06'
+release_date = '2025-06-06'
+last_updated = '2025-06-06'
+
+[limit]
+context = 32000
+output = 2560
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.0
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'privatemode-ai'
+

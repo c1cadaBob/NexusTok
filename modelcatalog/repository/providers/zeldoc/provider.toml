@@ -1,0 +1,6 @@
+id = 'zeldoc'
+name = 'Zeldoc'
+icon = 'Zeldoc'
+doc = 'https://docs.zeldoc.ai'
+status = 'active'
+

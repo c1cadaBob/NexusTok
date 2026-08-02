@@ -1,0 +1,21 @@
+id = 'gemini-3.1-flash-tts-preview'
+name = 'Gemini 3.1 Flash TTS Preview'
+description = 'Low-latency speech generation with steerable prompts and expressive audio tags'
+family = 'gemini-flash'
+status = 'active'
+temperature = true
+knowledge = '2025-01'
+release_date = '2026-04-15'
+last_updated = '2026-04-15'
+
+[limit]
+context = 8192
+output = 16384
+
+[modalities]
+input = ['text']
+output = ['audio']
+
+[source]
+origin = 'models_dev_github'
+

@@ -1,0 +1,6 @@
+id = 'llmgateway'
+name = 'LLM Gateway'
+icon = 'LLM Gateway'
+doc = 'https://llmgateway.io/docs'
+status = 'active'
+

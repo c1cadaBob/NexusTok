@@ -1,0 +1,15 @@
+id = 'anthropic--claude-3-haiku'
+name = 'anthropic--claude-3-haiku'
+description = 'Fast Claude model for responsive assistance, classification, and lightweight agents'
+status = 'active'
+
+[cost]
+input = 0.25
+output = 1.25
+cache_read = 0.03
+cache_write = 0.3
+
+[source]
+origin = 'models_dev_github'
+provider = 'sap-ai-core'
+

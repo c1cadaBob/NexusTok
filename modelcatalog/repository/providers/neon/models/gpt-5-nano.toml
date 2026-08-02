@@ -1,0 +1,16 @@
+id = 'gpt-5-nano'
+status = 'active'
+
+[modalities]
+input = ['text', 'image']
+output = ['text', 'image']
+
+[cost]
+input = 0.05
+output = 0.4
+cache_read = 0.005
+
+[source]
+origin = 'models_dev_github'
+provider = 'neon'
+

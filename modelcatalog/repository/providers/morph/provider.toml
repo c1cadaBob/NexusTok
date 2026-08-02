@@ -1,0 +1,6 @@
+id = 'morph'
+name = 'Morph'
+icon = 'Morph'
+doc = 'https://docs.morphllm.com/api-reference/introduction'
+status = 'active'
+

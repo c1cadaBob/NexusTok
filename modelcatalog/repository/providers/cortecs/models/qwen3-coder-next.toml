@@ -1,0 +1,29 @@
+id = 'qwen3-coder-next'
+name = 'Qwen3 Coder Next 80B'
+description = 'Qwen coding model for software agents, repository edits, and code reasoning'
+family = 'qwen'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+open_weights = true
+knowledge = '2025-04'
+release_date = '2026-02-04'
+last_updated = '2026-02-04'
+
+[limit]
+context = 256000
+output = 65536
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.158
+output = 0.84
+
+[source]
+origin = 'models_dev_github'
+provider = 'cortecs'
+

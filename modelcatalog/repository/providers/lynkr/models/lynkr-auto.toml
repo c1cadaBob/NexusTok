@@ -1,0 +1,26 @@
+id = 'lynkr-auto'
+name = 'Lynkr Auto (complexity routing)'
+description = 'Virtual model: Lynkr scores each request on complexity and routes it to the tier model the user configured (local Ollama/llama.cpp for simple requests, configured cloud providers for complex ones).'
+family = 'auto'
+status = 'active'
+temperature = true
+tool_call = true
+release_date = '2025-12-03'
+last_updated = '2026-07-11'
+
+[limit]
+context = 128000
+output = 8192
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.0
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'lynkr'
+

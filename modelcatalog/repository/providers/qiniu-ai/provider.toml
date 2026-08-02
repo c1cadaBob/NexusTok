@@ -1,0 +1,6 @@
+id = 'qiniu-ai'
+name = 'Qiniu'
+icon = 'Qiniu'
+doc = 'https://developer.qiniu.com/aitokenapi'
+status = 'active'
+

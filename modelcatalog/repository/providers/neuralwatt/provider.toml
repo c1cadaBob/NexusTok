@@ -1,0 +1,6 @@
+id = 'neuralwatt'
+name = 'Neuralwatt'
+icon = 'Neuralwatt'
+doc = 'https://portal.neuralwatt.com/docs'
+status = 'active'
+

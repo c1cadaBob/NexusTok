@@ -1,0 +1,24 @@
+id = 'gpt-oss-safeguard-120b'
+name = 'GPT OSS Safeguard 120B'
+description = 'Safety model for policy screening, moderation, and risk-aware routing workflows'
+family = 'gpt-oss'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+structured_output = true
+open_weights = true
+release_date = '2025-10-29'
+last_updated = '2025-10-29'
+
+[limit]
+context = 131072
+output = 32768
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

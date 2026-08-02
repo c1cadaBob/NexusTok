@@ -1,0 +1,29 @@
+id = 'claude-opus-4-1-20250805'
+name = 'claude-opus-4-1-20250805'
+description = 'Flagship Claude model for deep reasoning, coding, and long-horizon agents'
+family = 'claude-opus'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+knowledge = '2025-03-31'
+release_date = '2025-08-05'
+last_updated = '2025-08-05'
+
+[limit]
+context = 200000
+output = 32000
+
+[modalities]
+input = ['text', 'image', 'pdf']
+output = ['text']
+
+[cost]
+input = 15.0
+output = 75.0
+
+[source]
+origin = 'models_dev_github'
+provider = '302ai'
+

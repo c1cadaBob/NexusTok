@@ -1,0 +1,6 @@
+id = 'azure'
+name = 'Azure'
+icon = 'Azure'
+doc = 'https://learn.microsoft.com/en-us/azure/ai-services/openai/concepts/models'
+status = 'active'
+

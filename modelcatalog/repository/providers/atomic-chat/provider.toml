@@ -1,0 +1,6 @@
+id = 'atomic-chat'
+name = 'Atomic Chat'
+icon = 'Atomic Chat'
+doc = 'https://atomic.chat'
+status = 'active'
+

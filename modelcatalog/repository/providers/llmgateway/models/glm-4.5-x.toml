@@ -1,0 +1,29 @@
+id = 'glm-4.5-x'
+name = 'GLM-4.5 X'
+description = 'Flagship GLM model for hybrid reasoning, coding, and agentic engineering'
+family = 'glm'
+status = 'beta'
+reasoning = true
+temperature = true
+tool_call = true
+structured_output = true
+release_date = '2025-07-28'
+last_updated = '2025-07-28'
+
+[limit]
+context = 128000
+output = 16384
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 2.2
+output = 8.9
+cache_read = 0.45
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

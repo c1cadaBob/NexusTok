@@ -1,0 +1,6 @@
+id = 'lucidquery'
+name = 'LucidQuery'
+icon = 'LucidQuery'
+doc = 'https://lucidquery.com/docs'
+status = 'active'
+

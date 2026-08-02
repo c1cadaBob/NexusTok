@@ -1,0 +1,29 @@
+id = 'qwen3-235b-a22b-thinking-2507'
+name = 'Qwen3-235B-A22B-Thinking'
+description = 'Qwen reasoning model for deliberate problem solving, math, and coding'
+family = 'qwen'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+open_weights = true
+knowledge = '2025-04'
+release_date = '2025-07-01'
+last_updated = '2025-07-01'
+
+[limit]
+context = 256000
+output = 64000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.0
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'iflowcn'
+

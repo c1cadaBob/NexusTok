@@ -1,0 +1,6 @@
+id = 'inference'
+name = 'Inference'
+icon = 'Inference'
+doc = 'https://inference.net/models'
+status = 'active'
+

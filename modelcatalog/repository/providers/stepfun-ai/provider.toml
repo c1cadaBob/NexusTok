@@ -1,0 +1,6 @@
+id = 'stepfun-ai'
+name = 'StepFun (Global)'
+icon = 'StepFun (Global)'
+doc = 'https://platform.stepfun.ai/docs/en/overview/concept'
+status = 'active'
+

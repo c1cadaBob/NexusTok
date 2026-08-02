@@ -1,0 +1,6 @@
+id = 'xiaomi-token-plan-cn'
+name = 'Xiaomi Token Plan (China)'
+icon = 'Xiaomi Token Plan (China)'
+doc = 'https://platform.xiaomimimo.com/#/docs'
+status = 'active'
+

@@ -1,0 +1,30 @@
+id = 'gpt-5.2-pro'
+name = 'GPT-5.2 Pro'
+description = 'Higher-accuracy GPT-5.2 variant for tougher reasoning and review workflows'
+family = 'gpt-pro'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = false
+tool_call = true
+knowledge = '2025-08-31'
+release_date = '2025-12-11'
+last_updated = '2025-12-11'
+
+[limit]
+context = 400000
+input = 272000
+output = 128000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 21.0
+output = 168.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'openai'
+

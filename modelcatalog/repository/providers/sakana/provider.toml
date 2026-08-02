@@ -1,0 +1,6 @@
+id = 'sakana'
+name = 'Sakana AI'
+icon = 'Sakana AI'
+doc = 'https://console.sakana.ai/models'
+status = 'active'
+

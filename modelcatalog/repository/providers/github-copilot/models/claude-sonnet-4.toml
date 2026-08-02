@@ -1,0 +1,18 @@
+id = 'claude-sonnet-4'
+status = 'active'
+
+[limit]
+context = 216000
+input = 128000
+output = 16000
+
+[cost]
+input = 3.0
+output = 15.0
+cache_read = 0.3
+cache_write = 3.75
+
+[source]
+origin = 'models_dev_github'
+provider = 'github-copilot'
+

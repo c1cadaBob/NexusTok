@@ -1,0 +1,6 @@
+id = 'lilac'
+name = 'Lilac'
+icon = 'Lilac'
+doc = 'https://docs.getlilac.com/inference/models'
+status = 'active'
+

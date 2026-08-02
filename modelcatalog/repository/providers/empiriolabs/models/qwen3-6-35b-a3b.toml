@@ -1,0 +1,20 @@
+id = 'qwen3-6-35b-a3b'
+name = 'Qwen3.6 35B A3B'
+status = 'active'
+
+[limit]
+context = 131072
+output = 16384
+
+[modalities]
+input = ['text']
+
+[cost]
+input = 0.07
+output = 0.42
+cache_read = 0.035
+
+[source]
+origin = 'models_dev_github'
+provider = 'empiriolabs'
+

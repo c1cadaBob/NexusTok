@@ -1,0 +1,25 @@
+id = 'mistral-embed'
+name = 'Mistral Embed'
+description = 'Embedding model for semantic search, retrieval, clustering, and ranking pipelines'
+family = 'mistral-embed'
+status = 'active'
+temperature = false
+release_date = '2023-12-11'
+last_updated = '2023-12-11'
+
+[limit]
+context = 8000
+output = 3072
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.1
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'mistral'
+

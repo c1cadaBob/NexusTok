@@ -1,0 +1,6 @@
+id = 'novita-ai'
+name = 'NovitaAI'
+icon = 'NovitaAI'
+doc = 'https://novita.ai/docs/guides/introduction'
+status = 'active'
+

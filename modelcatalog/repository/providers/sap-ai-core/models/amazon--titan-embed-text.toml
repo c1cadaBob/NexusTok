@@ -1,0 +1,24 @@
+id = 'amazon--titan-embed-text'
+name = 'amazon--titan-embed-text'
+description = 'Embedding model for semantic search, retrieval, clustering, and ranking pipelines'
+status = 'active'
+temperature = false
+release_date = '2024-04-30'
+last_updated = '2024-04-30'
+
+[limit]
+context = 8192
+output = 1536
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.14
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'sap-ai-core'
+

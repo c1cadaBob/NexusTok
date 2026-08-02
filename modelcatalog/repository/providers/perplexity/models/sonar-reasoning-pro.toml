@@ -1,0 +1,28 @@
+id = 'sonar-reasoning-pro'
+name = 'Sonar Reasoning Pro'
+description = 'Web-grounded Sonar for multi-step research questions that need cited reasoning'
+family = 'sonar-reasoning'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+knowledge = '2025-09-01'
+release_date = '2024-01-01'
+last_updated = '2025-09-01'
+
+[limit]
+context = 128000
+output = 4096
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 2.0
+output = 8.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'perplexity'
+

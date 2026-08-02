@@ -1,0 +1,21 @@
+id = 'claude-sonnet-5'
+status = 'active'
+temperature = true
+structured_output = true
+
+[limit]
+output = 1000000
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 2.0
+output = 10.0
+cache_read = 0.2
+cache_write = 2.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

@@ -1,0 +1,7 @@
+id = 'snowflake-llama3.3-70b'
+status = 'active'
+
+[source]
+origin = 'models_dev_github'
+provider = 'snowflake-cortex'
+

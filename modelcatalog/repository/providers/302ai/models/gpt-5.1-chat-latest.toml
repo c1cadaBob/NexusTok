@@ -1,0 +1,30 @@
+id = 'gpt-5.1-chat-latest'
+name = 'gpt-5.1-chat-latest'
+description = 'Chat-tuned GPT model for conversational assistance, writing, and tool workflows'
+family = 'gpt-codex'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = false
+tool_call = true
+structured_output = true
+knowledge = '2024-09-30'
+release_date = '2025-11-14'
+last_updated = '2025-11-14'
+
+[limit]
+context = 128000
+output = 16384
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 1.25
+output = 10.0
+
+[source]
+origin = 'models_dev_github'
+provider = '302ai'
+

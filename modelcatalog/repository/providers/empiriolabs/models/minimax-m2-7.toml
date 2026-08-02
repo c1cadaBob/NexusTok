@@ -1,0 +1,18 @@
+id = 'minimax-m2-7'
+name = 'MiniMax M2.7'
+status = 'active'
+structured_output = true
+
+[limit]
+context = 200000
+output = 32768
+
+[cost]
+input = 0.15
+output = 0.6
+cache_read = 0.03
+
+[source]
+origin = 'models_dev_github'
+provider = 'empiriolabs'
+

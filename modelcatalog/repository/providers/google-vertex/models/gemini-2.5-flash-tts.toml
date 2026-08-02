@@ -1,0 +1,12 @@
+id = 'gemini-2.5-flash-tts'
+status = 'active'
+temperature = false
+
+[cost]
+input = 0.5
+output = 10.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'google-vertex'
+

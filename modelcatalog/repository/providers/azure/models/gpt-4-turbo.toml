@@ -1,0 +1,11 @@
+id = 'gpt-4-turbo'
+status = 'deprecated'
+
+[cost]
+input = 10.0
+output = 30.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'azure'
+

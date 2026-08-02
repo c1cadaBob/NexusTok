@@ -1,0 +1,6 @@
+id = 'venice'
+name = 'Venice AI'
+icon = 'Venice AI'
+doc = 'https://docs.venice.ai'
+status = 'active'
+

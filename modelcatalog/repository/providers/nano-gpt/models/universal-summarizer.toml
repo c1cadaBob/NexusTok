@@ -1,0 +1,24 @@
+id = 'universal-summarizer'
+name = 'Universal Summarizer'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+release_date = '2023-05-01'
+last_updated = '2024-01-01'
+
+[limit]
+context = 32768
+input = 32768
+output = 32768
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 30.0
+output = 30.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

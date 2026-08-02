@@ -1,0 +1,31 @@
+id = 'mimo-v2.5-free'
+name = 'MiMo V2.5 Free'
+description = 'MiMo omni model for text, image, video, audio, and agents'
+family = 'mimo-v2.5-free'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+open_weights = true
+knowledge = '2024-12'
+release_date = '2026-04-24'
+last_updated = '2026-04-24'
+
+[limit]
+context = 200000
+output = 32000
+
+[modalities]
+input = ['text', 'image', 'audio', 'video']
+output = ['text']
+
+[cost]
+input = 0.0
+output = 0.0
+cache_read = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'opencode'
+

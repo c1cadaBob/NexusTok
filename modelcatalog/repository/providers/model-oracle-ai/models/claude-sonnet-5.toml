@@ -1,0 +1,7 @@
+id = 'claude-sonnet-5'
+status = 'active'
+
+[source]
+origin = 'models_dev_github'
+provider = 'model-oracle-ai'
+

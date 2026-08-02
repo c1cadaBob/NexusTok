@@ -1,0 +1,29 @@
+id = 'claude-haiku-4-5-20251001-thinking'
+name = 'Claude Haiku 4.5 Thinking'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+attachment = true
+reasoning = true
+tool_call = true
+structured_output = true
+release_date = '2025-10-15'
+last_updated = '2025-10-15'
+
+[limit]
+context = 200000
+input = 200000
+output = 64000
+
+[modalities]
+input = ['text', 'image', 'pdf']
+output = ['text']
+
+[cost]
+input = 1.0
+output = 5.0
+cache_read = 0.1
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

@@ -1,0 +1,12 @@
+id = 'llama-3.1-nemotron-ultra-253b'
+status = 'active'
+structured_output = true
+
+[cost]
+input = 0.6
+output = 1.8
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

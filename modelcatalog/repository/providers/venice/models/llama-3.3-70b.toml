@@ -1,0 +1,26 @@
+id = 'llama-3.3-70b'
+name = 'Llama 3.3 70B'
+description = 'Open Llama instruction model for multilingual chat, reasoning, and coding'
+family = 'llama'
+status = 'active'
+tool_call = true
+open_weights = true
+release_date = '2025-04-06'
+last_updated = '2026-06-11'
+
+[limit]
+context = 128000
+output = 4096
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.7
+output = 2.8
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

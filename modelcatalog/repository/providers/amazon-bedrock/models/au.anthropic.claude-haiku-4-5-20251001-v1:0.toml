@@ -1,0 +1,15 @@
+id = 'au.anthropic.claude-haiku-4-5-20251001-v1:0'
+name = 'Claude Haiku 4.5 (AU)'
+status = 'active'
+structured_output = true
+
+[cost]
+input = 1.0
+output = 5.0
+cache_read = 0.1
+cache_write = 1.25
+
+[source]
+origin = 'models_dev_github'
+provider = 'amazon-bedrock'
+

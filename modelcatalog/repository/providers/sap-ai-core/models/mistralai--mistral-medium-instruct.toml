@@ -1,0 +1,16 @@
+id = 'mistralai--mistral-medium-instruct'
+name = 'mistralai--mistral-medium-instruct'
+status = 'active'
+
+[limit]
+context = 128000
+output = 128000
+
+[cost]
+input = 0.36
+output = 1.22
+
+[source]
+origin = 'models_dev_github'
+provider = 'sap-ai-core'
+

@@ -1,0 +1,6 @@
+id = 'tencent-coding-plan'
+name = 'Tencent Coding Plan (China)'
+icon = 'Tencent Coding Plan (China)'
+doc = 'https://cloud.tencent.com/document/product/1772/128947'
+status = 'active'
+

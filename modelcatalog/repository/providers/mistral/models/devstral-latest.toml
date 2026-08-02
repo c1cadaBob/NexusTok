@@ -1,0 +1,28 @@
+id = 'devstral-latest'
+name = 'Devstral 2'
+description = 'Legacy model retained for compatibility with older integrations'
+family = 'devstral'
+status = 'deprecated'
+temperature = true
+tool_call = true
+open_weights = true
+knowledge = '2025-12'
+release_date = '2025-12-09'
+last_updated = '2025-12-09'
+
+[limit]
+context = 262144
+output = 262144
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.4
+output = 2.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'mistral'
+

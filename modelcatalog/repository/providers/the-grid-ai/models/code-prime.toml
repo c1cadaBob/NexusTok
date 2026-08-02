@@ -1,0 +1,24 @@
+id = 'code-prime'
+name = 'Code Prime'
+description = 'Reliable models for everyday software tasks, code completion, review, and standard debugging. Any model that meets the contract spec can serve your request.'
+status = 'beta'
+reasoning = true
+temperature = true
+tool_call = true
+structured_output = true
+release_date = '2026-05-04'
+last_updated = '2026-07-15'
+
+[limit]
+context = 196608
+input = 120000
+output = 30000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+provider = 'the-grid-ai'
+

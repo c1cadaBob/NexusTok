@@ -1,0 +1,16 @@
+id = 'gpt-4.1-nano'
+name = 'gpt-4.1-nano'
+status = 'active'
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.08
+output = 0.26
+
+[source]
+origin = 'models_dev_github'
+provider = 'sap-ai-core'
+

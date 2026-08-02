@@ -1,0 +1,12 @@
+id = 'us.meta.llama4-scout-17b-instruct-v1:0'
+name = 'Llama 4 Scout 17B Instruct (US)'
+status = 'active'
+
+[cost]
+input = 0.17
+output = 0.66
+
+[source]
+origin = 'models_dev_github'
+provider = 'amazon-bedrock'
+

@@ -1,0 +1,14 @@
+id = 'kimi-k3'
+status = 'active'
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 3.0
+output = 15.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'cortecs'
+

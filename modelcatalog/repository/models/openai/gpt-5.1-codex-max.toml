@@ -1,0 +1,26 @@
+id = 'gpt-5.1-codex-max'
+name = 'GPT-5.1 Codex Max'
+description = 'Coding-optimized GPT model for repository edits, reviews, and agentic software work'
+family = 'gpt-codex'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = false
+tool_call = true
+structured_output = true
+knowledge = '2024-09-30'
+release_date = '2025-11-13'
+last_updated = '2025-11-13'
+
+[limit]
+context = 400000
+input = 272000
+output = 128000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

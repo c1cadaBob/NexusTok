@@ -1,0 +1,25 @@
+id = 'ernie-x1-turbo-32k'
+name = 'Ernie X1 Turbo 32k'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+attachment = true
+release_date = '2025-05-08'
+last_updated = '2025-05-08'
+
+[limit]
+context = 32000
+input = 32000
+output = 16384
+
+[modalities]
+input = ['text', 'image', 'pdf']
+output = ['text']
+
+[cost]
+input = 0.165
+output = 0.66
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

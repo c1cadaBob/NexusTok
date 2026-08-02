@@ -1,0 +1,24 @@
+id = 'claude-3-7-sonnet-20250219'
+name = 'Claude Sonnet 3.7'
+description = 'Balanced Claude model for coding, analysis, agent workflows, and cost control'
+family = 'claude-sonnet'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+knowledge = '2024-10-31'
+release_date = '2025-02-19'
+last_updated = '2025-02-19'
+
+[limit]
+context = 200000
+output = 64000
+
+[modalities]
+input = ['text', 'image', 'pdf']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

@@ -1,0 +1,14 @@
+id = 'gpt-5.4'
+name = 'gpt-5.4'
+description = 'Frontier GPT model for professional reasoning, coding, and multimodal work'
+status = 'active'
+
+[cost]
+input = 2.5
+output = 15.0
+cache_read = 0.25
+
+[source]
+origin = 'models_dev_github'
+provider = 'sap-ai-core'
+

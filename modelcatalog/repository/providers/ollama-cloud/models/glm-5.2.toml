@@ -1,0 +1,11 @@
+id = 'glm-5.2'
+status = 'active'
+open_weights = true
+
+[limit]
+context = 976000
+
+[source]
+origin = 'models_dev_github'
+provider = 'ollama-cloud'
+

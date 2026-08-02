@@ -1,0 +1,16 @@
+id = 'gemini-2.5-computer-use-preview-10-2025'
+name = 'Gemini 2.5 Computer Use Preview 10-2025'
+status = 'active'
+
+[limit]
+context = 131072
+output = 65536
+
+[cost]
+input = 1.25
+output = 10.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'google'
+

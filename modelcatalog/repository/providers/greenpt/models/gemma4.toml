@@ -1,0 +1,12 @@
+id = 'gemma4'
+name = 'gemma4'
+status = 'active'
+
+[cost]
+input = 0.57
+output = 1.71
+
+[source]
+origin = 'models_dev_github'
+provider = 'greenpt'
+

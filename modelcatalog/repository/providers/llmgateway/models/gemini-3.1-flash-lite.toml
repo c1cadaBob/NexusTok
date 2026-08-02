@@ -1,0 +1,13 @@
+id = 'gemini-3.1-flash-lite'
+status = 'active'
+
+[cost]
+input = 0.25
+output = 1.5
+cache_read = 0.025
+cache_write = 0.08333
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

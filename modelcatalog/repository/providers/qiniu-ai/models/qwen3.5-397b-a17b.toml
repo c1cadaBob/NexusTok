@@ -1,0 +1,23 @@
+id = 'qwen3.5-397b-a17b'
+name = 'Qwen3.5 397B A17B'
+description = 'Multimodal reasoning model for visual analysis, planning, and tool use'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+release_date = '2026-02-22'
+last_updated = '2026-02-22'
+
+[limit]
+context = 256000
+output = 64000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+provider = 'qiniu-ai'
+

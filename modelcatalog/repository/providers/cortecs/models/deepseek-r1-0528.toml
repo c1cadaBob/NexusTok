@@ -1,0 +1,29 @@
+id = 'deepseek-r1-0528'
+name = 'DeepSeek R1 0528'
+description = 'DeepSeek reasoning model for multi-step analysis, math, coding, and tools'
+family = 'deepseek-thinking'
+status = 'active'
+reasoning = true
+temperature = true
+tool_call = true
+open_weights = true
+knowledge = '2024-07'
+release_date = '2025-05-28'
+last_updated = '2025-05-28'
+
+[limit]
+context = 164000
+output = 164000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.585
+output = 2.307
+
+[source]
+origin = 'models_dev_github'
+provider = 'cortecs'
+

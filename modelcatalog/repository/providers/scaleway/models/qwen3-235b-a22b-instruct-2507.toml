@@ -1,0 +1,17 @@
+id = 'qwen3-235b-a22b-instruct-2507'
+name = 'Qwen3 235B A22B Instruct 2507'
+status = 'active'
+release_date = '2025-07-01'
+last_updated = '2026-03-17'
+
+[limit]
+context = 260000
+
+[cost]
+input = 0.75
+output = 2.25
+
+[source]
+origin = 'models_dev_github'
+provider = 'scaleway'
+

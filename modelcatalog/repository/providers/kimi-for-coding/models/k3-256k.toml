@@ -1,0 +1,21 @@
+id = 'k3-256k'
+name = 'Kimi K3-256K'
+description = '256K-context version of Kimi K3, reducing token consumption for shorter coding sessions'
+status = 'active'
+
+[limit]
+context = 262144
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 0.0
+output = 0.0
+cache_read = 0.0
+cache_write = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'kimi-for-coding'
+

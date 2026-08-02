@@ -1,0 +1,11 @@
+id = 'gpt-5.4-pro'
+status = 'active'
+
+[cost]
+input = 30.0
+output = 180.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

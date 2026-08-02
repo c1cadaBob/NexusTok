@@ -1,0 +1,12 @@
+id = 'mimo-v2.5'
+status = 'active'
+
+[cost]
+input = 0.0
+output = 0.0
+cache_read = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'xiaomi-token-plan-cn'
+

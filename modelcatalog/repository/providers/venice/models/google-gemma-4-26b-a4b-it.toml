@@ -1,0 +1,21 @@
+id = 'google-gemma-4-26b-a4b-it'
+name = 'Google Gemma 4 26B A4B Instruct'
+status = 'active'
+last_updated = '2026-06-11'
+
+[limit]
+context = 256000
+output = 8192
+
+[modalities]
+input = ['text', 'image', 'video']
+
+[cost]
+input = 0.13
+output = 0.4
+cache_read = 0.05
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

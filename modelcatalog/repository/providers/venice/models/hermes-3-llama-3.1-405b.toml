@@ -1,0 +1,25 @@
+id = 'hermes-3-llama-3.1-405b'
+name = 'Hermes 3 Llama 3.1 405b'
+description = 'Open Llama instruction model for multilingual chat, reasoning, and coding'
+family = 'hermes'
+status = 'active'
+open_weights = true
+release_date = '2025-09-25'
+last_updated = '2026-06-11'
+
+[limit]
+context = 128000
+output = 16384
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 1.1
+output = 3.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

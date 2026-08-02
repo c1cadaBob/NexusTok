@@ -1,0 +1,6 @@
+id = 'meganova'
+name = 'Meganova'
+icon = 'Meganova'
+doc = 'https://docs.meganova.ai'
+status = 'active'
+

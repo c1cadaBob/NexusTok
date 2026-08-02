@@ -1,0 +1,16 @@
+id = 'gpt-5-3-codex'
+status = 'active'
+
+[modalities]
+input = ['text', 'image', 'pdf']
+output = ['text', 'image']
+
+[cost]
+input = 1.75
+output = 14.0
+cache_read = 0.175
+
+[source]
+origin = 'models_dev_github'
+provider = 'neon'
+

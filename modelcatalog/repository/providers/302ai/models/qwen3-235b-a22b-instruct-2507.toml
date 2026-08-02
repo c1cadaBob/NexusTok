@@ -1,0 +1,26 @@
+id = 'qwen3-235b-a22b-instruct-2507'
+name = 'qwen3-235b-a22b-instruct-2507'
+description = 'Tool-capable chat model for instruction following and agentic application workflows'
+status = 'active'
+temperature = true
+tool_call = true
+knowledge = '2025-04'
+release_date = '2025-07-30'
+last_updated = '2025-07-30'
+
+[limit]
+context = 128000
+output = 65536
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.29
+output = 1.143
+
+[source]
+origin = 'models_dev_github'
+provider = '302ai'
+

@@ -1,0 +1,6 @@
+id = 'meta'
+name = 'Meta'
+icon = 'Meta'
+doc = 'https://dev.meta.ai/docs'
+status = 'active'
+

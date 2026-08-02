@@ -1,0 +1,6 @@
+id = 'tinfoil'
+name = 'Tinfoil'
+icon = 'Tinfoil'
+doc = 'https://docs.tinfoil.sh'
+status = 'active'
+

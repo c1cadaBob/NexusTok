@@ -1,0 +1,13 @@
+id = 'qwen3.7-max'
+status = 'active'
+
+[cost]
+input = 2.5
+output = 7.5
+cache_read = 0.5
+cache_write = 3.125
+
+[source]
+origin = 'models_dev_github'
+provider = 'alibaba-cn'
+

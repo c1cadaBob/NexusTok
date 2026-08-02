@@ -1,0 +1,30 @@
+id = 'qwen3.7-plus'
+name = 'Qwen3.7 Plus'
+description = 'Multimodal reasoning model for visual analysis, planning, and tool use'
+family = 'qwen3.7-plus'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+release_date = '2026-06-02'
+last_updated = '2026-06-02'
+
+[limit]
+context = 1000000
+output = 65536
+
+[modalities]
+input = ['text', 'image', 'video']
+output = ['text']
+
+[cost]
+input = 0.4
+output = 1.6
+cache_read = 0.04
+cache_write = 0.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'opencode-go'
+

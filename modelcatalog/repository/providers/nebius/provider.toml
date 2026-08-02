@@ -1,0 +1,6 @@
+id = 'nebius'
+name = 'Nebius Token Factory'
+icon = 'Nebius Token Factory'
+doc = 'https://docs.tokenfactory.nebius.com/'
+status = 'active'
+

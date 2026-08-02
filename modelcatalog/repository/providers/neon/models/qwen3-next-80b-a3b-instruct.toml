@@ -1,0 +1,11 @@
+id = 'qwen3-next-80b-a3b-instruct'
+status = 'active'
+
+[cost]
+input = 0.15
+output = 1.2
+
+[source]
+origin = 'models_dev_github'
+provider = 'neon'
+

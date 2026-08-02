@@ -1,0 +1,13 @@
+id = 'deepseek-v4-flash'
+name = 'DeepSeek V4 Flash (New)'
+status = 'active'
+
+[cost]
+input = 0.14
+output = 0.28
+cache_read = 0.0028
+
+[source]
+origin = 'models_dev_github'
+provider = 'opencode-go'
+

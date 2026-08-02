@@ -1,0 +1,6 @@
+id = 'cohere'
+name = 'Cohere'
+icon = 'Cohere.Color'
+doc = 'https://docs.cohere.com/docs/models'
+status = 'active'
+

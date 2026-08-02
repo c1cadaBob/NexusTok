@@ -1,0 +1,14 @@
+id = 'gpt-5-mini'
+name = 'gpt-5-mini'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+
+[cost]
+input = 0.25
+output = 2.0
+cache_read = 0.025
+
+[source]
+origin = 'models_dev_github'
+provider = 'sap-ai-core'
+

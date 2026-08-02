@@ -1,0 +1,6 @@
+id = 'freemodel'
+name = 'FreeModel'
+icon = 'FreeModel'
+doc = 'https://freemodel.dev'
+status = 'active'
+

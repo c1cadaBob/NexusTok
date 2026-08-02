@@ -1,0 +1,13 @@
+id = 'gemini-3.5-flash'
+status = 'active'
+
+[cost]
+input = 1.5
+output = 9.0
+cache_read = 0.15
+cache_write = 0.083333
+
+[source]
+origin = 'models_dev_github'
+provider = 'pioneer'
+

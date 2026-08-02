@@ -1,0 +1,17 @@
+id = 'qwen3.7-max'
+status = 'active'
+release_date = '2026-05-28'
+last_updated = '2026-07-22'
+
+[limit]
+output = 64000
+
+[cost]
+input = 2.5
+output = 7.5
+cache_read = 0.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'hyper'
+

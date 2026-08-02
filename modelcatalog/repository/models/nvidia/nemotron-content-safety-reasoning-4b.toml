@@ -1,0 +1,22 @@
+id = 'nemotron-content-safety-reasoning-4b'
+name = 'Nemotron Content Safety Reasoning 4B'
+description = 'Safety model for policy screening, moderation, and risk-aware routing workflows'
+family = 'nemotron'
+status = 'active'
+reasoning = true
+temperature = false
+open_weights = true
+release_date = '2026-01-22'
+last_updated = '2026-01-22'
+
+[limit]
+context = 128000
+output = 4096
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

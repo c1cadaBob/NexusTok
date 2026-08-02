@@ -1,0 +1,19 @@
+id = 'qwen3-coder-30b-a3b-instruct'
+name = 'Qwen3 Coder 30B A3B Instruct'
+status = 'active'
+reasoning = true
+release_date = '2025-07-31'
+last_updated = '2025-07-31'
+
+[limit]
+context = 262000
+output = 262000
+
+[cost]
+input = 0.053
+output = 0.222
+
+[source]
+origin = 'models_dev_github'
+provider = 'cortecs'
+

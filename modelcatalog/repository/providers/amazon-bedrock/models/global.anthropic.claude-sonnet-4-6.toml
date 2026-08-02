@@ -1,0 +1,15 @@
+id = 'global.anthropic.claude-sonnet-4-6'
+name = 'Claude Sonnet 4.6 (Global)'
+status = 'active'
+structured_output = true
+
+[cost]
+input = 3.0
+output = 15.0
+cache_read = 0.3
+cache_write = 3.75
+
+[source]
+origin = 'models_dev_github'
+provider = 'amazon-bedrock'
+

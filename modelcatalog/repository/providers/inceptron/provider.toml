@@ -1,0 +1,6 @@
+id = 'inceptron'
+name = 'Inceptron'
+icon = 'Inceptron'
+doc = 'https://docs.inceptron.io'
+status = 'active'
+

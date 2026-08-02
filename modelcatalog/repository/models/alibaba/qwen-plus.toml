@@ -1,15 +1,23 @@
 id = 'qwen-plus'
 name = 'Qwen Plus'
+description = 'Qwen instruction model for multilingual chat, reasoning, and tool use'
+family = 'qwen'
 status = 'active'
+reasoning = true
+temperature = true
 tool_call = true
-structured_output = true
+knowledge = '2024-04'
+release_date = '2024-01-25'
+last_updated = '2025-09-11'
 
 [limit]
-context = 131072
-input = 129024
-output = 8192
+context = 1000000
+output = 32768
 
 [modalities]
 input = ['text']
 output = ['text']
+
+[source]
+origin = 'models_dev_github'
 

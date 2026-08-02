@@ -1,0 +1,19 @@
+id = 'kimi-k2.5'
+family = 'kimi-k2'
+status = 'active'
+attachment = true
+temperature = true
+
+[limit]
+output = 98304
+
+[cost]
+input = 0.0
+output = 0.0
+cache_read = 0.0
+cache_write = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'alibaba-token-plan'
+

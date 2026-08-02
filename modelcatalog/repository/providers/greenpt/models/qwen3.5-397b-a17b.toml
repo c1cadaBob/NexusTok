@@ -1,0 +1,17 @@
+id = 'qwen3.5-397b-a17b'
+status = 'active'
+
+[limit]
+output = 16384
+
+[modalities]
+input = ['text']
+
+[cost]
+input = 0.798
+output = 4.959
+
+[source]
+origin = 'models_dev_github'
+provider = 'greenpt'
+

@@ -1,0 +1,11 @@
+id = 'kimi-k2.6'
+status = 'active'
+
+[cost]
+input = 1.2675
+output = 5.3368
+
+[source]
+origin = 'models_dev_github'
+provider = 'unorouter'
+

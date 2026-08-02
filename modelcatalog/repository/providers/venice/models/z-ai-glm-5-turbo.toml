@@ -1,0 +1,19 @@
+id = 'z-ai-glm-5-turbo'
+name = 'GLM 5 Turbo'
+status = 'active'
+open_weights = true
+release_date = '2026-03-15'
+last_updated = '2026-06-11'
+
+[limit]
+output = 32768
+
+[cost]
+input = 1.2
+output = 4.0
+cache_read = 0.24
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

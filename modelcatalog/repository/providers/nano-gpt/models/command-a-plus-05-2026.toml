@@ -1,0 +1,27 @@
+id = 'command-a-plus-05-2026'
+name = 'Cohere Command A+ (05/2026)'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+attachment = true
+reasoning = true
+structured_output = true
+release_date = '2026-05-22'
+last_updated = '2026-05-22'
+
+[limit]
+context = 128000
+input = 128000
+output = 64000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 2.5
+output = 10.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

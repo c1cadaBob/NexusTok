@@ -1,0 +1,28 @@
+id = 'gpt-4.1'
+name = 'OpenAI GPT-4.1'
+description = 'GPT model for general reasoning, writing, coding, and tool-assisted tasks'
+family = 'gpt'
+status = 'active'
+temperature = true
+tool_call = true
+knowledge = '2025-04'
+release_date = '2025-04-14'
+last_updated = '2025-04-14'
+
+[limit]
+context = 1047576
+output = 32768
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 2.0
+output = 8.0
+cache_read = 0.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'helicone'
+

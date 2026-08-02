@@ -1,0 +1,23 @@
+id = 'claude-4.5-sonnet'
+name = 'Claude 4.5 Sonnet'
+description = 'Balanced Claude model for coding, analysis, agent workflows, and cost control'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+release_date = '2025-09-30'
+last_updated = '2025-09-30'
+
+[limit]
+context = 200000
+output = 64000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+provider = 'qiniu-ai'
+

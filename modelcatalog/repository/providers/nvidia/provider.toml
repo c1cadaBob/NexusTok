@@ -1,0 +1,6 @@
+id = 'nvidia'
+name = 'Nvidia'
+icon = 'Nvidia'
+doc = 'https://docs.api.nvidia.com/nim/'
+status = 'active'
+

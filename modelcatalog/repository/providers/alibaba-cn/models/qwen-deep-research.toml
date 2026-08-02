@@ -1,0 +1,27 @@
+id = 'qwen-deep-research'
+name = 'Qwen Deep Research'
+description = 'Qwen instruction model for multilingual chat, reasoning, and tool use'
+family = 'qwen'
+status = 'active'
+temperature = true
+tool_call = true
+knowledge = '2024-04'
+release_date = '2024-01'
+last_updated = '2024-01'
+
+[limit]
+context = 1000000
+output = 32768
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 7.742
+output = 23.367
+
+[source]
+origin = 'models_dev_github'
+provider = 'alibaba-cn'
+

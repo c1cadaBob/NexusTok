@@ -1,0 +1,31 @@
+id = 'mimo-v2.5-pro'
+name = 'MiMo V2.5 Pro'
+description = 'MiMo pro model for strong multimodal reasoning and agent execution'
+family = 'mimo-v2.5-pro'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+open_weights = true
+knowledge = '2024-12'
+release_date = '2026-04-22'
+last_updated = '2026-04-22'
+
+[limit]
+context = 1048576
+output = 128000
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.435
+output = 0.87
+cache_read = 0.003625
+
+[source]
+origin = 'models_dev_github'
+provider = 'opencode-go'
+

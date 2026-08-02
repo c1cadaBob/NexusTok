@@ -1,0 +1,27 @@
+id = 'glm-4-32b-0414-128k'
+name = 'GLM-4 32B (0414-128k)'
+description = 'Flagship GLM model for hybrid reasoning, coding, and agentic engineering'
+family = 'glm'
+status = 'active'
+temperature = true
+tool_call = true
+structured_output = true
+release_date = '2025-04-14'
+last_updated = '2025-04-14'
+
+[limit]
+context = 128000
+output = 16384
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.1
+output = 0.1
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

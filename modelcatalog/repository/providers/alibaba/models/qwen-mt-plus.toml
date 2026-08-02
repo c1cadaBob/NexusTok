@@ -1,0 +1,26 @@
+id = 'qwen-mt-plus'
+name = 'Qwen-MT Plus'
+description = 'Translation model for multilingual conversion, localization, and cross-language workflows'
+family = 'qwen'
+status = 'active'
+temperature = true
+knowledge = '2024-04'
+release_date = '2025-01'
+last_updated = '2025-01'
+
+[limit]
+context = 16384
+output = 8192
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 2.46
+output = 7.37
+
+[source]
+origin = 'models_dev_github'
+provider = 'alibaba'
+

@@ -1,0 +1,17 @@
+id = 'gemma-4-31b'
+name = 'Gemma 4 31B'
+status = 'active'
+
+[limit]
+context = 262128
+output = 16384
+
+[cost]
+input = 0.144
+output = 0.42
+cache_read = 0.036
+
+[source]
+origin = 'models_dev_github'
+provider = 'neuralwatt'
+

@@ -1,0 +1,6 @@
+id = 'model-oracle-ai'
+name = 'Model Oracle AI'
+icon = 'Model Oracle AI'
+doc = 'https://modeloracle.com/setup/'
+status = 'active'
+

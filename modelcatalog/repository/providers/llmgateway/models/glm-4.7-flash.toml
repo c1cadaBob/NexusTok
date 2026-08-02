@@ -1,0 +1,13 @@
+id = 'glm-4.7-flash'
+status = 'active'
+
+[cost]
+input = 0.06
+output = 0.4
+cache_read = 0.01
+cache_write = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

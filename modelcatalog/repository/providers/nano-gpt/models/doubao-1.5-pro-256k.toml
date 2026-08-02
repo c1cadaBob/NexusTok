@@ -1,0 +1,24 @@
+id = 'doubao-1.5-pro-256k'
+name = 'Doubao 1.5 Pro 256k'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+release_date = '2025-03-12'
+last_updated = '2025-03-12'
+
+[limit]
+context = 256000
+input = 256000
+output = 16384
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.799
+output = 1.445
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

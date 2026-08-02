@@ -1,0 +1,25 @@
+id = 'wan2-2-t2v-a14b'
+name = 'Wan2.2-T2V-A14B'
+description = 'Video model for prompt-guided generation, editing, and motion workflows'
+status = 'active'
+temperature = false
+open_weights = true
+release_date = '2025-07-28'
+last_updated = '2026-04-30'
+
+[limit]
+context = 100
+output = 1
+
+[modalities]
+input = ['text']
+output = ['video']
+
+[cost]
+input = 0.6
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'digitalocean'
+

@@ -1,0 +1,15 @@
+id = 'deepseek-v4-pro'
+status = 'active'
+
+[limit]
+output = 131072
+
+[cost]
+input = 0.35
+output = 0.8
+cache_read = 0.003
+
+[source]
+origin = 'models_dev_github'
+provider = 'crof'
+

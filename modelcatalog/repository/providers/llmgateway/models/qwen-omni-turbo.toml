@@ -1,0 +1,11 @@
+id = 'qwen-omni-turbo'
+status = 'active'
+
+[cost]
+input = 0.2
+output = 0.8
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

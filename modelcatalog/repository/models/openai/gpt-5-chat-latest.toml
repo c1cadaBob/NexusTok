@@ -1,0 +1,25 @@
+id = 'gpt-5-chat-latest'
+name = 'GPT-5 Chat (latest)'
+description = 'Chat-tuned GPT model for conversational assistance, writing, and tool workflows'
+family = 'gpt-codex'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+structured_output = true
+knowledge = '2024-09-30'
+release_date = '2025-08-07'
+last_updated = '2025-08-07'
+
+[limit]
+context = 400000
+input = 272000
+output = 128000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

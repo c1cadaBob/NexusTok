@@ -1,0 +1,32 @@
+id = 'au.anthropic.claude-opus-4-6-v1'
+name = 'AU Anthropic Claude Opus 4.6'
+description = 'Flagship Claude model for deep reasoning, coding, and long-horizon agents'
+family = 'claude-opus'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+structured_output = true
+knowledge = '2025-05'
+release_date = '2026-02-05'
+last_updated = '2026-02-05'
+
+[limit]
+context = 1000000
+output = 128000
+
+[modalities]
+input = ['text', 'image', 'pdf']
+output = ['text']
+
+[cost]
+input = 16.5
+output = 82.5
+cache_read = 1.65
+cache_write = 20.625
+
+[source]
+origin = 'models_dev_github'
+provider = 'amazon-bedrock'
+

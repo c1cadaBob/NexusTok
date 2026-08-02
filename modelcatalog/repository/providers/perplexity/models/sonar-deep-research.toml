@@ -1,0 +1,26 @@
+id = 'sonar-deep-research'
+name = 'Perplexity Sonar Deep Research'
+description = 'Sonar search model for current answers, retrieval, and citation-backed chat'
+status = 'active'
+reasoning = true
+temperature = false
+knowledge = '2025-01'
+release_date = '2025-02-01'
+last_updated = '2025-09-01'
+
+[limit]
+context = 128000
+output = 32768
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 2.0
+output = 8.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'perplexity'
+

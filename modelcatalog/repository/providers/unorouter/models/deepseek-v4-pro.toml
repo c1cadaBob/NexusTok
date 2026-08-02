@@ -1,0 +1,11 @@
+id = 'deepseek-v4-pro'
+status = 'active'
+
+[cost]
+input = 0.8999
+output = 1.7999
+
+[source]
+origin = 'models_dev_github'
+provider = 'unorouter'
+

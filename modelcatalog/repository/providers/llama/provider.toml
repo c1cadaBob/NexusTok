@@ -1,0 +1,6 @@
+id = 'llama'
+name = 'Llama'
+icon = 'Llama'
+doc = 'https://llama.developer.meta.com/docs/models'
+status = 'active'
+

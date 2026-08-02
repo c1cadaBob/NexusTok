@@ -1,0 +1,31 @@
+id = 'mimo-v2-omni-free'
+name = 'MiMo V2 Omni Free'
+description = 'Legacy model retained for compatibility with older integrations'
+family = 'mimo-omni-free'
+status = 'deprecated'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+open_weights = true
+knowledge = '2024-12'
+release_date = '2026-03-18'
+last_updated = '2026-03-18'
+
+[limit]
+context = 262144
+output = 64000
+
+[modalities]
+input = ['text', 'image', 'audio', 'pdf']
+output = ['text']
+
+[cost]
+input = 0.0
+output = 0.0
+cache_read = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'opencode'
+

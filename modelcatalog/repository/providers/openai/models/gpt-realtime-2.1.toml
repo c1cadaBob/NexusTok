@@ -1,0 +1,14 @@
+id = 'gpt-realtime-2.1'
+status = 'active'
+
+[cost]
+input = 4.0
+output = 24.0
+cache_read = 0.4
+input_audio = 32.0
+output_audio = 64.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'openai'
+

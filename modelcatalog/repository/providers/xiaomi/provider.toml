@@ -1,0 +1,6 @@
+id = 'xiaomi'
+name = 'Xiaomi'
+icon = 'Xiaomi'
+doc = 'https://platform.xiaomimimo.com/#/docs'
+status = 'active'
+

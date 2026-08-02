@@ -1,0 +1,14 @@
+id = 'gpt-4.1-mini'
+status = 'active'
+reasoning = true
+
+[cost]
+input = 0.4
+output = 1.6
+cache_read = 0.2
+cache_write = 0.4
+
+[source]
+origin = 'models_dev_github'
+provider = 'pioneer'
+

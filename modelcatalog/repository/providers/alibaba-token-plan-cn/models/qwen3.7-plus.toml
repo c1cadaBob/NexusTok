@@ -1,0 +1,17 @@
+id = 'qwen3.7-plus'
+status = 'active'
+structured_output = true
+
+[limit]
+output = 65536
+
+[cost]
+input = 0.0
+output = 0.0
+cache_read = 0.0
+cache_write = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'alibaba-token-plan-cn'
+

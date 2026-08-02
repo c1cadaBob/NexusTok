@@ -1,0 +1,27 @@
+id = 'qwen3-next-80b'
+name = 'Qwen 3 Next 80b'
+description = 'Qwen instruction model for multilingual chat, reasoning, and tool use'
+family = 'qwen'
+status = 'active'
+tool_call = true
+structured_output = true
+open_weights = true
+release_date = '2025-04-29'
+last_updated = '2026-06-11'
+
+[limit]
+context = 256000
+output = 16384
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.35
+output = 1.9
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

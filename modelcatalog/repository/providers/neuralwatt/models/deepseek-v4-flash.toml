@@ -1,0 +1,17 @@
+id = 'deepseek-v4-flash'
+name = 'DeepSeek V4 Flash'
+status = 'active'
+
+[limit]
+context = 1048560
+output = 65536
+
+[cost]
+input = 0.104
+output = 0.207
+cache_read = 0.026
+
+[source]
+origin = 'models_dev_github'
+provider = 'neuralwatt'
+

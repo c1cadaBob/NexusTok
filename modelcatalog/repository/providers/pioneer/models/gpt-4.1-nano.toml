@@ -1,0 +1,14 @@
+id = 'gpt-4.1-nano'
+status = 'active'
+reasoning = true
+
+[cost]
+input = 0.1
+output = 0.4
+cache_read = 0.05
+cache_write = 0.1
+
+[source]
+origin = 'models_dev_github'
+provider = 'pioneer'
+

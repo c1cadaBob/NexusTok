@@ -1,0 +1,19 @@
+id = 'claude-opus-4-8-fast'
+name = 'Claude Opus 4.8 Fast'
+status = 'active'
+structured_output = true
+last_updated = '2026-06-11'
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 12.0
+output = 60.0
+cache_read = 1.2
+cache_write = 15.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

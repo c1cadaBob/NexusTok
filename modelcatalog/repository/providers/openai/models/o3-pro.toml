@@ -1,0 +1,30 @@
+id = 'o3-pro'
+name = 'o3-pro'
+description = 'High-effort o3 tier for difficult technical reasoning and careful answers'
+family = 'o-pro'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = false
+tool_call = true
+structured_output = true
+knowledge = '2024-05'
+release_date = '2025-06-10'
+last_updated = '2025-06-10'
+
+[limit]
+context = 200000
+output = 100000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 20.0
+output = 80.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'openai'
+

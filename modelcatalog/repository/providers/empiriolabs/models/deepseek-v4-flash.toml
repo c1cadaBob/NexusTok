@@ -1,0 +1,16 @@
+id = 'deepseek-v4-flash'
+status = 'active'
+last_updated = '2026-06-12'
+
+[limit]
+output = 393216
+
+[cost]
+input = 0.14
+output = 0.28
+cache_read = 0.14
+
+[source]
+origin = 'models_dev_github'
+provider = 'empiriolabs'
+

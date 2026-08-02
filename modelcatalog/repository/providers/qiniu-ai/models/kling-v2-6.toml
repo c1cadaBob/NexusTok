@@ -1,0 +1,21 @@
+id = 'kling-v2-6'
+name = 'Kling-V2 6'
+description = 'Video model for prompt-guided generation, editing, and motion workflows'
+status = 'active'
+attachment = true
+temperature = true
+release_date = '2026-01-13'
+last_updated = '2026-01-13'
+
+[limit]
+context = 99999999
+output = 99999999
+
+[modalities]
+input = ['text', 'image', 'video']
+output = ['video']
+
+[source]
+origin = 'models_dev_github'
+provider = 'qiniu-ai'
+

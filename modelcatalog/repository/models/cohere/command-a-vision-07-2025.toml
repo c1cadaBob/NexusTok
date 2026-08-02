@@ -1,0 +1,23 @@
+id = 'command-a-vision-07-2025'
+name = 'Command A Vision'
+description = 'Cohere vision model for multilingual document analysis, OCR, and image understanding'
+family = 'command-a'
+status = 'active'
+attachment = true
+temperature = true
+open_weights = true
+knowledge = '2024-06-01'
+release_date = '2025-07-31'
+last_updated = '2025-07-31'
+
+[limit]
+context = 128000
+output = 8000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+

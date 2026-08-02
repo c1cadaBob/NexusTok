@@ -1,0 +1,31 @@
+id = 'gpt-5-nano'
+name = 'GPT-5 Nano'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+family = 'gpt-nano'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = false
+tool_call = true
+knowledge = '2024-05-30'
+release_date = '2025-08-07'
+last_updated = '2025-08-07'
+
+[limit]
+context = 400000
+input = 272000
+output = 128000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.05
+output = 0.4
+cache_read = 0.01
+
+[source]
+origin = 'models_dev_github'
+provider = 'azure'
+

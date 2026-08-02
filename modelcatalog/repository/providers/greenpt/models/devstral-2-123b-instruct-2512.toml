@@ -1,0 +1,15 @@
+id = 'devstral-2-123b-instruct-2512'
+status = 'active'
+
+[limit]
+context = 200000
+output = 16384
+
+[cost]
+input = 0.57
+output = 2.736
+
+[source]
+origin = 'models_dev_github'
+provider = 'greenpt'
+

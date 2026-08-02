@@ -1,0 +1,29 @@
+id = 'nvidia-nemotron-3-super-120b'
+name = 'Nemotron-3-Super-120B'
+family = 'nemotron'
+status = 'beta'
+reasoning = true
+temperature = true
+tool_call = true
+structured_output = true
+open_weights = true
+knowledge = '2026-02'
+release_date = '2026-03-11'
+last_updated = '2026-04-16'
+
+[limit]
+context = 256000
+output = 32768
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.3
+output = 0.65
+
+[source]
+origin = 'models_dev_github'
+provider = 'digitalocean'
+

@@ -1,0 +1,18 @@
+id = 'muse-spark-1-1'
+status = 'active'
+
+[limit]
+output = 131072
+
+[modalities]
+input = ['text', 'image', 'video']
+
+[cost]
+input = 1.25
+output = 4.25
+cache_read = 1.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'empiriolabs'
+

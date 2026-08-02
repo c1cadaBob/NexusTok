@@ -1,0 +1,15 @@
+id = 'xiaomi-mimo-v2.5'
+name = 'Xiaomi MiMo-V2.5'
+family = 'mimo-v2.5'
+status = 'active'
+last_updated = '2026-05-13'
+
+[cost]
+input = 0.44
+output = 2.2
+cache_read = 0.088
+
+[source]
+origin = 'models_dev_github'
+provider = 'aihubmix'
+

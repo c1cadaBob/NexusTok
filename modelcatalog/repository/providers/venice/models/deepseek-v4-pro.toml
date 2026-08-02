@@ -1,0 +1,17 @@
+id = 'deepseek-v4-pro'
+family = 'deepseek'
+status = 'active'
+last_updated = '2026-06-11'
+
+[limit]
+output = 32768
+
+[cost]
+input = 1.65
+output = 3.301
+cache_read = 0.33
+
+[source]
+origin = 'models_dev_github'
+provider = 'venice'
+

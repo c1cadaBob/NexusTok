@@ -1,0 +1,6 @@
+id = 'huggingface'
+name = 'Hugging Face'
+icon = 'Hugging Face'
+doc = 'https://huggingface.co/docs/inference-providers'
+status = 'active'
+

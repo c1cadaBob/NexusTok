@@ -1,0 +1,26 @@
+id = 'glm-z1-airx'
+name = 'GLM Z1 AirX'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+tool_call = true
+structured_output = true
+release_date = '2025-04-15'
+last_updated = '2025-04-15'
+
+[limit]
+context = 32000
+input = 32000
+output = 16384
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.7
+output = 0.7
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

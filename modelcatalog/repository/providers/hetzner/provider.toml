@@ -1,0 +1,6 @@
+id = 'hetzner'
+name = 'Hetzner'
+icon = 'Hetzner'
+doc = 'https://experiments.hetzner.com/docs/inference'
+status = 'active'
+

@@ -1,0 +1,6 @@
+id = 'groq'
+name = 'Groq'
+icon = 'Groq'
+doc = 'https://console.groq.com/docs/models'
+status = 'active'
+

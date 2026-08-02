@@ -1,0 +1,21 @@
+id = 'happyhorse-1.1-r2v'
+name = 'HappyHorse 1.1 Reference-to-Video'
+description = 'Video model for reference-guided video generation'
+status = 'active'
+attachment = true
+temperature = true
+release_date = '2026-07-17'
+last_updated = '2026-07-17'
+
+[modalities]
+input = ['image', 'text']
+output = ['video']
+
+[cost]
+input = 0.0
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'alibaba-token-plan-cn'
+

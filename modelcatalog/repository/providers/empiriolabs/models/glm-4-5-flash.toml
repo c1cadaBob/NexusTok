@@ -1,0 +1,16 @@
+id = 'glm-4-5-flash'
+name = 'GLM 4.5 Flash'
+status = 'active'
+structured_output = true
+
+[limit]
+context = 200000
+
+[cost]
+input = 0.0
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'empiriolabs'
+

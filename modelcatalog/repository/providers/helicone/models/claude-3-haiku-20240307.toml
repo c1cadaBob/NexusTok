@@ -1,0 +1,29 @@
+id = 'claude-3-haiku-20240307'
+name = 'Anthropic: Claude 3 Haiku'
+description = 'Fast Claude model for responsive assistance, classification, and lightweight agents'
+family = 'claude-haiku'
+status = 'active'
+temperature = true
+tool_call = true
+knowledge = '2024-03'
+release_date = '2024-03-07'
+last_updated = '2024-03-07'
+
+[limit]
+context = 200000
+output = 4096
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.25
+output = 1.25
+cache_read = 0.03
+cache_write = 0.3
+
+[source]
+origin = 'models_dev_github'
+provider = 'helicone'
+

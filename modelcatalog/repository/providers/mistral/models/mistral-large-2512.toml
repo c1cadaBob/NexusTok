@@ -1,0 +1,29 @@
+id = 'mistral-large-2512'
+name = 'Mistral Large 3'
+description = "Mistral's largest general model for enterprise agents, coding, and multilingual reasoning"
+family = 'mistral-large'
+status = 'active'
+attachment = true
+temperature = true
+tool_call = true
+open_weights = true
+knowledge = '2024-11'
+release_date = '2024-11-01'
+last_updated = '2025-12-02'
+
+[limit]
+context = 262144
+output = 262144
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 0.5
+output = 1.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'mistral'
+

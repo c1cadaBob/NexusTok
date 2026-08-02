@@ -1,0 +1,6 @@
+id = 'unorouter'
+name = 'UnoRouter'
+icon = 'UnoRouter'
+doc = 'https://unorouter.com/models'
+status = 'active'
+

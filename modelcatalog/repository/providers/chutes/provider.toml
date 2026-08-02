@@ -1,0 +1,6 @@
+id = 'chutes'
+name = 'Chutes'
+icon = 'Chutes'
+doc = 'https://llm.chutes.ai/v1/models'
+status = 'active'
+

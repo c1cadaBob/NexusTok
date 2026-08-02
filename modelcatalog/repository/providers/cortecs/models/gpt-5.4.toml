@@ -1,0 +1,16 @@
+id = 'gpt-5.4'
+status = 'active'
+
+[limit]
+context = 1050000
+output = 128000
+
+[cost]
+input = 3.0
+output = 16.13
+cache_read = 0.25
+
+[source]
+origin = 'models_dev_github'
+provider = 'cortecs'
+

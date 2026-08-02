@@ -1,0 +1,15 @@
+id = 'deepseek-v4-pro'
+status = 'active'
+
+[limit]
+context = 1048576
+
+[cost]
+input = 1.553
+output = 3.106
+cache_read = 0.003625
+
+[source]
+origin = 'models_dev_github'
+provider = 'cortecs'
+

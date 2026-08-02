@@ -1,0 +1,24 @@
+id = 'kimi-k2.5'
+name = 'kimi-k2.5'
+description = 'Kimi multimodal agent model for visual understanding, coding, and planning'
+family = 'kimi-k2'
+status = 'active'
+attachment = true
+reasoning = true
+tool_call = true
+open_weights = true
+release_date = '2026-01-27'
+last_updated = '2026-01-27'
+
+[limit]
+context = 262144
+output = 262144
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[source]
+origin = 'models_dev_github'
+provider = 'ollama-cloud'
+

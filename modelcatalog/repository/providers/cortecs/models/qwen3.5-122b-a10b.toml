@@ -1,0 +1,21 @@
+id = 'qwen3.5-122b-a10b'
+name = 'Qwen3.5 122B A10B'
+status = 'active'
+knowledge = '2026-01'
+release_date = '2026-02-24'
+last_updated = '2026-02-24'
+
+[limit]
+output = 262144
+
+[modalities]
+input = ['text']
+
+[cost]
+input = 0.444
+output = 3.106
+
+[source]
+origin = 'models_dev_github'
+provider = 'cortecs'
+

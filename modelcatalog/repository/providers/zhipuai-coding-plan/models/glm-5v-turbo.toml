@@ -1,0 +1,30 @@
+id = 'glm-5v-turbo'
+name = 'GLM-5V-Turbo'
+description = 'GLM vision model for visual reasoning, documents, and multimodal agents'
+family = 'glm'
+status = 'active'
+attachment = true
+reasoning = true
+temperature = true
+tool_call = true
+release_date = '2026-04-01'
+last_updated = '2026-04-01'
+
+[limit]
+context = 200000
+output = 131072
+
+[modalities]
+input = ['text', 'image', 'video', 'pdf']
+output = ['text']
+
+[cost]
+input = 0.0
+output = 0.0
+cache_read = 0.0
+cache_write = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'zhipuai-coding-plan'
+

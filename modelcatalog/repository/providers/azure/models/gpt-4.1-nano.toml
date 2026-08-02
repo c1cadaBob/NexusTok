@@ -1,0 +1,12 @@
+id = 'gpt-4.1-nano'
+status = 'deprecated'
+
+[cost]
+input = 0.1
+output = 0.4
+cache_read = 0.025
+
+[source]
+origin = 'models_dev_github'
+provider = 'azure'
+

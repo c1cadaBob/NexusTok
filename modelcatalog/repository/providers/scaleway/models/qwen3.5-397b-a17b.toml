@@ -1,0 +1,22 @@
+id = 'qwen3.5-397b-a17b'
+name = 'Qwen3.5 397B A17B'
+status = 'active'
+knowledge = '2025-04'
+release_date = '2026-03-17'
+last_updated = '2026-03-17'
+
+[limit]
+context = 256000
+output = 16384
+
+[modalities]
+input = ['text', 'image', 'video']
+
+[cost]
+input = 0.6
+output = 3.6
+
+[source]
+origin = 'models_dev_github'
+provider = 'scaleway'
+

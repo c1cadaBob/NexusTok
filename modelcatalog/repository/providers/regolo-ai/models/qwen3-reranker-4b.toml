@@ -1,0 +1,26 @@
+id = 'qwen3-reranker-4b'
+name = 'Qwen3-Reranker-4B'
+description = 'Reranking model for improving retrieval quality in search and recommendation systems'
+family = 'qwen'
+status = 'active'
+temperature = false
+open_weights = true
+release_date = '2026-02-01'
+last_updated = '2026-02-01'
+
+[limit]
+context = 32768
+output = 8192
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.12
+output = 0.12
+
+[source]
+origin = 'models_dev_github'
+provider = 'regolo-ai'
+

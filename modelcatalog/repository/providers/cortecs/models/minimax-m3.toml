@@ -1,0 +1,12 @@
+id = 'minimax-m3'
+status = 'active'
+
+[cost]
+input = 0.355
+output = 1.775
+cache_read = 0.089
+
+[source]
+origin = 'models_dev_github'
+provider = 'cortecs'
+

@@ -1,0 +1,20 @@
+id = 'veo-3.1-lite-generate-preview'
+name = 'Veo 3.1 Lite Preview'
+description = 'Video model for prompt-guided generation, editing, and motion workflows'
+family = 'veo'
+status = 'active'
+attachment = true
+temperature = false
+release_date = '2026-03-31'
+last_updated = '2026-03-31'
+
+[limit]
+context = 1024
+
+[modalities]
+input = ['text', 'image']
+output = ['video']
+
+[source]
+origin = 'models_dev_github'
+

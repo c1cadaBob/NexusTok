@@ -1,0 +1,15 @@
+id = 'deepseek-v4-flash'
+status = 'active'
+
+[limit]
+output = 131072
+
+[cost]
+input = 0.12
+output = 0.21
+cache_read = 0.003
+
+[source]
+origin = 'models_dev_github'
+provider = 'crof'
+

@@ -1,0 +1,13 @@
+id = 'qwen3-6-plus'
+status = 'active'
+structured_output = true
+
+[cost]
+input = 0.5
+output = 3.0
+cache_read = 0.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'empiriolabs'
+

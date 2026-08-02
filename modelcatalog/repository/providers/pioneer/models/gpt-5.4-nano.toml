@@ -1,0 +1,16 @@
+id = 'gpt-5.4-nano'
+status = 'active'
+
+[limit]
+context = 1047576
+
+[cost]
+input = 0.2
+output = 1.25
+cache_read = 0.02
+cache_write = 0.2
+
+[source]
+origin = 'models_dev_github'
+provider = 'pioneer'
+

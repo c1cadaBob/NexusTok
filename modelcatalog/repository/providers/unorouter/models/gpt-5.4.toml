@@ -1,0 +1,11 @@
+id = 'gpt-5.4'
+status = 'active'
+
+[cost]
+input = 1.8
+output = 10.8
+
+[source]
+origin = 'models_dev_github'
+provider = 'unorouter'
+

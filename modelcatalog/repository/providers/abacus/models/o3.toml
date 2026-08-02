@@ -1,0 +1,21 @@
+id = 'o3'
+status = 'active'
+reasoning = true
+
+[limit]
+context = 200000
+output = 100000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+
+[cost]
+input = 2.0
+output = 8.0
+cache_read = 0.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'abacus'
+

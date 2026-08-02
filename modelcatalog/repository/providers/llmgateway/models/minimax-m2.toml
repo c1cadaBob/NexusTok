@@ -1,0 +1,12 @@
+id = 'minimax-m2'
+status = 'active'
+
+[cost]
+input = 0.2
+output = 1.0
+cache_read = 0.03
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

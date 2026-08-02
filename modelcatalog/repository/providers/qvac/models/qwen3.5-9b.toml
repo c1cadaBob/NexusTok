@@ -1,0 +1,15 @@
+id = 'qwen3.5-9b'
+status = 'active'
+
+[limit]
+context = 32768
+output = 8192
+
+[cost]
+input = 0.0
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'qvac'
+

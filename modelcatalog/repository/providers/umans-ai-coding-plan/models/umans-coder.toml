@@ -1,0 +1,18 @@
+id = 'umans-coder'
+name = 'Umans Coder'
+status = 'active'
+temperature = false
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 0.0
+output = 0.0
+cache_read = 0.0
+cache_write = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'umans-ai-coding-plan'
+

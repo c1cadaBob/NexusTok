@@ -1,0 +1,19 @@
+id = 'gpt-chat-latest'
+name = 'GPT Chat Latest'
+status = 'beta'
+temperature = false
+
+[limit]
+context = 128000
+input = 111616
+output = 16384
+
+[cost]
+input = 5.0
+output = 30.0
+cache_read = 0.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'azure'
+

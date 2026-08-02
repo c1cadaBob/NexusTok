@@ -1,0 +1,18 @@
+id = 'kimi-k2.7-code-1100b'
+status = 'active'
+
+[limit]
+context = 262144
+output = 81920
+
+[modalities]
+input = ['text', 'image']
+
+[cost]
+input = 0.86
+output = 3.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'aki-io'
+

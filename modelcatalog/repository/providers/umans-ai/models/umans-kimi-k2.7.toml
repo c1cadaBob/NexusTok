@@ -1,0 +1,16 @@
+id = 'umans-kimi-k2.7'
+name = 'Kimi K2.7 Code'
+status = 'active'
+
+[limit]
+output = 32768
+
+[cost]
+input = 0.95
+output = 4.0
+cache_read = 0.19
+
+[source]
+origin = 'models_dev_github'
+provider = 'umans-ai'
+

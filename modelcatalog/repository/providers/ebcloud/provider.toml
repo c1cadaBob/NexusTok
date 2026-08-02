@@ -1,0 +1,6 @@
+id = 'ebcloud'
+name = 'EBCloud'
+icon = 'EBCloud'
+doc = 'https://docs.ebtech.com/ai/model-api.html'
+status = 'active'
+

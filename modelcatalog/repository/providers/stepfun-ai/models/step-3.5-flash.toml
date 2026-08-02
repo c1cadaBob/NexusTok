@@ -1,0 +1,7 @@
+id = 'step-3.5-flash'
+status = 'active'
+
+[source]
+origin = 'models_dev_github'
+provider = 'stepfun-ai'
+

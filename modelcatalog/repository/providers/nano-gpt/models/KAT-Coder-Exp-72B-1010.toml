@@ -1,0 +1,24 @@
+id = 'KAT-Coder-Exp-72B-1010'
+name = 'KAT Coder Exp 72B 1010'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+release_date = '2025-10-28'
+last_updated = '2025-10-28'
+
+[limit]
+context = 128000
+input = 128000
+output = 32768
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.1
+output = 0.2
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

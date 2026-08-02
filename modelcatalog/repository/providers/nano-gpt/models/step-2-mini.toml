@@ -1,0 +1,24 @@
+id = 'step-2-mini'
+name = 'Step-2 Mini'
+description = 'Compact GPT model for low-latency assistance and high-volume workloads'
+status = 'active'
+release_date = '2024-07-05'
+last_updated = '2024-07-05'
+
+[limit]
+context = 8000
+input = 8000
+output = 4096
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.2006
+output = 0.408
+
+[source]
+origin = 'models_dev_github'
+provider = 'nano-gpt'
+

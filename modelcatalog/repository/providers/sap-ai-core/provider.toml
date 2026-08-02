@@ -1,0 +1,6 @@
+id = 'sap-ai-core'
+name = 'SAP AI Core'
+icon = 'SAP AI Core'
+doc = 'https://help.sap.com/docs/sap-ai-core'
+status = 'active'
+

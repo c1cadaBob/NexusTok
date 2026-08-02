@@ -1,0 +1,17 @@
+id = 'mai-code-1-flash-picker'
+status = 'active'
+
+[limit]
+context = 256000
+input = 128000
+output = 128000
+
+[cost]
+input = 0.75
+output = 4.5
+cache_read = 0.075
+
+[source]
+origin = 'models_dev_github'
+provider = 'github-copilot'
+

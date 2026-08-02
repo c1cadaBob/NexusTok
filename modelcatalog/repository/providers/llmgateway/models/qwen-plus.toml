@@ -1,0 +1,16 @@
+id = 'qwen-plus'
+status = 'active'
+
+[limit]
+context = 131072
+
+[cost]
+input = 0.4
+output = 1.2
+cache_read = 0.08
+cache_write = 0.5
+
+[source]
+origin = 'models_dev_github'
+provider = 'llmgateway'
+

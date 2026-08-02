@@ -1,0 +1,26 @@
+id = 'sonar-pro'
+name = 'Perplexity Sonar Pro'
+description = 'Advanced Sonar search model for deeper research and cited synthesis'
+family = 'sonar-pro'
+status = 'active'
+temperature = true
+knowledge = '2025-01'
+release_date = '2025-01-27'
+last_updated = '2025-01-27'
+
+[limit]
+context = 200000
+output = 4096
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 3.0
+output = 15.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'helicone'
+

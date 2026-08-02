@@ -1,0 +1,26 @@
+id = 'text-embedding-3-large'
+name = 'text-embedding-3-large'
+description = 'Embedding model for semantic search, retrieval, clustering, and ranking pipelines'
+family = 'text-embedding'
+status = 'active'
+temperature = false
+knowledge = '2024-01'
+release_date = '2024-01-25'
+last_updated = '2024-01-25'
+
+[limit]
+context = 8191
+output = 3072
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.13
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'openai'
+

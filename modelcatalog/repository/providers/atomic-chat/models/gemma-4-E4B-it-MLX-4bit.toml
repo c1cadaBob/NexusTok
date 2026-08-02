@@ -1,0 +1,26 @@
+id = 'gemma-4-E4B-it-MLX-4bit'
+name = 'Gemma 4 E4B Instruct (MLX 4-bit)'
+description = 'Open Gemma instruction model for efficient chat and self-hosted deployments'
+family = 'gemma'
+status = 'active'
+temperature = true
+open_weights = true
+release_date = '2026-04-02'
+last_updated = '2026-04-02'
+
+[limit]
+context = 32768
+output = 8192
+
+[modalities]
+input = ['text']
+output = ['text']
+
+[cost]
+input = 0.0
+output = 0.0
+
+[source]
+origin = 'models_dev_github'
+provider = 'atomic-chat'
+
