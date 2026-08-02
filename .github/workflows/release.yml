@@ -39,6 +39,18 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
+      - name: Check embedded model catalog size
+        run: |
+          node - <<'NODE'
+          const fs = require('fs')
+          const manifest = JSON.parse(fs.readFileSync('modelcatalog/repository/manifest.json', 'utf8'))
+          const count = Number(manifest.model_count || 0)
+          if (count < 200) {
+            console.error(`::error::Embedded model catalog has only ${count} models. Run: go run ./modelcatalog/cmd/catalogtool sync-models-dev -repo modelcatalog/repository`)
+            process.exit(1)
+          }
+          console.log(`Embedded model catalog contains ${count} models.`)
+          NODE
       - name: Determine Version
         run: |
           VERSION=$(git describe --tags)
@@ -97,6 +109,18 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
+      - name: Check embedded model catalog size
+        run: |
+          node - <<'NODE'
+          const fs = require('fs')
+          const manifest = JSON.parse(fs.readFileSync('modelcatalog/repository/manifest.json', 'utf8'))
+          const count = Number(manifest.model_count || 0)
+          if (count < 200) {
+            console.error(`::error::Embedded model catalog has only ${count} models. Run: go run ./modelcatalog/cmd/catalogtool sync-models-dev -repo modelcatalog/repository`)
+            process.exit(1)
+          }
+          console.log(`Embedded model catalog contains ${count} models.`)
+          NODE
       - name: Determine Version
         run: |
           VERSION=$(git describe --tags)
@@ -154,6 +178,18 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
+      - name: Check embedded model catalog size
+        run: |
+          node - <<'NODE'
+          const fs = require('fs')
+          const manifest = JSON.parse(fs.readFileSync('modelcatalog/repository/manifest.json', 'utf8'))
+          const count = Number(manifest.model_count || 0)
+          if (count < 200) {
+            console.error(`::error::Embedded model catalog has only ${count} models. Run: go run ./modelcatalog/cmd/catalogtool sync-models-dev -repo modelcatalog/repository`)
+            process.exit(1)
+          }
+          console.log(`Embedded model catalog contains ${count} models.`)
+          NODE
       - name: Determine Version
         run: |
           VERSION=$(git describe --tags)

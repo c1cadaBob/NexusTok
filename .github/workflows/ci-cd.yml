@@ -31,6 +31,28 @@ permissions:
   contents: read
 
 jobs:
+  catalog-check:
+    name: Embedded catalog check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Check embedded model catalog size
+        run: |
+          node - <<'NODE'
+          const fs = require('fs')
+          const manifest = JSON.parse(fs.readFileSync('modelcatalog/repository/manifest.json', 'utf8'))
+          const count = Number(manifest.model_count || 0)
+          if (count < 200) {
+            console.error(`::error::Embedded model catalog has only ${count} models. Run: go run ./modelcatalog/cmd/catalogtool sync-models-dev -repo modelcatalog/repository`)
+            process.exit(1)
+          }
+          console.log(`Embedded model catalog contains ${count} models.`)
+          NODE
+
   backend-test:
     name: Backend tests
     runs-on: ubuntu-latest
@@ -150,6 +172,7 @@ jobs:
   docker-build:
     name: Build & push Docker (${{ matrix.arch }})
     needs:
+      - catalog-check
       - backend-test
       - frontend-build
       - prepare_docker
