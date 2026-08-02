@@ -24,8 +24,8 @@ import { createSectionRegistry } from '@/features/system-settings/utils/section-
 const MODELS_SECTIONS = [
   {
     id: 'metadata',
-    titleKey: 'Metadata',
-    descriptionKey: 'Manage model metadata and configuration',
+    titleKey: 'Sync Source Models',
+    descriptionKey: 'Manage synced model metadata, vendors, pricing, and fallback catalog.',
     build: () => null, // Content is rendered directly in the page component
   },
   {

@@ -225,11 +225,15 @@ type modelsDevCatalogLimit struct {
 
 // syncSourceInfo 描述一次同步实际使用的数据来源。
 type syncSourceInfo struct {
-	Source     string `json:"source"`
-	Locale     string `json:"locale,omitempty"`
-	ModelsURL  string `json:"models_url,omitempty"`
-	VendorsURL string `json:"vendors_url,omitempty"`
-	CatalogURL string `json:"catalog_url,omitempty"`
+	Source              string `json:"source"`
+	Locale              string `json:"locale,omitempty"`
+	ModelsURL           string `json:"models_url,omitempty"`
+	VendorsURL          string `json:"vendors_url,omitempty"`
+	CatalogURL          string `json:"catalog_url,omitempty"`
+	FallbackUsed        bool   `json:"fallback_used,omitempty"`
+	FallbackReason      string `json:"fallback_reason,omitempty"`
+	FallbackName        string `json:"fallback_name,omitempty"`
+	FallbackGeneratedAt string `json:"fallback_generated_at,omitempty"`
 }
 
 // syncUpstreamOptions 控制内部同步范围。
@@ -1098,11 +1102,12 @@ func fetchSyncUpstreamData(ctx context.Context, req syncRequest) ([]upstreamVend
 	sourceInfo := buildSyncSourceInfo(req)
 	switch sourceInfo.Source {
 	case syncSourceModelsDev:
-		catalog, err := fetchModelsDevCatalog(ctx, sourceInfo.CatalogURL)
+		fetchResult, err := fetchModelsDevCatalogWithFallback(ctx, sourceInfo.CatalogURL)
 		if err != nil {
 			return nil, nil, sourceInfo, err
 		}
-		vendors, models := convertModelsDevCatalog(catalog)
+		applyModelsDevFallbackSourceInfo(&sourceInfo, fetchResult)
+		vendors, models := convertModelsDevCatalog(fetchResult.Catalog)
 		return vendors, models, sourceInfo, nil
 	default:
 		var vendorsEnv upstreamEnvelope[upstreamVendor]
@@ -1135,12 +1140,13 @@ func fetchSyncUpstreamDataWithPricing(ctx context.Context, req syncRequest) ([]u
 	sourceInfo := buildSyncSourceInfo(req)
 	switch sourceInfo.Source {
 	case syncSourceModelsDev:
-		catalog, err := fetchModelsDevCatalog(ctx, sourceInfo.CatalogURL)
+		fetchResult, err := fetchModelsDevCatalogWithFallback(ctx, sourceInfo.CatalogURL)
 		if err != nil {
 			return nil, nil, nil, sourceInfo, err
 		}
-		vendors, models := convertModelsDevCatalog(catalog)
-		pricing := extractModelsDevPricingCandidates(catalog)
+		applyModelsDevFallbackSourceInfo(&sourceInfo, fetchResult)
+		vendors, models := convertModelsDevCatalog(fetchResult.Catalog)
+		pricing := extractModelsDevPricingCandidates(fetchResult.Catalog)
 		return vendors, models, pricing, sourceInfo, nil
 	default:
 		vendors, models, sourceInfo, err := fetchSyncUpstreamData(ctx, req)

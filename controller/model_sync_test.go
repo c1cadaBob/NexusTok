@@ -126,6 +126,31 @@ func withModelsDevTestServer(t *testing.T, payload string) {
 	cacheMutex.Unlock()
 }
 
+func withFailingModelsDevTestServer(t *testing.T, statusCode int) {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, modelsDevCatalogPath, r.URL.Path)
+		http.Error(w, "upstream unavailable", statusCode)
+	}))
+	t.Cleanup(server.Close)
+
+	originalBase, hadBase := os.LookupEnv("MODELS_DEV_SYNC_BASE")
+	require.NoError(t, os.Setenv("MODELS_DEV_SYNC_BASE", server.URL))
+	t.Cleanup(func() {
+		if hadBase {
+			require.NoError(t, os.Setenv("MODELS_DEV_SYNC_BASE", originalBase))
+		} else {
+			require.NoError(t, os.Unsetenv("MODELS_DEV_SYNC_BASE"))
+		}
+	})
+
+	cacheMutex.Lock()
+	etagCache = make(map[string]string)
+	bodyCache = make(map[string][]byte)
+	cacheMutex.Unlock()
+}
+
 func TestConvertModelsDevCatalogPrefersDirectProvider(t *testing.T) {
 	catalog := &modelsDevCatalog{
 		Providers: map[string]modelsDevCatalogProvider{
@@ -395,6 +420,37 @@ func TestSyncUpstreamModelsCoreCreatesModelsDevCatalogModels(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, second.CreatedModels)
 	require.Empty(t, second.SkippedModels)
+}
+
+func TestSyncUpstreamModelsCoreUsesEmbeddedFallbackWhenModelsDevFails(t *testing.T) {
+	db := setupModelSyncTestDB(t)
+	withFailingModelsDevTestServer(t, http.StatusInternalServerError)
+
+	result, err := syncUpstreamModelsCore(context.Background(), syncRequest{
+		Source: syncSourceModelsDev,
+		Pricing: syncPricingPolicyRequest{
+			Enabled:       true,
+			ProviderOrder: []string{"openai"},
+		},
+	}, syncUpstreamOptions{CreateAllUpstream: true})
+
+	require.NoError(t, err)
+	require.True(t, result.Source.FallbackUsed)
+	require.Equal(t, modelsDevFallbackCatalogName, result.Source.FallbackName)
+	require.NotEmpty(t, result.Source.FallbackReason)
+	require.Contains(t, result.CreatedList, "gpt-5.5")
+	require.Contains(t, result.PricingList, "gpt-5.5")
+
+	var gpt model.Model
+	require.NoError(t, db.Where("model_name = ?", "gpt-5.5").First(&gpt).Error)
+	require.Equal(t, 1, gpt.SyncOfficial)
+	requireFloatMapValue(t, ratio_setting.GetModelRatioCopy(), "gpt-5.5", 2.5)
+	requireFloatMapValue(t, ratio_setting.GetCompletionRatioCopy(), "gpt-5.5", 6)
+
+	pricing := model.BuildModelPricingConfig(gpt.Id, "gpt-5.5")
+	require.NotNil(t, pricing.Source)
+	require.Equal(t, model.ModelPricingSourceUpstream, pricing.Source.Kind)
+	require.Equal(t, "openai", pricing.Source.Provider)
 }
 
 func TestSyncUpstreamModelsCoreModelsDevDefaultsToFullCatalog(t *testing.T) {

@@ -1,0 +1,264 @@
+{
+  "models": {
+    "alibaba/qwen-plus": {
+      "id": "qwen-plus",
+      "name": "Qwen Plus",
+      "status": "active",
+      "tool_call": true,
+      "structured_output": true,
+      "modalities": { "input": ["text"], "output": ["text"] },
+      "limit": { "context": 131072, "input": 129024, "output": 8192 }
+    },
+    "anthropic/claude-sonnet-4-20250514": {
+      "id": "claude-sonnet-4-20250514",
+      "name": "Claude Sonnet 4",
+      "status": "active",
+      "attachment": true,
+      "reasoning": true,
+      "tool_call": true,
+      "modalities": { "input": ["text", "image"], "output": ["text"] },
+      "limit": { "context": 200000, "input": 200000, "output": 64000 }
+    },
+    "anthropic/claude-3-5-haiku-20241022": {
+      "id": "claude-3-5-haiku-20241022",
+      "name": "Claude 3.5 Haiku",
+      "status": "active",
+      "tool_call": true,
+      "modalities": { "input": ["text"], "output": ["text"] },
+      "limit": { "context": 200000, "input": 200000, "output": 8192 }
+    },
+    "deepseek/deepseek-chat": {
+      "id": "deepseek-chat",
+      "name": "DeepSeek Chat",
+      "status": "active",
+      "tool_call": true,
+      "modalities": { "input": ["text"], "output": ["text"] },
+      "limit": { "context": 64000, "input": 64000, "output": 8192 }
+    },
+    "deepseek/deepseek-reasoner": {
+      "id": "deepseek-reasoner",
+      "name": "DeepSeek Reasoner",
+      "status": "active",
+      "reasoning": true,
+      "modalities": { "input": ["text"], "output": ["text"] },
+      "limit": { "context": 64000, "input": 64000, "output": 8192 }
+    },
+    "google/gemini-2.5-flash": {
+      "id": "gemini-2.5-flash",
+      "name": "Gemini 2.5 Flash",
+      "status": "active",
+      "attachment": true,
+      "reasoning": true,
+      "tool_call": true,
+      "structured_output": true,
+      "modalities": { "input": ["text", "image", "audio", "video"], "output": ["text"] },
+      "limit": { "context": 1048576, "input": 1048576, "output": 65536 }
+    },
+    "google/gemini-2.5-pro": {
+      "id": "gemini-2.5-pro",
+      "name": "Gemini 2.5 Pro",
+      "status": "active",
+      "attachment": true,
+      "reasoning": true,
+      "tool_call": true,
+      "structured_output": true,
+      "modalities": { "input": ["text", "image", "audio", "video"], "output": ["text"] },
+      "limit": { "context": 1048576, "input": 1048576, "output": 65536 }
+    },
+    "openai/gpt-4.1": {
+      "id": "gpt-4.1",
+      "name": "GPT-4.1",
+      "status": "active",
+      "attachment": true,
+      "tool_call": true,
+      "structured_output": true,
+      "modalities": { "input": ["text", "image"], "output": ["text"] },
+      "limit": { "context": 1047576, "input": 1047576, "output": 32768 }
+    },
+    "openai/gpt-4.1-mini": {
+      "id": "gpt-4.1-mini",
+      "name": "GPT-4.1 mini",
+      "status": "active",
+      "attachment": true,
+      "tool_call": true,
+      "structured_output": true,
+      "modalities": { "input": ["text", "image"], "output": ["text"] },
+      "limit": { "context": 1047576, "input": 1047576, "output": 32768 }
+    },
+    "openai/gpt-4o": {
+      "id": "gpt-4o",
+      "name": "GPT-4o",
+      "status": "active",
+      "attachment": true,
+      "tool_call": true,
+      "structured_output": true,
+      "modalities": { "input": ["text", "image", "audio"], "output": ["text"] },
+      "limit": { "context": 128000, "input": 128000, "output": 16384 }
+    },
+    "openai/gpt-4o-mini": {
+      "id": "gpt-4o-mini",
+      "name": "GPT-4o mini",
+      "status": "active",
+      "attachment": true,
+      "tool_call": true,
+      "structured_output": true,
+      "modalities": { "input": ["text", "image"], "output": ["text"] },
+      "limit": { "context": 128000, "input": 128000, "output": 16384 }
+    },
+    "openai/gpt-5": {
+      "id": "gpt-5",
+      "name": "GPT-5",
+      "status": "active",
+      "attachment": true,
+      "reasoning": true,
+      "tool_call": true,
+      "structured_output": true,
+      "modalities": { "input": ["text", "image"], "output": ["text"] },
+      "limit": { "context": 1050000, "input": 1050000, "output": 128000 }
+    },
+    "openai/gpt-5-mini": {
+      "id": "gpt-5-mini",
+      "name": "GPT-5 mini",
+      "status": "active",
+      "attachment": true,
+      "reasoning": true,
+      "tool_call": true,
+      "structured_output": true,
+      "modalities": { "input": ["text", "image"], "output": ["text"] },
+      "limit": { "context": 400000, "input": 400000, "output": 128000 }
+    },
+    "openai/gpt-5-nano": {
+      "id": "gpt-5-nano",
+      "name": "GPT-5 nano",
+      "status": "active",
+      "reasoning": true,
+      "tool_call": true,
+      "structured_output": true,
+      "modalities": { "input": ["text"], "output": ["text"] },
+      "limit": { "context": 400000, "input": 400000, "output": 128000 }
+    },
+    "openai/gpt-5.5": {
+      "id": "gpt-5.5",
+      "name": "GPT-5.5",
+      "status": "active",
+      "attachment": true,
+      "reasoning": true,
+      "tool_call": true,
+      "structured_output": true,
+      "modalities": { "input": ["text", "image"], "output": ["text"] },
+      "limit": { "context": 400000, "input": 400000, "output": 128000 }
+    }
+  },
+  "providers": {
+    "alibaba": {
+      "id": "alibaba",
+      "name": "Alibaba",
+      "doc": "https://help.aliyun.com/zh/model-studio/",
+      "models": {
+        "qwen-plus": {
+          "id": "qwen-plus",
+          "name": "Qwen Plus",
+          "cost": { "input": 20.0, "output": 60.0 }
+        }
+      }
+    },
+    "anthropic": {
+      "id": "anthropic",
+      "name": "Anthropic",
+      "doc": "https://docs.anthropic.com/",
+      "models": {
+        "claude-3-5-haiku-20241022": {
+          "id": "claude-3-5-haiku-20241022",
+          "name": "Claude 3.5 Haiku",
+          "cost": { "input": 1.0, "output": 5.0 }
+        },
+        "claude-sonnet-4-20250514": {
+          "id": "claude-sonnet-4-20250514",
+          "name": "Claude Sonnet 4",
+          "cost": { "input": 3.0, "output": 15.0 }
+        }
+      }
+    },
+    "deepseek": {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "doc": "https://api-docs.deepseek.com/",
+      "models": {
+        "deepseek-chat": {
+          "id": "deepseek-chat",
+          "name": "DeepSeek Chat",
+          "cost": { "input": 0.27, "output": 1.1 }
+        },
+        "deepseek-reasoner": {
+          "id": "deepseek-reasoner",
+          "name": "DeepSeek Reasoner",
+          "cost": { "input": 0.55, "output": 2.19 }
+        }
+      }
+    },
+    "google": {
+      "id": "google",
+      "name": "Google",
+      "doc": "https://ai.google.dev/",
+      "models": {
+        "gemini-2.5-flash": {
+          "id": "gemini-2.5-flash",
+          "name": "Gemini 2.5 Flash",
+          "cost": { "input": 0.3, "output": 2.5 }
+        },
+        "gemini-2.5-pro": {
+          "id": "gemini-2.5-pro",
+          "name": "Gemini 2.5 Pro",
+          "cost": { "input": 1.25, "output": 10.0 }
+        }
+      }
+    },
+    "openai": {
+      "id": "openai",
+      "name": "OpenAI",
+      "doc": "https://platform.openai.com/docs",
+      "models": {
+        "gpt-4.1": {
+          "id": "gpt-4.1",
+          "name": "GPT-4.1",
+          "cost": { "input": 2.0, "output": 8.0, "cache_read": 0.5 }
+        },
+        "gpt-4.1-mini": {
+          "id": "gpt-4.1-mini",
+          "name": "GPT-4.1 mini",
+          "cost": { "input": 0.4, "output": 1.6, "cache_read": 0.1 }
+        },
+        "gpt-4o": {
+          "id": "gpt-4o",
+          "name": "GPT-4o",
+          "cost": { "input": 2.5, "output": 10.0, "cache_read": 1.25 }
+        },
+        "gpt-4o-mini": {
+          "id": "gpt-4o-mini",
+          "name": "GPT-4o mini",
+          "cost": { "input": 0.15, "output": 0.6, "cache_read": 0.075 }
+        },
+        "gpt-5": {
+          "id": "gpt-5",
+          "name": "GPT-5",
+          "cost": { "input": 1.25, "output": 10.0, "cache_read": 0.125, "cache_write": 1.25 }
+        },
+        "gpt-5-mini": {
+          "id": "gpt-5-mini",
+          "name": "GPT-5 mini",
+          "cost": { "input": 0.25, "output": 2.0, "cache_read": 0.025, "cache_write": 0.25 }
+        },
+        "gpt-5-nano": {
+          "id": "gpt-5-nano",
+          "name": "GPT-5 nano",
+          "cost": { "input": 0.05, "output": 0.4, "cache_read": 0.005, "cache_write": 0.05 }
+        },
+        "gpt-5.5": {
+          "id": "gpt-5.5",
+          "name": "GPT-5.5",
+          "cost": { "input": 5.0, "output": 30.0, "cache_read": 0.5, "cache_write": 5.0 }
+        }
+      }
+    }
+  }
+}

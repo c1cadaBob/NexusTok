@@ -109,7 +109,7 @@ export function ModelsPrimaryButtons() {
             disabled={!canSyncUpstream}
             title={canSyncUpstream ? undefined : noPermissionMessage}
           >
-            {t('Sync Upstream')}
+            {t('Sync Source Models')}
             <DropdownMenuShortcut>
               <RefreshCw />
             </DropdownMenuShortcut>

@@ -48,8 +48,9 @@ const SECTION_META: Record<
   { titleKey: string; descriptionKey: string }
 > = {
   metadata: {
-    titleKey: 'Metadata',
-    descriptionKey: 'Manage model metadata and configuration',
+    titleKey: 'Sync Source Models',
+    descriptionKey:
+      'Manage synced model metadata, vendors, pricing, and fallback catalog.',
   },
   deployments: {
     titleKey: 'Deployments',

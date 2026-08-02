@@ -219,6 +219,18 @@ export interface SyncOverwritePayload {
   fields: string[]
 }
 
+export interface SyncSourceInfo {
+  source?: string
+  locale?: string
+  models_url?: string
+  vendors_url?: string
+  catalog_url?: string
+  fallback_used?: boolean
+  fallback_reason?: string
+  fallback_name?: string
+  fallback_generated_at?: string
+}
+
 /**
  * Sync upstream response
  */
@@ -233,6 +245,7 @@ export interface SyncUpstreamResponse {
     pricing_skipped?: number
     skipped_models?: string[]
     pricing_list?: string[]
+    source?: SyncSourceInfo
   }
 }
 

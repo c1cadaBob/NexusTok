@@ -150,6 +150,7 @@ export function SyncWizardDialog({
           updated_models,
           pricing_updated,
           pricing_skipped,
+          source: resultSource,
         } = response.data || {}
         toast.success(
           t(
@@ -163,6 +164,13 @@ export function SyncWizardDialog({
             }
           )
         )
+        if (resultSource?.fallback_used) {
+          toast.info(
+            t(
+              'Used embedded fallback catalog because the online source was unavailable.'
+            )
+          )
+        }
         queryClient.invalidateQueries({ queryKey: modelsQueryKeys.lists() })
         queryClient.invalidateQueries({ queryKey: vendorsQueryKeys.lists() })
         onOpenChange(false)
@@ -183,9 +191,11 @@ export function SyncWizardDialog({
         initialFocus={!isMobile}
       >
         <DialogHeader className='flex-shrink-0 text-start'>
-          <DialogTitle>{t('Sync Upstream Models')}</DialogTitle>
+          <DialogTitle>{t('Sync Source Models')}</DialogTitle>
           <DialogDescription>
-            {t('Synchronize models and vendors from an upstream source')}
+            {t(
+              'Manage synced model metadata, vendors, pricing, and fallback catalog.'
+            )}
           </DialogDescription>
         </DialogHeader>
 
@@ -305,7 +315,7 @@ export function SyncWizardDialog({
                     </div>
                     <p className='text-muted-foreground text-sm'>
                       {t(
-                        'Write selected provider prices into the model pricing settings during sync.'
+                        'Write selected provider prices into the model page during sync.'
                       )}
                     </p>
                   </div>
