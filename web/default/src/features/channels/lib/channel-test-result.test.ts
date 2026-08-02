@@ -22,7 +22,7 @@ import { getChannelTestFailureDisplay } from './channel-test-result'
 
 const fallbackSummary = 'Test failed'
 const modelPriceSummary =
-  'Model price is not configured. Please complete model pricing in settings.'
+  'Model price is not configured. Please complete pricing in Models → Sync Source Models.'
 
 describe('渠道测试失败结果展示', () => {
   test('空错误使用兜底摘要', () => {

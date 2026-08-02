@@ -27,10 +27,14 @@ export const Route = createFileRoute(
   '/_authenticated/system-settings/billing/$section'
 )({
   beforeLoad: ({ params }) => {
-    if (
-      params.section === 'model-pricing' ||
-      params.section === 'group-pricing'
-    ) {
+    if (params.section === 'model-pricing') {
+      throw redirect({
+        to: '/models/$section',
+        params: { section: 'metadata' },
+      })
+    }
+
+    if (params.section === 'group-pricing') {
       throw redirect({ to: '/pricing-settings' })
     }
 

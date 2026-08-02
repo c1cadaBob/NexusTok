@@ -217,6 +217,28 @@ func TestSaveModelPricingConfigRejectsImpossibleRatioPriceShape(t *testing.T) {
 	require.NotContains(t, ratio_setting.GetModelRatioCopy(), "zz-pricing-impossible")
 }
 
+func TestSaveModelPricingConfigDoesNotPersistDefaultRatioCatalog(t *testing.T) {
+	withModelPricingConfigTestState(t)
+	require.NoError(t, UpdateOption("ModelRatio", ratio_setting.DefaultModelRatio2JSONString()))
+
+	require.NoError(t, SaveModelPricingConfig("zz-pricing-only-override", ModelPricingUpdateRequest{
+		BillingMode:          ModelPricingModeRatio,
+		InputPricePerMillion: f64ptr(4),
+	}))
+
+	var option Option
+	require.NoError(t, DB.First(&option, "key = ?", "ModelRatio").Error)
+	var persisted map[string]float64
+	require.NoError(t, common.UnmarshalJsonStr(option.Value, &persisted))
+	require.Contains(t, persisted, "zz-pricing-only-override")
+	require.NotContains(t, persisted, "gpt-5")
+
+	ratio, ok, _ := ratio_setting.GetModelRatio("gpt-5")
+	require.True(t, ok)
+	require.InDelta(t, 0.625, ratio, 0.0000001)
+	requireFloatMapValue(t, ratio_setting.GetModelRatioCopy(), "zz-pricing-only-override", 2)
+}
+
 func TestRenameModelPricingConfigMovesAllDirectKeys(t *testing.T) {
 	withModelPricingConfigTestState(t)
 	valid := `tier("base", p * 1 + c * 2)`

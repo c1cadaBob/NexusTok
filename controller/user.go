@@ -539,7 +539,7 @@ func calculateUserPermissions(userRole int) map[string]interface{} {
 				"account_pool":    true,
 				"setting":         false, // 管理员不能访问系统设置
 				"pricing":         false, // 定价设置会修改 RootAuth 保护的系统选项
-				"pricing_setting": false, // 经典前端中的分组与模型定价入口
+				"pricing_setting": false, // 经典前端中的定价入口
 			},
 		}
 	} else {
@@ -589,7 +589,7 @@ func generateDefaultSidebarConfig(userRole int) string {
 			"channel":         true,
 			"account_pool":    true,
 			"pricing":         false, // 定价设置会修改 RootAuth 保护的系统选项
-			"pricing_setting": false, // 经典前端中的分组与模型定价入口
+			"pricing_setting": false, // 经典前端中的定价入口
 			"models":          true,
 			"redemption":      true,
 			"user":            true,

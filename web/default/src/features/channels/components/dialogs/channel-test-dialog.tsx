@@ -696,7 +696,7 @@ function FailureResultContent({
   const isModelPriceError =
     result.errorCode === CHANNEL_TEST_MODEL_PRICE_ERROR_CODE
   const modelPriceSummary = t(
-    'Model price is not configured. Please complete model pricing in settings.'
+    'Model price is not configured. Please complete pricing in Models → Sync Source Models.'
   )
   const { summary, details } = getChannelTestFailureDisplay({
     errorText,
@@ -716,9 +716,7 @@ function FailureResultContent({
             variant='outline'
             size='sm'
             className='h-7 w-fit px-2 text-xs'
-            onClick={() =>
-              window.open('/system-settings/billing/model-pricing', '_blank')
-            }
+            onClick={() => window.open('/models/metadata', '_blank')}
           >
             <Settings data-icon='inline-start' />
             {t('Go to Settings')}

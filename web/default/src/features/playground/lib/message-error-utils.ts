@@ -21,8 +21,7 @@ import type { Message } from '../types'
 import { getMessageContent } from './message-utils'
 
 export const FALLBACK_ERROR_CONTENT = 'An unknown error occurred'
-export const MODEL_PRICING_SETTINGS_PATH =
-  '/system-settings/billing/model-pricing'
+export const MODEL_PRICING_SETTINGS_PATH = '/models/metadata'
 
 const MODEL_PRICE_ERROR_CODE = 'model_price_error'
 

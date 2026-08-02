@@ -27,11 +27,12 @@ export const Route = createFileRoute(
   '/_authenticated/system-settings/models/$section'
 )({
   beforeLoad: ({ params }) => {
-    // 兼容旧版模型倍率入口：当前项目已将模型与分组定价统一收敛到独立定价页，
-    // 因此命中历史 section 时直接跳转到当前正式入口，避免静默回退到 global。
+    // 兼容旧版模型倍率入口：模型价格已经统一迁移到“模型 / 同步源模型”，
+    // 历史 section 不能再落到分组与工具价格页，否则管理员会找不到模型定价入口。
     if (params.section === 'model-ratio') {
       throw redirect({
-        to: '/pricing-settings',
+        to: '/models/$section',
+        params: { section: 'metadata' },
       })
     }
 

@@ -107,6 +107,7 @@ var defaultModelRatio = map[string]float64{
 	"gpt-5-mini-2025-08-07":            0.125,
 	"gpt-5-nano":                       0.025,
 	"gpt-5-nano-2025-08-07":            0.025,
+	"gpt-5.5":                          2.5, // $5 / 1M tokens
 	//"gpt-3.5-turbo-0301":           0.75, //deprecated
 	"gpt-3.5-turbo":          0.25,
 	"gpt-3.5-turbo-0613":     0.75,
@@ -392,7 +393,7 @@ func ModelPrice2JSONString() string {
 //
 // 返回值：解析失败时返回错误
 func UpdateModelPriceByJSONString(jsonStr string) error {
-	return types.LoadFromJsonStringWithCallback(modelPriceMap, jsonStr, InvalidateExposedDataCache)
+	return loadFloatMapWithDefaults(modelPriceMap, jsonStr, defaultModelPrice, InvalidateExposedDataCache)
 }
 
 // GetModelPrice 获取指定模型的固定价格
@@ -435,7 +436,35 @@ func GetModelPrice(name string, printErr bool) (float64, bool) {
 //
 // 返回值：解析失败时返回错误
 func UpdateModelRatioByJSONString(jsonStr string) error {
-	return types.LoadFromJsonStringWithCallback(modelRatioMap, jsonStr, InvalidateExposedDataCache)
+	return loadFloatMapWithDefaults(modelRatioMap, jsonStr, defaultModelRatio, InvalidateExposedDataCache)
+}
+
+// loadFloatMapWithDefaults 将持久化 JSON 作为覆盖层叠加到内置默认值上。
+//
+// 历史版本会把数据库中的 ModelRatio/ModelPrice 完全替换内存默认值；当旧数据库里保存了
+// `{}` 或很早以前的不完整 JSON 时，代码中新增的模型默认价格会被清空，最终导致 relay
+// 热路径误报“模型价格未配置”。这里先解析覆盖层，解析成功后一次性替换为“默认值 + 覆盖值”，
+// 既保留管理员自定义价格，也保证随版本发布的新默认模型在旧实例升级后立即可用。
+func loadFloatMapWithDefaults(target *types.RWMap[string, float64], jsonStr string, defaults map[string]float64, onSuccess func()) error {
+	overrides := make(map[string]float64)
+	if strings.TrimSpace(jsonStr) != "" {
+		if err := common.Unmarshal([]byte(jsonStr), &overrides); err != nil {
+			return err
+		}
+	}
+	merged := copyFloatMap(defaults)
+	for key, value := range overrides {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		merged[key] = value
+	}
+	target.ReplaceAll(merged)
+	if onSuccess != nil {
+		onSuccess()
+	}
+	return nil
 }
 
 // handleThinkingBudgetModel 处理带有思考预算的模型名称

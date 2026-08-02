@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/c1cada/NexusTok/common"
+	"github.com/c1cada/NexusTok/model"
 	"github.com/c1cada/NexusTok/pkg/billingexpr"
 	relaycommon "github.com/c1cada/NexusTok/relay/common"
 	"github.com/c1cada/NexusTok/setting/billing_setting"
@@ -17,7 +18,9 @@ import (
 	"github.com/c1cada/NexusTok/setting/ratio_setting"
 	"github.com/c1cada/NexusTok/types"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 // TestModelPriceHelperTieredUsesPreloadedRequestInput 测试分层计费模式下使用预加载的请求输入，
@@ -101,6 +104,43 @@ func TestModelPriceHelperPerCallSaturatesFixedPrice(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, math.MaxInt32, priceData.Quota)
+}
+
+func TestModelPriceNotConfiguredErrorPointsAdminsToModelsPage(t *testing.T) {
+	originalDB := model.DB
+	db, err := gorm.Open(sqlite.Open("file:price_error_admin?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.User{}))
+	model.DB = db
+	t.Cleanup(func() {
+		sqlDB, dbErr := db.DB()
+		if dbErr == nil {
+			_ = sqlDB.Close()
+		}
+		model.DB = originalDB
+	})
+
+	admin := model.User{
+		Username:    "price-admin",
+		Password:    "password",
+		DisplayName: "price-admin",
+		Role:        common.RoleAdminUser,
+		Status:      common.UserStatusEnabled,
+		Group:       "default",
+		AffCode:     "price-admin",
+	}
+	require.NoError(t, model.DB.Create(&admin).Error)
+	t.Cleanup(func() {
+		_ = model.DB.Delete(&model.User{}, admin.Id).Error
+	})
+
+	err = modelPriceNotConfiguredError("gpt-5.5", admin.Id)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "模型 → 同步源模型")
+	require.Contains(t, err.Error(), "Models → Sync Source Models")
+	require.NotContains(t, err.Error(), "分组与模型"+"定价设置")
+	require.NotContains(t, err.Error(), "Group & Model"+" Pricing")
 }
 
 // restoreRatioSettings 保存并恢复全局 ratio 配置，避免本文件的极端倍率污染其它测试。

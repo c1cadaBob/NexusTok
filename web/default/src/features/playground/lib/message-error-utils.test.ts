@@ -72,7 +72,7 @@ describe('message error utils', () => {
     assert.equal(state?.content, FALLBACK_ERROR_CONTENT)
   })
 
-  test('shows model pricing settings link only for admins', () => {
+  test('shows model page pricing link only for admins', () => {
     const message = makeMessage({ errorCode: 'model_price_error' })
     const adminState = getMessageErrorState(message, true)
     const userState = getMessageErrorState(message, false)

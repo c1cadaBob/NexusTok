@@ -278,19 +278,66 @@ func RenameModelPricingConfigWithDB(db *gorm.DB, oldName, newName string) error 
 }
 
 func readModelPricingOptionMaps() modelPricingOptionMaps {
+	options := getPersistedModelPricingOptions()
 	return modelPricingOptionMaps{
-		modelPrice:           ratio_setting.GetModelPriceCopy(),
-		modelRatio:           ratio_setting.GetModelRatioCopy(),
-		completionRatio:      ratio_setting.GetCompletionRatioCopy(),
-		cacheRatio:           ratio_setting.GetCacheRatioCopy(),
-		createCacheRatio:     ratio_setting.GetCreateCacheRatioCopy(),
-		imageRatio:           ratio_setting.GetImageRatioCopy(),
-		audioRatio:           ratio_setting.GetAudioRatioCopy(),
-		audioCompletionRatio: ratio_setting.GetAudioCompletionRatioCopy(),
-		billingMode:          billing_setting.GetBillingModeCopy(),
-		billingExpr:          billing_setting.GetBillingExprCopy(),
+		modelPrice:           parsePersistedFloatPricingOption(options, "ModelPrice", ratio_setting.GetDefaultModelPriceMap()),
+		modelRatio:           parsePersistedFloatPricingOption(options, "ModelRatio", ratio_setting.GetDefaultModelRatioMap()),
+		completionRatio:      parsePersistedFloatPricingOption(options, "CompletionRatio", ratio_setting.GetDefaultCompletionRatioMap()),
+		cacheRatio:           parsePersistedFloatPricingOption(options, "CacheRatio", ratio_setting.GetDefaultCacheRatioMap()),
+		createCacheRatio:     parsePersistedFloatPricingOption(options, "CreateCacheRatio", ratio_setting.GetDefaultCreateCacheRatioMap()),
+		imageRatio:           parsePersistedFloatPricingOption(options, "ImageRatio", ratio_setting.GetDefaultImageRatioMap()),
+		audioRatio:           parsePersistedFloatPricingOption(options, "AudioRatio", ratio_setting.GetDefaultAudioRatioMap()),
+		audioCompletionRatio: parsePersistedFloatPricingOption(options, "AudioCompletionRatio", ratio_setting.GetDefaultAudioCompletionRatioMap()),
+		billingMode:          parsePersistedStringPricingOption(options, "billing_setting.billing_mode"),
+		billingExpr:          parsePersistedStringPricingOption(options, "billing_setting.billing_expr"),
 		pricingSource:        GetModelPricingSourceCopy(),
 	}
+}
+
+func parsePersistedFloatPricingOption(options map[string]string, optionKey string, defaults map[string]float64) map[string]float64 {
+	result := make(map[string]float64)
+	raw := strings.TrimSpace(options[optionKey])
+	if raw == "" {
+		return result
+	}
+	var values map[string]float64
+	if err := common.UnmarshalJsonStr(raw, &values); err != nil {
+		common.SysError("failed to parse persisted pricing option " + optionKey + ": " + err.Error())
+		return result
+	}
+	for key, value := range values {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if defaultValue, ok := defaults[key]; ok && samePricingFloat(defaultValue, value) {
+			continue
+		}
+		result[key] = value
+	}
+	return result
+}
+
+func parsePersistedStringPricingOption(options map[string]string, optionKey string) map[string]string {
+	result := make(map[string]string)
+	raw := strings.TrimSpace(options[optionKey])
+	if raw == "" {
+		return result
+	}
+	var values map[string]string
+	if err := common.UnmarshalJsonStr(raw, &values); err != nil {
+		common.SysError("failed to parse persisted pricing option " + optionKey + ": " + err.Error())
+		return result
+	}
+	for key, value := range values {
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key == "" || value == "" {
+			continue
+		}
+		result[key] = value
+	}
+	return result
 }
 
 // GetModelPricingOverrideModelSet 返回所有已经存在模型级定价覆盖的模型名集合。
@@ -352,6 +399,21 @@ func GetModelPricingOverrideModelSet() map[string]struct{} {
 			}
 		}
 	}
+	collectManualSourceKeys := func(optionKey string) {
+		var values map[string]ModelPricingSource
+		if err := common.UnmarshalJsonStr(options[optionKey], &values); err != nil {
+			if strings.TrimSpace(options[optionKey]) != "" {
+				common.SysError("failed to parse persisted pricing option " + optionKey + ": " + err.Error())
+			}
+			return
+		}
+		for key, value := range values {
+			key = strings.TrimSpace(key)
+			if key != "" && strings.TrimSpace(value.Kind) == ModelPricingSourceManual {
+				result[key] = struct{}{}
+			}
+		}
+	}
 
 	collectFloatKeys("ModelPrice", ratio_setting.GetDefaultModelPriceMap())
 	collectFloatKeys("ModelRatio", ratio_setting.GetDefaultModelRatioMap())
@@ -363,6 +425,7 @@ func GetModelPricingOverrideModelSet() map[string]struct{} {
 	collectFloatKeys("AudioCompletionRatio", ratio_setting.GetDefaultAudioCompletionRatioMap())
 	collectBillingModeKeys("billing_setting.billing_mode")
 	collectBillingExprKeys("billing_setting.billing_expr")
+	collectManualSourceKeys(ModelPricingSourceOptionKey)
 	return result
 }
 
@@ -378,6 +441,7 @@ func getPersistedModelPricingOptions() map[string]string {
 		"AudioCompletionRatio",
 		"billing_setting.billing_mode",
 		"billing_setting.billing_expr",
+		ModelPricingSourceOptionKey,
 	}
 	result := make(map[string]string, len(keys))
 	if DB != nil {

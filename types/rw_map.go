@@ -24,8 +24,8 @@ import (
 //   - K: 键类型，必须是可比较类型
 //   - V: 值类型
 type RWMap[K comparable, V any] struct {
-	data  map[K]V       // 底层数据存储
-	mutex sync.RWMutex  // 读写锁，保护并发访问
+	data  map[K]V      // 底层数据存储
+	mutex sync.RWMutex // 读写锁，保护并发访问
 }
 
 // UnmarshalJSON 从 JSON 字节数据反序列化到 RWMap
@@ -102,6 +102,19 @@ func (m *RWMap[K, V]) Set(key K, value V) {
 func (m *RWMap[K, V]) AddAll(other map[K]V) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
+	for k, v := range other {
+		m.data[k] = v
+	}
+}
+
+// ReplaceAll 用一份新 Map 原子替换当前全部键值。
+//
+// 调用方传入的 Map 会被复制一份再保存，避免后续修改原始 Map 时绕过 RWMap 的锁。
+// 该方法用于“默认值 + 持久化覆盖”这类配置热加载场景，保证读者不会观察到中间清空态。
+func (m *RWMap[K, V]) ReplaceAll(other map[K]V) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.data = make(map[K]V, len(other))
 	for k, v := range other {
 		m.data[k] = v
 	}

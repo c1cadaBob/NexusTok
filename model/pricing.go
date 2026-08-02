@@ -14,7 +14,6 @@
 package model
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -31,35 +30,35 @@ import (
 // Pricing 模型定价信息
 // 包含模型的计费配置、倍率、分组启用信息等
 type Pricing struct {
-	ModelName              string                  `json:"model_name"`                // 模型名称
-	Description            string                  `json:"description,omitempty"`     // 模型描述
-	Icon                   string                  `json:"icon,omitempty"`            // 模型图标
-	Tags                   string                  `json:"tags,omitempty"`            // 模型标签
-	VendorID               int                     `json:"vendor_id,omitempty"`       // 供应商 ID
-	QuotaType              int                     `json:"quota_type"`                // 计费类型
-	ModelRatio             float64                 `json:"model_ratio"`               // 模型倍率
-	ModelPrice             float64                 `json:"model_price"`               // 模型价格
-	OwnerBy                string                  `json:"owner_by"`                  // 所有者
-	CompletionRatio        float64                 `json:"completion_ratio"`          // 补全倍率
-	CacheRatio             *float64                `json:"cache_ratio,omitempty"`     // 缓存倍率
-	CreateCacheRatio       *float64                `json:"create_cache_ratio,omitempty"` // 创建缓存倍率
-	ImageRatio             *float64                `json:"image_ratio,omitempty"`     // 图片倍率
-	AudioRatio             *float64                `json:"audio_ratio,omitempty"`     // 音频倍率
+	ModelName              string                  `json:"model_name"`                       // 模型名称
+	Description            string                  `json:"description,omitempty"`            // 模型描述
+	Icon                   string                  `json:"icon,omitempty"`                   // 模型图标
+	Tags                   string                  `json:"tags,omitempty"`                   // 模型标签
+	VendorID               int                     `json:"vendor_id,omitempty"`              // 供应商 ID
+	QuotaType              int                     `json:"quota_type"`                       // 计费类型
+	ModelRatio             float64                 `json:"model_ratio"`                      // 模型倍率
+	ModelPrice             float64                 `json:"model_price"`                      // 模型价格
+	OwnerBy                string                  `json:"owner_by"`                         // 所有者
+	CompletionRatio        float64                 `json:"completion_ratio"`                 // 补全倍率
+	CacheRatio             *float64                `json:"cache_ratio,omitempty"`            // 缓存倍率
+	CreateCacheRatio       *float64                `json:"create_cache_ratio,omitempty"`     // 创建缓存倍率
+	ImageRatio             *float64                `json:"image_ratio,omitempty"`            // 图片倍率
+	AudioRatio             *float64                `json:"audio_ratio,omitempty"`            // 音频倍率
 	AudioCompletionRatio   *float64                `json:"audio_completion_ratio,omitempty"` // 音频补全倍率
-	EnableGroup            []string                `json:"enable_groups"`             // 启用的分组列表
-	SupportedEndpointTypes []constant.EndpointType `json:"supported_endpoint_types"`  // 支持的端点类型
-	BillingMode            string                  `json:"billing_mode,omitempty"`    // 计费模式
-	BillingExpr            string                  `json:"billing_expr,omitempty"`    // 计费表达式
-	PricingVersion         string                  `json:"pricing_version,omitempty"` // 定价版本
+	EnableGroup            []string                `json:"enable_groups"`                    // 启用的分组列表
+	SupportedEndpointTypes []constant.EndpointType `json:"supported_endpoint_types"`         // 支持的端点类型
+	BillingMode            string                  `json:"billing_mode,omitempty"`           // 计费模式
+	BillingExpr            string                  `json:"billing_expr,omitempty"`           // 计费表达式
+	PricingVersion         string                  `json:"pricing_version,omitempty"`        // 定价版本
 }
 
 // PricingVendor 供应商定价信息
 // 用于定价查询时展示供应商信息
 type PricingVendor struct {
-	ID          int    `json:"id"`                     // 供应商 ID
-	Name        string `json:"name"`                   // 供应商名称
-	Description string `json:"description,omitempty"`  // 供应商描述
-	Icon        string `json:"icon,omitempty"`         // 供应商图标
+	ID          int    `json:"id"`                    // 供应商 ID
+	Name        string `json:"name"`                  // 供应商名称
+	Description string `json:"description,omitempty"` // 供应商描述
+	Icon        string `json:"icon,omitempty"`        // 供应商图标
 }
 
 var (
@@ -242,7 +241,7 @@ func updatePricing() {
 			continue
 		}
 		var raw map[string]interface{}
-		if err := json.Unmarshal([]byte(meta.Endpoints), &raw); err == nil {
+		if err := common.Unmarshal([]byte(meta.Endpoints), &raw); err == nil {
 			endpoints := make([]string, 0, len(raw))
 			for k, v := range raw {
 				switch v.(type) {
@@ -286,7 +285,7 @@ func updatePricing() {
 			continue
 		}
 		var raw map[string]interface{}
-		if err := json.Unmarshal([]byte(meta.Endpoints), &raw); err == nil {
+		if err := common.Unmarshal([]byte(meta.Endpoints), &raw); err == nil {
 			for k, v := range raw {
 				switch val := v.(type) {
 				case string:
@@ -301,7 +300,7 @@ func updatePricing() {
 					}
 					supportedEndpointMap[k] = ep
 				default:
-					// ignore unsupported types
+					// 忽略不支持的端点定义形态，避免单个异常字段影响整个价格缓存。
 				}
 			}
 		}
