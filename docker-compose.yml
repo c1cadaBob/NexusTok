@@ -15,6 +15,10 @@
 #   2. 在 depends_on 中取消 clickhouse 注释
 #   3. 取消 clickhouse 服务和 clickhouse_data 卷的注释
 #
+# 系统维护页面内 Docker 自动更新：
+#   - 默认挂载 /var/run/docker.sock，让 Root 管理员可以在后台拉取镜像并重建当前容器
+#   - Docker socket 等同宿主机 Docker 管理权限，只应部署在可信管理员可访问的实例中
+#
 # ⚠️  重要：生产环境部署前必须修改所有默认密码和会话密钥！
 
 version: '3.4' # For compatibility with older Docker versions
@@ -30,6 +34,7 @@ services:
     volumes:
       - ./data:/data
       - ./logs:/app/logs
+      - /var/run/docker.sock:/var/run/docker.sock # 系统维护 Docker 自动更新需要；等同宿主高权限入口
     environment:
       - SQL_DSN=postgresql://root:123456@postgres:5432/nexustok # ⚠️ IMPORTANT: Change the password in production!
 #      - SQL_DSN=root:123456@tcp(mysql:3306)/nexustok  # Point to the mysql service, uncomment if using MySQL

@@ -78,10 +78,11 @@ docker run --name nexustok -d --restart always \
   -p 3000:3000 \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   c1cadabob/nexustok:latest
 ```
 
-`-v ./data:/data` 会把 SQLite 和运行时数据保存到当前目录的 `data` 文件夹。生产部署建议使用绝对路径。
+`-v ./data:/data` 会把 SQLite 和运行时数据保存到当前目录的 `data` 文件夹。生产部署建议使用绝对路径。`/var/run/docker.sock` 用于系统维护页内自动拉取镜像并重建容器，等同宿主机 Docker 管理权限，只应在可信管理员环境中挂载；不挂载时仍可检查更新，但不能在页面内应用 Docker 更新。
 
 Docker 镜像只包含 NexusTok 应用，不内置 PostgreSQL 服务。单容器默认使用 SQLite；外接 MySQL 或 PostgreSQL 时通过 `SQL_DSN` 指定连接串，例如：
 

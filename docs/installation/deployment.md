@@ -372,6 +372,14 @@ docker compose -f docker-compose.loadtest.yml down -v
 
 如果不需要 Compose 编排，可以直接运行官方镜像。
 
+如果希望在后台 **系统维护 → 检查更新** 页面直接应用 Docker 镜像更新，需要给容器挂载 Docker socket：
+
+```bash
+-v /var/run/docker.sock:/var/run/docker.sock
+```
+
+NexusTok 不依赖镜像内安装 `docker` CLI，而是通过 Docker Engine API 拉取目标镜像并重建当前容器。Docker socket 等同宿主机 Docker 管理权限，只应在可信管理员环境中启用；不挂载时维护页仍能检查更新并展示手动命令，但不能直接应用 Docker 更新。
+
 SQLite 模式：
 
 ```bash
@@ -385,6 +393,7 @@ docker run --name nexustok -d --restart always \
   -e SESSION_SECRET_FILE=/data/session_secret \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   c1cadabob/nexustok:latest
 ```
 
@@ -413,10 +422,30 @@ docker run --name nexustok -d --restart always \
   -e REDIS_CONN_STRING="redis://:password@host:6379/0" \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   c1cadabob/nexustok:latest
 ```
 
 Docker 镜像只包含 NexusTok 应用进程，不会在同一个容器里内置 PostgreSQL、MySQL 或 Redis。单容器默认使用 SQLite；外接 MySQL/PostgreSQL 时通过 `SQL_DSN` 指向外部服务；需要同时编排 PostgreSQL 和 Redis 时，请优先使用本仓库的 Docker Compose。ClickHouse 只能配置为 `LOG_SQL_DSN` 日志库，不能作为主业务库。
+
+### 已按旧命令启动时启用页面自动更新
+
+如果当前容器启动时没有挂载 `/var/run/docker.sock`，页面会提示一次性重建命令。对于常见单容器 SQLite 部署，可以在宿主机执行：
+
+```bash
+docker rm -f nexustok 2>/dev/null || true
+
+docker run --name nexustok -d --restart always \
+  -p 3008:3000 \
+  -e TZ=Asia/Shanghai \
+  -e SESSION_SECRET_FILE=/data/session_secret \
+  -v /opt/nexustok/data:/data \
+  -v /opt/nexustok/logs:/app/logs \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  c1cadabob/nexustok:latest
+```
+
+上面的命令保留 `/opt/nexustok/data` 和 `/opt/nexustok/logs`，不会删除 SQLite、会话密钥文件或日志。端口请按你的实际暴露端口调整，例如 `-p 3008:3000` 表示通过 `http://服务器IP:3008` 访问。
 
 单容器模式和 Compose 模式都使用 NexusTok 原生账号池。账号池分组、池账号和认证文件 API 均由主服务直接提供，不需要额外启动 CLIProxyAPI Sidecar 或 CPA Usage Service。
 
@@ -892,6 +921,8 @@ curl -H "NexusTok-User: <管理员用户ID>" \
 
 ## 更新流程
 
+如果 Docker 部署已经挂载 `/var/run/docker.sock`，Root 管理员可以直接在后台 **系统维护 → 检查更新** 中点击 **Apply update**。系统会按部署方式识别当前容器：Docker 单容器会拉取目标镜像并用相同端口、卷、环境变量和重启策略重建；无法控制宿主 Docker 或源码构建时，页面只展示手动命令。
+
 生产 Compose 镜像更新：
 
 ```bash
@@ -923,6 +954,7 @@ docker run --name nexustok -d --restart always \
   -e SESSION_SECRET_FILE=/data/session_secret \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   c1cadabob/nexustok:latest
 ```
 

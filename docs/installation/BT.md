@@ -64,6 +64,8 @@ services:
       - "3000:3000"
     volumes:
       - ./data:/data
+      - ./logs:/app/logs
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - SESSION_SECRET_FILE=/data/session_secret
       - TZ=Asia/Shanghai
@@ -90,6 +92,7 @@ docker run --name nexustok -d --restart always \
   -e SESSION_SECRET_FILE=/data/session_secret \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   c1cadabob/nexustok:latest
 ```
 
@@ -102,6 +105,8 @@ curl -sS http://127.0.0.1:3000/api/status
 ```
 
 访问 `http://您的服务器IP:3000`。如果无法访问，请在宝塔面板 **安全** 和云服务器安全组中同时放行 TCP `3000` 端口。
+
+`/var/run/docker.sock` 用于后台 **系统维护 → 检查更新** 页面自动拉取镜像并重建当前容器，等同宿主机 Docker 管理权限，只应在可信管理员环境中挂载。如果旧容器启动时没有挂载它，维护页会显示一次性重建命令；执行后仍复用 `/opt/nexustok/data` 和 `/opt/nexustok/logs`，不会删除数据。
 
 ***
 
@@ -194,6 +199,7 @@ docker run --name nexustok -d --restart always \
   -e SESSION_SECRET_FILE=/data/session_secret \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   c1cadabob/nexustok:latest
 ```
 

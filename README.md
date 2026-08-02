@@ -62,6 +62,7 @@ docker run --name nexustok -d --restart always \
   -e SESSION_SECRET_FILE=/data/session_secret \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   c1cadabob/nexustok:latest
 
 # 使用 MySQL（外接数据库）
@@ -72,6 +73,7 @@ docker run --name nexustok -d --restart always \
   -e SESSION_SECRET_FILE=/data/session_secret \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   c1cadabob/nexustok:latest
 
 # 使用 PostgreSQL（外接数据库）
@@ -83,6 +85,7 @@ docker run --name nexustok -d --restart always \
   -e SESSION_SECRET_FILE=/data/session_secret \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   c1cadabob/nexustok:latest
 
 # 启动后检查
@@ -91,7 +94,7 @@ docker logs -f nexustok
 curl -sS http://127.0.0.1:3000/api/status
 ```
 
-> **💡 提示：** 访问地址为 `http://服务器IP:3000`。云服务器还需要在安全组和系统防火墙中放行 TCP `3000` 端口。`/opt/nexustok/data` 保存 SQLite、会话密钥文件和运行时数据，更新容器时不要删除。Docker 镜像只包含 NexusTok 应用本身，不内置 PostgreSQL；需要数据库容器时请使用 Docker Compose，单容器模式则通过 `SQL_DSN` 连接外部 MySQL 或 PostgreSQL。
+> **💡 提示：** 访问地址为 `http://服务器IP:3000`。云服务器还需要在安全组和系统防火墙中放行 TCP `3000` 端口。`/opt/nexustok/data` 保存 SQLite、会话密钥文件和运行时数据，更新容器时不要删除。Docker 镜像只包含 NexusTok 应用本身，不内置 PostgreSQL；需要数据库容器时请使用 Docker Compose，单容器模式则通过 `SQL_DSN` 连接外部 MySQL 或 PostgreSQL。`/var/run/docker.sock` 用于系统维护页内自动拉取镜像并重建容器，等同宿主机 Docker 管理权限，只应在可信管理员环境中挂载；不挂载时仍可检查更新，但不能在页面内应用 Docker 更新。
 
 </details>
 
@@ -184,6 +187,7 @@ docker run --name nexustok -d --restart always \
   -e SESSION_SECRET_FILE=/data/session_secret \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   c1cadabob/nexustok:latest
 
 docker ps | grep nexustok
@@ -200,6 +204,7 @@ docker run --name nexustok -d --restart always \
   -e SESSION_SECRET_FILE=/data/session_secret \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   c1cadabob/nexustok:latest
 ```
 
@@ -213,12 +218,14 @@ docker run --name nexustok -d --restart always \
   -e SESSION_SECRET_FILE=/data/session_secret \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   c1cadabob/nexustok:latest
 ```
 
 > **💡 路径说明：**
 > - `/opt/nexustok/data:/data` - SQLite、会话密钥文件和运行时数据
 > - `/opt/nexustok/logs:/app/logs` - 主服务日志
+> - `/var/run/docker.sock:/var/run/docker.sock` - 系统维护页 Docker 自动更新入口；等同宿主机 Docker 管理权限，只给可信管理员环境使用
 > - 访问 `http://服务器IP:3000` 前，请确认云服务器安全组已放行 TCP `3000` 端口。
 > - Docker 镜像不内置 PostgreSQL。需要随应用一起启动 PostgreSQL/Redis 时使用 Docker Compose；单容器模式通过 `SQL_DSN` 连接外部 MySQL/PostgreSQL。
 

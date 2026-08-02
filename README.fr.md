@@ -77,10 +77,11 @@ docker run --name nexustok -d --restart always \
   -p 3000:3000 \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   c1cadabob/nexustok:latest
 ```
 
-`-v ./data:/data` stocke SQLite et les données d'exécution dans le dossier local `data`. Utilisez un chemin absolu pour les déploiements de production.
+`-v ./data:/data` stocke SQLite et les données d'exécution dans le dossier local `data`. Utilisez un chemin absolu pour les déploiements de production. `/var/run/docker.sock` active les mises à jour Docker depuis le tableau de bord en autorisant NexusTok à récupérer l'image et à recréer son conteneur ; cela équivaut à un accès d'administration Docker sur l'hôte et ne doit être monté que dans un environnement administrateur de confiance. Sans ce montage, NexusTok peut vérifier les mises à jour mais ne peut pas les appliquer depuis la page.
 
 L'image Docker contient uniquement l'application NexusTok, pas de serveur PostgreSQL intégré. Un conteneur seul utilise SQLite par défaut ; connectez MySQL ou PostgreSQL externe avec `SQL_DSN`, par exemple :
 

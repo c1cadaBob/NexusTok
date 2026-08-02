@@ -77,10 +77,11 @@ docker run --name nexustok -d --restart always \
   -p 3000:3000 \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   c1cadabob/nexustok:latest
 ```
 
-`-v ./data:/data` は SQLite と実行時データをローカルの `data` ディレクトリに保存します。本番環境では絶対パスの利用を推奨します。
+`-v ./data:/data` は SQLite と実行時データをローカルの `data` ディレクトリに保存します。本番環境では絶対パスの利用を推奨します。`/var/run/docker.sock` はダッシュボードから Docker イメージを取得してコンテナを再作成するために使います。これはホストの Docker 管理権限と同等なので、信頼できる管理者環境でのみマウントしてください。マウントしない場合も更新確認はできますが、ページ上から Docker 更新を適用できません。
 
 Docker イメージには NexusTok アプリケーションのみが含まれ、PostgreSQL サーバーは同梱されません。単一コンテナは既定で SQLite を使用します。外部 MySQL または PostgreSQL に接続する場合は `SQL_DSN` を指定してください。例：
 
