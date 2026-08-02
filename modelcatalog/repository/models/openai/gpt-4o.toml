@@ -1,0 +1,16 @@
+id = 'gpt-4o'
+name = 'GPT-4o'
+status = 'active'
+attachment = true
+tool_call = true
+structured_output = true
+
+[limit]
+context = 128000
+input = 128000
+output = 16384
+
+[modalities]
+input = ['text', 'image', 'audio']
+output = ['text']
+

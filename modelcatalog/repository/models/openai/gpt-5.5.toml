@@ -1,0 +1,17 @@
+id = 'gpt-5.5'
+name = 'GPT-5.5'
+status = 'active'
+attachment = true
+reasoning = true
+tool_call = true
+structured_output = true
+
+[limit]
+context = 400000
+input = 400000
+output = 128000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+

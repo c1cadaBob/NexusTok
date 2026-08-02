@@ -1,0 +1,14 @@
+id = 'deepseek-chat'
+name = 'DeepSeek Chat'
+status = 'active'
+tool_call = true
+
+[limit]
+context = 64000
+input = 64000
+output = 8192
+
+[modalities]
+input = ['text']
+output = ['text']
+

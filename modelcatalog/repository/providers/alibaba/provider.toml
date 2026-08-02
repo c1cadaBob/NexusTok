@@ -1,0 +1,5 @@
+id = 'alibaba'
+name = 'Alibaba'
+doc = 'https://help.aliyun.com/zh/model-studio/'
+status = 'active'
+

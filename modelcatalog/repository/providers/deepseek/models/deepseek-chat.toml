@@ -1,0 +1,8 @@
+id = 'deepseek-chat'
+name = 'DeepSeek Chat'
+status = 'active'
+
+[cost]
+input = 0.27
+output = 1.1
+

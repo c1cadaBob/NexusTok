@@ -1,0 +1,9 @@
+id = 'gpt-4o'
+name = 'GPT-4o'
+status = 'active'
+
+[cost]
+input = 2.5
+output = 10.0
+cache_read = 1.25
+

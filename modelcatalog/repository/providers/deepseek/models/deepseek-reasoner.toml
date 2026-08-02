@@ -1,0 +1,8 @@
+id = 'deepseek-reasoner'
+name = 'DeepSeek Reasoner'
+status = 'active'
+
+[cost]
+input = 0.55
+output = 2.19
+

@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE_URL="${MODELS_DEV_CATALOG_URL:-https://models.dev/catalog.json}"
-TARGET="${ROOT_DIR}/controller/data/model-catalog/models-dev-fallback.json"
+REPO_DIR="${MODEL_CATALOG_REPO_DIR:-${ROOT_DIR}/modelcatalog/repository}"
 TMP_FILE="$(mktemp)"
 
 cleanup() {
@@ -29,5 +29,5 @@ if (
 fs.writeFileSync(file, JSON.stringify(data, null, 2) + '\n')
 NODE
 
-install -m 0644 "${TMP_FILE}" "${TARGET}"
-echo "Updated ${TARGET} from ${SOURCE_URL}"
+go run "${ROOT_DIR}/modelcatalog/cmd/catalogtool" import-json -source "${TMP_FILE}" -repo "${REPO_DIR}"
+echo "Updated ${REPO_DIR} from ${SOURCE_URL}"

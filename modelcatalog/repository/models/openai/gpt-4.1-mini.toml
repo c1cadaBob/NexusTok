@@ -1,0 +1,16 @@
+id = 'gpt-4.1-mini'
+name = 'GPT-4.1 mini'
+status = 'active'
+attachment = true
+tool_call = true
+structured_output = true
+
+[limit]
+context = 1047576
+input = 1047576
+output = 32768
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+

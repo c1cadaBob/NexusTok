@@ -1,0 +1,16 @@
+id = 'claude-sonnet-4-20250514'
+name = 'Claude Sonnet 4'
+status = 'active'
+attachment = true
+reasoning = true
+tool_call = true
+
+[limit]
+context = 200000
+input = 200000
+output = 64000
+
+[modalities]
+input = ['text', 'image']
+output = ['text']
+

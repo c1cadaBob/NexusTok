@@ -1,0 +1,5 @@
+id = 'deepseek'
+name = 'DeepSeek'
+doc = 'https://api-docs.deepseek.com/'
+status = 'active'
+

@@ -1,0 +1,10 @@
+id = 'gpt-5-mini'
+name = 'GPT-5 mini'
+status = 'active'
+
+[cost]
+input = 0.25
+output = 2.0
+cache_read = 0.025
+cache_write = 0.25
+

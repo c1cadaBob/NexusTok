@@ -1,0 +1,8 @@
+id = 'qwen-plus'
+name = 'Qwen Plus'
+status = 'active'
+
+[cost]
+input = 20.0
+output = 60.0
+

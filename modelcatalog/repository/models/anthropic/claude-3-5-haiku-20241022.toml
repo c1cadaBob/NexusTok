@@ -1,0 +1,14 @@
+id = 'claude-3-5-haiku-20241022'
+name = 'Claude 3.5 Haiku'
+status = 'active'
+tool_call = true
+
+[limit]
+context = 200000
+input = 200000
+output = 8192
+
+[modalities]
+input = ['text']
+output = ['text']
+

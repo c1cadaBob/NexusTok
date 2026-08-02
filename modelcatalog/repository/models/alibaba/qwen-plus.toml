@@ -1,0 +1,15 @@
+id = 'qwen-plus'
+name = 'Qwen Plus'
+status = 'active'
+tool_call = true
+structured_output = true
+
+[limit]
+context = 131072
+input = 129024
+output = 8192
+
+[modalities]
+input = ['text']
+output = ['text']
+

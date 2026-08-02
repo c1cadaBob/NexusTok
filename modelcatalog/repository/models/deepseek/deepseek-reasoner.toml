@@ -1,0 +1,14 @@
+id = 'deepseek-reasoner'
+name = 'DeepSeek Reasoner'
+status = 'active'
+reasoning = true
+
+[limit]
+context = 64000
+input = 64000
+output = 8192
+
+[modalities]
+input = ['text']
+output = ['text']
+

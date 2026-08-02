@@ -1,0 +1,5 @@
+id = 'anthropic'
+name = 'Anthropic'
+doc = 'https://docs.anthropic.com/'
+status = 'active'
+
