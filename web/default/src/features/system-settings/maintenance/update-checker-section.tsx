@@ -115,8 +115,41 @@ function getBuildTypeLabel(buildType?: string) {
   }
 }
 
+function getDeploymentModeLabel(mode?: string) {
+  switch (mode) {
+    case 'binary':
+      return 'Binary deployment'
+    case 'docker_run':
+      return 'Docker run'
+    case 'docker_compose':
+      return 'Docker Compose'
+    case 'container_unknown':
+      return 'Container'
+    case 'source':
+      return 'Source or development build'
+    default:
+      return 'Unknown'
+  }
+}
+
+function getComparisonStatusLabel(status?: string) {
+  switch (status) {
+    case 'older':
+      return 'Current version is older'
+    case 'latest':
+      return 'Current version matches latest release'
+    case 'newer':
+      return 'Current version is newer than latest release'
+    case 'unknown':
+      return 'Version comparison unavailable'
+    default:
+      return 'Unknown'
+  }
+}
+
 function getStatusBadgeVariant(info?: SystemUpdateInfo) {
   if (!info) return 'secondary' as const
+  if (info.build_type === 'container' && info.can_apply) return 'default' as const
   if (info.release_status === 'none') return 'secondary' as const
   if (info.has_update && info.can_apply) return 'default' as const
   if (info.has_update && !info.can_apply) return 'destructive' as const
@@ -125,6 +158,8 @@ function getStatusBadgeVariant(info?: SystemUpdateInfo) {
 
 function getUpdateStatusLabel(info?: SystemUpdateInfo) {
   if (!info) return 'Not checked'
+  if (info.build_type === 'container' && info.can_apply)
+    return 'Docker image refresh available'
   if (info.release_status === 'none') return 'No release published'
   if (info.has_update && info.can_apply) return 'Update available'
   if (info.has_update) return 'Manual update required'
@@ -259,6 +294,25 @@ export function UpdateCheckerSection({
   )
   const showDockerManualCommands =
     info?.build_type === 'container' && Boolean(info?.manual_update_hint)
+  const dockerSocketEnabled = Boolean(info?.docker?.socket_available)
+  const dockerEnableCommand =
+    info?.docker?.one_time_enable_command ||
+    `docker rm -f nexustok 2>/dev/null || true
+
+docker run --name nexustok -d --restart always \\
+  -p 3008:3000 \\
+  -e TZ=Asia/Shanghai \\
+  -e SESSION_SECRET_FILE=/data/session_secret \\
+  -v /opt/nexustok/data:/data \\
+  -v /opt/nexustok/logs:/app/logs \\
+  -v /var/run/docker.sock:/var/run/docker.sock \\
+  c1cadabob/nexustok:latest`
+  const dockerManualCommand =
+    info?.docker?.manual_update_command ||
+    `docker pull c1cadabob/nexustok:latest
+docker stop nexustok
+docker rm nexustok
+# ${t('Recreate docker run with the same mounted data directories')}`
 
   const checkMutation = useMutation({
     mutationFn: () => getLatestSystemUpdate(true),
@@ -475,6 +529,33 @@ export function UpdateCheckerSection({
                     value={t(getBuildTypeLabel(info?.build_type))}
                   />
                   <DetailItem
+                    label={t('Deployment mode')}
+                    value={t(getDeploymentModeLabel(info?.deployment_mode))}
+                  />
+                  <DetailItem
+                    label={t('Version comparison')}
+                    value={t(
+                      getComparisonStatusLabel(info?.comparison_status)
+                    )}
+                  />
+                  {info?.target_image ? (
+                    <DetailItem
+                      label={t('Target image')}
+                      value={info.target_image}
+                      mono
+                    />
+                  ) : null}
+                  {info?.docker ? (
+                    <DetailItem
+                      label={t('Docker control')}
+                      value={
+                        dockerSocketEnabled
+                          ? t('Docker socket available')
+                          : t('Docker socket not mounted')
+                      }
+                    />
+                  ) : null}
+                  <DetailItem
                     label={t('Release asset')}
                     value={info?.matched_asset?.name || t('Not available')}
                   />
@@ -573,13 +654,16 @@ export function UpdateCheckerSection({
                       <div className='grid gap-3 lg:grid-cols-2'>
                         <div className='min-w-0'>
                           <div className='mb-1 text-xs font-medium'>
-                            {t('Single container')}
+                            {dockerSocketEnabled
+                              ? t('Manual Docker update')
+                              : t('Enable dashboard Docker updates')}
                           </div>
                           <pre className='bg-muted text-muted-foreground overflow-x-auto rounded-md p-3 text-xs'>
-                            <code>{`docker pull c1cadabob/nexustok:latest
-docker stop nexustok
-docker rm nexustok
-# ${t('Recreate docker run with the same mounted data directories')}`}</code>
+                            <code>
+                              {dockerSocketEnabled
+                                ? dockerManualCommand
+                                : dockerEnableCommand}
+                            </code>
                           </pre>
                         </div>
                         <div className='min-w-0'>
@@ -594,6 +678,22 @@ docker compose up -d nexustok`}</code>
                       </div>
                     ) : null}
                   </div>
+                </AlertDescription>
+              </Alert>
+            ) : null}
+
+            {info?.build_type === 'container' ? (
+              <Alert className='mt-4'>
+                <ShieldAlertIcon aria-hidden='true' />
+                <AlertTitle>{t('Docker update boundary')}</AlertTitle>
+                <AlertDescription>
+                  {dockerSocketEnabled
+                    ? t(
+                        'Docker socket is mounted. Dashboard updates can pull the target image and recreate this container with the same ports, volumes, environment, and restart policy.'
+                      )
+                    : t(
+                        'Mount /var/run/docker.sock to enable dashboard Docker updates. Without it, NexusTok can check updates but cannot control the host Docker Engine.'
+                      )}
                 </AlertDescription>
               </Alert>
             ) : null}
@@ -662,18 +762,34 @@ docker compose up -d nexustok`}</code>
                   {t(getSystemUpdateTaskSummary(currentTask), {
                     version:
                       taskResult?.target_version || taskState?.target_version,
+                    image: taskResult?.target_image || taskState?.target_image,
                   })}
                 </div>
 
-                {taskResult?.backup_path || taskResult?.sha256 ? (
+                {taskResult?.backup_path ||
+                taskResult?.sha256 ||
+                taskResult?.backup_container_name ||
+                taskResult?.new_container_id ? (
                   <div className='grid gap-3 md:grid-cols-2'>
                     <DetailItem
                       label={t('Backup path')}
-                      value={taskResult.backup_path || t('Not available')}
+                      value={
+                        taskResult.backup_path ||
+                        taskResult.backup_container_name ||
+                        t('Not available')
+                      }
                     />
                     <DetailItem
-                      label={t('SHA256')}
-                      value={taskResult.sha256 || t('Not available')}
+                      label={
+                        taskResult.new_container_id
+                          ? t('New container')
+                          : t('SHA256')
+                      }
+                      value={
+                        taskResult.new_container_id ||
+                        taskResult.sha256 ||
+                        t('Not available')
+                      }
                       mono
                     />
                   </div>

@@ -5,6 +5,7 @@ package main
 
 import (
 	"bytes"    // 字节操作，用于处理嵌入的静态资源
+	"context"  // 上下文控制，用于维护 helper 子命令
 	"embed"    // Go 1.16+ 嵌入文件系统功能
 	"fmt"      // 格式化输出
 	"log"      // 日志包
@@ -61,6 +62,11 @@ var classicIndexPage []byte // 经典主题的入口 HTML 页面
 // main 是应用程序的入口函数
 // 负责初始化所有资源、启动后台任务、配置 HTTP 服务器并监听端口
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "system-update-helper" {
+		runSystemUpdateHelper()
+		return
+	}
+
 	// 记录启动时间，用于计算启动耗时
 	startTime := time.Now()
 
@@ -281,6 +287,32 @@ func main() {
 	if err != nil {
 		// 服务器启动失败时记录致命日志
 		common.FatalLog("failed to start HTTP server: " + err.Error())
+	}
+}
+
+// runSystemUpdateHelper 运行 Docker 自动更新 helper 子命令。
+//
+// helper 由正在运行的 NexusTok 容器通过 Docker Engine API 创建。它共享同一份数据库
+// 配置和数据卷，但不启动 HTTP 服务、Redis runner 或其它后台任务，只负责在主容器被
+// 停止后继续完成镜像拉取、容器重建/回滚和 SystemTask 结果写回。
+func runSystemUpdateHelper() {
+	os.Args = []string{os.Args[0]}
+	_ = godotenv.Load(".env")
+	common.InitEnv()
+	logger.SetupLogger()
+	ratio_setting.InitRatioSettings()
+	service.InitHttpClient()
+	if err := model.InitDB(); err != nil {
+		common.FatalLog("failed to initialize helper database: " + err.Error())
+		return
+	}
+	defer func() {
+		if err := model.CloseDB(); err != nil {
+			common.SysLog("failed to close helper database: " + err.Error())
+		}
+	}()
+	if err := service.RunSystemUpdateDockerHelper(context.Background()); err != nil {
+		common.FatalLog("Docker system update helper failed: " + err.Error())
 	}
 }
 

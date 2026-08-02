@@ -159,6 +159,22 @@ export type SystemUpdateRuntime = {
   is_running_in_container: boolean
 }
 
+export type SystemUpdateDockerInfo = {
+  container_id?: string
+  container_name?: string
+  current_image?: string
+  current_image_id?: string
+  target_image?: string
+  socket_path?: string
+  socket_available: boolean
+  compose_project?: string
+  compose_service?: string
+  compose_working_dir?: string
+  compose_config_files?: string
+  one_time_enable_command?: string
+  manual_update_command?: string
+}
+
 export type SystemUpdateInfo = {
   current_version: string
   latest_version: string
@@ -169,6 +185,12 @@ export type SystemUpdateInfo = {
   checksum_asset?: SystemUpdateAsset
   runtime: SystemUpdateRuntime
   build_type: string
+  deployment_mode?: string
+  comparison_status?: 'newer' | 'latest' | 'older' | 'unknown'
+  update_method?: string
+  target_image?: string
+  docker?: SystemUpdateDockerInfo
+  docker_control_available?: boolean
   can_apply: boolean
   apply_disabled_reason?: string
   rollback_available: boolean

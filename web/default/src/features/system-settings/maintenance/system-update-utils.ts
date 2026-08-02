@@ -27,6 +27,8 @@ export type SystemUpdateTaskState = {
   total_bytes?: number
   target_version?: string
   asset_name?: string
+  mode?: string
+  target_image?: string
 }
 
 export type SystemUpdateTaskResult = {
@@ -40,6 +42,11 @@ export type SystemUpdateTaskResult = {
   published_at?: string
   restart_required?: boolean
   rollback_available?: boolean
+  mode?: string
+  target_image?: string
+  old_container_id?: string
+  new_container_id?: string
+  backup_container_name?: string
 }
 
 export type SystemUpdateTask = SystemTask<
@@ -56,6 +63,10 @@ export const SYSTEM_UPDATE_PHASE_LABELS: Record<string, string> = {
   replacing: 'Replacing executable',
   ready: 'Ready to restart',
   rolling_back: 'Rolling back binary',
+  pulling_image: 'Pulling Docker image',
+  starting_helper: 'Starting update helper',
+  recreating_container: 'Recreating Docker container',
+  probing: 'Checking updated service',
 }
 
 export function isActiveSystemUpdateStatus(status: SystemTaskStatus) {
@@ -83,12 +94,18 @@ export function getSystemUpdateTaskSummary(task: SystemTask) {
 
   if (task.error) return task.error
   if (task.type === 'system_update' && task.status === 'succeeded') {
+    if (result?.target_image) {
+      return 'Docker image updated to {{image}}.'
+    }
     const targetVersion = result?.target_version || state?.target_version
     return targetVersion
       ? 'Updated to {{version}}. Restart required.'
       : 'Update applied. Restart required.'
   }
   if (task.type === 'system_rollback' && task.status === 'succeeded') {
+    if (result?.new_container_id) {
+      return 'Docker container rollback applied.'
+    }
     return 'Rollback applied. Restart required.'
   }
   return getSystemUpdatePhaseLabel(state?.phase)

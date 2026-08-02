@@ -1,7 +1,8 @@
 // Package service - system_update.go
-// 该文件实现系统维护更新能力。更新流程只面向裸机二进制部署：后端从 GitHub
-// Release 下载与当前平台匹配的 NexusTok 二进制，校验 SHA256 后在当前可执行文件
-// 同目录完成备份和原子替换，再由管理员触发服务重启让新版本生效。
+// 该文件实现系统维护更新能力。裸机二进制部署会从 GitHub Release 下载与当前平台
+// 匹配的 NexusTok 二进制，校验 SHA256 后在当前可执行文件同目录完成备份和原子替换；
+// Docker 部署则通过 Docker Engine API 拉取目标镜像并重建当前容器。所有会改变运行
+// 形态的动作都挂在 SystemTask 上，便于 Root 管理员观察进度、失败原因和回滚入口。
 package service
 
 import (
@@ -43,16 +44,38 @@ const (
 
 	systemUpdateReleaseStatusPublished = "published"
 	systemUpdateReleaseStatusNone      = "none"
+
+	systemUpdateDeploymentBinary           = "binary"
+	systemUpdateDeploymentDockerRun        = "docker_run"
+	systemUpdateDeploymentDockerCompose    = "docker_compose"
+	systemUpdateDeploymentContainerUnknown = "container_unknown"
+	systemUpdateDeploymentSource           = "source"
+
+	systemUpdateComparisonNewer   = "newer"
+	systemUpdateComparisonLatest  = "latest"
+	systemUpdateComparisonOlder   = "older"
+	systemUpdateComparisonUnknown = "unknown"
+
+	systemUpdateMethodBinaryReplace = "binary_replace"
+	systemUpdateMethodDockerEngine  = "docker_engine"
+	systemUpdateMethodDockerCompose = "docker_compose"
+	systemUpdateMethodManual        = "manual"
+
+	systemUpdateDefaultDockerImage = "c1cadabob/nexustok:latest"
 )
 
 const (
-	SystemUpdatePhaseChecking    = "checking"
-	SystemUpdatePhaseDownloading = "downloading"
-	SystemUpdatePhaseVerifying   = "verifying"
-	SystemUpdatePhaseBackingUp   = "backing_up"
-	SystemUpdatePhaseReplacing   = "replacing"
-	SystemUpdatePhaseReady       = "ready"
-	SystemUpdatePhaseRollingBack = "rolling_back"
+	SystemUpdatePhaseChecking            = "checking"
+	SystemUpdatePhaseDownloading         = "downloading"
+	SystemUpdatePhaseVerifying           = "verifying"
+	SystemUpdatePhaseBackingUp           = "backing_up"
+	SystemUpdatePhaseReplacing           = "replacing"
+	SystemUpdatePhaseReady               = "ready"
+	SystemUpdatePhaseRollingBack         = "rolling_back"
+	SystemUpdatePhasePullingImage        = "pulling_image"
+	SystemUpdatePhaseStartingHelper      = "starting_helper"
+	SystemUpdatePhaseRecreatingContainer = "recreating_container"
+	SystemUpdatePhaseProbing             = "probing"
 )
 
 var (
@@ -60,25 +83,32 @@ var (
 	ErrSystemUpdateDisabled    = errors.New("system update cannot be applied")
 	ErrSystemRollbackDisabled  = errors.New("no backup executable found")
 	ErrSystemUpdateNoRelease   = errors.New("no published GitHub release was found")
+	ErrSystemUpdateHandedOff   = errors.New("system update task handed off to docker helper")
 )
 
 // SystemUpdateInfo 是系统更新检查接口返回给前端的完整视图。
 type SystemUpdateInfo struct {
-	CurrentVersion      string                   `json:"current_version"`
-	LatestVersion       string                   `json:"latest_version"`
-	HasUpdate           bool                     `json:"has_update"`
-	Cached              bool                     `json:"cached"`
-	ReleaseInfo         *SystemUpdateReleaseInfo `json:"release_info,omitempty"`
-	MatchedAsset        *SystemUpdateAsset       `json:"matched_asset,omitempty"`
-	ChecksumAsset       *SystemUpdateAsset       `json:"checksum_asset,omitempty"`
-	Runtime             SystemUpdateRuntime      `json:"runtime"`
-	BuildType           string                   `json:"build_type"`
-	CanApply            bool                     `json:"can_apply"`
-	ApplyDisabledReason string                   `json:"apply_disabled_reason,omitempty"`
-	RollbackAvailable   bool                     `json:"rollback_available"`
-	Warning             string                   `json:"warning,omitempty"`
-	ReleaseStatus       string                   `json:"release_status"`
-	ManualUpdateHint    string                   `json:"manual_update_hint,omitempty"`
+	CurrentVersion         string                   `json:"current_version"`
+	LatestVersion          string                   `json:"latest_version"`
+	HasUpdate              bool                     `json:"has_update"`
+	Cached                 bool                     `json:"cached"`
+	ReleaseInfo            *SystemUpdateReleaseInfo `json:"release_info,omitempty"`
+	MatchedAsset           *SystemUpdateAsset       `json:"matched_asset,omitempty"`
+	ChecksumAsset          *SystemUpdateAsset       `json:"checksum_asset,omitempty"`
+	Runtime                SystemUpdateRuntime      `json:"runtime"`
+	BuildType              string                   `json:"build_type"`
+	DeploymentMode         string                   `json:"deployment_mode"`
+	ComparisonStatus       string                   `json:"comparison_status"`
+	UpdateMethod           string                   `json:"update_method"`
+	TargetImage            string                   `json:"target_image,omitempty"`
+	Docker                 *SystemUpdateDockerInfo  `json:"docker,omitempty"`
+	DockerControlAvailable bool                     `json:"docker_control_available"`
+	CanApply               bool                     `json:"can_apply"`
+	ApplyDisabledReason    string                   `json:"apply_disabled_reason,omitempty"`
+	RollbackAvailable      bool                     `json:"rollback_available"`
+	Warning                string                   `json:"warning,omitempty"`
+	ReleaseStatus          string                   `json:"release_status"`
+	ManualUpdateHint       string                   `json:"manual_update_hint,omitempty"`
 }
 
 // SystemUpdateRuntime 描述当前进程运行平台，用于前端解释自动更新可用性。
@@ -86,6 +116,23 @@ type SystemUpdateRuntime struct {
 	GOOS                 string `json:"goos"`
 	GOARCH               string `json:"goarch"`
 	IsRunningInContainer bool   `json:"is_running_in_container"`
+}
+
+// SystemUpdateDockerInfo 描述当前 Docker 部署的可更新信息。
+type SystemUpdateDockerInfo struct {
+	ContainerID          string `json:"container_id,omitempty"`
+	ContainerName        string `json:"container_name,omitempty"`
+	CurrentImage         string `json:"current_image,omitempty"`
+	CurrentImageID       string `json:"current_image_id,omitempty"`
+	TargetImage          string `json:"target_image,omitempty"`
+	SocketPath           string `json:"socket_path,omitempty"`
+	SocketAvailable      bool   `json:"socket_available"`
+	ComposeProject       string `json:"compose_project,omitempty"`
+	ComposeService       string `json:"compose_service,omitempty"`
+	ComposeWorkingDir    string `json:"compose_working_dir,omitempty"`
+	ComposeConfigFiles   string `json:"compose_config_files,omitempty"`
+	OneTimeEnableCommand string `json:"one_time_enable_command,omitempty"`
+	ManualUpdateCommand  string `json:"manual_update_command,omitempty"`
 }
 
 // SystemUpdateReleaseInfo 是 GitHub Release 中用于维护页展示的字段。
@@ -109,6 +156,8 @@ type SystemUpdateAsset struct {
 type SystemUpdateTaskPayload struct {
 	TargetVersion string `json:"target_version,omitempty"`
 	AssetName     string `json:"asset_name,omitempty"`
+	Mode          string `json:"mode,omitempty"`
+	TargetImage   string `json:"target_image,omitempty"`
 }
 
 // SystemUpdateTaskState 是更新/回滚任务的可观察进度。
@@ -119,21 +168,28 @@ type SystemUpdateTaskState struct {
 	TotalBytes      int64  `json:"total_bytes,omitempty"`
 	TargetVersion   string `json:"target_version,omitempty"`
 	AssetName       string `json:"asset_name,omitempty"`
+	Mode            string `json:"mode,omitempty"`
+	TargetImage     string `json:"target_image,omitempty"`
 }
 
 // SystemUpdateTaskResult 保存更新任务完成后的关键信息，方便前端提示重启和回滚。
 type SystemUpdateTaskResult struct {
-	CurrentVersion     string `json:"current_version"`
-	TargetVersion      string `json:"target_version,omitempty"`
-	AssetName          string `json:"asset_name,omitempty"`
-	CurrentExecutable  string `json:"current_executable,omitempty"`
-	BackupPath         string `json:"backup_path,omitempty"`
-	SHA256             string `json:"sha256,omitempty"`
-	HTMLURL            string `json:"html_url,omitempty"`
-	PublishedAt        string `json:"published_at,omitempty"`
-	RestartRequired    bool   `json:"restart_required"`
-	RollbackAvailable  bool   `json:"rollback_available"`
-	PreviousExecutable string `json:"previous_executable,omitempty"`
+	CurrentVersion      string `json:"current_version"`
+	TargetVersion       string `json:"target_version,omitempty"`
+	AssetName           string `json:"asset_name,omitempty"`
+	CurrentExecutable   string `json:"current_executable,omitempty"`
+	BackupPath          string `json:"backup_path,omitempty"`
+	SHA256              string `json:"sha256,omitempty"`
+	HTMLURL             string `json:"html_url,omitempty"`
+	PublishedAt         string `json:"published_at,omitempty"`
+	RestartRequired     bool   `json:"restart_required"`
+	RollbackAvailable   bool   `json:"rollback_available"`
+	PreviousExecutable  string `json:"previous_executable,omitempty"`
+	Mode                string `json:"mode,omitempty"`
+	TargetImage         string `json:"target_image,omitempty"`
+	OldContainerID      string `json:"old_container_id,omitempty"`
+	NewContainerID      string `json:"new_container_id,omitempty"`
+	BackupContainerName string `json:"backup_container_name,omitempty"`
 }
 
 // SystemRestartResult 描述一次重启请求是否已被调度。
@@ -185,13 +241,15 @@ func NewSystemUpdateHTTPClient() SystemUpdateGitHubClient {
 type SystemUpdateService struct {
 	githubClient SystemUpdateGitHubClient
 
-	currentVersionFn func() string
-	goosFn           func() string
-	goarchFn         func() string
-	isContainerFn    func() bool
-	executableFn     func() (string, error)
-	evalSymlinksFn   func(string) (string, error)
-	nowFn            func() time.Time
+	currentVersionFn     func() string
+	goosFn               func() string
+	goarchFn             func() string
+	isContainerFn        func() bool
+	executableFn         func() (string, error)
+	evalSymlinksFn       func(string) (string, error)
+	dockerSocketPathFn   func() string
+	currentContainerIDFn func() string
+	nowFn                func() time.Time
 
 	cacheMu  sync.Mutex
 	cached   *SystemUpdateInfo
@@ -216,14 +274,16 @@ func getSystemUpdateGitHubRepo() string {
 // NewSystemUpdateService 创建系统更新服务。
 func NewSystemUpdateService(githubClient SystemUpdateGitHubClient) *SystemUpdateService {
 	return &SystemUpdateService{
-		githubClient:     githubClient,
-		currentVersionFn: func() string { return common.Version },
-		goosFn:           func() string { return runtime.GOOS },
-		goarchFn:         func() string { return runtime.GOARCH },
-		isContainerFn:    common.IsRunningInContainer,
-		executableFn:     os.Executable,
-		evalSymlinksFn:   filepath.EvalSymlinks,
-		nowFn:            time.Now,
+		githubClient:         githubClient,
+		currentVersionFn:     func() string { return common.Version },
+		goosFn:               func() string { return runtime.GOOS },
+		goarchFn:             func() string { return runtime.GOARCH },
+		isContainerFn:        common.IsRunningInContainer,
+		executableFn:         os.Executable,
+		evalSymlinksFn:       filepath.EvalSymlinks,
+		dockerSocketPathFn:   systemUpdateDockerSocketPath,
+		currentContainerIDFn: systemUpdateCurrentContainerID,
+		nowFn:                time.Now,
 	}
 }
 
@@ -254,7 +314,7 @@ func StartSystemUpdateTask(ctx context.Context) (*model.SystemTask, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !info.HasUpdate {
+	if !info.HasUpdate && info.UpdateMethod != systemUpdateMethodDockerEngine && info.UpdateMethod != systemUpdateMethodDockerCompose {
 		return nil, ErrSystemUpdateUnavailable
 	}
 	if !info.CanApply {
@@ -266,6 +326,8 @@ func StartSystemUpdateTask(ctx context.Context) (*model.SystemTask, error) {
 
 	payload := SystemUpdateTaskPayload{
 		TargetVersion: info.LatestVersion,
+		Mode:          info.DeploymentMode,
+		TargetImage:   info.TargetImage,
 	}
 	if info.MatchedAsset != nil {
 		payload.AssetName = info.MatchedAsset.Name
@@ -276,6 +338,8 @@ func StartSystemUpdateTask(ctx context.Context) (*model.SystemTask, error) {
 		Progress:      0,
 		TargetVersion: payload.TargetVersion,
 		AssetName:     payload.AssetName,
+		Mode:          payload.Mode,
+		TargetImage:   payload.TargetImage,
 	})
 	if err != nil {
 		activeTask, activeErr := model.GetActiveSystemTaskByActiveKey(systemUpdateActiveKey)
@@ -364,6 +428,9 @@ func (s *SystemUpdateService) buildNoReleaseInfo() *SystemUpdateInfo {
 			IsRunningInContainer: s.isContainerFn(),
 		},
 		BuildType:           buildType,
+		DeploymentMode:      s.deploymentMode(buildType),
+		ComparisonStatus:    systemUpdateComparisonUnknown,
+		UpdateMethod:        systemUpdateMethodManual,
 		RollbackAvailable:   s.RollbackAvailable(),
 		ReleaseStatus:       systemUpdateReleaseStatusNone,
 		ManualUpdateHint:    systemUpdateManualUpdateHint(buildType),
@@ -371,6 +438,8 @@ func (s *SystemUpdateService) buildNoReleaseInfo() *SystemUpdateInfo {
 		ApplyDisabledReason: "No published GitHub release was found.",
 		Warning:             "No published GitHub release was found.",
 	}
+	s.enrichDockerInfo(context.Background(), info)
+	s.syncApplicability(info)
 	return info
 }
 
@@ -384,9 +453,19 @@ func (s *SystemUpdateService) buildUpdateInfo(release *systemUpdateGitHubRelease
 	currentParsed, currentOK := parseSystemUpdateVersion(currentVersion)
 	latestParsed, latestOK := parseSystemUpdateVersion(latestVersion)
 	hasUpdate := false
+	comparisonStatus := systemUpdateComparisonUnknown
 	warning := ""
 	if currentOK && latestOK {
-		hasUpdate = compareParsedSystemUpdateVersion(currentParsed, latestParsed) < 0
+		compareResult := compareParsedSystemUpdateVersion(currentParsed, latestParsed)
+		switch {
+		case compareResult < 0:
+			comparisonStatus = systemUpdateComparisonOlder
+			hasUpdate = true
+		case compareResult == 0:
+			comparisonStatus = systemUpdateComparisonLatest
+		default:
+			comparisonStatus = systemUpdateComparisonNewer
+		}
 	} else {
 		warning = "Unable to compare current version with latest release."
 	}
@@ -407,10 +486,14 @@ func (s *SystemUpdateService) buildUpdateInfo(release *systemUpdateGitHubRelease
 			IsRunningInContainer: s.isContainerFn(),
 		},
 		BuildType:         s.buildType(currentOK),
+		DeploymentMode:    s.deploymentMode(s.buildType(currentOK)),
+		ComparisonStatus:  comparisonStatus,
+		UpdateMethod:      systemUpdateMethodManual,
 		RollbackAvailable: s.RollbackAvailable(),
 		Warning:           warning,
 		ReleaseStatus:     systemUpdateReleaseStatusPublished,
 	}
+	s.enrichDockerInfo(context.Background(), info)
 	s.syncApplicability(info)
 	return info
 }
@@ -426,8 +509,21 @@ func (s *SystemUpdateService) buildType(versionComparable bool) string {
 	return systemUpdateBuildRelease
 }
 
+func (s *SystemUpdateService) deploymentMode(buildType string) string {
+	switch buildType {
+	case systemUpdateBuildContainer:
+		return systemUpdateDeploymentContainerUnknown
+	case systemUpdateBuildSource:
+		return systemUpdateDeploymentSource
+	default:
+		return systemUpdateDeploymentBinary
+	}
+}
+
 func (s *SystemUpdateService) syncApplicability(info *SystemUpdateInfo) {
 	switch {
+	case info.BuildType == systemUpdateBuildContainer:
+		s.syncDockerApplicability(info)
 	case info.ReleaseStatus == systemUpdateReleaseStatusNone:
 		info.CanApply = false
 		info.ApplyDisabledReason = "No published GitHub release was found."
@@ -435,10 +531,6 @@ func (s *SystemUpdateService) syncApplicability(info *SystemUpdateInfo) {
 	case !info.HasUpdate:
 		info.CanApply = false
 		info.ApplyDisabledReason = "Already running the latest version."
-	case info.BuildType == systemUpdateBuildContainer:
-		info.CanApply = false
-		info.ApplyDisabledReason = "Container deployments must be updated by replacing the image."
-		info.ManualUpdateHint = systemUpdateManualUpdateHint(info.BuildType)
 	case info.BuildType == systemUpdateBuildSource:
 		info.CanApply = false
 		info.ApplyDisabledReason = "Source or development builds cannot be replaced safely from the dashboard."
@@ -452,6 +544,35 @@ func (s *SystemUpdateService) syncApplicability(info *SystemUpdateInfo) {
 	default:
 		info.CanApply = true
 		info.ApplyDisabledReason = ""
+	}
+}
+
+func (s *SystemUpdateService) syncDockerApplicability(info *SystemUpdateInfo) {
+	info.UpdateMethod = systemUpdateMethodDockerEngine
+	if info.DeploymentMode == systemUpdateDeploymentDockerCompose {
+		// 第一版仍通过 Docker Engine helper 原子重建当前容器；Compose 标签用于识别和展示
+		// 手动命令。这样不依赖镜像内 docker CLI，也避免把 compose 文件路径挂入应用容器。
+		info.UpdateMethod = systemUpdateMethodDockerCompose
+	}
+	if info.ComparisonStatus == systemUpdateComparisonUnknown {
+		info.HasUpdate = true
+	}
+	if info.TargetImage == "" {
+		info.TargetImage = systemUpdateTargetDockerImage("")
+	}
+	if info.Docker != nil {
+		info.DockerControlAvailable = info.Docker.SocketAvailable
+	}
+	if !info.DockerControlAvailable {
+		info.CanApply = false
+		info.ApplyDisabledReason = "Docker automatic updates require mounting /var/run/docker.sock into the NexusTok container."
+		info.ManualUpdateHint = systemUpdateManualUpdateHint(info.BuildType)
+		return
+	}
+	info.CanApply = true
+	info.ApplyDisabledReason = ""
+	if info.ReleaseStatus == systemUpdateReleaseStatusNone {
+		info.Warning = "No published GitHub release was found. Docker update will pull the configured target image."
 	}
 }
 
@@ -472,6 +593,9 @@ func systemUpdateDockerManualUpdateHint() string {
 
 // RollbackAvailable 检查当前可执行文件旁边是否存在 .backup。
 func (s *SystemUpdateService) RollbackAvailable() bool {
+	if s.isContainerFn() {
+		return s.DockerRollbackAvailable(context.Background())
+	}
 	exePath, err := s.executablePath()
 	if err != nil {
 		return false
@@ -491,11 +615,14 @@ func (s *SystemUpdateService) PerformUpdate(ctx context.Context, task *model.Sys
 	if err != nil {
 		return nil, err
 	}
-	if !info.HasUpdate {
+	if !info.HasUpdate && info.UpdateMethod != systemUpdateMethodDockerEngine && info.UpdateMethod != systemUpdateMethodDockerCompose {
 		return nil, ErrSystemUpdateUnavailable
 	}
 	if !info.CanApply {
 		return nil, fmt.Errorf("%w: %s", ErrSystemUpdateDisabled, info.ApplyDisabledReason)
+	}
+	if info.BuildType == systemUpdateBuildContainer {
+		return s.HandOffDockerUpdate(ctx, task, runnerID, info)
 	}
 	if info.MatchedAsset == nil || info.ChecksumAsset == nil || info.ReleaseInfo == nil {
 		return nil, ErrSystemUpdateDisabled
@@ -592,11 +719,15 @@ func (s *SystemUpdateService) PerformUpdate(ctx context.Context, task *model.Sys
 		PublishedAt:       info.ReleaseInfo.PublishedAt,
 		RestartRequired:   true,
 		RollbackAvailable: true,
+		Mode:              systemUpdateDeploymentBinary,
 	}, nil
 }
 
 // PerformRollback 将 .backup 恢复为当前可执行文件。
 func (s *SystemUpdateService) PerformRollback(_ context.Context, task *model.SystemTask, runnerID string) (*SystemUpdateTaskResult, error) {
+	if s.isContainerFn() {
+		return s.HandOffDockerRollback(context.Background(), task, runnerID)
+	}
 	state := SystemUpdateTaskState{Phase: SystemUpdatePhaseRollingBack, Progress: 20}
 	if err := updateSystemUpdateTaskState(task, runnerID, state); err != nil {
 		return nil, err
@@ -674,6 +805,9 @@ type systemUpdateHandler struct{}
 
 func (systemUpdateHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
 	result, err := defaultSystemUpdateService.PerformUpdate(ctx, task, runnerID)
+	if errors.Is(err, ErrSystemUpdateHandedOff) {
+		return
+	}
 	status := model.SystemTaskStatusSucceeded
 	errorMessage := ""
 	if err != nil {
@@ -694,6 +828,9 @@ func (systemRollbackHandler) Type() string {
 
 func (systemRollbackHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
 	result, err := defaultSystemUpdateService.PerformRollback(ctx, task, runnerID)
+	if errors.Is(err, ErrSystemUpdateHandedOff) {
+		return
+	}
 	status := model.SystemTaskStatusSucceeded
 	errorMessage := ""
 	if err != nil {
@@ -1139,6 +1276,10 @@ func cloneSystemUpdateInfo(info *SystemUpdateInfo) *SystemUpdateInfo {
 	if info.ChecksumAsset != nil {
 		assetClone := *info.ChecksumAsset
 		clone.ChecksumAsset = &assetClone
+	}
+	if info.Docker != nil {
+		dockerClone := *info.Docker
+		clone.Docker = &dockerClone
 	}
 	return &clone
 }

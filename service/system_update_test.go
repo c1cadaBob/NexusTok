@@ -117,24 +117,32 @@ func TestSystemUpdateCheckFindsApplicableLinuxAsset(t *testing.T) {
 	assert.Equal(t, systemUpdateReleaseStatusPublished, info.ReleaseStatus)
 }
 
-func TestSystemUpdateCheckMapsGitHubNotFoundToNoReleaseInfo(t *testing.T) {
+func TestSystemUpdateCheckMapsGitHubNotFoundToNoReleaseInfoForDocker(t *testing.T) {
 	client := &fakeSystemUpdateGitHubClient{fetchErr: ErrSystemUpdateNoRelease}
 	service := NewSystemUpdateService(client)
 	service.currentVersionFn = func() string { return "v1.0.0" }
 	service.goosFn = func() string { return "linux" }
 	service.goarchFn = func() string { return "amd64" }
 	service.isContainerFn = func() bool { return true }
+	service.dockerSocketPathFn = func() string { return filepath.Join(t.TempDir(), "missing-docker.sock") }
 	service.executableFn = func() (string, error) { return "", errors.New("not configured") }
 
 	info, err := service.CheckLatest(context.Background(), true)
 
 	require.NoError(t, err)
-	assert.False(t, info.HasUpdate)
+	assert.True(t, info.HasUpdate)
 	assert.False(t, info.CanApply)
 	assert.Equal(t, systemUpdateReleaseStatusNone, info.ReleaseStatus)
-	assert.Equal(t, "No published GitHub release was found.", info.ApplyDisabledReason)
-	assert.Contains(t, info.ManualUpdateHint, "c1cadabob/nexustok:latest")
 	assert.Equal(t, systemUpdateBuildContainer, info.BuildType)
+	assert.Equal(t, systemUpdateDeploymentContainerUnknown, info.DeploymentMode)
+	assert.Equal(t, systemUpdateMethodDockerEngine, info.UpdateMethod)
+	assert.Equal(t, systemUpdateComparisonUnknown, info.ComparisonStatus)
+	assert.Equal(t, systemUpdateDefaultDockerImage, info.TargetImage)
+	assert.Contains(t, info.ApplyDisabledReason, "/var/run/docker.sock")
+	assert.Contains(t, info.ManualUpdateHint, "c1cadabob/nexustok:latest")
+	require.NotNil(t, info.Docker)
+	assert.False(t, info.Docker.SocketAvailable)
+	assert.Contains(t, info.Docker.OneTimeEnableCommand, "/var/run/docker.sock")
 }
 
 func TestSystemUpdateGitHubRepoCanBeOverriddenByEnv(t *testing.T) {
@@ -177,7 +185,8 @@ func TestSystemUpdateCheckDisablesContainerAndSourceBuilds(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, containerInfo.CanApply)
 	assert.Equal(t, systemUpdateBuildContainer, containerInfo.BuildType)
-	assert.Contains(t, containerInfo.ApplyDisabledReason, "Container deployments")
+	assert.Equal(t, systemUpdateMethodDockerEngine, containerInfo.UpdateMethod)
+	assert.Contains(t, containerInfo.ApplyDisabledReason, "/var/run/docker.sock")
 	assert.Contains(t, containerInfo.ManualUpdateHint, "c1cadabob/nexustok:latest")
 
 	sourceService := newTestSystemUpdateService("v0.0.0", "linux", "amd64", false, release)
@@ -187,6 +196,19 @@ func TestSystemUpdateCheckDisablesContainerAndSourceBuilds(t *testing.T) {
 	assert.Equal(t, systemUpdateBuildSource, sourceInfo.BuildType)
 	assert.Contains(t, sourceInfo.ApplyDisabledReason, "Source or development")
 	assert.Contains(t, sourceInfo.ManualUpdateHint, "pulling the latest code")
+}
+
+func TestSystemUpdateCheckKeepsUnparseableBuildComparisonUnknown(t *testing.T) {
+	service := newTestSystemUpdateService("main-20260802-f7ba633", "linux", "amd64", true, testSystemUpdateRelease("v0.1.1"))
+
+	info, err := service.CheckLatest(context.Background(), true)
+
+	require.NoError(t, err)
+	assert.Equal(t, systemUpdateComparisonUnknown, info.ComparisonStatus)
+	assert.True(t, info.HasUpdate)
+	assert.False(t, info.CanApply)
+	assert.Contains(t, info.Warning, "Unable to compare")
+	assert.Contains(t, info.ApplyDisabledReason, "/var/run/docker.sock")
 }
 
 func TestSystemUpdateCheckKeepsUnknownCustomPlatformNotApplicable(t *testing.T) {
@@ -463,6 +485,7 @@ func newTestSystemUpdateService(currentVersion string, goos string, goarch strin
 	service.isContainerFn = func() bool { return isContainer }
 	service.executableFn = func() (string, error) { return "", errors.New("not configured") }
 	service.evalSymlinksFn = func(path string) (string, error) { return path, nil }
+	service.dockerSocketPathFn = func() string { return filepath.Join(os.TempDir(), "nexustok-test-missing-docker.sock") }
 	return service
 }
 

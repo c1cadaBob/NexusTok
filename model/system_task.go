@@ -397,6 +397,54 @@ func RenewSystemTaskLock(taskID string, lockedBy string, lockUntil int64) error 
 	return nil
 }
 
+// TransferSystemTaskLock 将 running 任务的租约从当前 runner 转交给新的 runner。
+//
+// 这个能力只用于“当前进程需要被外部 helper 停止”的维护场景，例如 Docker 容器自更新：
+// 主容器不能先停止自己再继续写任务结果，因此需要先创建 helper 容器，再把同一条
+// SystemTask 的 locked_by 和 system_task_locks 记录原子切换给 helper。调用方必须在
+// helper 启动失败时把锁转回原 runner，避免任务卡在无法续租的状态。
+func TransferSystemTaskLock(taskID string, taskType string, fromRunner string, toRunner string, lockUntil int64) error {
+	if taskID == "" || taskType == "" {
+		return ErrSystemTaskLockLost
+	}
+	if fromRunner == "" || toRunner == "" {
+		return errSystemTaskRunnerIDRequired
+	}
+	if lockUntil == 0 {
+		return errSystemTaskLockUntilRequired
+	}
+	now := common.GetTimestamp()
+	return DB.Transaction(func(tx *gorm.DB) error {
+		taskResult := tx.Model(&SystemTask{}).
+			Where("task_id = ? AND type = ? AND status = ? AND locked_by = ?", taskID, taskType, SystemTaskStatusRunning, fromRunner).
+			Updates(map[string]any{
+				"locked_by":  toRunner,
+				"updated_at": now,
+			})
+		if taskResult.Error != nil {
+			return taskResult.Error
+		}
+		if taskResult.RowsAffected == 0 {
+			return ErrSystemTaskLockLost
+		}
+
+		lockResult := tx.Model(&SystemTaskLock{}).
+			Where("type = ? AND task_id = ? AND locked_by = ?", taskType, taskID, fromRunner).
+			Updates(map[string]any{
+				"locked_by":    toRunner,
+				"locked_until": lockUntil,
+				"updated_at":   now,
+			})
+		if lockResult.Error != nil {
+			return lockResult.Error
+		}
+		if lockResult.RowsAffected == 0 {
+			return ErrSystemTaskLockLost
+		}
+		return nil
+	})
+}
+
 // MarkSystemTaskLeaseExpired 将租约过期的 running 任务标记为失败并释放 ActiveKey。
 func MarkSystemTaskLeaseExpired(taskID string) error {
 	return DB.Model(&SystemTask{}).
