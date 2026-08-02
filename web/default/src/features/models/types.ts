@@ -225,6 +225,10 @@ export interface SyncSourceInfo {
   models_url?: string
   vendors_url?: string
   catalog_url?: string
+  catalog_origin?: string
+  fallback_stage?: string
+  github_repo?: string
+  catalog_version?: string
   fallback_used?: boolean
   fallback_reason?: string
   fallback_name?: string
@@ -351,7 +355,7 @@ export type SyncLocale = 'zh' | 'en' | 'ja'
 /**
  * Sync upstream source
  */
-export type SyncSource = 'official' | 'models.dev' | 'config'
+export type SyncSource = 'official' | 'models.dev'
 
 export interface SyncPricingPolicy {
   enabled: boolean

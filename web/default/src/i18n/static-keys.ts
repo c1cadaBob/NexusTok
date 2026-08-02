@@ -417,10 +417,12 @@ export const STATIC_I18N_KEYS = [
   'Chinese',
   'English',
   'Japanese',
-  'Official Repository',
-  'Configuration File',
-  'Sync from the public upstream metadata repository.',
-  'Upload or reference a local configuration file.',
+  'NexusTok Model Repository',
+  'Sync from the built-in model repository packaged with this release.',
+  'Models.dev website was unavailable, so GitHub fallback was used.',
+  'External model sources were unavailable, so the built-in NexusTok repository was used.',
+  'Synced from the built-in NexusTok model repository.',
+  'Synced from models.dev website.',
 
   // Subscription constants (dynamic labelKey)
   'years',

@@ -18,6 +18,7 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import { useEffect, useMemo, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import type { TFunction } from 'i18next'
 import { GripVertical, Loader2, RefreshCw, ShieldCheck } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -51,6 +52,44 @@ type SyncWizardDialogProps = {
 }
 
 const DEFAULT_PROVIDER_ORDER = ['openai', 'anthropic', 'google', 'azure']
+
+function getCatalogSourceMessage(
+  t: TFunction,
+  source?: {
+    catalog_origin?: string
+    fallback_stage?: string
+    github_repo?: string
+    fallback_name?: string
+    catalog_version?: string
+  }
+) {
+  switch (source?.catalog_origin) {
+    case 'models_dev_github':
+      return t(
+        'Models.dev website was unavailable, so GitHub fallback was used.'
+      )
+    case 'nexustok_embedded':
+      return t(
+        'External model sources were unavailable, so the built-in NexusTok repository was used.'
+      )
+    case 'nexustok_repository':
+      return t('Synced from the built-in NexusTok model repository.')
+    case 'models_dev_web':
+      return t('Synced from models.dev website.')
+    default:
+      if (source?.fallback_stage === 'github') {
+        return t(
+          'Models.dev website was unavailable, so GitHub fallback was used.'
+        )
+      }
+      if (source?.fallback_stage === 'embedded') {
+        return t(
+          'External model sources were unavailable, so the built-in NexusTok repository was used.'
+        )
+      }
+      return ''
+  }
+}
 
 export function SyncWizardDialog({
   open,
@@ -101,7 +140,7 @@ export function SyncWizardDialog({
     .split(/[\n,]/)
     .map((provider) => provider.trim())
     .filter(Boolean)
-  const canSyncPricing = source === 'models.dev'
+  const canSyncPricing = source === 'models.dev' || source === 'official'
   const canSyncUpstream = permissions.canOperate && permissions.canWrite
 
   const handleSync = async () => {
@@ -164,12 +203,9 @@ export function SyncWizardDialog({
             }
           )
         )
-        if (resultSource?.fallback_used) {
-          toast.info(
-            t(
-              'Used embedded fallback catalog because the online source was unavailable.'
-            )
-          )
+        const catalogSourceMessage = getCatalogSourceMessage(t, resultSource)
+        if (catalogSourceMessage) {
+          toast.info(catalogSourceMessage)
         }
         queryClient.invalidateQueries({ queryKey: modelsQueryKeys.lists() })
         queryClient.invalidateQueries({ queryKey: vendorsQueryKeys.lists() })
@@ -244,7 +280,7 @@ export function SyncWizardDialog({
                           <span className='font-medium'>{option.label}</span>
                           {option.value === 'official' && (
                             <StatusBadge
-                              label={t('Legacy')}
+                              label={t('Built-in')}
                               variant='neutral'
                               copyable={false}
                             />

@@ -189,9 +189,11 @@ export function getSyncLocaleOptions(t: TFunction) {
 export function getSyncSourceOptions(t: TFunction) {
   return [
     {
-      label: t('Official Repository'),
+      label: t('NexusTok Model Repository'),
       value: 'official' as SyncSource,
-      description: t('Sync from the public upstream metadata repository.'),
+      description: t(
+        'Sync from the built-in model repository packaged with this release.'
+      ),
       disabled: false,
     },
     {
@@ -199,12 +201,6 @@ export function getSyncSourceOptions(t: TFunction) {
       value: 'models.dev' as SyncSource,
       description: t('Sync model metadata and provider pricing from models.dev.'),
       disabled: false,
-    },
-    {
-      label: t('Configuration File'),
-      value: 'config' as SyncSource,
-      description: t('Upload or reference a local configuration file.'),
-      disabled: true,
     },
   ] as const
 }
