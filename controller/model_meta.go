@@ -25,6 +25,7 @@ import (
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/constant"
 	"github.com/c1cada/NexusTok/model"
+	"github.com/c1cada/NexusTok/modelcatalog"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -132,6 +133,9 @@ func CreateModelMeta(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if err := modelcatalog.WriteBackModelFromDB(m); err != nil {
+		common.SysError("failed to write back created model catalog entry: " + err.Error())
+	}
 	model.RefreshPricing()
 	common.ApiSuccess(c, &m)
 }
@@ -191,6 +195,9 @@ func UpdateModelMeta(c *gin.Context) {
 		if err != nil {
 			common.ApiError(c, err)
 			return
+		}
+		if err := modelcatalog.WriteBackModelFromDB(m); err != nil {
+			common.SysError("failed to write back updated model catalog entry: " + err.Error())
 		}
 	}
 	model.RefreshPricing()
@@ -432,6 +439,9 @@ func UpdateModelPricingConfig(c *gin.Context) {
 	if err := model.SaveModelPricingConfig(m.ModelName, req); err != nil {
 		common.ApiErrorMsg(c, err.Error())
 		return
+	}
+	if err := modelcatalog.WriteBackModelPricing(m, req); err != nil {
+		common.SysError("failed to write back model pricing catalog entry: " + err.Error())
 	}
 	common.ApiSuccess(c, model.BuildModelPricingConfig(m.Id, m.ModelName))
 }

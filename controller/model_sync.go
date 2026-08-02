@@ -22,6 +22,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -29,6 +30,7 @@ import (
 
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/model"
+	"github.com/c1cada/NexusTok/modelcatalog"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -54,22 +56,21 @@ func (m rawJSONMessage) MarshalJSON() ([]byte, error) {
 	return m, nil
 }
 
-// 上游地址常量
-const (
-	upstreamModelsURL  = "https://basellm.github.io/llm-metadata/api/newapi/models.json"  // 模型数据 URL
-	upstreamVendorsURL = "https://basellm.github.io/llm-metadata/api/newapi/vendors.json" // 供应商数据 URL
-)
-
 // 同步来源常量。
 //
-// official 保持现有官方元数据仓库行为；models.dev 用于每日自动同步，
-// 也允许后续通过 API 显式指定，方便排查或临时手动触发同一套转换逻辑。
+// official 作为历史 API 值保留，但用户可见含义已经收敛为 NexusTok 项目内模型仓库；
+// models.dev 仍优先读取官网 catalog，并在网络失败时降级 GitHub TOML 和内置仓库。
 const (
 	syncSourceOfficial  = "official"
 	syncSourceModelsDev = "models.dev"
+	syncSourceConfig    = "config"
 
 	modelsDevDefaultBaseURL = "https://models.dev"
 	modelsDevCatalogPath    = "/catalog.json"
+
+	modelsDevGitHubRepo           = "anomalyco/models.dev"
+	modelsDevGitHubDefaultTreeURL = "https://api.github.com/repos/anomalyco/models.dev/git/trees/dev?recursive=1"
+	modelsDevGitHubDefaultRawBase = "https://raw.githubusercontent.com/anomalyco/models.dev/dev"
 )
 
 // normalizeLocale 标准化语言代码
@@ -85,39 +86,31 @@ func normalizeLocale(locale string) (string, bool) {
 	}
 }
 
-// getUpstreamBase 获取上游基础 URL
-//
-// 可通过环境变量 SYNC_UPSTREAM_BASE 覆盖
-func getUpstreamBase() string {
-	return common.GetEnvOrDefaultString("SYNC_UPSTREAM_BASE", "https://basellm.github.io/llm-metadata")
-}
-
-// getUpstreamURLs 根据语言获取上游数据 URL
-//
-// 参数：
-//   - locale: 语言代码
-//
-// 返回值：
-//   - modelsURL: 模型数据 URL
-//   - vendorsURL: 供应商数据 URL
-func getUpstreamURLs(locale string) (modelsURL, vendorsURL string) {
-	base := strings.TrimRight(getUpstreamBase(), "/")
-	if l, ok := normalizeLocale(locale); ok && l != "" {
-		return fmt.Sprintf("%s/api/i18n/%s/newapi/models.json", base, l),
-			fmt.Sprintf("%s/api/i18n/%s/newapi/vendors.json", base, l)
-	}
-	return fmt.Sprintf("%s/api/newapi/models.json", base), fmt.Sprintf("%s/api/newapi/vendors.json", base)
-}
-
 // normalizeSyncSource 标准化同步来源。
 func normalizeSyncSource(source string) string {
-	switch strings.ToLower(strings.TrimSpace(source)) {
+	normalized := strings.ToLower(strings.TrimSpace(source))
+	switch normalized {
 	case "", syncSourceOfficial, "repository", "upstream":
+		return syncSourceOfficial
+	case "nexustok", "nexustok_repository", "nexustok-repository":
 		return syncSourceOfficial
 	case syncSourceModelsDev, "modelsdev", "models_dev", "models-dev", "models":
 		return syncSourceModelsDev
+	case syncSourceConfig, "configuration", "file", "config-file":
+		return syncSourceConfig
 	default:
-		return syncSourceOfficial
+		return normalized
+	}
+}
+
+func validateSyncSource(source string) error {
+	switch normalizeSyncSource(source) {
+	case syncSourceOfficial, syncSourceModelsDev:
+		return nil
+	case syncSourceConfig:
+		return errors.New("配置文件导入同步方式已停用，请使用 NexusTok 模型仓库或 Models.dev")
+	default:
+		return fmt.Errorf("不支持的模型同步来源: %s", strings.TrimSpace(source))
 	}
 }
 
@@ -131,6 +124,14 @@ func getModelsDevBase() string {
 // getModelsDevCatalogURL 获取 models.dev catalog URL。
 func getModelsDevCatalogURL() string {
 	return strings.TrimRight(getModelsDevBase(), "/") + modelsDevCatalogPath
+}
+
+func getModelsDevGitHubTreeURL() string {
+	return common.GetEnvOrDefaultString("MODELS_DEV_GITHUB_TREE_URL", modelsDevGitHubDefaultTreeURL)
+}
+
+func getModelsDevGitHubRawBase() string {
+	return strings.TrimRight(common.GetEnvOrDefaultString("MODELS_DEV_GITHUB_RAW_BASE", modelsDevGitHubDefaultRawBase), "/")
 }
 
 // upstreamEnvelope 上游 API 响应信封结构体
@@ -230,6 +231,10 @@ type syncSourceInfo struct {
 	ModelsURL           string `json:"models_url,omitempty"`
 	VendorsURL          string `json:"vendors_url,omitempty"`
 	CatalogURL          string `json:"catalog_url,omitempty"`
+	CatalogOrigin       string `json:"catalog_origin,omitempty"`
+	FallbackStage       string `json:"fallback_stage,omitempty"`
+	GitHubRepo          string `json:"github_repo,omitempty"`
+	CatalogVersion      string `json:"catalog_version,omitempty"`
 	FallbackUsed        bool   `json:"fallback_used,omitempty"`
 	FallbackReason      string `json:"fallback_reason,omitempty"`
 	FallbackName        string `json:"fallback_name,omitempty"`
@@ -549,6 +554,318 @@ func fetchModelsDevCatalog(ctx context.Context, catalogURL string) (*modelsDevCa
 		return nil, errors.New("models.dev catalog is empty")
 	}
 	return &catalog, nil
+}
+
+// fetchNexusTokRepositoryCatalog 读取随构建打包的项目内模型仓库。
+//
+// official API 值历史上表示远程官方仓库。现在保留该 API 值做兼容，但实际数据源
+// 已切换为 Git 可审查的 NexusTok 内置模型仓库，避免生产环境继续依赖旧 basellm 远程源。
+func fetchNexusTokRepositoryCatalog() (*modelcatalog.Catalog, syncSourceInfo, error) {
+	catalog, err := modelcatalog.LoadEmbeddedCatalog()
+	manifest := modelcatalog.LoadEmbeddedManifest()
+	sourceInfo := syncSourceInfo{
+		Source:              syncSourceOfficial,
+		CatalogOrigin:       modelcatalog.CatalogOriginNexusTokRepository,
+		FallbackName:        manifest.Name,
+		FallbackGeneratedAt: manifest.GeneratedAt,
+		CatalogVersion:      manifest.Version,
+	}
+	if err != nil {
+		return nil, sourceInfo, err
+	}
+	if sourceInfo.FallbackName == "" {
+		sourceInfo.FallbackName = catalog.Manifest.Name
+	}
+	if sourceInfo.FallbackGeneratedAt == "" {
+		sourceInfo.FallbackGeneratedAt = catalog.Manifest.GeneratedAt
+	}
+	if sourceInfo.CatalogVersion == "" {
+		sourceInfo.CatalogVersion = catalog.Manifest.Version
+	}
+	return catalog, sourceInfo, nil
+}
+
+func convertModelCatalogToModelsDevCatalog(catalog *modelcatalog.Catalog) *modelsDevCatalog {
+	if catalog == nil {
+		return nil
+	}
+	result := &modelsDevCatalog{
+		Models:    make(map[string]modelsDevCatalogModel, len(catalog.Models)),
+		Providers: make(map[string]modelsDevCatalogProvider, len(catalog.Providers)),
+	}
+	for key, item := range catalog.Models {
+		result.Models[key] = convertCatalogModel(item)
+	}
+	for providerID, provider := range catalog.Providers {
+		converted := modelsDevCatalogProvider{
+			ID:     coalesce(provider.ID, providerID),
+			Name:   provider.Name,
+			Doc:    provider.Doc,
+			Models: make(map[string]modelsDevCatalogModel, len(provider.Models)),
+		}
+		for modelID, item := range provider.Models {
+			converted.Models[modelID] = convertCatalogModel(item)
+		}
+		result.Providers[providerID] = converted
+	}
+	return result
+}
+
+func convertModelsDevCatalogToModelCatalog(catalog *modelsDevCatalog) *modelcatalog.Catalog {
+	if catalog == nil {
+		return nil
+	}
+	result := &modelcatalog.Catalog{
+		Models:    make(map[string]modelcatalog.CatalogModel, len(catalog.Models)),
+		Providers: make(map[string]modelcatalog.CatalogProvider, len(catalog.Providers)),
+	}
+	for key, item := range catalog.Models {
+		ownerID, modelID := splitModelsDevCanonicalKey(key)
+		if modelID == "" {
+			modelID = strings.TrimSpace(item.ID)
+		}
+		if ownerID == "" {
+			ownerID = providerIDFromModelsDevModel(item, catalog)
+		}
+		if ownerID == "" || modelID == "" {
+			continue
+		}
+		result.Models[ownerID+"/"+modelID] = convertModelsDevModelToCatalog(item, modelID)
+	}
+	for providerID, provider := range catalog.Providers {
+		converted := modelcatalog.CatalogProvider{
+			ID:     coalesce(provider.ID, providerID),
+			Name:   provider.Name,
+			Doc:    provider.Doc,
+			Status: "active",
+			Icon:   modelsDevCatalogProviderIcon(providerID, provider.Name),
+			Models: make(map[string]modelcatalog.CatalogModel, len(provider.Models)),
+		}
+		for modelID, item := range provider.Models {
+			id := strings.TrimSpace(item.ID)
+			if id == "" {
+				id = modelID
+			}
+			converted.Models[id] = convertModelsDevModelToCatalog(item, id)
+		}
+		result.Providers[converted.ID] = converted
+	}
+	result.Manifest = modelcatalog.BuildManifest(result, "")
+	return result
+}
+
+func convertModelsDevModelToCatalog(item modelsDevCatalogModel, fallbackID string) modelcatalog.CatalogModel {
+	id := strings.TrimSpace(item.ID)
+	if id == "" {
+		id = fallbackID
+	}
+	if _, modelID := splitModelsDevCanonicalKey(id); modelID != "" && strings.Contains(id, "/") {
+		id = modelID
+	}
+	return modelcatalog.CatalogModel{
+		ID:               id,
+		Name:             item.Name,
+		Family:           item.Family,
+		Status:           coalesce(item.Status, "active"),
+		Attachment:       item.Attachment,
+		Reasoning:        item.Reasoning,
+		ToolCall:         item.ToolCall,
+		StructuredOutput: item.StructuredOutput,
+		OpenWeights:      item.OpenWeights,
+		Limit: modelcatalog.CatalogLimit{
+			Context: item.Limit.Context,
+			Input:   item.Limit.Input,
+			Output:  item.Limit.Output,
+		},
+		Modalities: modelcatalog.CatalogModalities{
+			Input:  item.Modalities.Input,
+			Output: item.Modalities.Output,
+		},
+		Cost: modelcatalog.CatalogCost{
+			Input:       item.Cost.Input,
+			Output:      item.Cost.Output,
+			CacheRead:   item.Cost.CacheRead,
+			CacheWrite:  item.Cost.CacheWrite,
+			InputAudio:  item.Cost.InputAudio,
+			OutputAudio: item.Cost.OutputAudio,
+		},
+		Source: modelcatalog.CatalogSourceTrace{
+			Origin: modelcatalog.CatalogOriginModelsDevWeb,
+		},
+	}
+}
+
+func providerIDFromModelsDevModel(item modelsDevCatalogModel, catalog *modelsDevCatalog) string {
+	modelID := strings.TrimSpace(item.ID)
+	if ownerID, _, ok := strings.Cut(modelID, "/"); ok {
+		return strings.TrimSpace(ownerID)
+	}
+	if catalog == nil {
+		return ""
+	}
+	for providerID, provider := range catalog.Providers {
+		if _, ok := provider.Models[modelID]; ok {
+			return providerID
+		}
+	}
+	return ""
+}
+
+func convertCatalogModel(item modelcatalog.CatalogModel) modelsDevCatalogModel {
+	return modelsDevCatalogModel{
+		ID:               item.ID,
+		Name:             item.Name,
+		Family:           item.Family,
+		Attachment:       item.Attachment,
+		Reasoning:        item.Reasoning,
+		ToolCall:         item.ToolCall,
+		StructuredOutput: item.StructuredOutput,
+		OpenWeights:      item.OpenWeights,
+		Status:           item.Status,
+		Modalities: modelsDevCatalogModalities{
+			Input:  item.Modalities.Input,
+			Output: item.Modalities.Output,
+		},
+		Limit: modelsDevCatalogLimit{
+			Context: item.Limit.Context,
+			Input:   item.Limit.Input,
+			Output:  item.Limit.Output,
+		},
+		Cost: modelsDevCatalogCost{
+			Input:       item.Cost.Input,
+			Output:      item.Cost.Output,
+			CacheRead:   item.Cost.CacheRead,
+			CacheWrite:  item.Cost.CacheWrite,
+			InputAudio:  item.Cost.InputAudio,
+			OutputAudio: item.Cost.OutputAudio,
+		},
+	}
+}
+
+func convertModelCatalogToUpstream(catalog *modelcatalog.Catalog) ([]upstreamVendor, []upstreamModel) {
+	if catalog == nil {
+		return nil, nil
+	}
+	vendors := make([]upstreamVendor, 0, len(catalog.Providers))
+	providerIDs := make([]string, 0, len(catalog.Providers))
+	for providerID := range catalog.Providers {
+		providerIDs = append(providerIDs, providerID)
+	}
+	sortModelsDevProviderIDs(providerIDs)
+	for _, providerID := range providerIDs {
+		provider := catalog.Providers[providerID]
+		name := strings.TrimSpace(provider.Name)
+		if name == "" {
+			name = providerID
+		}
+		vendors = append(vendors, upstreamVendor{
+			Description: provider.Description,
+			Icon:        coalesce(provider.Icon, modelsDevCatalogProviderIcon(providerID, name)),
+			Name:        name,
+			Status:      1,
+		})
+	}
+
+	modelKeys := make([]string, 0, len(catalog.Models))
+	for key := range catalog.Models {
+		modelKeys = append(modelKeys, key)
+	}
+	sort.Strings(modelKeys)
+	models := make([]upstreamModel, 0, len(modelKeys))
+	for _, key := range modelKeys {
+		ownerID, modelName := splitModelsDevCanonicalKey(key)
+		def := catalog.Models[key]
+		if strings.TrimSpace(def.ID) != "" && !strings.Contains(strings.TrimSpace(def.ID), "/") {
+			modelName = strings.TrimSpace(def.ID)
+		}
+		if modelName == "" {
+			continue
+		}
+		provider := catalog.Providers[ownerID]
+		providerName := strings.TrimSpace(provider.Name)
+		if providerName == "" {
+			providerName = ownerID
+		}
+		tags := strings.Join(uniqueNonEmptyStrings(def.Tags), ",")
+		if tags == "" {
+			tags = buildModelsDevModelTags(convertCatalogModel(def))
+		}
+		models = append(models, upstreamModel{
+			Description: coalesce(def.Description, buildModelsDevModelDescription(providerName, convertCatalogModel(def))),
+			Icon:        coalesce(def.Icon, coalesce(provider.Icon, modelsDevCatalogProviderIcon(ownerID, providerName))),
+			ModelName:   modelName,
+			NameRule:    def.NameRule,
+			Status:      modelsDevModelStatus(def.Status),
+			Tags:        tags,
+			VendorName:  providerName,
+		})
+	}
+	return vendors, models
+}
+
+func extractCatalogPricingCandidates(catalog *modelcatalog.Catalog) map[string][]modelsDevPricingCandidate {
+	return extractModelsDevPricingCandidates(convertModelCatalogToModelsDevCatalog(catalog))
+}
+
+type modelsDevGitHubTreeResponse struct {
+	Tree []modelsDevGitHubTreeItem `json:"tree"`
+}
+
+type modelsDevGitHubTreeItem struct {
+	Path string `json:"path"`
+	Type string `json:"type"`
+}
+
+// fetchModelsDevCatalogFromGitHub 从 anomalyco/models.dev 的 TOML 目录读取 catalog。
+//
+// 该 fallback 只在官网 catalog 不可用时触发。它仍然解析 models/providers TOML，
+// 不读取仓库中的其它文件，避免把源码仓库中与模型目录无关的内容引入同步链路。
+func fetchModelsDevCatalogFromGitHub(ctx context.Context) (*modelcatalog.Catalog, error) {
+	treeURL := getModelsDevGitHubTreeURL()
+	buf, err := fetchRawJSON(ctx, treeURL)
+	if err != nil {
+		return nil, err
+	}
+	var tree modelsDevGitHubTreeResponse
+	if err := common.Unmarshal(buf, &tree); err != nil {
+		return nil, err
+	}
+	files := make(map[string][]byte)
+	for _, item := range tree.Tree {
+		path := strings.TrimSpace(item.Path)
+		if item.Type != "blob" || !isModelsDevCatalogTOMLPath(path) {
+			continue
+		}
+		fileBuf, err := fetchRawJSON(ctx, buildModelsDevGitHubRawURL(path))
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		files[path] = fileBuf
+	}
+	if len(files) == 0 {
+		return nil, errors.New("models.dev GitHub fallback has no catalog TOML files")
+	}
+	return modelcatalog.ParseRepositoryFiles(files)
+}
+
+func isModelsDevCatalogTOMLPath(path string) bool {
+	parts := strings.Split(strings.TrimSpace(path), "/")
+	if len(parts) == 3 && parts[0] == "models" && strings.HasSuffix(parts[2], ".toml") {
+		return true
+	}
+	if len(parts) == 3 && parts[0] == "providers" && parts[2] == "provider.toml" {
+		return true
+	}
+	return len(parts) == 4 && parts[0] == "providers" && parts[2] == "models" && strings.HasSuffix(parts[3], ".toml")
+}
+
+func buildModelsDevGitHubRawURL(path string) string {
+	parts := strings.Split(strings.TrimSpace(path), "/")
+	escaped := make([]string, 0, len(parts))
+	for _, part := range parts {
+		escaped = append(escaped, url.PathEscape(part))
+	}
+	return getModelsDevGitHubRawBase() + "/" + strings.Join(escaped, "/")
 }
 
 // convertModelsDevCatalog 将 models.dev catalog 转成本项目现有同步流程使用的结构。
@@ -1046,16 +1363,21 @@ func buildSyncSourceInfo(req syncRequest) syncSourceInfo {
 	switch source {
 	case syncSourceModelsDev:
 		return syncSourceInfo{
-			Source:     syncSourceModelsDev,
-			CatalogURL: getModelsDevCatalogURL(),
+			Source:        syncSourceModelsDev,
+			CatalogURL:    getModelsDevCatalogURL(),
+			CatalogOrigin: modelcatalog.CatalogOriginModelsDevWeb,
 		}
+	case syncSourceConfig:
+		return syncSourceInfo{Source: syncSourceConfig}
 	default:
-		modelsURL, vendorsURL := getUpstreamURLs(req.Locale)
+		manifest := modelcatalog.LoadEmbeddedManifest()
 		return syncSourceInfo{
-			Source:     syncSourceOfficial,
-			Locale:     req.Locale,
-			ModelsURL:  modelsURL,
-			VendorsURL: vendorsURL,
+			Source:              syncSourceOfficial,
+			Locale:              req.Locale,
+			CatalogOrigin:       modelcatalog.CatalogOriginNexusTokRepository,
+			FallbackName:        manifest.Name,
+			FallbackGeneratedAt: manifest.GeneratedAt,
+			CatalogVersion:      manifest.Version,
 		}
 	}
 }
@@ -1100,6 +1422,9 @@ func resolveSyncUpstreamOptions(req syncRequest, opts syncUpstreamOptions) syncU
 // fetchSyncUpstreamData 拉取指定来源的供应商和模型数据。
 func fetchSyncUpstreamData(ctx context.Context, req syncRequest) ([]upstreamVendor, []upstreamModel, syncSourceInfo, error) {
 	sourceInfo := buildSyncSourceInfo(req)
+	if err := validateSyncSource(req.Source); err != nil {
+		return nil, nil, sourceInfo, err
+	}
 	switch sourceInfo.Source {
 	case syncSourceModelsDev:
 		fetchResult, err := fetchModelsDevCatalogWithFallback(ctx, sourceInfo.CatalogURL)
@@ -1110,27 +1435,13 @@ func fetchSyncUpstreamData(ctx context.Context, req syncRequest) ([]upstreamVend
 		vendors, models := convertModelsDevCatalog(fetchResult.Catalog)
 		return vendors, models, sourceInfo, nil
 	default:
-		var vendorsEnv upstreamEnvelope[upstreamVendor]
-		var modelsEnv upstreamEnvelope[upstreamModel]
-		var fetchErr error
-		var wg sync.WaitGroup
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			// vendor 失败不拦截，缺少 vendor 时模型仍可创建，只是不绑定供应商。
-			_ = fetchJSON(ctx, sourceInfo.VendorsURL, &vendorsEnv)
-		}()
-		go func() {
-			defer wg.Done()
-			if err := fetchJSON(ctx, sourceInfo.ModelsURL, &modelsEnv); err != nil {
-				fetchErr = err
-			}
-		}()
-		wg.Wait()
-		if fetchErr != nil {
-			return nil, nil, sourceInfo, fetchErr
+		catalog, info, err := fetchNexusTokRepositoryCatalog()
+		if err != nil {
+			return nil, nil, sourceInfo, err
 		}
-		return vendorsEnv.Data, modelsEnv.Data, sourceInfo, nil
+		sourceInfo = mergeSyncSourceInfo(sourceInfo, info)
+		vendors, models := convertModelCatalogToUpstream(catalog)
+		return vendors, models, sourceInfo, nil
 	}
 }
 
@@ -1138,6 +1449,9 @@ func fetchSyncUpstreamData(ctx context.Context, req syncRequest) ([]upstreamVend
 // 官方仓库暂无统一 provider 价格结构，因此非 models.dev 来源返回空候选。
 func fetchSyncUpstreamDataWithPricing(ctx context.Context, req syncRequest) ([]upstreamVendor, []upstreamModel, map[string][]modelsDevPricingCandidate, syncSourceInfo, error) {
 	sourceInfo := buildSyncSourceInfo(req)
+	if err := validateSyncSource(req.Source); err != nil {
+		return nil, nil, nil, sourceInfo, err
+	}
 	switch sourceInfo.Source {
 	case syncSourceModelsDev:
 		fetchResult, err := fetchModelsDevCatalogWithFallback(ctx, sourceInfo.CatalogURL)
@@ -1149,9 +1463,34 @@ func fetchSyncUpstreamDataWithPricing(ctx context.Context, req syncRequest) ([]u
 		pricing := extractModelsDevPricingCandidates(fetchResult.Catalog)
 		return vendors, models, pricing, sourceInfo, nil
 	default:
-		vendors, models, sourceInfo, err := fetchSyncUpstreamData(ctx, req)
-		return vendors, models, nil, sourceInfo, err
+		catalog, info, err := fetchNexusTokRepositoryCatalog()
+		if err != nil {
+			return nil, nil, nil, sourceInfo, err
+		}
+		sourceInfo = mergeSyncSourceInfo(sourceInfo, info)
+		vendors, models := convertModelCatalogToUpstream(catalog)
+		pricing := extractCatalogPricingCandidates(catalog)
+		return vendors, models, pricing, sourceInfo, nil
 	}
+}
+
+func mergeSyncSourceInfo(base syncSourceInfo, override syncSourceInfo) syncSourceInfo {
+	if override.Source != "" {
+		base.Source = override.Source
+	}
+	if override.CatalogOrigin != "" {
+		base.CatalogOrigin = override.CatalogOrigin
+	}
+	if override.CatalogVersion != "" {
+		base.CatalogVersion = override.CatalogVersion
+	}
+	if override.FallbackName != "" {
+		base.FallbackName = override.FallbackName
+	}
+	if override.FallbackGeneratedAt != "" {
+		base.FallbackGeneratedAt = override.FallbackGeneratedAt
+	}
+	return base
 }
 
 // syncUpstreamModelsCore 执行模型目录同步。
@@ -1163,6 +1502,9 @@ func fetchSyncUpstreamDataWithPricing(ctx context.Context, req syncRequest) ([]u
 // - 创建出来的模型明确设置 sync_official=1，后续仍可参与官方数据差异预览。
 func syncUpstreamModelsCore(ctx context.Context, req syncRequest, opts syncUpstreamOptions) (*syncUpstreamResult, error) {
 	req.Source = normalizeSyncSource(req.Source)
+	if err := validateSyncSource(req.Source); err != nil {
+		return nil, err
+	}
 	opts = resolveSyncUpstreamOptions(req, opts)
 	sourceInfo := buildSyncSourceInfo(req)
 	emptyResult := &syncUpstreamResult{
@@ -1333,13 +1675,19 @@ func syncUpstreamModelsCore(ctx context.Context, req syncRequest, opts syncUpstr
 		}
 	}
 	if shouldApplySyncPricing(req, sourceInfo, pricingCandidates) {
-		applyModelsDevPricingPolicy(req.Pricing, pricingCandidates, result)
+		applyModelsDevPricingPolicy(req.Pricing, sourceInfo, pricingCandidates, result)
 	}
+	writeBackSyncedCatalog(sourceInfo)
 	return result, nil
 }
 
 func shouldApplySyncPricing(req syncRequest, sourceInfo syncSourceInfo, pricingCandidates map[string][]modelsDevPricingCandidate) bool {
-	if sourceInfo.Source != syncSourceModelsDev || len(pricingCandidates) == 0 {
+	if len(pricingCandidates) == 0 {
+		return false
+	}
+	switch sourceInfo.Source {
+	case syncSourceModelsDev, syncSourceOfficial:
+	default:
 		return false
 	}
 	return req.Pricing.Enabled
@@ -1351,7 +1699,7 @@ func shouldApplySyncPricing(req syncRequest, sourceInfo syncSourceInfo, pricingC
 // 2. manual 来源默认最高优先级，除非 overwrite_manual=true；
 // 3. provider_order 中先命中的 provider 生效，未配置时使用 models.dev provider 稳定排序；
 // 4. 保存为 ratio 模式，保持 relay 热路径和 /api/pricing 结构不变。
-func applyModelsDevPricingPolicy(policy syncPricingPolicyRequest, candidates map[string][]modelsDevPricingCandidate, result *syncUpstreamResult) {
+func applyModelsDevPricingPolicy(policy syncPricingPolicyRequest, sourceInfo syncSourceInfo, candidates map[string][]modelsDevPricingCandidate, result *syncUpstreamResult) {
 	if result == nil || len(candidates) == 0 {
 		return
 	}
@@ -1394,11 +1742,17 @@ func applyModelsDevPricingPolicy(policy syncPricingPolicyRequest, candidates map
 			result.PricingSkipped++
 			continue
 		}
+		sourceKind := model.ModelPricingSourceUpstream
+		sourceName := syncSourceModelsDev
+		if sourceInfo.Source == syncSourceOfficial {
+			sourceKind = model.ModelPricingSourceBuiltin
+			sourceName = modelcatalog.CatalogOriginNexusTokRepository
+		}
 		updates[modelName] = update
 		sources[modelName] = model.ModelPricingSource{
-			Kind:      model.ModelPricingSourceUpstream,
+			Kind:      sourceKind,
 			Provider:  candidate.ProviderID,
-			Source:    syncSourceModelsDev,
+			Source:    sourceName,
 			UpdatedAt: time.Now().Unix(),
 		}
 	}
@@ -1415,6 +1769,32 @@ func applyModelsDevPricingPolicy(policy syncPricingPolicyRequest, candidates map
 		result.PricingList = append(result.PricingList, modelName)
 	}
 	sort.Strings(result.PricingList)
+}
+
+func writeBackSyncedCatalog(sourceInfo syncSourceInfo) {
+	if !modelcatalog.WriteBackEnabled() || sourceInfo.Source != syncSourceModelsDev {
+		return
+	}
+	timeoutSec := common.GetEnvOrDefault("SYNC_HTTP_TIMEOUT_SECONDS", 15)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
+	defer cancel()
+	fetchResult, err := fetchModelsDevCatalogWithFallback(ctx, getModelsDevCatalogURL())
+	if err != nil {
+		if err != nil {
+			common.SysError("failed to write back models.dev catalog: " + err.Error())
+		}
+		return
+	}
+	modelCatalog := fetchResult.ModelCatalog
+	if modelCatalog == nil {
+		modelCatalog = convertModelsDevCatalogToModelCatalog(fetchResult.Catalog)
+	}
+	if modelCatalog == nil {
+		return
+	}
+	if err := modelcatalog.WriteBackCatalog(modelCatalog); err != nil {
+		common.SysError("failed to write back model catalog repository: " + err.Error())
+	}
 }
 
 func shouldPreserveLocalPricing(policy syncPricingPolicyRequest, source model.ModelPricingSource, existingOverrides map[string]struct{}, modelName string) bool {

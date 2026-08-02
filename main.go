@@ -22,6 +22,7 @@ import (
 	"github.com/c1cada/NexusTok/logger"                        // 日志配置
 	"github.com/c1cada/NexusTok/middleware"                    // 中间件：认证、限流、CORS 等
 	"github.com/c1cada/NexusTok/model"                         // 数据模型层：GORM ORM
+	"github.com/c1cada/NexusTok/modelcatalog"                  // 项目内模型仓库：内置模型、供应商和价格补齐
 	"github.com/c1cada/NexusTok/oauth"                         // OAuth 认证实现
 	perfmetrics "github.com/c1cada/NexusTok/pkg/perf_metrics"  // 性能监控指标
 	"github.com/c1cada/NexusTok/relay"                         // AI API 中继/代理层
@@ -448,6 +449,21 @@ func InitResources() error {
 	// 必须在数据库初始化之后执行
 	// 从数据库加载所有配置项到内存
 	model.InitOptionMap()
+
+	// 使用随镜像打包的项目内模型仓库补齐缺失模型和缺失模型价格。
+	// 这里不覆盖管理员手动配置，也不写入渠道、用户、Token、日志或密钥等运行时数据。
+	if common.IsMasterNode {
+		if seedResult, seedErr := modelcatalog.SeedEmbeddedCatalog(); seedErr != nil {
+			common.SysLog("failed to seed embedded model catalog: " + seedErr.Error())
+		} else if seedResult != nil && (seedResult.CreatedModels > 0 || seedResult.CreatedVendors > 0 || seedResult.PricingUpdated > 0) {
+			common.SysLog(fmt.Sprintf(
+				"embedded model catalog seeded: created_models=%d created_vendors=%d pricing_updated=%d",
+				seedResult.CreatedModels,
+				seedResult.CreatedVendors,
+				seedResult.PricingUpdated,
+			))
+		}
+	}
 
 	// 清理旧的磁盘缓存文件
 	// 删除过期的缓存文件，释放磁盘空间

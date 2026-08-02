@@ -106,6 +106,8 @@ const (
 	ModelPricingSourceManual = "manual"
 	// ModelPricingSourceUpstream 表示价格来自上游同步策略。
 	ModelPricingSourceUpstream = "upstream"
+	// ModelPricingSourceBuiltin 表示价格来自随二进制打包的 NexusTok 内置模型仓库。
+	ModelPricingSourceBuiltin = "builtin"
 )
 
 // GetModelPricingConfigByID 按模型 ID 聚合模型元数据与现有定价配置。

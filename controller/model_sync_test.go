@@ -12,6 +12,7 @@ import (
 
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/model"
+	"github.com/c1cada/NexusTok/modelcatalog"
 	"github.com/c1cada/NexusTok/setting/billing_setting"
 	"github.com/c1cada/NexusTok/setting/config"
 	"github.com/c1cada/NexusTok/setting/ratio_setting"
@@ -130,18 +131,53 @@ func withFailingModelsDevTestServer(t *testing.T, statusCode int) {
 	t.Helper()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, modelsDevCatalogPath, r.URL.Path)
 		http.Error(w, "upstream unavailable", statusCode)
 	}))
 	t.Cleanup(server.Close)
 
 	originalBase, hadBase := os.LookupEnv("MODELS_DEV_SYNC_BASE")
+	originalTree, hadTree := os.LookupEnv("MODELS_DEV_GITHUB_TREE_URL")
 	require.NoError(t, os.Setenv("MODELS_DEV_SYNC_BASE", server.URL))
+	require.NoError(t, os.Setenv("MODELS_DEV_GITHUB_TREE_URL", server.URL+"/github-tree"))
 	t.Cleanup(func() {
 		if hadBase {
 			require.NoError(t, os.Setenv("MODELS_DEV_SYNC_BASE", originalBase))
 		} else {
 			require.NoError(t, os.Unsetenv("MODELS_DEV_SYNC_BASE"))
+		}
+		if hadTree {
+			require.NoError(t, os.Setenv("MODELS_DEV_GITHUB_TREE_URL", originalTree))
+		} else {
+			require.NoError(t, os.Unsetenv("MODELS_DEV_GITHUB_TREE_URL"))
+		}
+	})
+
+	cacheMutex.Lock()
+	etagCache = make(map[string]string)
+	bodyCache = make(map[string][]byte)
+	cacheMutex.Unlock()
+}
+
+func withModelsDevEnv(t *testing.T, baseURL, treeURL, rawBase string) {
+	t.Helper()
+	envs := map[string]string{
+		"MODELS_DEV_SYNC_BASE":       baseURL,
+		"MODELS_DEV_GITHUB_TREE_URL": treeURL,
+		"MODELS_DEV_GITHUB_RAW_BASE": rawBase,
+	}
+	previous := make(map[string]string, len(envs))
+	existed := make(map[string]bool, len(envs))
+	for key, value := range envs {
+		previous[key], existed[key] = os.LookupEnv(key)
+		require.NoError(t, os.Setenv(key, value))
+	}
+	t.Cleanup(func() {
+		for key := range envs {
+			if existed[key] {
+				require.NoError(t, os.Setenv(key, previous[key]))
+			} else {
+				require.NoError(t, os.Unsetenv(key))
+			}
 		}
 	})
 
@@ -436,7 +472,9 @@ func TestSyncUpstreamModelsCoreUsesEmbeddedFallbackWhenModelsDevFails(t *testing
 
 	require.NoError(t, err)
 	require.True(t, result.Source.FallbackUsed)
-	require.Equal(t, modelsDevFallbackCatalogName, result.Source.FallbackName)
+	require.Equal(t, modelcatalog.CatalogOriginNexusTokEmbedded, result.Source.CatalogOrigin)
+	require.Equal(t, modelcatalog.FallbackStageEmbedded, result.Source.FallbackStage)
+	require.NotEmpty(t, result.Source.FallbackName)
 	require.NotEmpty(t, result.Source.FallbackReason)
 	require.Contains(t, result.CreatedList, "gpt-5.5")
 	require.Contains(t, result.PricingList, "gpt-5.5")
@@ -451,6 +489,98 @@ func TestSyncUpstreamModelsCoreUsesEmbeddedFallbackWhenModelsDevFails(t *testing
 	require.NotNil(t, pricing.Source)
 	require.Equal(t, model.ModelPricingSourceUpstream, pricing.Source.Kind)
 	require.Equal(t, "openai", pricing.Source.Provider)
+}
+
+func TestSyncUpstreamModelsCoreUsesGitHubFallbackWhenModelsDevWebFails(t *testing.T) {
+	db := setupModelSyncTestDB(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case modelsDevCatalogPath:
+			http.Error(w, "models.dev unavailable", http.StatusBadGateway)
+		case "/tree":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"tree": [
+					{"path": "models/openai/gpt-github.toml", "type": "blob"},
+					{"path": "providers/openai/provider.toml", "type": "blob"},
+					{"path": "providers/openai/models/gpt-github.toml", "type": "blob"}
+				]
+			}`))
+		case "/raw/models/openai/gpt-github.toml":
+			_, _ = w.Write([]byte(`
+id = "gpt-github"
+name = "GPT GitHub"
+reasoning = true
+
+[limit]
+context = 128000
+`))
+		case "/raw/providers/openai/provider.toml":
+			_, _ = w.Write([]byte(`
+id = "openai"
+name = "OpenAI"
+icon = "OpenAI.Color"
+`))
+		case "/raw/providers/openai/models/gpt-github.toml":
+			_, _ = w.Write([]byte(`
+id = "gpt-github"
+
+[cost]
+input = 2
+output = 8
+`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	withModelsDevEnv(t, server.URL, server.URL+"/tree", server.URL+"/raw")
+
+	result, err := syncUpstreamModelsCore(context.Background(), syncRequest{
+		Source: syncSourceModelsDev,
+		Pricing: syncPricingPolicyRequest{
+			Enabled:       true,
+			ProviderOrder: []string{"openai"},
+		},
+	}, syncUpstreamOptions{CreateAllUpstream: true})
+	require.NoError(t, err)
+	require.True(t, result.Source.FallbackUsed)
+	require.Equal(t, modelcatalog.CatalogOriginModelsDevGitHub, result.Source.CatalogOrigin)
+	require.Equal(t, modelcatalog.FallbackStageGitHub, result.Source.FallbackStage)
+	require.Equal(t, modelsDevGitHubRepo, result.Source.GitHubRepo)
+	require.Contains(t, result.CreatedList, "gpt-github")
+	require.Contains(t, result.PricingList, "gpt-github")
+
+	var saved model.Model
+	require.NoError(t, db.Where("model_name = ?", "gpt-github").First(&saved).Error)
+	requireFloatMapValue(t, ratio_setting.GetModelRatioCopy(), "gpt-github", 1)
+	requireFloatMapValue(t, ratio_setting.GetCompletionRatioCopy(), "gpt-github", 4)
+}
+
+func TestSyncUpstreamModelsCoreRejectsConfigSource(t *testing.T) {
+	_ = setupModelSyncTestDB(t)
+
+	_, err := syncUpstreamModelsCore(context.Background(), syncRequest{Source: "config"}, syncUpstreamOptions{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "配置文件导入同步方式已停用")
+}
+
+func TestSyncUpstreamModelsCoreOfficialUsesEmbeddedRepository(t *testing.T) {
+	_ = setupModelSyncTestDB(t)
+
+	result, err := syncUpstreamModelsCore(context.Background(), syncRequest{
+		Source: syncSourceOfficial,
+		Pricing: syncPricingPolicyRequest{
+			Enabled:       true,
+			ProviderOrder: []string{"openai"},
+		},
+	}, syncUpstreamOptions{CreateAllUpstream: true})
+	require.NoError(t, err)
+	require.Equal(t, syncSourceOfficial, result.Source.Source)
+	require.Equal(t, modelcatalog.CatalogOriginNexusTokRepository, result.Source.CatalogOrigin)
+	require.Contains(t, result.CreatedList, "gpt-5")
+	require.Contains(t, result.PricingList, "gpt-5")
+	require.Equal(t, model.ModelPricingSourceBuiltin, model.GetModelPricingSourceCopy()["gpt-5"].Kind)
 }
 
 func TestSyncUpstreamModelsCoreModelsDevDefaultsToFullCatalog(t *testing.T) {
