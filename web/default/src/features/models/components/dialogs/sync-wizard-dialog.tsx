@@ -43,7 +43,7 @@ import { syncUpstream, previewUpstreamDiff } from '../../api'
 import { getSyncLocaleOptions, getSyncSourceOptions } from '../../constants'
 import { useModelPermissions } from '../../hooks/use-model-permissions'
 import { modelsQueryKeys, vendorsQueryKeys } from '../../lib'
-import type { SyncLocale, SyncSource } from '../../types'
+import type { CatalogWriteBackInfo, SyncLocale, SyncSource } from '../../types'
 import { useModels } from '../models-provider'
 
 type SyncWizardDialogProps = {
@@ -88,6 +88,42 @@ function getCatalogSourceMessage(
         )
       }
       return ''
+  }
+}
+
+function showCatalogWriteBackToast(
+  t: TFunction,
+  writeBack?: CatalogWriteBackInfo
+) {
+  if (!writeBack?.status) return
+  const modelCount = writeBack.model_count || 0
+  const providerCount = writeBack.provider_count || 0
+  switch (writeBack.status) {
+    case 'success':
+      toast.success(
+        t(
+          'Model catalog repository updated. {{models}} models and {{providers}} providers will be embedded in the next build.',
+          { models: modelCount, providers: providerCount }
+        )
+      )
+      return
+    case 'skipped':
+      toast.warning(
+        t(
+          'Synced to the database only. Enable MODEL_CATALOG_WRITE_BACK on the development server before release to embed {{models}} models in the next image.',
+          { models: modelCount }
+        )
+      )
+      return
+    case 'failed':
+      toast.error(
+        t('Model catalog write-back failed: {{reason}}', {
+          reason: writeBack.reason || t('Unknown'),
+        })
+      )
+      return
+    default:
+      return
   }
 }
 
@@ -190,6 +226,7 @@ export function SyncWizardDialog({
           pricing_updated,
           pricing_skipped,
           source: resultSource,
+          catalog_write_back,
         } = response.data || {}
         toast.success(
           t(
@@ -206,6 +243,17 @@ export function SyncWizardDialog({
         const catalogSourceMessage = getCatalogSourceMessage(t, resultSource)
         if (catalogSourceMessage) {
           toast.info(catalogSourceMessage)
+        }
+        showCatalogWriteBackToast(t, catalog_write_back)
+        if (resultSource?.catalog_origin === 'nexustok_embedded') {
+          toast.info(
+            t('Built-in repository contains {{count}} models.', {
+              count:
+                resultSource.source_model_count ||
+                resultSource.embedded_model_count ||
+                0,
+            })
+          )
         }
         queryClient.invalidateQueries({ queryKey: modelsQueryKeys.lists() })
         queryClient.invalidateQueries({ queryKey: vendorsQueryKeys.lists() })

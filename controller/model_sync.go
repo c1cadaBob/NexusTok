@@ -226,19 +226,36 @@ type modelsDevCatalogLimit struct {
 
 // syncSourceInfo 描述一次同步实际使用的数据来源。
 type syncSourceInfo struct {
-	Source              string `json:"source"`
-	Locale              string `json:"locale,omitempty"`
-	ModelsURL           string `json:"models_url,omitempty"`
-	VendorsURL          string `json:"vendors_url,omitempty"`
-	CatalogURL          string `json:"catalog_url,omitempty"`
-	CatalogOrigin       string `json:"catalog_origin,omitempty"`
-	FallbackStage       string `json:"fallback_stage,omitempty"`
-	GitHubRepo          string `json:"github_repo,omitempty"`
-	CatalogVersion      string `json:"catalog_version,omitempty"`
-	FallbackUsed        bool   `json:"fallback_used,omitempty"`
-	FallbackReason      string `json:"fallback_reason,omitempty"`
-	FallbackName        string `json:"fallback_name,omitempty"`
-	FallbackGeneratedAt string `json:"fallback_generated_at,omitempty"`
+	Source                string `json:"source"`
+	Locale                string `json:"locale,omitempty"`
+	ModelsURL             string `json:"models_url,omitempty"`
+	VendorsURL            string `json:"vendors_url,omitempty"`
+	CatalogURL            string `json:"catalog_url,omitempty"`
+	CatalogOrigin         string `json:"catalog_origin,omitempty"`
+	FallbackStage         string `json:"fallback_stage,omitempty"`
+	GitHubRepo            string `json:"github_repo,omitempty"`
+	CatalogVersion        string `json:"catalog_version,omitempty"`
+	SourceModelCount      int    `json:"source_model_count,omitempty"`
+	SourceProviderCount   int    `json:"source_provider_count,omitempty"`
+	EmbeddedModelCount    int    `json:"embedded_model_count,omitempty"`
+	EmbeddedProviderCount int    `json:"embedded_provider_count,omitempty"`
+	FallbackUsed          bool   `json:"fallback_used,omitempty"`
+	FallbackReason        string `json:"fallback_reason,omitempty"`
+	FallbackName          string `json:"fallback_name,omitempty"`
+	FallbackGeneratedAt   string `json:"fallback_generated_at,omitempty"`
+}
+
+// catalogWriteBackResult 描述开发环境模型仓库写回状态。
+//
+// 同步数据库和写回 Git 工作区是两个不同动作：生产环境通常只同步数据库，开发环境
+// 显式开启 MODEL_CATALOG_WRITE_BACK 后才会把公开模型 catalog 写回 repository 文件。
+type catalogWriteBackResult struct {
+	Status        string `json:"status"`
+	Reason        string `json:"reason,omitempty"`
+	ModelCount    int    `json:"model_count,omitempty"`
+	ProviderCount int    `json:"provider_count,omitempty"`
+	GeneratedAt   string `json:"generated_at,omitempty"`
+	RepoDir       string `json:"repo_dir,omitempty"`
 }
 
 // syncUpstreamOptions 控制内部同步范围。
@@ -259,16 +276,17 @@ type syncPricingPolicyRequest struct {
 
 // syncUpstreamResult 是同步核心返回的结构化结果。
 type syncUpstreamResult struct {
-	CreatedModels  int            `json:"created_models"`
-	CreatedVendors int            `json:"created_vendors"`
-	UpdatedModels  int            `json:"updated_models"`
-	PricingUpdated int            `json:"pricing_updated,omitempty"`
-	PricingSkipped int            `json:"pricing_skipped,omitempty"`
-	SkippedModels  []string       `json:"skipped_models"`
-	CreatedList    []string       `json:"created_list"`
-	UpdatedList    []string       `json:"updated_list"`
-	PricingList    []string       `json:"pricing_list,omitempty"`
-	Source         syncSourceInfo `json:"source"`
+	CreatedModels    int                     `json:"created_models"`
+	CreatedVendors   int                     `json:"created_vendors"`
+	UpdatedModels    int                     `json:"updated_models"`
+	PricingUpdated   int                     `json:"pricing_updated,omitempty"`
+	PricingSkipped   int                     `json:"pricing_skipped,omitempty"`
+	SkippedModels    []string                `json:"skipped_models"`
+	CreatedList      []string                `json:"created_list"`
+	UpdatedList      []string                `json:"updated_list"`
+	PricingList      []string                `json:"pricing_list,omitempty"`
+	Source           syncSourceInfo          `json:"source"`
+	CatalogWriteBack *catalogWriteBackResult `json:"catalog_write_back,omitempty"`
 }
 
 // ETag 和响应体缓存，用于条件请求优化
@@ -564,11 +582,13 @@ func fetchNexusTokRepositoryCatalog() (*modelcatalog.Catalog, syncSourceInfo, er
 	catalog, err := modelcatalog.LoadEmbeddedCatalog()
 	manifest := modelcatalog.LoadEmbeddedManifest()
 	sourceInfo := syncSourceInfo{
-		Source:              syncSourceOfficial,
-		CatalogOrigin:       modelcatalog.CatalogOriginNexusTokRepository,
-		FallbackName:        manifest.Name,
-		FallbackGeneratedAt: manifest.GeneratedAt,
-		CatalogVersion:      manifest.Version,
+		Source:                syncSourceOfficial,
+		CatalogOrigin:         modelcatalog.CatalogOriginNexusTokRepository,
+		FallbackName:          manifest.Name,
+		FallbackGeneratedAt:   manifest.GeneratedAt,
+		CatalogVersion:        manifest.Version,
+		EmbeddedModelCount:    manifest.ModelCount,
+		EmbeddedProviderCount: manifest.ProviderCount,
 	}
 	if err != nil {
 		return nil, sourceInfo, err
@@ -581,6 +601,14 @@ func fetchNexusTokRepositoryCatalog() (*modelcatalog.Catalog, syncSourceInfo, er
 	}
 	if sourceInfo.CatalogVersion == "" {
 		sourceInfo.CatalogVersion = catalog.Manifest.Version
+	}
+	sourceInfo.SourceModelCount = len(catalog.Models)
+	sourceInfo.SourceProviderCount = len(catalog.Providers)
+	if sourceInfo.EmbeddedModelCount == 0 {
+		sourceInfo.EmbeddedModelCount = len(catalog.Models)
+	}
+	if sourceInfo.EmbeddedProviderCount == 0 {
+		sourceInfo.EmbeddedProviderCount = len(catalog.Providers)
 	}
 	return catalog, sourceInfo, nil
 }
@@ -1360,24 +1388,28 @@ func ensureVendorID(vendorName string, vendorByName map[string]upstreamVendor, v
 // buildSyncSourceInfo 根据请求生成来源信息。
 func buildSyncSourceInfo(req syncRequest) syncSourceInfo {
 	source := normalizeSyncSource(req.Source)
+	manifest := modelcatalog.LoadEmbeddedManifest()
 	switch source {
 	case syncSourceModelsDev:
 		return syncSourceInfo{
-			Source:        syncSourceModelsDev,
-			CatalogURL:    getModelsDevCatalogURL(),
-			CatalogOrigin: modelcatalog.CatalogOriginModelsDevWeb,
+			Source:                syncSourceModelsDev,
+			CatalogURL:            getModelsDevCatalogURL(),
+			CatalogOrigin:         modelcatalog.CatalogOriginModelsDevWeb,
+			EmbeddedModelCount:    manifest.ModelCount,
+			EmbeddedProviderCount: manifest.ProviderCount,
 		}
 	case syncSourceConfig:
 		return syncSourceInfo{Source: syncSourceConfig}
 	default:
-		manifest := modelcatalog.LoadEmbeddedManifest()
 		return syncSourceInfo{
-			Source:              syncSourceOfficial,
-			Locale:              req.Locale,
-			CatalogOrigin:       modelcatalog.CatalogOriginNexusTokRepository,
-			FallbackName:        manifest.Name,
-			FallbackGeneratedAt: manifest.GeneratedAt,
-			CatalogVersion:      manifest.Version,
+			Source:                syncSourceOfficial,
+			Locale:                req.Locale,
+			CatalogOrigin:         modelcatalog.CatalogOriginNexusTokRepository,
+			FallbackName:          manifest.Name,
+			FallbackGeneratedAt:   manifest.GeneratedAt,
+			CatalogVersion:        manifest.Version,
+			EmbeddedModelCount:    manifest.ModelCount,
+			EmbeddedProviderCount: manifest.ProviderCount,
 		}
 	}
 }
@@ -1489,6 +1521,18 @@ func mergeSyncSourceInfo(base syncSourceInfo, override syncSourceInfo) syncSourc
 	}
 	if override.FallbackGeneratedAt != "" {
 		base.FallbackGeneratedAt = override.FallbackGeneratedAt
+	}
+	if override.SourceModelCount > 0 {
+		base.SourceModelCount = override.SourceModelCount
+	}
+	if override.SourceProviderCount > 0 {
+		base.SourceProviderCount = override.SourceProviderCount
+	}
+	if override.EmbeddedModelCount > 0 {
+		base.EmbeddedModelCount = override.EmbeddedModelCount
+	}
+	if override.EmbeddedProviderCount > 0 {
+		base.EmbeddedProviderCount = override.EmbeddedProviderCount
 	}
 	return base
 }
@@ -1677,7 +1721,7 @@ func syncUpstreamModelsCore(ctx context.Context, req syncRequest, opts syncUpstr
 	if shouldApplySyncPricing(req, sourceInfo, pricingCandidates) {
 		applyModelsDevPricingPolicy(req.Pricing, sourceInfo, pricingCandidates, result)
 	}
-	writeBackSyncedCatalog(sourceInfo)
+	result.CatalogWriteBack = writeBackSyncedCatalog(sourceInfo)
 	return result, nil
 }
 
@@ -1771,29 +1815,66 @@ func applyModelsDevPricingPolicy(policy syncPricingPolicyRequest, sourceInfo syn
 	sort.Strings(result.PricingList)
 }
 
-func writeBackSyncedCatalog(sourceInfo syncSourceInfo) {
-	if !modelcatalog.WriteBackEnabled() || sourceInfo.Source != syncSourceModelsDev {
-		return
+func writeBackSyncedCatalog(sourceInfo syncSourceInfo) *catalogWriteBackResult {
+	if sourceInfo.Source != syncSourceModelsDev {
+		return nil
+	}
+	repoDir := modelcatalog.RepositoryDir()
+	if !modelcatalog.WriteBackEnabled() {
+		return &catalogWriteBackResult{
+			Status:        "skipped",
+			Reason:        "MODEL_CATALOG_WRITE_BACK is disabled; synced models were saved to the database only and will not be included in the next embedded catalog build.",
+			ModelCount:    sourceInfo.SourceModelCount,
+			ProviderCount: sourceInfo.SourceProviderCount,
+			RepoDir:       repoDir,
+		}
 	}
 	timeoutSec := common.GetEnvOrDefault("SYNC_HTTP_TIMEOUT_SECONDS", 15)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
 	defer cancel()
 	fetchResult, err := fetchModelsDevCatalogWithFallback(ctx, getModelsDevCatalogURL())
 	if err != nil {
-		if err != nil {
-			common.SysError("failed to write back models.dev catalog: " + err.Error())
+		common.SysError("failed to write back models.dev catalog: " + err.Error())
+		return &catalogWriteBackResult{
+			Status:        "failed",
+			Reason:        err.Error(),
+			ModelCount:    sourceInfo.SourceModelCount,
+			ProviderCount: sourceInfo.SourceProviderCount,
+			RepoDir:       repoDir,
 		}
-		return
 	}
 	modelCatalog := fetchResult.ModelCatalog
 	if modelCatalog == nil {
 		modelCatalog = convertModelsDevCatalogToModelCatalog(fetchResult.Catalog)
 	}
 	if modelCatalog == nil {
-		return
+		return &catalogWriteBackResult{
+			Status:  "failed",
+			Reason:  "models.dev catalog is empty after conversion",
+			RepoDir: repoDir,
+		}
 	}
 	if err := modelcatalog.WriteBackCatalog(modelCatalog); err != nil {
 		common.SysError("failed to write back model catalog repository: " + err.Error())
+		return &catalogWriteBackResult{
+			Status:        "failed",
+			Reason:        err.Error(),
+			ModelCount:    len(modelCatalog.Models),
+			ProviderCount: len(modelCatalog.Providers),
+			GeneratedAt:   modelCatalog.Manifest.GeneratedAt,
+			RepoDir:       repoDir,
+		}
+	}
+	manifest := modelCatalog.Manifest
+	if manifest.ModelCount == 0 && manifest.ProviderCount == 0 {
+		manifest = modelcatalog.BuildManifest(modelCatalog, manifest.GeneratedAt)
+	}
+	return &catalogWriteBackResult{
+		Status:        "success",
+		ModelCount:    manifest.ModelCount,
+		ProviderCount: manifest.ProviderCount,
+		GeneratedAt:   manifest.GeneratedAt,
+		RepoDir:       repoDir,
 	}
 }
 

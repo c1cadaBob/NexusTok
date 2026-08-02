@@ -31,44 +31,30 @@ type modelsDevCatalogFetchResult struct {
 // 仓库，仍失败才使用 NexusTok 内置仓库。内置仓库是构建时打包的只读兜底，保证模型
 // 页面不会因为外网不可用而完全空白。
 func fetchModelsDevCatalogWithFallback(ctx context.Context, catalogURL string) (modelsDevCatalogFetchResult, error) {
-	catalog, err := fetchModelsDevCatalog(ctx, catalogURL)
-	if err == nil {
-		return modelsDevCatalogFetchResult{
-			Catalog:       catalog,
-			CatalogOrigin: modelcatalog.CatalogOriginModelsDevWeb,
-		}, nil
+	fetchResult, err := modelcatalog.FetchModelsDevCatalogWithFallback(ctx, modelcatalog.ModelsDevFetchOptions{
+		CatalogURL: catalogURL,
+		TreeURL:    getModelsDevGitHubTreeURL(),
+		RawBaseURL: getModelsDevGitHubRawBase(),
+		Client:     getHTTPClient(),
+	})
+	if err != nil {
+		return modelsDevCatalogFetchResult{}, err
 	}
-
-	githubCatalog, githubErr := fetchModelsDevCatalogFromGitHub(ctx)
-	if githubErr == nil {
-		return modelsDevCatalogFetchResult{
-			Catalog:        convertModelCatalogToModelsDevCatalog(githubCatalog),
-			ModelCatalog:   githubCatalog,
-			CatalogOrigin:  modelcatalog.CatalogOriginModelsDevGitHub,
-			FallbackUsed:   true,
-			FallbackStage:  modelcatalog.FallbackStageGitHub,
-			FallbackReason: err.Error(),
-			FallbackName:   modelsDevGitHubRepo,
-			GitHubRepo:     modelsDevGitHubRepo,
-			CatalogVersion: githubCatalog.Manifest.Version,
-		}, nil
+	catalog := fetchResult.Catalog
+	if catalog == nil {
+		return modelsDevCatalogFetchResult{}, fmt.Errorf("models.dev catalog result is empty")
 	}
-
-	embedded, embeddedErr := modelcatalog.LoadEmbeddedCatalog()
-	if embeddedErr != nil {
-		return modelsDevCatalogFetchResult{}, fmt.Errorf("%w; GitHub fallback failed: %v; embedded fallback failed: %v", err, githubErr, embeddedErr)
-	}
-	manifest := embedded.Manifest
 	return modelsDevCatalogFetchResult{
-		Catalog:             convertModelCatalogToModelsDevCatalog(embedded),
-		ModelCatalog:        embedded,
-		CatalogOrigin:       modelcatalog.CatalogOriginNexusTokEmbedded,
-		FallbackUsed:        true,
-		FallbackStage:       modelcatalog.FallbackStageEmbedded,
-		FallbackReason:      fmt.Sprintf("%v; GitHub fallback failed: %v", err, githubErr),
-		FallbackName:        coalesce(manifest.Name, modelsDevEmbeddedFallbackName),
-		FallbackGeneratedAt: manifest.GeneratedAt,
-		CatalogVersion:      manifest.Version,
+		Catalog:             convertModelCatalogToModelsDevCatalog(catalog),
+		ModelCatalog:        catalog,
+		CatalogOrigin:       fetchResult.CatalogOrigin,
+		FallbackStage:       fetchResult.FallbackStage,
+		GitHubRepo:          fetchResult.GitHubRepo,
+		CatalogVersion:      fetchResult.CatalogVersion,
+		FallbackUsed:        fetchResult.FallbackUsed,
+		FallbackReason:      fetchResult.FallbackReason,
+		FallbackName:        coalesce(fetchResult.FallbackName, modelsDevEmbeddedFallbackName),
+		FallbackGeneratedAt: fetchResult.FallbackGeneratedAt,
 	}, nil
 }
 
@@ -80,6 +66,10 @@ func applyModelsDevFallbackSourceInfo(sourceInfo *syncSourceInfo, fetchResult mo
 	sourceInfo.CatalogVersion = strings.TrimSpace(fetchResult.CatalogVersion)
 	sourceInfo.FallbackStage = strings.TrimSpace(fetchResult.FallbackStage)
 	sourceInfo.GitHubRepo = strings.TrimSpace(fetchResult.GitHubRepo)
+	if fetchResult.Catalog != nil {
+		sourceInfo.SourceModelCount = len(fetchResult.Catalog.Models)
+		sourceInfo.SourceProviderCount = len(fetchResult.Catalog.Providers)
+	}
 	if !fetchResult.FallbackUsed {
 		return
 	}

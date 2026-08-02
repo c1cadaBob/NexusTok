@@ -229,10 +229,23 @@ export interface SyncSourceInfo {
   fallback_stage?: string
   github_repo?: string
   catalog_version?: string
+  source_model_count?: number
+  source_provider_count?: number
+  embedded_model_count?: number
+  embedded_provider_count?: number
   fallback_used?: boolean
   fallback_reason?: string
   fallback_name?: string
   fallback_generated_at?: string
+}
+
+export interface CatalogWriteBackInfo {
+  status?: 'success' | 'skipped' | 'failed'
+  reason?: string
+  model_count?: number
+  provider_count?: number
+  generated_at?: string
+  repo_dir?: string
 }
 
 /**
@@ -250,6 +263,7 @@ export interface SyncUpstreamResponse {
     skipped_models?: string[]
     pricing_list?: string[]
     source?: SyncSourceInfo
+    catalog_write_back?: CatalogWriteBackInfo
   }
 }
 
