@@ -1,0 +1,187 @@
+name: nexustok-loadtest
+
+x-nexustok-env: &nexustok-env
+  SQL_DSN: postgresql://root:123456@postgres:5432/nexustok?sslmode=disable
+  LOG_SQL_DSN: clickhouse://default:123456@clickhouse:9000/nexustok_logs
+  LOG_SQL_CLICKHOUSE_TTL_DAYS: "30"
+  REDIS_CONN_STRING: redis://:123456@redis:6379/0
+  REDIS_POOL_SIZE: "256"
+  SQL_MAX_IDLE_CONNS: "100"
+  SQL_MAX_OPEN_CONNS: "1000"
+  SQL_MAX_LIFETIME: "60"
+  SESSION_SECRET: loadtest-session-secret-change-before-production
+  CRYPTO_SECRET: loadtest-crypto-secret-change-before-production
+  SESSION_MAX_AGE: "7776000"
+  TZ: Asia/Shanghai
+  ERROR_LOG_ENABLED: "true"
+  BATCH_UPDATE_ENABLED: "true"
+  UPDATE_TASK: "false"
+  RELAY_MAX_IDLE_CONNS: "1000"
+  RELAY_MAX_IDLE_CONNS_PER_HOST: "200"
+  RELAY_MAX_CONNS_PER_HOST: "0"
+  RELAY_RESPONSE_HEADER_TIMEOUT: "300"
+  RELAY_PROXY_CLIENT_CACHE_TTL: "900"
+  RELAY_PROXY_CLIENT_CACHE_MAX_SIZE: "4096"
+
+x-nexustok-common: &nexustok-common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: nexustok-loadtest:local
+  restart: unless-stopped
+  command: --log-dir /app/logs
+  environment: *nexustok-env
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    clickhouse:
+      condition: service_healthy
+    mock-openai:
+      condition: service_healthy
+  networks:
+    - loadtest-network
+  healthcheck:
+    test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:3000/api/status | grep -q '\"success\":true'"]
+    interval: 15s
+    timeout: 5s
+    retries: 20
+    start_period: 45s
+
+services:
+  nexustok-a:
+    <<: *nexustok-common
+    environment:
+      <<: *nexustok-env
+      NODE_NAME: nexustok-a
+    volumes:
+      - loadtest_logs_a:/app/logs
+
+  nexustok-b:
+    <<: *nexustok-common
+    environment:
+      <<: *nexustok-env
+      NODE_NAME: nexustok-b
+    volumes:
+      - loadtest_logs_b:/app/logs
+
+  postgres:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: "123456"
+      POSTGRES_DB: nexustok
+    volumes:
+      - loadtest_pg_data:/var/lib/postgresql/data
+    networks:
+      - loadtest-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U root -d nexustok"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "123456", "--appendonly", "yes"]
+    volumes:
+      - loadtest_redis_data:/data
+    networks:
+      - loadtest-network
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a 123456 --no-auth-warning ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: nexustok_logs
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: "123456"
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    volumes:
+      - loadtest_clickhouse_data:/var/lib/clickhouse
+    networks:
+      - loadtest-network
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --password 123456 --query 'SELECT 1' >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  mock-openai:
+    build:
+      context: .
+      dockerfile: tools/loadtest/mock-openai/Dockerfile
+    image: nexustok-mock-openai-loadtest:local
+    restart: unless-stopped
+    environment:
+      MOCK_OPENAI_MODEL: gpt-loadtest
+      MOCK_OPENAI_TTFT_MS: "80"
+      MOCK_OPENAI_TOKEN_DELAY_MS: "20"
+      MOCK_OPENAI_OUTPUT_TOKENS: "64"
+      MOCK_OPENAI_ERROR_RATE: "0"
+      MOCK_OPENAI_RATE_LIMIT_RATE: "0"
+      MOCK_OPENAI_BODY_BYTES: "0"
+    ports:
+      - "18080:8080"
+    networks:
+      - loadtest-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/healthz | grep -q '\"ok\":true'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "3100:80"
+    volumes:
+      - ./scripts/loadtest/Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      nexustok-a:
+        condition: service_healthy
+      nexustok-b:
+        condition: service_healthy
+    networks:
+      - loadtest-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1/api/status | grep -q '\"success\":true'"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+
+  k6:
+    image: grafana/k6:latest
+    profiles:
+      - tools
+    working_dir: /scripts
+    volumes:
+      - ./scripts/loadtest:/scripts:ro
+      - ./loadtest-results:/results
+    networks:
+      - loadtest-network
+    depends_on:
+      caddy:
+        condition: service_healthy
+    command: ["version"]
+
+volumes:
+  loadtest_pg_data:
+  loadtest_redis_data:
+  loadtest_clickhouse_data:
+  loadtest_logs_a:
+  loadtest_logs_b:
+
+networks:
+  loadtest-network:
+    driver: bridge

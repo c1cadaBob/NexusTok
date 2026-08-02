@@ -1,0 +1,17 @@
+:80 {
+	encode zstd gzip
+
+	reverse_proxy nexustok-a:3000 nexustok-b:3000 {
+		lb_policy round_robin
+		flush_interval -1
+
+		header_up X-Real-IP {remote_host}
+
+		transport http {
+			keepalive 120s
+			keepalive_idle_conns 256
+			response_header_timeout 600s
+			compression off
+		}
+	}
+}

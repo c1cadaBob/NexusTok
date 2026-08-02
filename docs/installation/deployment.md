@@ -198,6 +198,176 @@ location / {
 
 流式响应/SSE 场景下最重要的是关闭响应缓冲、保留长超时和上游 keepalive。反向代理品牌不是关键，关键是这些参数要和实际流式请求、上游延迟和文件上传大小匹配。
 
+## 多节点压测与观测
+
+仓库提供一套专用的轻量压测环境，用于在继续优化热路径前建立可重复的基线。该环境使用独立 Compose project 和独立 Docker volume，包含：
+
+| 服务 | 作用 |
+|------|------|
+| `nexustok-a` / `nexustok-b` | 两个 NexusTok 实例，使用相同 `SESSION_SECRET` / `CRYPTO_SECRET`，不同 `NODE_NAME` |
+| `postgres` | 压测主库 |
+| `redis` | 压测缓存、限流和多节点热路径状态 |
+| `clickhouse` | 压测消费日志库，默认 `LOG_SQL_CLICKHOUSE_TTL_DAYS=30` |
+| `caddy` | 入口反向代理，默认宿主机端口 `3100`，轮询转发到两个 NexusTok 实例 |
+| `mock-openai` | 本地 OpenAI-compatible 上游，支持非流式、SSE 流式、错误率和 429 注入 |
+| `k6` | 压测执行容器 |
+
+> 该环境只用于压测。不要复用生产数据库、生产 Redis、生产 ClickHouse、生产密钥或真实上游 key。默认压测请求只打本地 `mock-openai`，不会产生真实模型费用。
+
+### 启动压测环境
+
+```bash
+docker compose -f docker-compose.loadtest.yml up -d --build
+docker compose -f docker-compose.loadtest.yml ps
+curl -sS http://127.0.0.1:3100/api/status
+```
+
+如果宿主机已有 `3100` 或 `18080` 端口占用，可在 `docker-compose.loadtest.yml` 中调整 `caddy` 或 `mock-openai` 的端口映射。容器网络内的服务名不要改，bootstrap 默认会把渠道指向 `http://mock-openai:8080`。
+
+### 初始化测试数据
+
+```bash
+scripts/loadtest/bootstrap.sh
+```
+
+默认行为：
+
+- 等待 `http://127.0.0.1:3100/api/status` 可用。
+- 如系统未初始化，调用 `POST /api/setup` 创建 Root 用户：用户名 `root`，密码 `LoadtestRoot123!`。
+- 登录 Root，保存 session cookie 到 `.loadtest/cookie`。
+- 幂等创建或复用渠道 `loadtest-mock-openai`：`type=1`，`base_url=http://mock-openai:8080`，`models=gpt-loadtest`。
+- 幂等创建或复用无限额度 Token `loadtest-token`，并把完整 `sk-*` 写入 `.loadtest/token`。
+
+可覆盖的常用变量：
+
+```bash
+LOADTEST_BASE_URL=http://127.0.0.1:3100 \
+LOADTEST_ROOT_PASSWORD='更换后的Root密码' \
+LOADTEST_UPSTREAM_URL=http://mock-openai:8080 \
+MODEL=gpt-loadtest \
+scripts/loadtest/bootstrap.sh
+```
+
+### 运行 k6 场景
+
+默认混合场景为 80% 非流式、20% 流式：
+
+```bash
+scripts/loadtest/run.sh mixed
+```
+
+其它场景：
+
+```bash
+scripts/loadtest/run.sh status_smoke
+scripts/loadtest/run.sh chat_non_stream
+scripts/loadtest/run.sh chat_stream
+```
+
+常用压测参数：
+
+```bash
+VUS=50 DURATION=5m scripts/loadtest/run.sh mixed
+RAMPING=true VUS=100 DURATION=10m scripts/loadtest/run.sh mixed
+```
+
+k6 会生成带时间戳的结果目录，例如：
+
+```text
+loadtest-results/20260802T120000Z/
+  summary.json
+  summary.md
+```
+
+阈值默认值：
+
+| 指标 | 默认阈值 |
+|------|----------|
+| HTTP 错误率 | `< 1%` |
+| 非流式 P95 | `< 1500ms` |
+| 流式首包近似 P95 | `< 1000ms` |
+| `/api/status` P95 | `< 100ms` |
+
+说明：k6 标准 HTTP API 会缓冲响应体，因此流式首包使用 `res.timings.waiting` 作为轻量近似值。后续如果要做严格 TTFT，可再引入专用 streaming client 或自定义 xk6 扩展。
+
+### 采集观测报告
+
+```bash
+scripts/loadtest/collect.sh
+```
+
+采集内容会写入 `loadtest-results/<timestamp>/report.md`，并包含：
+
+- `/api/status`
+- `/api/perf-metrics/summary?hours=1`
+- `/api/system-info/instances`
+- `/api/system-task/list`
+- `mock-openai` 的 `/metrics`
+- `docker stats --no-stream`
+- PostgreSQL 连接数和基础表统计
+- Redis `INFO stats`、`INFO clients`、`INFO memory`
+- ClickHouse `system.parts`、`system.mutations` 和 `logs` 表行数
+- 最近一次 k6 `summary.json` / `summary.md`，如果存在
+
+初次看报告时建议按这个顺序排查：
+
+1. 先看 k6 错误率和 P95/P99。
+2. 再看 `mock-metrics.json`，确认上游是否注入了错误或 429。
+3. 如果 mock 延迟稳定但 NexusTok 延迟升高，检查 `docker-stats.txt`、`postgres-connections.txt` 和 Redis ops/内存。
+4. 如果 ClickHouse `logs` 表没有写入，先查 `LOG_SQL_DSN` 初始化日志，再判断是否需要继续调整日志库。
+5. 如果只有一个 NexusTok 实例有心跳或流量，检查 Caddy 健康状态和 `system-instances.json`。
+
+### Mock 上游参数
+
+`mock-openai` 通过环境变量控制行为，可直接修改 `docker-compose.loadtest.yml` 后重建：
+
+| 环境变量 | 默认值 | 说明 |
+|----------|--------|------|
+| `MOCK_OPENAI_MODEL` | `gpt-loadtest` | 固定返回模型 |
+| `MOCK_OPENAI_TTFT_MS` | `80` | 首包/首 token 延迟 |
+| `MOCK_OPENAI_TOKEN_DELAY_MS` | `20` | 每个输出 token 间隔 |
+| `MOCK_OPENAI_OUTPUT_TOKENS` | `64` | 输出 token 数 |
+| `MOCK_OPENAI_ERROR_RATE` | `0` | 注入 500 错误比例，`0-1` |
+| `MOCK_OPENAI_RATE_LIMIT_RATE` | `0` | 注入 429 比例，`0-1` |
+| `MOCK_OPENAI_BODY_BYTES` | `0` | 非流式响应额外填充大小 |
+
+修改后执行：
+
+```bash
+docker compose -f docker-compose.loadtest.yml up -d --build mock-openai
+```
+
+### 真实上游 smoke
+
+真实上游 smoke 默认不会运行，必须显式传入真实地址、key 和模型，建议只跑 10-20 次请求：
+
+```bash
+docker compose -f docker-compose.loadtest.yml run --rm \
+  -e REAL_BASE_URL="https://your-real-upstream.example" \
+  -e REAL_API_KEY="sk-..." \
+  -e REAL_MODEL="your-model" \
+  -e REAL_ITERATIONS=10 \
+  k6 run /scripts/k6/real-upstream-smoke.js
+```
+
+真实上游 smoke 只用于上线前确认链路可用，不纳入默认压测，也不要在 CI 或巡检任务中自动执行。
+
+### 停止和清理
+
+停止压测环境并保留压测 volume：
+
+```bash
+docker compose -f docker-compose.loadtest.yml down
+```
+
+删除压测环境和压测数据卷：
+
+```bash
+docker compose -f docker-compose.loadtest.yml down -v
+```
+
+`down -v` 只会删除 `docker-compose.loadtest.yml` 声明的独立压测卷，不会删除生产 `docker-compose.yml` 的默认卷。执行前仍建议确认当前目录和 Compose 文件，避免误操作。
+
 ## 单容器部署
 
 如果不需要 Compose 编排，可以直接运行官方镜像。
