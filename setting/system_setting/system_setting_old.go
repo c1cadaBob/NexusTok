@@ -5,7 +5,7 @@
 package system_setting
 
 // ServerAddress 当前服务器的访问地址
-var ServerAddress = "http://localhost:3000"
+var ServerAddress = "http://localhost:3030"
 
 // WorkerUrl Worker 工作节点的 URL 地址，为空表示不使用 Worker
 var WorkerUrl = ""

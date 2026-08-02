@@ -13,6 +13,7 @@ x-nexustok-env: &nexustok-env
   CRYPTO_SECRET: loadtest-crypto-secret-change-before-production
   SESSION_MAX_AGE: "7776000"
   TZ: Asia/Shanghai
+  PORT: "3030"
   ERROR_LOG_ENABLED: "true"
   BATCH_UPDATE_ENABLED: "true"
   UPDATE_TASK: "false"
@@ -43,7 +44,7 @@ x-nexustok-common: &nexustok-common
   networks:
     - loadtest-network
   healthcheck:
-    test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:3000/api/status | grep -q '\"success\":true'"]
+    test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:3030/api/status | grep -q '\"success\":true'"]
     interval: 15s
     timeout: 5s
     retries: 20

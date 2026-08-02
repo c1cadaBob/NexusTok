@@ -66,7 +66,7 @@ nano docker-compose.yml
 docker-compose up -d
 ```
 
-启动后访问 `http://localhost:3000`，按初始化向导完成配置。
+启动后访问 `http://localhost:3030`，按初始化向导完成配置。
 
 <details>
 <summary><strong>Docker 命令</strong></summary>
@@ -75,8 +75,9 @@ docker-compose up -d
 docker pull c1cadabob/nexustok:latest
 
 docker run --name nexustok -d --restart always \
-  -p 3000:3000 \
+  -p 3030:3030 \
   -e TZ=Asia/Shanghai \
+  -e PORT=3030 \
   -v ./data:/data \
   -v /var/run/docker.sock:/var/run/docker.sock \
   c1cadabob/nexustok:latest

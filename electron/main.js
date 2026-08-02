@@ -8,7 +8,7 @@ let mainWindow;
 let serverProcess;
 let tray = null;
 let serverErrorLogs = [];
-const PORT = 3000;
+const PORT = 3030;
 const DEV_FRONTEND_PORT = 3001; // 默认前端 Rsbuild 开发服务器端口，与 make dev-web 保持一致
 
 // 保存日志到文件并打开
@@ -234,7 +234,7 @@ function startServer() {
       // 只需要等待前端开发服务器就绪
       console.log('Development mode: skipping server startup');
       console.log('Please make sure you have started:');
-      console.log('  1. Go backend: make dev-api or go run main.go (port 3000)');
+      console.log('  1. Go backend: make dev-api or go run main.go (port 3030)');
       console.log('  2. Default frontend dev server: make dev-web or cd web/default && bun run dev -- --port 3001');
       console.log('');
       console.log('Checking if servers are running...');
@@ -376,7 +376,7 @@ function startServer() {
 
     checkServerAvailability(PORT)
       .then(() => {
-        console.log('✓ Backend server is accessible on port 3000');
+        console.log('✓ Backend server is accessible on port 3030');
         resolve();
       })
       .catch((err) => {

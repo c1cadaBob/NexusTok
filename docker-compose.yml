@@ -2,7 +2,7 @@
 #
 # 快速启动：
 #   1. docker-compose up -d
-#   2. 访问 http://localhost:3000
+#   2. 访问 http://localhost:3030
 #
 # 使用 MySQL 替代 PostgreSQL：
 #   1. 注释 postgres 服务和 SQL_DSN 行
@@ -30,7 +30,7 @@ services:
     restart: always
     command: --log-dir /app/logs
     ports:
-      - "3000:3000"
+      - "3030:3030"
     volumes:
       - ./data:/data
       - ./logs:/app/logs
@@ -46,6 +46,7 @@ services:
       - SQL_MAX_OPEN_CONNS=1000
       - SQL_MAX_LIFETIME=60
       - TZ=Asia/Shanghai
+      - PORT=3030
       - ERROR_LOG_ENABLED=true # 是否启用错误日志记录 (Whether to enable error log recording)
       - BATCH_UPDATE_ENABLED=true  # 是否启用批量更新 (Whether to enable batch update)
       - NODE_NAME=nexustok-node-1  # 节点名称，用于审计日志中标识节点身份；多节点/容器部署时建议设置 (Node name used in audit logs; recommended when running multiple instances or in containers)
@@ -72,7 +73,7 @@ services:
     networks:
       - nexustok-network
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:3030/api/status | grep -o '\"success\":\\s*true' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

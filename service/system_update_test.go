@@ -143,6 +143,23 @@ func TestSystemUpdateCheckMapsGitHubNotFoundToNoReleaseInfoForDocker(t *testing.
 	require.NotNil(t, info.Docker)
 	assert.False(t, info.Docker.SocketAvailable)
 	assert.Contains(t, info.Docker.OneTimeEnableCommand, "/var/run/docker.sock")
+	assert.Contains(t, info.Docker.OneTimeEnableCommand, "-p 3030:3030")
+	assert.Contains(t, info.Docker.OneTimeEnableCommand, "-e PORT=3030")
+}
+
+func TestSystemUpdateDockerManualRunCommandDefaultsTo3030(t *testing.T) {
+	command := minimalSystemUpdateDockerRunCommand(
+		"c1cadabob/nexustok:latest",
+		"nexustok",
+		[]string{"/opt/nexustok/data:/data", "/opt/nexustok/logs:/app/logs"},
+		nil,
+		[]string{"TZ=Asia/Shanghai"},
+	)
+
+	assert.Contains(t, command, "-p 3030:3030")
+	assert.Contains(t, command, "-e PORT=3030")
+	assert.Contains(t, command, "-v /opt/nexustok/data:/data")
+	assert.Contains(t, command, "c1cadabob/nexustok:latest")
 }
 
 func TestSystemUpdateGitHubRepoCanBeOverriddenByEnv(t *testing.T) {

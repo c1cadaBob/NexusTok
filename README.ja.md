@@ -65,7 +65,7 @@ nano docker-compose.yml
 docker-compose up -d
 ```
 
-起動後、`http://localhost:3000` を開き、初期化ウィザードを完了してください。
+起動後、`http://localhost:3030` を開き、初期化ウィザードを完了してください。
 
 <details>
 <summary><strong>Docker コマンド</strong></summary>
@@ -74,8 +74,9 @@ docker-compose up -d
 docker pull c1cadabob/nexustok:latest
 
 docker run --name nexustok -d --restart always \
-  -p 3000:3000 \
+  -p 3030:3030 \
   -e TZ=Asia/Shanghai \
+  -e PORT=3030 \
   -v ./data:/data \
   -v /var/run/docker.sock:/var/run/docker.sock \
   c1cadabob/nexustok:latest

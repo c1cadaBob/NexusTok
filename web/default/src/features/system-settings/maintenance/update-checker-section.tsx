@@ -300,8 +300,9 @@ export function UpdateCheckerSection({
     `docker rm -f nexustok 2>/dev/null || true
 
 docker run --name nexustok -d --restart always \\
-  -p 3008:3000 \\
+  -p 3030:3030 \\
   -e TZ=Asia/Shanghai \\
+  -e PORT=3030 \\
   -e SESSION_SECRET_FILE=/data/session_secret \\
   -v /opt/nexustok/data:/data \\
   -v /opt/nexustok/logs:/app/logs \\

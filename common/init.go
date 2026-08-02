@@ -28,7 +28,7 @@ import (
 
 // 命令行参数定义
 var (
-	Port         = flag.Int("port", 3000, "the listening port")                  // 监听端口
+	Port         = flag.Int("port", 3030, "the listening port")                  // 监听端口
 	PrintVersion = flag.Bool("version", false, "print version and exit")         // 打印版本
 	PrintHelp    = flag.Bool("help", false, "print help and exit")               // 打印帮助
 	LogDir       = flag.String("log-dir", "./logs", "specify the log directory") // 日志目录

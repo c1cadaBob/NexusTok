@@ -8,7 +8,7 @@
 # 使用方法：
 #   1. docker compose -f docker-compose.dev.yml up -d
 #   2. cd web && bun install && bun run dev
-#   3. 访问 http://localhost:3001（Rsbuild 开发服务器，API 自动代理到 :3000）
+#   3. 访问 http://localhost:3001（Rsbuild 开发服务器，API 自动代理到 :3030）
 #
 # 重新构建后端（Go 代码修改后）：
 #   docker compose -f docker-compose.dev.yml up -d --build nexustok
@@ -29,13 +29,14 @@ services:
     container_name: nexustok-dev
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "3030:3030"
     volumes:
       - dev_data:/data
     environment:
       - SQL_DSN=postgresql://root:123456@postgres:5432/nexustok
       - REDIS_CONN_STRING=redis://redis
       - TZ=Asia/Shanghai
+      - PORT=3030
       - BATCH_UPDATE_ENABLED=true
       # 仅当开发后端通过 HTTPS 域名访问时开启。开启后必须配置可信 URL，
       # 否则浏览器不会在 HTTP 本地开发环境中携带 Secure session cookie。

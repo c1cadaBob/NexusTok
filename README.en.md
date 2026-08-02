@@ -65,7 +65,7 @@ nano docker-compose.yml
 docker-compose up -d
 ```
 
-After startup, open `http://localhost:3000` and complete the setup wizard.
+After startup, open `http://localhost:3030` and complete the setup wizard.
 
 <details>
 <summary><strong>Docker command</strong></summary>
@@ -74,8 +74,9 @@ After startup, open `http://localhost:3000` and complete the setup wizard.
 docker pull c1cadabob/nexustok:latest
 
 docker run --name nexustok -d --restart always \
-  -p 3000:3000 \
+  -p 3030:3030 \
   -e TZ=Asia/Shanghai \
+  -e PORT=3030 \
   -v ./data:/data \
   -v /var/run/docker.sock:/var/run/docker.sock \
   c1cadabob/nexustok:latest

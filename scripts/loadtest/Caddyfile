@@ -1,7 +1,7 @@
 :80 {
 	encode zstd gzip
 
-	reverse_proxy nexustok-a:3000 nexustok-b:3000 {
+	reverse_proxy nexustok-a:3030 nexustok-b:3030 {
 		lb_policy round_robin
 		flush_interval -1
 

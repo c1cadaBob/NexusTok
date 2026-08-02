@@ -41,12 +41,12 @@
 3. 点击 **安装**
 4. 配置以下基本选项：
    - **容器名称**：可自定义，默认为 `nexustok`
-   - **端口映射**：默认为 `3000:3000`
+   - **端口映射**：默认为 `3030:3030`
    - **环境变量**：
      - `SESSION_SECRET` 或 `SESSION_SECRET_FILE`：会话密钥（**必填**，多机部署时必须一致）
      - `CRYPTO_SECRET`：加密密钥（使用 Redis 时必填）
 5. 点击 **确认** 开始安装
-6. 等待安装完成后，访问 `http://您的服务器IP:3000` 即可使用
+6. 等待安装完成后，访问 `http://您的服务器IP:3030` 即可使用
 
 ### 方法二：使用 Docker Compose
 
@@ -61,7 +61,7 @@ services:
     container_name: nexustok
     restart: always
     ports:
-      - "3000:3000"
+      - "3030:3030"
     volumes:
       - ./data:/data
       - ./logs:/app/logs
@@ -87,8 +87,9 @@ mkdir -p /opt/nexustok/data /opt/nexustok/logs
 docker rm -f nexustok 2>/dev/null || true
 
 docker run --name nexustok -d --restart always \
-  -p 3000:3000 \
+  -p 3030:3030 \
   -e TZ=Asia/Shanghai \
+  -e PORT=3030 \
   -e SESSION_SECRET_FILE=/data/session_secret \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
@@ -101,10 +102,10 @@ docker run --name nexustok -d --restart always \
 ```bash
 docker ps | grep nexustok
 docker logs -f nexustok
-curl -sS http://127.0.0.1:3000/api/status
+curl -sS http://127.0.0.1:3030/api/status
 ```
 
-访问 `http://您的服务器IP:3000`。如果无法访问，请在宝塔面板 **安全** 和云服务器安全组中同时放行 TCP `3000` 端口。
+访问 `http://您的服务器IP:3030`。如果无法访问，请在宝塔面板 **安全** 和云服务器安全组中同时放行 TCP `3030` 端口。
 
 `/var/run/docker.sock` 用于后台 **系统维护 → 检查更新** 页面自动拉取镜像并重建当前容器，等同宿主机 Docker 管理权限，只应在可信管理员环境中挂载。如果旧容器启动时没有挂载它，维护页会显示一次性重建命令；执行后仍复用 `/opt/nexustok/data` 和 `/opt/nexustok/logs`，不会删除数据。
 
@@ -154,10 +155,10 @@ head -c 16 /dev/urandom | xxd -p
 
 ## 常见问题
 
-### Q1：无法访问 3000 端口？
+### Q1：无法访问 3030 端口？
 
-1. 检查服务器防火墙是否开放 3000 端口
-2. 在宝塔面板 **安全** 中放行 3000 端口
+1. 检查服务器防火墙是否开放 3030 端口
+2. 在宝塔面板 **安全** 中放行 3030 端口
 3. 检查云服务器安全组是否开放端口
 
 ### Q2：登录后提示会话失效？
@@ -194,8 +195,9 @@ docker rm nexustok
 
 # 使用原来的数据目录重新启动，不要删除 /opt/nexustok/data。
 docker run --name nexustok -d --restart always \
-  -p 3000:3000 \
+  -p 3030:3030 \
   -e TZ=Asia/Shanghai \
+  -e PORT=3030 \
   -e SESSION_SECRET_FILE=/data/session_secret \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \

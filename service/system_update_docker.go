@@ -458,8 +458,9 @@ func systemUpdateDockerSocketEnableCommand(containerName string) string {
 	return fmt.Sprintf(`docker rm -f %[1]s 2>/dev/null || true
 
 docker run --name %[1]s -d --restart always \
-  -p 3008:3000 \
+  -p 3030:3030 \
   -e TZ=Asia/Shanghai \
+  -e PORT=3030 \
   -e SESSION_SECRET_FILE=/data/session_secret \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
@@ -1045,7 +1046,7 @@ func dockerPortFlagLines(ports map[string][]dockerPortBinding) []string {
 	}
 	sort.Strings(lines)
 	if len(lines) == 0 {
-		return []string{"3008:3000"}
+		return []string{"3030:3030"}
 	}
 	return lines
 }
@@ -1059,15 +1060,22 @@ func containerPortPort(containerPort string) string {
 }
 
 func dockerSelectedEnvLines(env []string) []string {
-	allowedPrefixes := []string{"TZ=", "SESSION_SECRET_FILE=", "SESSION_SECRET=", "SQL_DSN=", "REDIS_CONN_STRING=", "NODE_NAME="}
+	allowedPrefixes := []string{"TZ=", "PORT=", "SESSION_SECRET_FILE=", "SESSION_SECRET=", "SQL_DSN=", "REDIS_CONN_STRING=", "NODE_NAME="}
 	lines := []string{}
+	hasPort := false
 	for _, item := range env {
 		for _, prefix := range allowedPrefixes {
 			if strings.HasPrefix(item, prefix) {
 				lines = append(lines, item)
+				if prefix == "PORT=" {
+					hasPort = true
+				}
 				break
 			}
 		}
+	}
+	if !hasPort {
+		lines = append(lines, "PORT=3030")
 	}
 	sort.Strings(lines)
 	return lines

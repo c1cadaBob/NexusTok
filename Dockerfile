@@ -10,7 +10,7 @@
 #   TARGETOS - 目标操作系统（默认: linux）
 #   TARGETARCH - 目标架构（默认: amd64）
 #
-# 暴露端口：3000
+# 暴露端口：3030
 
 # 阶段 1：构建默认前端
 FROM oven/bun:1@sha256:0733e50325078969732ebe3b15ce4c4be5082f18c4ac1a0f0ca4839c2e4e42a7 AS builder
@@ -63,6 +63,6 @@ RUN apt-get update \
 
 COPY --from=builder2 /build/nexustok /
 COPY LICENSE NOTICE THIRD-PARTY-LICENSES.md /licenses/
-EXPOSE 3000
+EXPOSE 3030
 WORKDIR /data
 ENTRYPOINT ["/nexustok"]

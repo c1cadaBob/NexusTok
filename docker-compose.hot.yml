@@ -50,7 +50,7 @@ services:
     working_dir: /app
     command: ["/app/bin/docker-hot-backend.sh"]
     ports:
-      - "${HOT_PORT:-3003}:3000"
+      - "${HOT_PORT:-3003}:3030"
     volumes:
       - .:/app
       - ./data:/data
@@ -59,6 +59,7 @@ services:
       SQL_DSN: postgresql://root:123456@postgres:5432/nexustok
       REDIS_CONN_STRING: redis://redis:6379
       TZ: Asia/Shanghai
+      PORT: "3030"
       GIN_MODE: release
       GOPROXY: https://goproxy.cn,https://goproxy.io,direct
       GOSUMDB: sum.golang.google.cn

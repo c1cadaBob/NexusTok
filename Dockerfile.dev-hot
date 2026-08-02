@@ -10,7 +10,7 @@
 #   GOPROXY - Go 模块代理（默认: goproxy.cn）
 #   GOSUMDB - Go 校验数据库
 #
-# 暴露端口：3000
+# 暴露端口：3030
 
 # 开发环境基础镜像
 FROM golang:1.26.1-alpine
@@ -29,4 +29,4 @@ RUN mkdir -p /tmp/go-build /tmp/go-mod /tmp/go/bin \
     && chmod -R 0777 /tmp/go-build /tmp/go-mod /tmp/go
 
 WORKDIR /app
-EXPOSE 3000
+EXPOSE 3030

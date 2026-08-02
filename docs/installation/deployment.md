@@ -25,7 +25,7 @@ Go 入口文件 `main.go` 使用 `//go:embed` 嵌入以上构建产物。生产�
 可通过接口确认当前主题：
 
 ```bash
-curl -sS http://127.0.0.1:3000/api/status | grep -o '"theme":"[^"]*"'
+curl -sS http://127.0.0.1:3030/api/status | grep -o '"theme":"[^"]*"'
 ```
 
 如果页面样式没有变化，优先确认 `theme.frontend` 是否仍为 `classic`，以及 Go 服务是否已经重新编译嵌入了最新 `dist`。
@@ -54,7 +54,7 @@ docker-compose up -d
 
 | 服务 | 容器名 | 容器端口 | 宿主机端口 | 说明 |
 |------|--------|----------|------------|------|
-| NexusTok | `nexustok` | `3000` | `3000` | 主 Web、管理后台和 Relay API |
+| NexusTok | `nexustok` | `3030` | `3030` | 主 Web、管理后台和 Relay API |
 | Redis | `redis` | `6379` | 不对外暴露 | 缓存、限流、分布式状态 |
 | PostgreSQL | `postgres` | `5432` | 不对外暴露 | 主数据库 |
 
@@ -163,7 +163,7 @@ Caddy 示例：
 example.com {
   encode zstd gzip
 
-  reverse_proxy 127.0.0.1:3000 {
+  reverse_proxy 127.0.0.1:3030 {
     header_up X-Real-IP {remote_host}
     header_up X-Forwarded-For {remote_host}
     header_up X-Forwarded-Proto {scheme}
@@ -181,7 +181,7 @@ Nginx 关键项：
 
 ```nginx
 location / {
-  proxy_pass http://127.0.0.1:3000;
+  proxy_pass http://127.0.0.1:3030;
   proxy_http_version 1.1;
   proxy_set_header Connection "";
   proxy_set_header Host $host;
@@ -388,8 +388,9 @@ mkdir -p /opt/nexustok/data /opt/nexustok/logs
 docker rm -f nexustok 2>/dev/null || true
 
 docker run --name nexustok -d --restart always \
-  -p 3000:3000 \
+  -p 3030:3030 \
   -e TZ=Asia/Shanghai \
+  -e PORT=3030 \
   -e SESSION_SECRET_FILE=/data/session_secret \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
@@ -402,10 +403,10 @@ docker run --name nexustok -d --restart always \
 ```bash
 docker ps | grep nexustok
 docker logs -f nexustok
-curl -sS http://127.0.0.1:3000/api/status
+curl -sS http://127.0.0.1:3030/api/status
 ```
 
-浏览器访问 `http://服务器IP:3000`。如果部署在云服务器上，请确认安全组和系统防火墙已经放行 TCP `3000` 端口。`/opt/nexustok/data` 保存 SQLite、会话密钥文件和运行时数据，更新容器时不要删除。
+浏览器访问 `http://服务器IP:3030`。如果部署在云服务器上，请确认安全组和系统防火墙已经放行 TCP `3030` 端口。`/opt/nexustok/data` 保存 SQLite、会话密钥文件和运行时数据，更新容器时不要删除。旧部署如果必须继续使用容器内 `3000`，请显式加 `-e PORT=3000 -p 宿主端口:3000`；新部署推荐 `PORT=3030` 和 `3030:3030`。
 
 外部 PostgreSQL 示例：
 
@@ -415,8 +416,9 @@ mkdir -p /opt/nexustok/data /opt/nexustok/logs
 docker rm -f nexustok 2>/dev/null || true
 
 docker run --name nexustok -d --restart always \
-  -p 3000:3000 \
+  -p 3030:3030 \
   -e TZ=Asia/Shanghai \
+  -e PORT=3030 \
   -e SESSION_SECRET_FILE=/data/session_secret \
   -e SQL_DSN="postgresql://user:password@host:5432/nexustok?sslmode=disable" \
   -e REDIS_CONN_STRING="redis://:password@host:6379/0" \
@@ -436,8 +438,9 @@ Docker 镜像只包含 NexusTok 应用进程，不会在同一个容器里内置
 docker rm -f nexustok 2>/dev/null || true
 
 docker run --name nexustok -d --restart always \
-  -p 3008:3000 \
+  -p 3030:3030 \
   -e TZ=Asia/Shanghai \
+  -e PORT=3030 \
   -e SESSION_SECRET_FILE=/data/session_secret \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
@@ -445,7 +448,7 @@ docker run --name nexustok -d --restart always \
   c1cadabob/nexustok:latest
 ```
 
-上面的命令保留 `/opt/nexustok/data` 和 `/opt/nexustok/logs`，不会删除 SQLite、会话密钥文件或日志。端口请按你的实际暴露端口调整，例如 `-p 3008:3000` 表示通过 `http://服务器IP:3008` 访问。
+上面的命令保留 `/opt/nexustok/data` 和 `/opt/nexustok/logs`，不会删除 SQLite、会话密钥文件或日志。端口请按你的实际暴露端口调整：默认推荐 `-p 3030:3030`；如果仍想用宿主机 `3008` 访问，则使用 `-p 3008:3030`，对应地址为 `http://服务器IP:3008`。
 
 单容器模式和 Compose 模式都使用 NexusTok 原生账号池。账号池分组、池账号和认证文件 API 均由主服务直接提供，不需要额外启动 CLIProxyAPI Sidecar 或 CPA Usage Service。
 
@@ -468,8 +471,9 @@ docker build -t nexustok:local .
 
 ```bash
 docker run --name nexustok-local -d --restart always \
-  -p 3000:3000 \
+  -p 3030:3030 \
   -e TZ=Asia/Shanghai \
+  -e PORT=3030 \
   -e SESSION_SECRET="$(openssl rand -hex 32)" \
   -v "$PWD/data:/data" \
   nexustok:local
@@ -502,7 +506,7 @@ bun install
 bun run dev
 ```
 
-默认前端 Rsbuild 会把 `/api`、`/mj`、`/pg` 代理到 `VITE_REACT_APP_SERVER_URL`，未设置时为 `http://localhost:3000`。
+默认前端 Rsbuild 会把 `/api`、`/mj`、`/pg` 代理到 `VITE_REACT_APP_SERVER_URL`，未设置时为 `http://localhost:3030`。
 
 启动经典前端开发服务器：
 
@@ -545,7 +549,7 @@ docker compose -f docker-compose.hot.yml up -d --build
 
 | 服务 | 容器名 | 端口 |
 |------|--------|------|
-| 主服务 | `nexustok-api-hot` | 宿主机 `3003` -> 容器 `3000` |
+| 主服务 | `nexustok-api-hot` | 宿主机 `3003` -> 容器 `3030` |
 | 前端构建监听 | `nexustok-frontend-watch` | 不暴露端口 |
 | PostgreSQL | `nexustok-hot-pg` | Docker 网络内 `5432` |
 | Redis | `nexustok-hot-redis` | Docker 网络内 `6379` |
@@ -647,7 +651,7 @@ journalctl -u nexustok -f
 5. 初始化定价数据、日志数据库和 Redis。
 6. 初始化监控、i18n、OAuth、Relay 通道。
 7. 注册 API 路由、Web 静态资源路由、原生账号池路由和兼容账号池管理器路由。
-8. 启动 HTTP 服务，默认监听 `3000`。
+8. 启动 HTTP 服务，默认监听 `3030`。
 
 Web 静态资源路由会根据 `common.GetTheme()` 选择默认前端或经典前端。根路径和 SPA 路由由 `router/web-router.go` 的 `NoRoute` 回退到对应主题的 `index.html`。
 
@@ -713,10 +717,10 @@ environment:
 
 ```bash
 # 1. 确认服务实际返回的主题
-curl -sS http://127.0.0.1:3000/api/status | grep -o '"theme":"[^"]*"'
+curl -sS http://127.0.0.1:3030/api/status | grep -o '"theme":"[^"]*"'
 
 # 2. 确认 HTML 加载的是新版 static 资源还是经典 assets 资源
-curl -sS http://127.0.0.1:3000/ | sed -n '1,80p'
+curl -sS http://127.0.0.1:3030/ | sed -n '1,80p'
 
 # 3. 热重载环境检查默认前端 dist
 ls -lah web/default/dist
@@ -741,11 +745,11 @@ docker logs --tail 120 nexustok-api-hot
 检查监听端口和容器端口映射：
 
 ```bash
-ss -ltnp | grep -E ':3000|:3003|:8080'
+ss -ltnp | grep -E ':3030|:3003|:8080'
 docker ps --format '{{.Names}} {{.Ports}}'
 ```
 
-如果经过 Nginx、Caddy、宝塔或云厂商端口转发，还需要确认外部端口映射到哪个内部服务。排查时优先直连宿主机本地端口，例如 `127.0.0.1:3000` 或 `127.0.0.1:3003`，再排查外部反向代理。
+如果经过 Nginx、Caddy、宝塔或云厂商端口转发，还需要确认外部端口映射到哪个内部服务。排查时优先直连宿主机本地端口，例如 `127.0.0.1:3030` 或 `127.0.0.1:3003`，再排查外部反向代理。
 
 ### 容器启动失败
 
@@ -865,7 +869,7 @@ volumes:
 
 ```bash
 docker logs --tail 200 nexustok
-curl -sS http://127.0.0.1:3000/api/status
+curl -sS http://127.0.0.1:3030/api/status
 ```
 
 热重载环境对应主服务容器：
@@ -916,7 +920,7 @@ docker logs --tail 200 nexustok-api-hot | grep 'models.dev model sync'
 
 ```bash
 curl -H "NexusTok-User: <管理员用户ID>" \
-  "http://127.0.0.1:3000/api/models/sync_upstream/preview?source=models.dev"
+  "http://127.0.0.1:3030/api/models/sync_upstream/preview?source=models.dev"
 ```
 
 ## 更新流程
@@ -929,7 +933,7 @@ curl -H "NexusTok-User: <管理员用户ID>" \
 docker compose pull nexustok
 docker compose up -d nexustok
 docker compose ps
-curl -sS http://127.0.0.1:3000/api/status
+curl -sS http://127.0.0.1:3030/api/status
 ```
 
 旧版 Docker Compose 可使用：
@@ -949,8 +953,9 @@ docker rm nexustok
 
 # 使用原来的 /opt/nexustok/data 和 /opt/nexustok/logs 挂载目录重新启动。
 docker run --name nexustok -d --restart always \
-  -p 3000:3000 \
+  -p 3030:3030 \
   -e TZ=Asia/Shanghai \
+  -e PORT=3030 \
   -e SESSION_SECRET_FILE=/data/session_secret \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
@@ -979,8 +984,8 @@ sudo systemctl restart nexustok
 更新后验证：
 
 ```bash
-curl -sS http://127.0.0.1:3000/api/status
-curl -sS http://127.0.0.1:3000/ | sed -n '1,80p'
+curl -sS http://127.0.0.1:3030/api/status
+curl -sS http://127.0.0.1:3030/ | sed -n '1,80p'
 ```
 
 如果经过反向代理或 CDN，请再用浏览器强制刷新，并检查网络面板中 HTML、JS、CSS 的资源哈希是否已经更新。
