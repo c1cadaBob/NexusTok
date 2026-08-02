@@ -150,7 +150,9 @@ func setTestGlobalWebRateLimit(t *testing.T, limit int, duration int64) func() {
 	common.GlobalWebRateLimitEnable = true
 	common.GlobalWebRateLimitNum = limit
 	common.GlobalWebRateLimitDuration = duration
-	common.RateLimitKeyExpirationDuration = time.Minute
+	// 本组测试只验证请求窗口命中，不依赖后台过期清理。将清理间隔设为 0，
+	// 避免测试重置全局内存限流器时，上一轮清理协程仍持有同一个 mutex 引发竞态。
+	common.RateLimitKeyExpirationDuration = 0
 	inMemoryRateLimiter = common.InMemoryRateLimiter{}
 
 	return func() {
