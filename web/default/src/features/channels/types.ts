@@ -452,6 +452,8 @@ export interface UpstreamAccountCaptureStatusData {
   platform: UpstreamAccountPlatform
   base_url: string
   origin: string
+  userscript_url?: string
+  login_url?: string
   summary?: UpstreamAccountCaptureCredentialSummary
 }
 

@@ -169,7 +169,7 @@ func StartUpstreamAccountCaptureSession(c *gin.Context) {
 
 // GetUpstreamAccountCaptureSession 返回当前采集会话的脱敏状态。
 func GetUpstreamAccountCaptureSession(c *gin.Context) {
-	result, err := upstreamaccount.GetCaptureSessionStatus(c.GetInt("id"), c.Param("id"))
+	result, err := upstreamaccount.GetCaptureSessionStatus(c.GetInt("id"), c.Param("id"), externalRequestBaseURL(c))
 	if err != nil {
 		common.ApiError(c, err)
 		return

@@ -21,6 +21,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import {
   AlertCircle,
   CheckCircle2,
+  Code2,
   Copy,
   ExternalLink,
   Loader2,
@@ -31,7 +32,17 @@ import { toast } from 'sonner'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import {
   getUpstreamAccountCaptureSession,
+  getUpstreamAccountCaptureUserscript,
   startUpstreamAccountCaptureSession,
 } from '../api'
 import type {
@@ -54,10 +65,19 @@ function formatUnixTime(value?: number) {
   return new Date(value * 1000).toLocaleString()
 }
 
-function hasInstallLinks(
-  value: UpstreamAccountCaptureStartData | UpstreamAccountCaptureStatusData | null
-): value is UpstreamAccountCaptureStartData {
-  return Boolean(value && 'userscript_url' in value)
+function buildUserscriptURL(captureId: string) {
+  const path = `/api/channel/upstream-account/capture-session/${encodeURIComponent(captureId)}/userscript.user.js`
+  if (typeof window === 'undefined') return path
+  return new URL(path, window.location.origin).toString()
+}
+
+function buildCompleteEndpoint(captureId: string) {
+  if (!captureId) return ''
+  const shortID =
+    captureId.length > 14
+      ? `${captureId.slice(0, 8)}...${captureId.slice(-4)}`
+      : captureId
+  return `/api/channel/upstream-account/capture-session/${shortID}/complete`
 }
 
 export function UpstreamAccountCapturePanel({
@@ -71,6 +91,8 @@ export function UpstreamAccountCapturePanel({
   const { t } = useTranslation()
   const [localSession, setLocalSession] =
     useState<UpstreamAccountCaptureStartData | null>(null)
+  const [scriptDialogOpen, setScriptDialogOpen] = useState(false)
+  const [userscriptSource, setUserscriptSource] = useState('')
   const completedToastRef = useRef('')
 
   const statusQuery = useQuery({
@@ -86,7 +108,24 @@ export function UpstreamAccountCapturePanel({
   const status = statusQuery.data?.data
   const session = useMemo<
     UpstreamAccountCaptureStartData | UpstreamAccountCaptureStatusData | null
-  >(() => status || localSession, [localSession, status])
+  >(() => {
+    if (!status && !localSession) return null
+    return {
+      capture_id: status?.capture_id || localSession?.capture_id || captureId,
+      status: status?.status || 'pending',
+      expires_at: status?.expires_at || localSession?.expires_at || 0,
+      platform: status?.platform || localSession?.platform || platform,
+      base_url: status?.base_url || localSession?.base_url || baseUrl,
+      origin: status?.origin || localSession?.origin || '',
+      userscript_url:
+        status?.userscript_url ||
+        localSession?.userscript_url ||
+        (captureId ? buildUserscriptURL(captureId) : ''),
+      login_url: status?.login_url || localSession?.login_url || baseUrl,
+      summary: status?.summary,
+      message: status?.message,
+    }
+  }, [baseUrl, captureId, localSession, platform, status])
 
   const startMutation = useMutation({
     mutationFn: startUpstreamAccountCaptureSession,
@@ -96,6 +135,8 @@ export function UpstreamAccountCapturePanel({
         return
       }
       setLocalSession(res.data)
+      setUserscriptSource('')
+      setScriptDialogOpen(false)
       onCaptureIdChange(res.data.capture_id)
       completedToastRef.current = ''
       toast.success(t('Capture session created'))
@@ -113,7 +154,7 @@ export function UpstreamAccountCapturePanel({
     if (!status || status.status !== 'completed') return
     if (completedToastRef.current === status.capture_id) return
     completedToastRef.current = status.capture_id
-    toast.success(t('Login state captured. Preview the upstream account to verify it.'))
+    toast.success(t('Login state captured. Click Sync Keys to preview and save it.'))
   }, [status, t])
 
   const handleStart = useCallback(() => {
@@ -143,8 +184,46 @@ export function UpstreamAccountCapturePanel({
     window.open(value, '_blank', 'noopener,noreferrer')
   }, [])
 
-  const installURL = hasInstallLinks(session) ? session.userscript_url : undefined
-  const loginURL = hasInstallLinks(session) ? session.login_url : baseUrl
+  const scriptMutation = useMutation({
+    mutationFn: getUpstreamAccountCaptureUserscript,
+  })
+
+  const loadUserscriptSource = useCallback(async () => {
+    if (!captureId) {
+      throw new Error(t('Create a capture session first'))
+    }
+    if (userscriptSource) return userscriptSource
+    const script = await scriptMutation.mutateAsync(captureId)
+    setUserscriptSource(script)
+    return script
+  }, [captureId, scriptMutation, t, userscriptSource])
+
+  const handleViewScript = useCallback(async () => {
+    try {
+      await loadUserscriptSource()
+      setScriptDialogOpen(true)
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : t('Failed to load userscript source')
+      toast.error(message)
+    }
+  }, [loadUserscriptSource, t])
+
+  const handleCopyFullScript = useCallback(async () => {
+    try {
+      const script = await loadUserscriptSource()
+      await navigator.clipboard.writeText(script)
+      toast.success(t('Userscript source copied'))
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : t('Failed to copy userscript source')
+      toast.error(message)
+    }
+  }, [loadUserscriptSource, t])
+
+  const installURL = session?.userscript_url || (captureId ? buildUserscriptURL(captureId) : '')
+  const loginURL = session?.login_url || baseUrl
+  const callbackEndpoint = buildCompleteEndpoint(captureId)
   const isCompleted = status?.status === 'completed'
   const isFailed = status?.status === 'failed'
   const summary = status?.summary
@@ -201,9 +280,18 @@ export function UpstreamAccountCapturePanel({
         </Alert>
       )}
 
+      <Alert>
+        <AlertCircle aria-hidden='true' />
+        <AlertDescription>
+          {t(
+            'Capture flow: create a session, install the userscript, open and log in to the upstream site, click Send login to NexusTok on that site, then return here to preview and save.'
+          )}
+        </AlertDescription>
+      </Alert>
+
       {session ? (
         <div className='flex flex-col gap-3'>
-          <div className='grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-4'>
+          <div className='grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-5'>
             <div className='min-w-0 rounded-md border p-2'>
               <div className='text-muted-foreground'>{t('Status')}</div>
               <div className='truncate font-medium'>
@@ -232,7 +320,22 @@ export function UpstreamAccountCapturePanel({
                 {summary?.access_token_masked || '-'}
               </div>
             </div>
+            <div className='min-w-0 rounded-md border p-2'>
+              <div className='text-muted-foreground'>{t('Callback Endpoint')}</div>
+              <div className='truncate font-medium' title={callbackEndpoint}>
+                {callbackEndpoint || '-'}
+              </div>
+            </div>
           </div>
+
+          {callbackEndpoint ? (
+            <div className='text-muted-foreground text-xs'>
+              {t(
+                'This script posts captured login state to {{callback}}. It only writes to the temporary capture session; use Sync Keys to preview and save it.',
+                { callback: callbackEndpoint }
+              )}
+            </div>
+          ) : null}
 
           <div className='flex flex-col gap-2 sm:flex-row sm:flex-wrap'>
             <Button
@@ -268,6 +371,32 @@ export function UpstreamAccountCapturePanel({
             <Button
               type='button'
               variant='outline'
+              disabled={!captureId || scriptMutation.isPending}
+              onClick={() => void handleViewScript()}
+            >
+              {scriptMutation.isPending ? (
+                <Loader2 data-icon='inline-start' className='animate-spin' />
+              ) : (
+                <Code2 data-icon='inline-start' />
+              )}
+              {t('View Script Source')}
+            </Button>
+            <Button
+              type='button'
+              variant='outline'
+              disabled={!captureId || scriptMutation.isPending}
+              onClick={() => void handleCopyFullScript()}
+            >
+              {scriptMutation.isPending ? (
+                <Loader2 data-icon='inline-start' className='animate-spin' />
+              ) : (
+                <Copy data-icon='inline-start' />
+              )}
+              {t('Copy Full Script')}
+            </Button>
+            <Button
+              type='button'
+              variant='outline'
               disabled={!captureId || statusQuery.isFetching}
               onClick={() => void statusQuery.refetch()}
             >
@@ -285,7 +414,7 @@ export function UpstreamAccountCapturePanel({
               <CheckCircle2 aria-hidden='true' />
               <AlertDescription>
                 {t(
-                  'Captured {{platform}} login state for {{account}}. The token is stored only in the temporary capture session until you preview and save.',
+                  'Captured {{platform}} login state for {{account}}. The token is stored only in the temporary capture session until you click Sync Keys to preview and save.',
                   {
                     platform: summary.platform,
                     account:
@@ -307,6 +436,35 @@ export function UpstreamAccountCapturePanel({
           ) : null}
         </div>
       ) : null}
+
+      <Dialog open={scriptDialogOpen} onOpenChange={setScriptDialogOpen}>
+        <DialogContent className='flex max-h-[85vh] flex-col gap-0 p-0 sm:max-w-4xl'>
+          <DialogHeader className='border-b px-6 py-4'>
+            <DialogTitle>{t('Userscript source')}</DialogTitle>
+            <DialogDescription>
+              {t(
+                'Read-only userscript generated for this capture session. Install it in Tampermonkey or copy it manually.'
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <ScrollArea className='min-h-0 flex-1'>
+            <pre className='text-foreground bg-muted/40 m-0 overflow-x-auto p-4 text-xs leading-relaxed'>
+              <code>{userscriptSource}</code>
+            </pre>
+          </ScrollArea>
+          <DialogFooter className='border-t px-6 py-4'>
+            <Button
+              type='button'
+              variant='outline'
+              disabled={!userscriptSource}
+              onClick={() => void handleCopyFullScript()}
+            >
+              <Copy data-icon='inline-start' />
+              {t('Copy Full Script')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

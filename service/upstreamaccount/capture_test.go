@@ -16,6 +16,8 @@ func TestCaptureSessionCompletesSub2APIPayload(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, start.CaptureID)
 	require.Equal(t, "https://sub.example.com", start.Origin)
+	require.Equal(t, "https://nexus.example.com/api/channel/upstream-account/capture-session/"+start.CaptureID+"/userscript.user.js", start.UserscriptURL)
+	require.Equal(t, "https://sub.example.com", start.LoginURL)
 
 	record, found, err := captureSessionCache.Get(start.CaptureID)
 	require.NoError(t, err)
@@ -98,9 +100,11 @@ func TestCaptureSessionCompletesNewAPIAccessTokenPayloadAndRendersScript(t *test
 	})
 	require.NoError(t, err)
 
-	status, err := GetCaptureSessionStatus(9, start.CaptureID)
+	status, err := GetCaptureSessionStatus(9, start.CaptureID, "https://nexus.example.com")
 	require.NoError(t, err)
 	require.Equal(t, "completed", status.Status)
+	require.Equal(t, "https://nexus.example.com/api/channel/upstream-account/capture-session/"+start.CaptureID+"/userscript.user.js", status.UserscriptURL)
+	require.Equal(t, "https://new.example.com/dashboard", status.LoginURL)
 	require.Equal(t, "17", status.Summary.UserID)
 	require.True(t, strings.HasPrefix(status.Summary.AccessTokenMasked, "new-ap"))
 

@@ -205,6 +205,22 @@ export async function getUpstreamAccountCaptureSession(
 }
 
 /**
+ * 读取当前采集会话对应的完整油猴脚本源码。
+ */
+export async function getUpstreamAccountCaptureUserscript(
+  captureId: string
+): Promise<string> {
+  const res = await api.get(
+    `/api/channel/upstream-account/capture-session/${captureId}/userscript.user.js`,
+    {
+      responseType: 'text',
+      disableDuplicate: true,
+    } as ExtendedApiConfig
+  )
+  return String(res.data || '')
+}
+
+/**
  * 使用重新输入或已保存的上游账号凭据刷新已有账号同步渠道。
  */
 export async function refreshUpstreamAccountChannel(

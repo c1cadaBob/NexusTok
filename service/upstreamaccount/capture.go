@@ -92,14 +92,16 @@ type CaptureCredentialSummary struct {
 
 // CaptureSessionStatusResult 是后台页面轮询采集状态的响应。
 type CaptureSessionStatusResult struct {
-	CaptureID string                    `json:"capture_id"`
-	Status    string                    `json:"status"`
-	Message   string                    `json:"message,omitempty"`
-	ExpiresAt int64                     `json:"expires_at"`
-	Platform  string                    `json:"platform"`
-	BaseURL   string                    `json:"base_url"`
-	Origin    string                    `json:"origin"`
-	Summary   *CaptureCredentialSummary `json:"summary,omitempty"`
+	CaptureID     string                    `json:"capture_id"`
+	Status        string                    `json:"status"`
+	Message       string                    `json:"message,omitempty"`
+	ExpiresAt     int64                     `json:"expires_at"`
+	Platform      string                    `json:"platform"`
+	BaseURL       string                    `json:"base_url"`
+	Origin        string                    `json:"origin"`
+	UserscriptURL string                    `json:"userscript_url,omitempty"`
+	LoginURL      string                    `json:"login_url,omitempty"`
+	Summary       *CaptureCredentialSummary `json:"summary,omitempty"`
 }
 
 // CaptureSessionCompleteRequest 是油猴脚本回传的登录态负载。
@@ -183,24 +185,25 @@ func StartCaptureSession(userID int, req CaptureSessionStartRequest, nexusBaseUR
 	if err := captureSessionCache.SetWithTTL(id, record, captureTTL); err != nil {
 		return nil, fmt.Errorf("保存采集会话失败：%w", err)
 	}
+	userscriptURL, loginURL := captureSessionLinks(record, nexusBaseURL)
 	return &CaptureSessionStartResult{
 		CaptureID:     id,
 		ExpiresAt:     expiresAt,
 		Platform:      platform,
 		BaseURL:       normalizedBaseURL,
 		Origin:        origin,
-		UserscriptURL: nexusBaseURL + "/api/channel/upstream-account/capture-session/" + url.PathEscape(id) + "/userscript.user.js",
-		LoginURL:      normalizedBaseURL,
+		UserscriptURL: userscriptURL,
+		LoginURL:      loginURL,
 	}, nil
 }
 
 // GetCaptureSessionStatus 返回当前管理员可见的采集状态。
-func GetCaptureSessionStatus(userID int, captureID string) (*CaptureSessionStatusResult, error) {
+func GetCaptureSessionStatus(userID int, captureID string, nexusBaseURL string) (*CaptureSessionStatusResult, error) {
 	record, err := getCaptureRecordForUser(userID, captureID)
 	if err != nil {
 		return nil, err
 	}
-	return sanitizeCaptureRecord(record), nil
+	return sanitizeCaptureRecord(record, nexusBaseURL), nil
 }
 
 // ResolveCaptureCredential 将已完成的采集会话转换为预览请求可用的临时凭据。
@@ -239,7 +242,7 @@ func CompleteCaptureSession(captureID string, req CaptureSessionCompleteRequest)
 		record.Error = common.MaskSensitiveInfo(req.Error)
 		record.UpdatedAt = common.GetTimestamp()
 		_ = captureSessionCache.SetWithTTL(record.ID, record, time.Until(time.Unix(record.ExpiresAt, 0)))
-		return sanitizeCaptureRecord(record), fmt.Errorf("%s", record.Error)
+		return sanitizeCaptureRecord(record, ""), fmt.Errorf("%s", record.Error)
 	}
 	credential, summary, err := buildCredentialFromCapture(record, req)
 	if err != nil {
@@ -247,7 +250,7 @@ func CompleteCaptureSession(captureID string, req CaptureSessionCompleteRequest)
 		record.Error = common.MaskSensitiveInfo(err.Error())
 		record.UpdatedAt = common.GetTimestamp()
 		_ = captureSessionCache.SetWithTTL(record.ID, record, time.Until(time.Unix(record.ExpiresAt, 0)))
-		return sanitizeCaptureRecord(record), err
+		return sanitizeCaptureRecord(record, ""), err
 	}
 	record.Status = captureStatusCompleted
 	record.Error = ""
@@ -257,7 +260,7 @@ func CompleteCaptureSession(captureID string, req CaptureSessionCompleteRequest)
 	if err := captureSessionCache.SetWithTTL(record.ID, record, time.Until(time.Unix(record.ExpiresAt, 0))); err != nil {
 		return nil, fmt.Errorf("保存采集结果失败：%w", err)
 	}
-	return sanitizeCaptureRecord(record), nil
+	return sanitizeCaptureRecord(record, ""), nil
 }
 
 // ParseCredentialDraft 解析管理员手动粘贴的登录态，并只返回脱敏摘要。
@@ -565,21 +568,33 @@ func getCaptureRecord(captureID string) (CaptureSessionRecord, error) {
 	return record, nil
 }
 
-func sanitizeCaptureRecord(record CaptureSessionRecord) *CaptureSessionStatusResult {
+func sanitizeCaptureRecord(record CaptureSessionRecord, nexusBaseURL string) *CaptureSessionStatusResult {
 	message := ""
 	if record.Status == captureStatusFailed {
 		message = record.Error
 	}
+	userscriptURL, loginURL := captureSessionLinks(record, nexusBaseURL)
 	return &CaptureSessionStatusResult{
-		CaptureID: record.ID,
-		Status:    record.Status,
-		Message:   message,
-		ExpiresAt: record.ExpiresAt,
-		Platform:  record.Platform,
-		BaseURL:   record.BaseURL,
-		Origin:    record.Origin,
-		Summary:   record.Summary,
+		CaptureID:     record.ID,
+		Status:        record.Status,
+		Message:       message,
+		ExpiresAt:     record.ExpiresAt,
+		Platform:      record.Platform,
+		BaseURL:       record.BaseURL,
+		Origin:        record.Origin,
+		UserscriptURL: userscriptURL,
+		LoginURL:      loginURL,
+		Summary:       record.Summary,
 	}
+}
+
+func captureSessionLinks(record CaptureSessionRecord, nexusBaseURL string) (string, string) {
+	nexusBaseURL = strings.TrimRight(strings.TrimSpace(nexusBaseURL), "/")
+	userscriptURL := ""
+	if nexusBaseURL != "" && strings.TrimSpace(record.ID) != "" {
+		userscriptURL = nexusBaseURL + "/api/channel/upstream-account/capture-session/" + url.PathEscape(record.ID) + "/userscript.user.js"
+	}
+	return userscriptURL, record.BaseURL
 }
 
 func buildCredentialFromCapture(record CaptureSessionRecord, req CaptureSessionCompleteRequest) (Credential, *CaptureCredentialSummary, error) {
