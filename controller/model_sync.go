@@ -1827,6 +1827,12 @@ func writeBackSyncedCatalog(sourceInfo syncSourceInfo) *catalogWriteBackResult {
 	if sourceInfo.Source != syncSourceModelsDev {
 		return nil
 	}
+	if sourceInfo.CatalogOrigin == modelcatalog.CatalogOriginNexusTokEmbedded {
+		// 数据已经来自当前镜像内置的 NexusTok 模型仓库，不存在“把外部 catalog 写回
+		// 下一个镜像”的动作。生产环境外网不可达时会走到这里，此时继续返回 skipped
+		// 会让页面误以为 280 个模型还没有被打包进当前镜像。
+		return nil
+	}
 	repoDir := modelcatalog.RepositoryDir()
 	if !modelcatalog.WriteBackEnabled() {
 		return &catalogWriteBackResult{

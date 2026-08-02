@@ -26,6 +26,10 @@ import (
 func setupModelSyncTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
+	// 模型同步单测只验证数据库写入和来源分流，不应受开发机写回开关影响，
+	// 更不能在测试过程中修改真实的 modelcatalog/repository 文件。
+	t.Setenv("MODEL_CATALOG_WRITE_BACK", "false")
+
 	common.UsingSQLite = true
 	common.UsingMySQL = false
 	common.UsingPostgreSQL = false
@@ -466,6 +470,7 @@ func TestSyncUpstreamModelsCoreCreatesModelsDevCatalogModels(t *testing.T) {
 	require.Equal(t, 1, result.CreatedVendors)
 	require.Equal(t, syncSourceModelsDev, result.Source.Source)
 	require.Contains(t, result.Source.CatalogURL, modelsDevCatalogPath)
+	require.Equal(t, "skipped", result.CatalogWriteBack.Status)
 
 	var vendor model.Vendor
 	require.NoError(t, db.Where("name = ?", "OpenAI").First(&vendor).Error)
@@ -506,6 +511,7 @@ func TestSyncUpstreamModelsCoreUsesEmbeddedFallbackWhenModelsDevFails(t *testing
 	require.Equal(t, modelcatalog.FallbackStageEmbedded, result.Source.FallbackStage)
 	require.NotEmpty(t, result.Source.FallbackName)
 	require.NotEmpty(t, result.Source.FallbackReason)
+	require.Nil(t, result.CatalogWriteBack)
 	require.Contains(t, result.CreatedList, "gpt-5.5")
 	require.Contains(t, result.PricingList, "gpt-5.5")
 

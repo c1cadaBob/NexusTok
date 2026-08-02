@@ -244,7 +244,9 @@ export function SyncWizardDialog({
         if (catalogSourceMessage) {
           toast.info(catalogSourceMessage)
         }
-        showCatalogWriteBackToast(t, catalog_write_back)
+        if (resultSource?.catalog_origin !== 'nexustok_embedded') {
+          showCatalogWriteBackToast(t, catalog_write_back)
+        }
         if (resultSource?.catalog_origin === 'nexustok_embedded') {
           toast.info(
             t('Built-in repository contains {{count}} models.', {
