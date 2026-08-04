@@ -26,7 +26,7 @@ import {
   useState,
 } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { AlertCircle, Loader2, RefreshCw } from 'lucide-react'
+import { AlertCircle, ExternalLink, Loader2, RefreshCw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -101,6 +101,33 @@ function compactKeys(
   return t('{{count}} key(s)', { count })
 }
 
+function openCaptureURL(url: string, targetWindow?: Window | null) {
+  const trimmedURL = url.trim()
+  if (!trimmedURL) return false
+  try {
+    if (targetWindow && !targetWindow.closed) {
+      targetWindow.location.href = trimmedURL
+      targetWindow.focus()
+      return true
+    }
+  } catch {
+    // 复用预打开窗口失败时，继续尝试创建新标签页，避免一次异常中断兜底链路。
+  }
+  try {
+    const nextWindow = window.open(trimmedURL, '_blank')
+    if (!nextWindow) return false
+    try {
+      nextWindow.opener = null
+    } catch {
+      // 部分浏览器在跨域导航后不允许再触碰 opener，打开结果本身仍然有效。
+    }
+    nextWindow.focus()
+    return true
+  } catch {
+    return false
+  }
+}
+
 export const UpstreamAccountCapturePanel = forwardRef<
   UpstreamAccountCapturePanelHandle,
   UpstreamAccountCapturePanelProps
@@ -120,7 +147,15 @@ export const UpstreamAccountCapturePanel = forwardRef<
   const { t } = useTranslation()
   const [localSession, setLocalSession] =
     useState<UpstreamAccountCaptureStartData | null>(null)
+  const [fallbackVisible, setFallbackVisible] = useState(false)
+  const [captureOpenState, setCaptureOpenState] = useState({
+    installOpened: false,
+    loginOpened: false,
+    installBlocked: false,
+    loginBlocked: false,
+  })
   const completedToastRef = useRef('')
+  const fallbackTimerRef = useRef<number | null>(null)
   const pendingCaptureWindowsRef = useRef<{
     installWindow?: Window | null
     loginWindow?: Window | null
@@ -176,24 +211,38 @@ export const UpstreamAccountCapturePanel = forwardRef<
     ) => {
       const installURL = sessionData.userscript_url
       const loginURL = sessionData.login_url || sessionData.base_url || baseUrl
+      const installOpened = installURL
+        ? openCaptureURL(installURL, installWindow)
+        : false
+      setCaptureOpenState({
+        installOpened,
+        loginOpened: false,
+        installBlocked: Boolean(installURL && !installOpened),
+        loginBlocked: false,
+      })
       if (installURL) {
-        if (installWindow && !installWindow.closed) {
-          installWindow.location.href = installURL
-        } else {
-          window.open(installURL, '_blank', 'noopener,noreferrer')
-        }
+        setFallbackVisible(!installOpened)
       }
       if (loginURL) {
         window.setTimeout(() => {
-          if (loginWindow && !loginWindow.closed) {
-            loginWindow.location.href = loginURL
-          } else {
-            window.open(loginURL, '_blank', 'noopener,noreferrer')
+          const loginOpened = openCaptureURL(loginURL, loginWindow)
+          setCaptureOpenState((previous) => ({
+            ...previous,
+            loginOpened,
+            loginBlocked: Boolean(loginURL && !loginOpened),
+          }))
+          if (!installOpened || !loginOpened) {
+            setFallbackVisible(true)
+            toast.warning(
+              t(
+                'Automatic capture tabs were blocked. Use the fallback buttons to continue.'
+              )
+            )
           }
         }, 1200)
       }
     },
-    [baseUrl]
+    [baseUrl, t]
   )
 
   const startMutation = useMutation({
@@ -210,6 +259,7 @@ export const UpstreamAccountCapturePanel = forwardRef<
       setLocalSession(res.data)
       onCaptureIdChange(res.data.capture_id)
       completedToastRef.current = ''
+      setFallbackVisible(false)
       openCaptureTargets(res.data, windows.installWindow, windows.loginWindow)
       toast.success(t('Capture session created'))
     },
@@ -248,8 +298,6 @@ export const UpstreamAccountCapturePanel = forwardRef<
     try {
       installWindow = window.open('about:blank', '_blank')
       loginWindow = window.open('about:blank', '_blank')
-      if (installWindow) installWindow.opener = null
-      if (loginWindow) loginWindow.opener = null
     } catch {
       installWindow = null
       loginWindow = null
@@ -262,6 +310,50 @@ export const UpstreamAccountCapturePanel = forwardRef<
       return_url: returnUrl || window.location.href,
     })
   }, [baseUrl, channelId, disabled, platform, returnUrl, startMutation, t])
+
+  const handleOpenInstaller = useCallback(() => {
+    const installURL = session?.userscript_url || ''
+    if (!installURL) {
+      toast.error(t('Signed userscript install link is not ready yet'))
+      return
+    }
+    const opened = openCaptureURL(installURL)
+    setFallbackVisible(true)
+    setCaptureOpenState((previous) => ({
+      ...previous,
+      installOpened: previous.installOpened || opened,
+      installBlocked: !opened,
+    }))
+    if (!opened) {
+      toast.error(
+        t(
+          'Browser blocked the script installer tab. Allow pop-ups for NexusTok and try again.'
+        )
+      )
+    }
+  }, [session?.userscript_url, t])
+
+  const handleOpenUpstreamSite = useCallback(() => {
+    const loginURL = session?.login_url || session?.base_url || baseUrl
+    if (!loginURL.trim()) {
+      toast.error(t('Upstream platform URL is required'))
+      return
+    }
+    const opened = openCaptureURL(loginURL)
+    setFallbackVisible(true)
+    setCaptureOpenState((previous) => ({
+      ...previous,
+      loginOpened: previous.loginOpened || opened,
+      loginBlocked: !opened,
+    }))
+    if (!opened) {
+      toast.error(
+        t(
+          'Browser blocked the upstream site tab. Allow pop-ups for NexusTok and try again.'
+        )
+      )
+    }
+  }, [baseUrl, session?.base_url, session?.login_url, t])
 
   useImperativeHandle(
     ref,
@@ -293,6 +385,36 @@ export const UpstreamAccountCapturePanel = forwardRef<
     session?.api_base_url ||
     status?.diagnostics?.api_base_url_seen ||
     ''
+  useEffect(() => {
+    if (!session?.capture_id || isCompleted) {
+      if (fallbackTimerRef.current) {
+        window.clearTimeout(fallbackTimerRef.current)
+        fallbackTimerRef.current = null
+      }
+      setFallbackVisible(false)
+      return
+    }
+    if (fallbackTimerRef.current) {
+      window.clearTimeout(fallbackTimerRef.current)
+    }
+    fallbackTimerRef.current = window.setTimeout(() => {
+      setFallbackVisible(true)
+    }, 5000)
+    return () => {
+      if (fallbackTimerRef.current) {
+        window.clearTimeout(fallbackTimerRef.current)
+        fallbackTimerRef.current = null
+      }
+    }
+  }, [isCompleted, session?.capture_id])
+
+  const showFallbackNotice =
+    !isCompleted &&
+    (fallbackVisible ||
+      captureOpenState.installBlocked ||
+      captureOpenState.loginBlocked ||
+      isFailed)
+
   if (!session) return null
 
   return (
@@ -367,7 +489,44 @@ export const UpstreamAccountCapturePanel = forwardRef<
           )}
           {t('Refresh Capture Status')}
         </Button>
+        {!isCompleted ? (
+          <>
+            <Button
+              type='button'
+              variant='outline'
+              disabled={!session.userscript_url}
+              onClick={handleOpenInstaller}
+            >
+              <ExternalLink data-icon='inline-start' />
+              {t('Reopen Script Installer')}
+            </Button>
+            <Button
+              type='button'
+              variant='outline'
+              disabled={!(session.login_url || session.base_url || baseUrl)}
+              onClick={handleOpenUpstreamSite}
+            >
+              <ExternalLink data-icon='inline-start' />
+              {t('Open Upstream Site')}
+            </Button>
+          </>
+        ) : null}
       </div>
+
+      {showFallbackNotice ? (
+        <Alert variant={isFailed ? 'destructive' : 'default'}>
+          <AlertCircle aria-hidden='true' />
+          <AlertDescription>
+            {captureOpenState.installBlocked || captureOpenState.loginBlocked
+              ? t(
+                  'Automatic capture tabs were blocked. Use the fallback buttons to continue.'
+                )
+              : t(
+                  'If the installer tab stays open, confirm the userscript, then continue on the upstream site.'
+                )}
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       {status?.message ? (
         <Alert variant={isFailed ? 'destructive' : 'default'}>
