@@ -74,6 +74,7 @@ type CaptureSessionRecord struct {
 	UpdatedAt    int64                     `json:"updated_at"`
 	Credential   Credential                `json:"credential,omitempty"`
 	Summary      *CaptureCredentialSummary `json:"summary,omitempty"`
+	Diagnostics  *CaptureDiagnostics       `json:"diagnostics,omitempty"`
 }
 
 // CaptureCredentialSummary 是安全返回给前端的采集摘要。
@@ -92,6 +93,22 @@ type CaptureCredentialSummary struct {
 	CaptureSource       string `json:"capture_source,omitempty"`
 }
 
+// CaptureDiagnostics 只记录排查登录态读取问题所需的非敏感信息。
+//
+// 这里禁止保存任何 token、Cookie 或 localStorage value，只保留 key 名、存在性
+// 和最后尝试的校验接口。这样管理员可以判断脚本运行上下文是否正确，同时不会
+// 因为错误诊断把第三方登录凭据写入页面响应或普通日志。
+type CaptureDiagnostics struct {
+	PageOrigin            string   `json:"page_origin,omitempty"`
+	LocalStorageKeys      []string `json:"local_storage_keys,omitempty"`
+	SessionStorageKeys    []string `json:"session_storage_keys,omitempty"`
+	AuthTokenPresent      bool     `json:"auth_token_present,omitempty"`
+	AccessTokenPresent    bool     `json:"access_token_present,omitempty"`
+	RefreshTokenPresent   bool     `json:"refresh_token_present,omitempty"`
+	OAuthHashTokenPresent bool     `json:"oauth_hash_token_present,omitempty"`
+	AuthMePath            string   `json:"auth_me_path,omitempty"`
+}
+
 // CaptureSessionStatusResult 是后台页面轮询采集状态的响应。
 type CaptureSessionStatusResult struct {
 	CaptureID     string                    `json:"capture_id"`
@@ -104,29 +121,31 @@ type CaptureSessionStatusResult struct {
 	UserscriptURL string                    `json:"userscript_url,omitempty"`
 	LoginURL      string                    `json:"login_url,omitempty"`
 	Summary       *CaptureCredentialSummary `json:"summary,omitempty"`
+	Diagnostics   *CaptureDiagnostics       `json:"diagnostics,omitempty"`
 }
 
 // CaptureSessionCompleteRequest 是油猴脚本回传的登录态负载。
 type CaptureSessionCompleteRequest struct {
-	CaptureSecret string            `json:"capture_secret"`
-	CaptureSource string            `json:"capture_source,omitempty"`
-	Platform      string            `json:"platform,omitempty"`
-	BaseURL       string            `json:"base_url,omitempty"`
-	Origin        string            `json:"origin,omitempty"`
-	AuthMode      string            `json:"auth_mode,omitempty"`
-	UserID        string            `json:"user_id,omitempty"`
-	Username      string            `json:"username,omitempty"`
-	Email         string            `json:"email,omitempty"`
-	AccessToken   string            `json:"access_token,omitempty"`
-	RefreshToken  string            `json:"refresh_token,omitempty"`
-	ExpiresAt     int64             `json:"expires_at,omitempty"`
-	ExpiresIn     int64             `json:"expires_in,omitempty"`
-	Hash          string            `json:"hash,omitempty"`
-	LocalStorage  map[string]string `json:"local_storage,omitempty"`
-	AuthUser      map[string]any    `json:"auth_user,omitempty"`
-	CapturedAt    int64             `json:"captured_at,omitempty"`
-	UserAgent     string            `json:"user_agent,omitempty"`
-	Error         string            `json:"error,omitempty"`
+	CaptureSecret string              `json:"capture_secret"`
+	CaptureSource string              `json:"capture_source,omitempty"`
+	Platform      string              `json:"platform,omitempty"`
+	BaseURL       string              `json:"base_url,omitempty"`
+	Origin        string              `json:"origin,omitempty"`
+	AuthMode      string              `json:"auth_mode,omitempty"`
+	UserID        string              `json:"user_id,omitempty"`
+	Username      string              `json:"username,omitempty"`
+	Email         string              `json:"email,omitempty"`
+	AccessToken   string              `json:"access_token,omitempty"`
+	RefreshToken  string              `json:"refresh_token,omitempty"`
+	ExpiresAt     int64               `json:"expires_at,omitempty"`
+	ExpiresIn     int64               `json:"expires_in,omitempty"`
+	Hash          string              `json:"hash,omitempty"`
+	LocalStorage  map[string]string   `json:"local_storage,omitempty"`
+	AuthUser      map[string]any      `json:"auth_user,omitempty"`
+	CapturedAt    int64               `json:"captured_at,omitempty"`
+	UserAgent     string              `json:"user_agent,omitempty"`
+	Error         string              `json:"error,omitempty"`
+	Diagnostics   *CaptureDiagnostics `json:"diagnostics,omitempty"`
 }
 
 // CredentialParseRequest 允许手动粘贴内容复用采集解析器。
@@ -247,6 +266,7 @@ func CompleteCaptureSession(captureID string, req CaptureSessionCompleteRequest)
 	if strings.TrimSpace(req.Error) != "" {
 		record.Status = captureStatusFailed
 		record.Error = common.MaskSensitiveInfo(req.Error)
+		record.Diagnostics = sanitizeCaptureDiagnostics(req.Diagnostics)
 		record.UpdatedAt = common.GetTimestamp()
 		_ = captureSessionCache.SetWithTTL(record.ID, record, time.Until(time.Unix(record.ExpiresAt, 0)))
 		return sanitizeCaptureRecord(record, ""), fmt.Errorf("%s", record.Error)
@@ -255,6 +275,7 @@ func CompleteCaptureSession(captureID string, req CaptureSessionCompleteRequest)
 	if err != nil {
 		record.Status = captureStatusFailed
 		record.Error = common.MaskSensitiveInfo(err.Error())
+		record.Diagnostics = sanitizeCaptureDiagnostics(req.Diagnostics)
 		record.UpdatedAt = common.GetTimestamp()
 		_ = captureSessionCache.SetWithTTL(record.ID, record, time.Until(time.Unix(record.ExpiresAt, 0)))
 		return sanitizeCaptureRecord(record, ""), err
@@ -263,6 +284,7 @@ func CompleteCaptureSession(captureID string, req CaptureSessionCompleteRequest)
 	record.Error = ""
 	record.Credential = credential
 	record.Summary = summary
+	record.Diagnostics = sanitizeCaptureDiagnostics(req.Diagnostics)
 	record.UpdatedAt = common.GetTimestamp()
 	if err := captureSessionCache.SetWithTTL(record.ID, record, time.Until(time.Unix(record.ExpiresAt, 0))); err != nil {
 		return nil, fmt.Errorf("保存采集结果失败：%w", err)
@@ -359,16 +381,24 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
 	return fmt.Sprintf(`// ==UserScript==
 // @name         NexusTok Upstream Login Capture
 // @namespace    https://github.com/c1cadaBob/NexusTok
-// @version      1.0.0
+// @version      1.1.0
 // @description  Capture logged-in new-api/sub2api credentials for NexusTok upstream account sync.
 // @match        %s
+// @run-at       document-idle
 // @grant        GM_xmlhttpRequest
 // @grant        GM_addStyle
+// @grant        unsafeWindow
 // @connect      %s
 // ==/UserScript==
 
 (function () {
   'use strict';
+  // Tampermonkey 默认把脚本放在隔离沙箱中；登录态却属于目标页面上下文。
+  // 优先使用 unsafeWindow，才能读取 sub2api 页面真正的 localStorage/sessionStorage。
+  const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+  const pageFetch = typeof pageWindow.fetch === 'function'
+    ? pageWindow.fetch.bind(pageWindow)
+    : window.fetch.bind(window);
   const config = %s;
   const buttonId = 'nexustok-upstream-capture-button';
   const panelId = 'nexustok-upstream-capture-panel';
@@ -423,7 +453,7 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
 
   function storageItems() {
     const items = [];
-    for (const storage of [window.localStorage, window.sessionStorage]) {
+    for (const storage of [pageWindow.localStorage, pageWindow.sessionStorage]) {
       try {
         for (let i = 0; i < storage.length; i += 1) {
           const key = storage.key(i) || '';
@@ -435,7 +465,7 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
   }
 
   function directStorageValue(keys) {
-    for (const storage of [window.localStorage, window.sessionStorage]) {
+    for (const storage of [pageWindow.localStorage, pageWindow.sessionStorage]) {
       for (const key of keys) {
         try {
           const value = text(storage.getItem(key) || '').trim();
@@ -457,8 +487,85 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
     return '';
   }
 
+  function pageStateValue(names) {
+    const stateNames = ['__INITIAL_STATE__', '__APP_STATE__', '__NUXT__', '__NEXT_DATA__', '__PINIA__'];
+    for (const stateName of stateNames) {
+      try {
+        const found = findValueDeep(pageWindow[stateName], names, 0);
+        if (found) return found;
+      } catch (_) {}
+    }
+    return '';
+  }
+
+  function normalizeTokenCandidate(value, names) {
+    const raw = text(value).trim();
+    if (!raw) return '';
+    const parsed = parseJSON(raw);
+    if (parsed) {
+      return text(findValueDeep(parsed, names, 0)).trim();
+    }
+    return raw.replace(/^Bearer\s+/i, '').trim();
+  }
+
+  function directStorageToken(keys, names) {
+    return normalizeTokenCandidate(directStorageValue(keys), names);
+  }
+
+  function storageKeyNames(storage) {
+    const keys = [];
+    try {
+      for (let index = 0; index < storage.length && keys.length < 64; index += 1) {
+        const key = text(storage.key(index) || '').trim();
+        if (key && key.length <= 128) keys.push(key);
+      }
+    } catch (_) {}
+    return keys;
+  }
+
+  function hasStorageValue(keys) {
+    for (const storage of [pageWindow.localStorage, pageWindow.sessionStorage]) {
+      for (const key of keys) {
+        try {
+          if (text(storage.getItem(key) || '').trim()) return true;
+        } catch (_) {}
+      }
+    }
+    return false;
+  }
+
+  function hasHashToken() {
+    const params = parseHashParams();
+    return Boolean(
+      params.get('access_token') ||
+      params.get('auth_token') ||
+      params.get('token') ||
+      params.get('refresh_token') ||
+      params.get('rt')
+    );
+  }
+
+  function collectSub2APIDiagnostics(authMePath) {
+    let localStorageKeys = [];
+    let sessionStorageKeys = [];
+    try { localStorageKeys = storageKeyNames(pageWindow.localStorage); } catch (_) {}
+    try { sessionStorageKeys = storageKeyNames(pageWindow.sessionStorage); } catch (_) {}
+    return {
+      page_origin: text(pageWindow.location && pageWindow.location.origin),
+      local_storage_keys: localStorageKeys,
+      session_storage_keys: sessionStorageKeys,
+      auth_token_present: hasStorageValue(['auth_token']),
+      access_token_present: hasStorageValue(['access_token', 'token', 'jwt', 'sub2api_auth_token']) ||
+        Boolean(pageStateValue(['access_token', 'auth_token', 'token', 'jwt'])),
+      refresh_token_present: hasStorageValue(['refresh_token', 'refreshToken', 'rt', 'sub2api_refresh_token']) ||
+        Boolean(pageStateValue(['refresh_token', 'refreshtoken', 'rt'])),
+      oauth_hash_token_present: hasHashToken(),
+      auth_me_path: text(authMePath || ''),
+    };
+  }
+
   function parseHashParams() {
-    const rawHash = text(window.location.hash || '').replace(/^#/, '');
+    const rawHash = text(pageWindow.location.hash || '').replace(/^#/, '');
     const candidates = [rawHash];
     if (rawHash.includes('?')) candidates.push(rawHash.slice(rawHash.indexOf('?') + 1));
     if (rawHash.includes('&')) candidates.push(rawHash.slice(rawHash.indexOf('&') + 1));
@@ -481,10 +588,10 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
   }
 
   function guessNewAPIUserID() {
-    const directUID = text(localStorage.getItem('uid') || sessionStorage.getItem('uid') || '').trim();
+    const directUID = text(pageWindow.localStorage.getItem('uid') || pageWindow.sessionStorage.getItem('uid') || '').trim();
     if (isNumericUserID(directUID)) return directUID;
     const keys = ['uid', 'user', 'user_info', 'userInfo', 'auth', 'auth_user', 'new-api-user', 'New-Api-User'];
-    for (const storage of [window.localStorage, window.sessionStorage]) {
+    for (const storage of [pageWindow.localStorage, pageWindow.sessionStorage]) {
       for (const key of keys) {
         const raw = storage.getItem(key);
         if (!raw) continue;
@@ -534,9 +641,9 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
 
   function candidateAPIPrefixes() {
     const prefixes = new Set(['']);
-    for (const raw of [config.baseURL, window.location.href]) {
+    for (const raw of [config.baseURL, pageWindow.location.href]) {
       try {
-        const parsed = new URL(raw, window.location.origin);
+        const parsed = new URL(raw, pageWindow.location.origin);
         const prefix = cleanPathPrefix(parsed.pathname);
         if (prefix && prefix !== '/api') {
           prefixes.add(prefix.endsWith('/api') ? prefix.slice(0, -4) : prefix);
@@ -569,9 +676,9 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
         }
         const sameOriginScripts = Array.from(sources)
           .map((src) => {
-            try { return new URL(src, window.location.href); } catch (_) { return null; }
+            try { return new URL(src, pageWindow.location.href); } catch (_) { return null; }
           })
-          .filter((src) => src && src.origin === window.location.origin && /\.js(?:$|\?)/i.test(src.href))
+          .filter((src) => src && src.origin === pageWindow.location.origin && /\.js(?:$|\?)/i.test(src.href))
           .slice(0, 12);
         const discovered = { self: new Set(), token: new Set() };
         const patterns = [
@@ -580,7 +687,7 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
         ];
         for (const scriptURL of sameOriginScripts) {
           try {
-            const res = await fetch(scriptURL.href, { credentials: 'include', cache: 'force-cache' });
+            const res = await pageFetch(scriptURL.href, { credentials: 'include', cache: 'force-cache' });
             if (!res.ok) continue;
             const body = await res.text();
             for (const pattern of patterns) {
@@ -626,7 +733,7 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
   }
 
   async function readJSON(path, options) {
-    const response = await fetch(path, {
+    const response = await pageFetch(path, {
       credentials: 'include',
       cache: 'no-store',
       ...options,
@@ -701,7 +808,7 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
     const discovered = await discoverAPIPaths('self');
     if (discovered.some((path) => /\/api\/user\/self/.test(path))) return true;
     try {
-      const response = await fetch('/api/status', { credentials: 'include', cache: 'no-store' });
+      const response = await pageFetch('/api/status', { credentials: 'include', cache: 'no-store' });
       const headerVersion = text(response.headers.get('X-New-Api-Version') || response.headers.get('x-new-api-version') || '');
       if (headerVersion) return true;
       const rawBody = await response.text();
@@ -715,24 +822,34 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
   }
 
   function readSub2APILoginState() {
-    const accessToken = text(
+    const accessToken = normalizeTokenCandidate(
       tokenFromHashParam('access_token', 'auth_token', 'token') ||
-      directStorageValue(['auth_token', 'access_token', 'token', 'jwt', 'sub2api_auth_token']) ||
+      directStorageToken(
+        ['auth_token', 'access_token', 'token', 'jwt', 'sub2api_auth_token'],
+        ['access_token', 'auth_token', 'token', 'jwt']
+      ) ||
       deepStorageValue(
         ['auth', 'auth_user', 'token_info', 'tokenInfo', 'session', 'user'],
         ['access_token', 'auth_token', 'token', 'jwt'],
         /auth|token|session|user/i
-      )
-    ).trim();
-    const refreshToken = text(
+      ) ||
+      pageStateValue(['access_token', 'auth_token', 'token', 'jwt']),
+      ['access_token', 'auth_token', 'token', 'jwt']
+    );
+    const refreshToken = normalizeTokenCandidate(
       tokenFromHashParam('refresh_token', 'rt') ||
-      directStorageValue(['refresh_token', 'refreshToken', 'rt', 'sub2api_refresh_token']) ||
+      directStorageToken(
+        ['refresh_token', 'refreshToken', 'rt', 'sub2api_refresh_token'],
+        ['refresh_token', 'refreshtoken', 'rt']
+      ) ||
       deepStorageValue(
         ['auth', 'auth_user', 'token_info', 'tokenInfo', 'session', 'user'],
         ['refresh_token', 'refreshtoken', 'rt'],
         /auth|token|session|user/i
-      )
-    ).trim();
+      ) ||
+      pageStateValue(['refresh_token', 'refreshtoken', 'rt']),
+      ['refresh_token', 'refreshtoken', 'rt']
+    );
     const expiresAt = text(
       tokenFromHashParam('expires_at', 'expiresAt') ||
       directStorageValue(['token_expires_at', 'expires_at', 'expiresAt', 'access_token_expires_at']) ||
@@ -742,7 +859,13 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
         /auth|token|session|user/i
       )
     ).trim();
-    const authUser = parseJSON(directStorageValue(['auth_user', 'user', 'user_info', 'userInfo'])) || {};
+    const storedAuthUser =
+      parseJSON(directStorageValue(['auth_user', 'user', 'user_info', 'userInfo']));
+    const pageAuthUser = pageWindow.__AUTH_USER__;
+    const authUser =
+      (storedAuthUser && typeof storedAuthUser === 'object' ? storedAuthUser : null) ||
+      (pageAuthUser && typeof pageAuthUser === 'object' ? pageAuthUser : {}) ||
+      {};
     return {
       accessToken,
       refreshToken,
@@ -754,6 +877,7 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
         refresh_token: refreshToken,
         token_expires_at: expiresAt,
       },
+      diagnostics: collectSub2APIDiagnostics(''),
     };
   }
 
@@ -812,13 +936,22 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
   async function captureSub2API() {
     const params = parseHashParams();
     const state = readSub2APILoginState();
+    const diagnostics = state.diagnostics || collectSub2APIDiagnostics('');
     let authUser = state.authUser || {};
     const accessToken = state.accessToken;
     if (!accessToken) {
       if (await pageLooksLikeNewAPI()) {
-        throw new Error('This page looks like a new-api/NexusTok site, but this capture session was created as sub2api. Recreate the capture session and select new-api, or open the real sub2api upstream site.');
+        const error = new Error('This page looks like a new-api/NexusTok site, but this capture session was created as sub2api. Open the real sub2api upstream site and make sure its login state is available there.');
+        error.diagnostics = diagnostics;
+        throw error;
       }
-      throw new Error('sub2api access token was not found in localStorage/sessionStorage or OAuth callback hash. Make sure you opened the logged-in sub2api site, not the NexusTok page or a new-api site.');
+      const error = new Error(
+        'sub2api access token was not found in the target page context. ' +
+        'Open the logged-in sub2api site in the same browser profile. ' +
+        'If localStorage.auth_token is null, the login state is stored under another origin or was cleared.'
+      );
+      error.diagnostics = diagnostics;
+      throw error;
     }
     try {
       const meResult = await readFirstJSON(
@@ -828,10 +961,14 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
         'sub2_me'
       );
       const me = meResult.data;
+      diagnostics.auth_me_path = meResult.path;
       authUser = { ...(authUser || {}), ...(me || {}) };
     } catch (error) {
+      diagnostics.auth_me_path = 'failed';
       const message = error && error.message ? error.message : String(error);
-      throw new Error('sub2api access token is invalid or expired: ' + message);
+      const wrapped = new Error('sub2api access token is invalid or expired: ' + message);
+      wrapped.diagnostics = diagnostics;
+      throw wrapped;
     }
     const expiresIn = Number.parseInt(text(params.get('expires_in')), 10);
     return {
@@ -842,8 +979,9 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
       expires_in: Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn : 0,
       expires_at: normalizeExpiresAt(state.expiresAt),
       auth_user: authUser,
-      hash: window.location.hash || '',
+      hash: pageWindow.location.hash || '',
       local_storage: state.localStorage,
+      diagnostics,
     };
   }
 
@@ -884,7 +1022,7 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
         ...captured,
         capture_secret: config.captureSecret,
         capture_source: 'userscript',
-        origin: window.location.origin,
+        origin: pageWindow.location.origin,
         base_url: config.baseURL,
         captured_at: Math.floor(Date.now() / 1000),
         user_agent: navigator.userAgent,
@@ -896,11 +1034,14 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
       const payload = {
         capture_secret: config.captureSecret,
         capture_source: 'userscript',
-        origin: window.location.origin,
+        origin: pageWindow.location.origin,
         base_url: config.baseURL,
         platform: config.platform,
         captured_at: Math.floor(Date.now() / 1000),
         error: message,
+        diagnostics: error && error.diagnostics
+          ? error.diagnostics
+          : collectSub2APIDiagnostics(''),
       };
       try { await postToNexusTok(payload); } catch (_) {}
       setStatus('Capture failed: ' + message, 'error');
@@ -981,7 +1122,44 @@ func sanitizeCaptureRecord(record CaptureSessionRecord, nexusBaseURL string) *Ca
 		UserscriptURL: userscriptURL,
 		LoginURL:      loginURL,
 		Summary:       record.Summary,
+		Diagnostics:   sanitizeCaptureDiagnostics(record.Diagnostics),
 	}
+}
+
+// sanitizeCaptureDiagnostics 限制诊断字段只能包含安全的 key 名和布尔值。
+//
+// userscript 是在第三方站点页面中运行的，任何诊断扩展都必须保持“只说明读取
+// 结果，不回传读取内容”的不变量；这里再次清理长度和 key 数量，防止恶意页面
+// 构造超大诊断负载占用缓存。
+func sanitizeCaptureDiagnostics(value *CaptureDiagnostics) *CaptureDiagnostics {
+	if value == nil {
+		return nil
+	}
+	sanitized := &CaptureDiagnostics{
+		PageOrigin:            strings.TrimSpace(value.PageOrigin),
+		AuthTokenPresent:      value.AuthTokenPresent,
+		AccessTokenPresent:    value.AccessTokenPresent,
+		RefreshTokenPresent:   value.RefreshTokenPresent,
+		OAuthHashTokenPresent: value.OAuthHashTokenPresent,
+		AuthMePath:            strings.TrimSpace(value.AuthMePath),
+	}
+	limitKeys := func(keys []string) []string {
+		limited := make([]string, 0, min(len(keys), 64))
+		for _, key := range keys {
+			key = strings.TrimSpace(key)
+			if key == "" || len(key) > 128 {
+				continue
+			}
+			limited = append(limited, key)
+			if len(limited) >= 64 {
+				break
+			}
+		}
+		return limited
+	}
+	sanitized.LocalStorageKeys = limitKeys(value.LocalStorageKeys)
+	sanitized.SessionStorageKeys = limitKeys(value.SessionStorageKeys)
+	return sanitized
 }
 
 func captureSessionLinks(record CaptureSessionRecord, nexusBaseURL string) (string, string) {

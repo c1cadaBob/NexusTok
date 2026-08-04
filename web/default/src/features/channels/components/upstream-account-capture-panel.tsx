@@ -442,6 +442,47 @@ export function UpstreamAccountCapturePanel({
               <AlertDescription>{status.message}</AlertDescription>
             </Alert>
           ) : null}
+
+          {status?.diagnostics ? (
+            <Alert>
+              <AlertCircle aria-hidden='true' />
+              <AlertDescription>
+                <div className='space-y-1 text-xs'>
+                  <div className='font-medium'>{t('Capture diagnostics')}</div>
+                  <div>
+                    {t('Page origin')}: {status.diagnostics.page_origin || '-'}
+                  </div>
+                  <div>
+                    {t('localStorage keys')}:{' '}
+                    {status.diagnostics.local_storage_keys?.join(', ') || '-'}
+                  </div>
+                  <div>
+                    {t('sessionStorage keys')}:{' '}
+                    {status.diagnostics.session_storage_keys?.join(', ') || '-'}
+                  </div>
+                  <div className='grid gap-x-4 gap-y-1 sm:grid-cols-2'>
+                    <span>
+                      auth_token: {status.diagnostics.auth_token_present ? t('Yes') : t('No')}
+                    </span>
+                    <span>
+                      access_token: {status.diagnostics.access_token_present ? t('Yes') : t('No')}
+                    </span>
+                    <span>
+                      refresh_token: {status.diagnostics.refresh_token_present ? t('Yes') : t('No')}
+                    </span>
+                    <span>
+                      {t('OAuth hash token')}: {status.diagnostics.oauth_hash_token_present ? t('Yes') : t('No')}
+                    </span>
+                  </div>
+                  {status.diagnostics.auth_me_path ? (
+                    <div>
+                      {t('Auth validation endpoint')}: {status.diagnostics.auth_me_path}
+                    </div>
+                  ) : null}
+                </div>
+              </AlertDescription>
+            </Alert>
+          ) : null}
         </div>
       ) : null}
 

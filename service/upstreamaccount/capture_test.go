@@ -2,6 +2,9 @@ package upstreamaccount
 
 import (
 	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -93,6 +96,10 @@ func TestCaptureSessionCompletesNewAPIAccessTokenPayloadAndRendersScript(t *test
 	require.Contains(t, script, "normalizeNewAPIUserID")
 	require.Contains(t, script, "This page looks like a new-api/NexusTok site")
 	require.Contains(t, script, "readSub2APILoginState")
+	require.Contains(t, script, "@grant        unsafeWindow")
+	require.Contains(t, script, "const pageWindow")
+	require.Contains(t, script, "collectSub2APIDiagnostics")
+	require.Contains(t, script, "localStorage.auth_token")
 
 	record, found, err := captureSessionCache.Get(start.CaptureID)
 	require.NoError(t, err)
@@ -138,6 +145,77 @@ func TestCaptureSessionCompletesNewAPIAccessTokenPayloadAndRendersScript(t *test
 	require.NotNil(t, credential.Session.NewAPI)
 	require.Equal(t, "17", credential.Session.NewAPI.UserID)
 	require.Equal(t, "new-api-access-token", credential.Session.NewAPI.AccessToken)
+}
+
+func TestCaptureSessionStoresOnlySafeDiagnostics(t *testing.T) {
+	start, err := StartCaptureSession(13, CaptureSessionStartRequest{
+		Platform: PlatformSub2API,
+		BaseURL:  "https://sub.example.com",
+	}, "https://nexus.example.com")
+	require.NoError(t, err)
+	record, found, err := captureSessionCache.Get(start.CaptureID)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	const secretToken = "diagnostic-secret-token"
+	_, err = CompleteCaptureSession(start.CaptureID, CaptureSessionCompleteRequest{
+		CaptureSecret: record.Secret,
+		Origin:        "https://sub.example.com",
+		Error:         "sub2api access token was not found",
+		Diagnostics: &CaptureDiagnostics{
+			PageOrigin:            "https://sub.example.com",
+			LocalStorageKeys:      []string{"auth_token", "refresh_token", "theme"},
+			SessionStorageKeys:    []string{"temporary"},
+			AuthTokenPresent:      false,
+			AccessTokenPresent:    false,
+			RefreshTokenPresent:   true,
+			OAuthHashTokenPresent: false,
+			AuthMePath:            "",
+		},
+	})
+	require.Error(t, err)
+
+	status, err := GetCaptureSessionStatus(13, start.CaptureID, "https://nexus.example.com")
+	require.NoError(t, err)
+	require.Equal(t, captureStatusFailed, status.Status)
+	require.NotNil(t, status.Diagnostics)
+	require.Equal(t, []string{"auth_token", "refresh_token", "theme"}, status.Diagnostics.LocalStorageKeys)
+	require.True(t, status.Diagnostics.RefreshTokenPresent)
+	require.NotContains(t, status.Message, secretToken)
+
+	raw, err := common.Marshal(status)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), secretToken)
+}
+
+func TestRenderedCaptureUserscriptHasValidJavaScriptSyntax(t *testing.T) {
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("环境没有 Node.js，跳过动态油猴脚本语法检查")
+	}
+
+	start, err := StartCaptureSession(14, CaptureSessionStartRequest{
+		Platform: PlatformSub2API,
+		BaseURL:  "https://sub.example.com",
+	}, "https://nexus.example.com")
+	require.NoError(t, err)
+	record, found, err := captureSessionCache.Get(start.CaptureID)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	script, err := RenderCaptureUserscriptWithInstallToken(
+		start.CaptureID,
+		record.InstallToken,
+		"https://nexus.example.com",
+	)
+	require.NoError(t, err)
+	scriptPath := filepath.Join(t.TempDir(), "capture.user.js")
+	require.NoError(t, os.WriteFile(scriptPath, []byte(script), 0o600))
+
+	// 生成脚本最终会直接交给 Tampermonkey；在单测中先用 Node 的语法检查拦截
+	// 模板拼接造成的括号、引号或转义错误，避免只能到浏览器里才发现脚本无法安装。
+	output, err := exec.Command(nodePath, "--check", scriptPath).CombinedOutput()
+	require.NoError(t, err, string(output))
 }
 
 func TestParseCredentialDraftReturnsSanitizedSummary(t *testing.T) {

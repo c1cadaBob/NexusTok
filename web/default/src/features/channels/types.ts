@@ -444,6 +444,17 @@ export interface UpstreamAccountCaptureCredentialSummary {
   capture_source?: string
 }
 
+export interface UpstreamAccountCaptureDiagnostics {
+  page_origin?: string
+  local_storage_keys?: string[]
+  session_storage_keys?: string[]
+  auth_token_present?: boolean
+  access_token_present?: boolean
+  refresh_token_present?: boolean
+  oauth_hash_token_present?: boolean
+  auth_me_path?: string
+}
+
 export interface UpstreamAccountCaptureStatusData {
   capture_id: string
   status: 'pending' | 'completed' | 'failed'
@@ -455,6 +466,7 @@ export interface UpstreamAccountCaptureStatusData {
   userscript_url?: string
   login_url?: string
   summary?: UpstreamAccountCaptureCredentialSummary
+  diagnostics?: UpstreamAccountCaptureDiagnostics
 }
 
 export interface UpstreamAccountCaptureStartResponse {
