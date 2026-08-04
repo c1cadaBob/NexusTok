@@ -208,16 +208,33 @@ export async function getUpstreamAccountCaptureSession(
  * 读取当前采集会话对应的完整油猴脚本源码。
  */
 export async function getUpstreamAccountCaptureUserscript(
-  captureId: string
+  captureIdOrURL: string
 ): Promise<string> {
+  const scriptURL = captureIdOrURL.includes('/capture-session/')
+    ? captureIdOrURL
+    : `/api/channel/upstream-account/capture-session/${encodeURIComponent(captureIdOrURL)}/userscript.user.js`
   const res = await api.get(
-    `/api/channel/upstream-account/capture-session/${captureId}/userscript.user.js`,
+    scriptURL,
     {
       responseType: 'text',
       disableDuplicate: true,
     } as ExtendedApiConfig
   )
-  return String(res.data || '')
+  const source = String(res.data || '')
+  if (!source.trimStart().startsWith('// ==UserScript==')) {
+    let message = 'Failed to load userscript source'
+    try {
+      const body = JSON.parse(source) as {
+        message?: string
+        error?: { message?: string }
+      }
+      message = body.message || body.error?.message || message
+    } catch {
+      // 非 JSON 响应通常是代理错误页或过期链接的 HTML，前端统一给出稳定提示。
+    }
+    throw new Error(message)
+  }
+  return source
 }
 
 /**

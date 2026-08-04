@@ -73,7 +73,6 @@ func TestChannelPermissionRoutesClassifyCoreActions(t *testing.T) {
 	assertPermissionRoute(t, http.MethodPost, "/upstream-account/browser-auth/complete", authz.ChannelSensitiveWrite)
 	assertPermissionRoute(t, http.MethodPost, "/upstream-account/capture-session/start", authz.ChannelSensitiveWrite)
 	assertPermissionRoute(t, http.MethodGet, "/upstream-account/capture-session/:id", authz.ChannelSensitiveWrite)
-	assertPermissionRoute(t, http.MethodGet, "/upstream-account/capture-session/:id/userscript.user.js", authz.ChannelSensitiveWrite)
 	assertPermissionRoute(t, http.MethodPost, "/upstream-account/credentials/parse", authz.ChannelSensitiveWrite)
 	assertPermissionRoute(t, http.MethodDelete, "/:id", authz.ChannelSensitiveWrite)
 	assertPermissionRoute(t, http.MethodPost, "/:id/key", authz.ChannelSecretView)

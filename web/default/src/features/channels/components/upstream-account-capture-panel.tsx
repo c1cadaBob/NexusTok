@@ -65,19 +65,9 @@ function formatUnixTime(value?: number) {
   return new Date(value * 1000).toLocaleString()
 }
 
-function buildUserscriptURL(captureId: string) {
-  const path = `/api/channel/upstream-account/capture-session/${encodeURIComponent(captureId)}/userscript.user.js`
-  if (typeof window === 'undefined') return path
-  return new URL(path, window.location.origin).toString()
-}
-
 function buildCompleteEndpoint(captureId: string) {
   if (!captureId) return ''
-  const shortID =
-    captureId.length > 14
-      ? `${captureId.slice(0, 8)}...${captureId.slice(-4)}`
-      : captureId
-  return `/api/channel/upstream-account/capture-session/${shortID}/complete`
+  return `/api/channel/upstream-account/capture-session/${captureId}/complete`
 }
 
 export function UpstreamAccountCapturePanel({
@@ -118,9 +108,7 @@ export function UpstreamAccountCapturePanel({
       base_url: status?.base_url || localSession?.base_url || baseUrl,
       origin: status?.origin || localSession?.origin || '',
       userscript_url:
-        status?.userscript_url ||
-        localSession?.userscript_url ||
-        (captureId ? buildUserscriptURL(captureId) : ''),
+        status?.userscript_url || localSession?.userscript_url || '',
       login_url: status?.login_url || localSession?.login_url || baseUrl,
       summary: status?.summary,
       message: status?.message,
@@ -154,7 +142,9 @@ export function UpstreamAccountCapturePanel({
     if (!status || status.status !== 'completed') return
     if (completedToastRef.current === status.capture_id) return
     completedToastRef.current = status.capture_id
-    toast.success(t('Login state captured. Click Sync Keys to preview and save it.'))
+    toast.success(
+      t('Login state captured. Click Sync Keys to validate, preview, and save it.')
+    )
   }, [status, t])
 
   const handleStart = useCallback(() => {
@@ -184,19 +174,26 @@ export function UpstreamAccountCapturePanel({
     window.open(value, '_blank', 'noopener,noreferrer')
   }, [])
 
+  const installURL = session?.userscript_url || ''
+  const loginURL = session?.login_url || baseUrl
+  const callbackEndpoint = buildCompleteEndpoint(captureId)
+  const isCompleted = status?.status === 'completed'
+  const isFailed = status?.status === 'failed'
+  const summary = status?.summary
+
   const scriptMutation = useMutation({
     mutationFn: getUpstreamAccountCaptureUserscript,
   })
 
   const loadUserscriptSource = useCallback(async () => {
-    if (!captureId) {
-      throw new Error(t('Create a capture session first'))
+    if (!installURL) {
+      throw new Error(t('Signed userscript install link is not ready yet'))
     }
     if (userscriptSource) return userscriptSource
-    const script = await scriptMutation.mutateAsync(captureId)
+    const script = await scriptMutation.mutateAsync(installURL)
     setUserscriptSource(script)
     return script
-  }, [captureId, scriptMutation, t, userscriptSource])
+  }, [installURL, scriptMutation, t, userscriptSource])
 
   const handleViewScript = useCallback(async () => {
     try {
@@ -221,13 +218,6 @@ export function UpstreamAccountCapturePanel({
     }
   }, [loadUserscriptSource, t])
 
-  const installURL = session?.userscript_url || (captureId ? buildUserscriptURL(captureId) : '')
-  const loginURL = session?.login_url || baseUrl
-  const callbackEndpoint = buildCompleteEndpoint(captureId)
-  const isCompleted = status?.status === 'completed'
-  const isFailed = status?.status === 'failed'
-  const summary = status?.summary
-
   return (
     <div className='flex flex-col gap-3 rounded-lg border p-3 sm:col-span-2 lg:col-span-6'>
       <div className='flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between'>
@@ -238,10 +228,10 @@ export function UpstreamAccountCapturePanel({
           <div className='text-muted-foreground text-xs'>
             {platform === 'new-api'
               ? t(
-                  'The userscript runs inside the upstream new-api site, calls /api/user/self and /api/user/token with your logged-in browser session, then sends only the captured upstream token to NexusTok.'
+                  'The userscript runs inside the upstream new-api site, reads the user ID from localStorage when possible, calls /api/user/self and /api/user/token with your logged-in browser session, then sends only the captured upstream token to NexusTok.'
                 )
               : t(
-                  'The userscript runs inside the upstream sub2api site and reads auth_token, refresh_token, and token_expires_at from localStorage or the OAuth callback hash.'
+                  'The userscript runs inside the upstream sub2api site, reads auth_token, refresh_token, and token_expires_at from localStorage or the OAuth callback hash, then checks /api/v1/auth/me before sending the login state.'
                 )}
           </div>
         </div>
@@ -285,6 +275,24 @@ export function UpstreamAccountCapturePanel({
         <AlertDescription>
           {t(
             'Capture flow: create a session, install the userscript, open and log in to the upstream site, click Send login to NexusTok on that site, then return here to preview and save.'
+          )}
+        </AlertDescription>
+      </Alert>
+
+      <Alert>
+        <AlertCircle aria-hidden='true' />
+        <AlertDescription>
+          {t(
+            'The userscript install link is signed and expires with this capture session. If it expires, create a new capture session.'
+          )}
+        </AlertDescription>
+      </Alert>
+
+      <Alert>
+        <AlertCircle aria-hidden='true' />
+        <AlertDescription>
+          {t(
+            'In multi-node deployments, enable Redis or sticky routing so the userscript callback and status polling can read the same capture session.'
           )}
         </AlertDescription>
       </Alert>
@@ -371,7 +379,7 @@ export function UpstreamAccountCapturePanel({
             <Button
               type='button'
               variant='outline'
-              disabled={!captureId || scriptMutation.isPending}
+              disabled={!installURL || scriptMutation.isPending}
               onClick={() => void handleViewScript()}
             >
               {scriptMutation.isPending ? (
@@ -384,7 +392,7 @@ export function UpstreamAccountCapturePanel({
             <Button
               type='button'
               variant='outline'
-              disabled={!captureId || scriptMutation.isPending}
+              disabled={!installURL || scriptMutation.isPending}
               onClick={() => void handleCopyFullScript()}
             >
               {scriptMutation.isPending ? (
@@ -414,7 +422,7 @@ export function UpstreamAccountCapturePanel({
               <CheckCircle2 aria-hidden='true' />
               <AlertDescription>
                 {t(
-                  'Captured {{platform}} login state for {{account}}. The token is stored only in the temporary capture session until you click Sync Keys to preview and save.',
+                  'Captured {{platform}} login state for {{account}}. The token is stored only in the temporary capture session until you click Sync Keys to validate, preview, and save.',
                   {
                     platform: summary.platform,
                     account:

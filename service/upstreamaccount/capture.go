@@ -1,6 +1,7 @@
 package upstreamaccount
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -59,19 +60,20 @@ type CaptureSessionStartResult struct {
 // status 查询只返回脱敏摘要；真正预览时后端按 capture_id 取出登录态使用，避免把
 // 明文 token 再回传到浏览器页面。
 type CaptureSessionRecord struct {
-	ID         string                    `json:"id"`
-	Secret     string                    `json:"secret"`
-	UserID     int                       `json:"user_id"`
-	ChannelID  int                       `json:"channel_id,omitempty"`
-	Platform   string                    `json:"platform"`
-	BaseURL    string                    `json:"base_url"`
-	Origin     string                    `json:"origin"`
-	Status     string                    `json:"status"`
-	Error      string                    `json:"error,omitempty"`
-	ExpiresAt  int64                     `json:"expires_at"`
-	UpdatedAt  int64                     `json:"updated_at"`
-	Credential Credential                `json:"credential,omitempty"`
-	Summary    *CaptureCredentialSummary `json:"summary,omitempty"`
+	ID           string                    `json:"id"`
+	Secret       string                    `json:"secret"`
+	InstallToken string                    `json:"install_token,omitempty"`
+	UserID       int                       `json:"user_id"`
+	ChannelID    int                       `json:"channel_id,omitempty"`
+	Platform     string                    `json:"platform"`
+	BaseURL      string                    `json:"base_url"`
+	Origin       string                    `json:"origin"`
+	Status       string                    `json:"status"`
+	Error        string                    `json:"error,omitempty"`
+	ExpiresAt    int64                     `json:"expires_at"`
+	UpdatedAt    int64                     `json:"updated_at"`
+	Credential   Credential                `json:"credential,omitempty"`
+	Summary      *CaptureCredentialSummary `json:"summary,omitempty"`
 }
 
 // CaptureCredentialSummary 是安全返回给前端的采集摘要。
@@ -169,18 +171,23 @@ func StartCaptureSession(userID int, req CaptureSessionStartRequest, nexusBaseUR
 	if err != nil {
 		return nil, fmt.Errorf("生成采集密钥失败：%w", err)
 	}
+	installToken, err := common.GenerateRandomCharsKey(48)
+	if err != nil {
+		return nil, fmt.Errorf("生成脚本安装签名失败：%w", err)
+	}
 	expiresAt := time.Now().Add(captureTTL).Unix()
 	record := CaptureSessionRecord{
-		ID:        id,
-		Secret:    secret,
-		UserID:    userID,
-		ChannelID: req.ChannelID,
-		Platform:  platform,
-		BaseURL:   normalizedBaseURL,
-		Origin:    origin,
-		Status:    captureStatusPending,
-		ExpiresAt: expiresAt,
-		UpdatedAt: common.GetTimestamp(),
+		ID:           id,
+		Secret:       secret,
+		InstallToken: installToken,
+		UserID:       userID,
+		ChannelID:    req.ChannelID,
+		Platform:     platform,
+		BaseURL:      normalizedBaseURL,
+		Origin:       origin,
+		Status:       captureStatusPending,
+		ExpiresAt:    expiresAt,
+		UpdatedAt:    common.GetTimestamp(),
 	}
 	if err := captureSessionCache.SetWithTTL(id, record, captureTTL); err != nil {
 		return nil, fmt.Errorf("保存采集会话失败：%w", err)
@@ -305,6 +312,26 @@ func RenderCaptureUserscript(userID int, captureID string, nexusBaseURL string) 
 	if err != nil {
 		return "", err
 	}
+	return renderCaptureUserscript(record, nexusBaseURL)
+}
+
+// RenderCaptureUserscriptWithInstallToken 通过短时安装签名生成油猴脚本。
+//
+// 该入口用于浏览器/Tampermonkey 直接打开 `.user.js` 链接。浏览器导航无法稳定携带
+// NexusTok-User 自定义头，因此不能再依赖后台登录态鉴权；安全边界收敛到一次性
+// install_token、capture session TTL 和脚本内的 capture_secret。
+func RenderCaptureUserscriptWithInstallToken(captureID string, installToken string, nexusBaseURL string) (string, error) {
+	record, err := getCaptureRecord(captureID)
+	if err != nil {
+		return "", err
+	}
+	if err := verifyCaptureInstallToken(record, installToken); err != nil {
+		return "", err
+	}
+	return renderCaptureUserscript(record, nexusBaseURL)
+}
+
+func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (string, error) {
 	nexusBaseURL = strings.TrimRight(strings.TrimSpace(nexusBaseURL), "/")
 	if nexusBaseURL == "" {
 		return "", fmt.Errorf("NexusTok 地址不能为空")
@@ -386,7 +413,9 @@ func RenderCaptureUserscript(userID int, captureID string, nexusBaseURL string) 
   }
 
   function guessNewAPIUserID() {
-    const keys = ['user', 'user_info', 'userInfo', 'auth', 'auth_user', 'new-api-user', 'New-Api-User'];
+    const directUID = text(localStorage.getItem('uid') || sessionStorage.getItem('uid') || '').trim();
+    if (/^\d+$/.test(directUID)) return directUID;
+    const keys = ['uid', 'user', 'user_info', 'userInfo', 'auth', 'auth_user', 'new-api-user', 'New-Api-User'];
     for (const storage of [window.localStorage, window.sessionStorage]) {
       for (const key of keys) {
         const raw = storage.getItem(key);
@@ -435,25 +464,38 @@ func RenderCaptureUserscript(userID int, captureID string, nexusBaseURL string) 
     const self = await readJSON('/api/user/self', { headers });
     const resolvedUserID = text(self.id || userID).trim();
     const token = await readJSON('/api/user/token', { headers: { 'New-Api-User': resolvedUserID } });
+    const accessToken = typeof token === 'string' ? token : text(token.access_token || token.token || '');
+    if (!accessToken) throw new Error('new-api /api/user/token did not return access_token');
     return {
       platform: 'new-api',
       auth_mode: 'access_token',
       user_id: resolvedUserID,
       username: text(self.username || ''),
       email: text(self.email || ''),
-      access_token: typeof token === 'string' ? token : text(token.access_token || token.token || ''),
+      access_token: accessToken,
       auth_user: self,
     };
   }
 
-  function captureSub2API() {
+  async function captureSub2API() {
     const params = new URLSearchParams(window.location.hash.replace(/^#/, ''));
-    const authUser = parseJSON(localStorage.getItem('auth_user')) || null;
+    let authUser = parseJSON(localStorage.getItem('auth_user')) || null;
+    const accessToken = text(params.get('access_token') || localStorage.getItem('auth_token') || '');
+    if (!accessToken) throw new Error('sub2api auth_token not found. Please sign in to the upstream site first.');
+    try {
+      const me = await readJSON('/api/v1/auth/me', {
+        headers: { Authorization: 'Bearer ' + accessToken },
+      });
+      authUser = { ...(authUser || {}), ...(me || {}) };
+    } catch (error) {
+      const message = error && error.message ? error.message : String(error);
+      throw new Error('sub2api access token is invalid or expired: ' + message);
+    }
     const expiresIn = Number.parseInt(text(params.get('expires_in')), 10);
     return {
       platform: 'sub2api',
       auth_mode: 'access_token',
-      access_token: text(params.get('access_token') || localStorage.getItem('auth_token') || ''),
+      access_token: accessToken,
       refresh_token: text(params.get('refresh_token') || localStorage.getItem('refresh_token') || ''),
       expires_in: Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn : 0,
       expires_at: normalizeExpiresAt(localStorage.getItem('token_expires_at')),
@@ -499,7 +541,7 @@ func RenderCaptureUserscript(userID int, captureID string, nexusBaseURL string) 
   async function runCapture() {
     try {
       setStatus('Capturing upstream login...', 'info');
-      const captured = config.platform === 'new-api' ? await captureNewAPI() : captureSub2API();
+      const captured = config.platform === 'new-api' ? await captureNewAPI() : await captureSub2API();
       const payload = {
         ...captured,
         capture_secret: config.captureSecret,
@@ -510,8 +552,9 @@ func RenderCaptureUserscript(userID int, captureID string, nexusBaseURL string) 
         user_agent: navigator.userAgent,
       };
       await postToNexusTok(payload);
-      setStatus('Captured. Return to NexusTok to preview and save.', 'success');
+      setStatus('Captured. Return to NexusTok and click Sync Keys to validate, preview, and save.', 'success');
     } catch (error) {
+      const message = error && error.message ? error.message : String(error);
       const payload = {
         capture_secret: config.captureSecret,
         capture_source: 'userscript',
@@ -519,10 +562,10 @@ func RenderCaptureUserscript(userID int, captureID string, nexusBaseURL string) 
         base_url: config.baseURL,
         platform: config.platform,
         captured_at: Math.floor(Date.now() / 1000),
-        error: error && error.message ? error.message : String(error),
+        error: message,
       };
       try { await postToNexusTok(payload); } catch (_) {}
-      setStatus(payload.error, 'error');
+      setStatus('Capture failed: ' + message, 'error');
     }
   }
 
@@ -568,6 +611,21 @@ func getCaptureRecord(captureID string) (CaptureSessionRecord, error) {
 	return record, nil
 }
 
+func verifyCaptureInstallToken(record CaptureSessionRecord, installToken string) error {
+	expected := strings.TrimSpace(record.InstallToken)
+	actual := strings.TrimSpace(installToken)
+	if expected == "" {
+		return fmt.Errorf("脚本安装链接已失效，请重新创建采集会话")
+	}
+	if actual == "" {
+		return fmt.Errorf("脚本安装链接缺少 install_token，请从 NexusTok 页面重新复制安装链接")
+	}
+	if subtle.ConstantTimeCompare([]byte(actual), []byte(expected)) != 1 {
+		return fmt.Errorf("脚本安装链接无效或已过期，请重新创建采集会话")
+	}
+	return nil
+}
+
 func sanitizeCaptureRecord(record CaptureSessionRecord, nexusBaseURL string) *CaptureSessionStatusResult {
 	message := ""
 	if record.Status == captureStatusFailed {
@@ -591,8 +649,16 @@ func sanitizeCaptureRecord(record CaptureSessionRecord, nexusBaseURL string) *Ca
 func captureSessionLinks(record CaptureSessionRecord, nexusBaseURL string) (string, string) {
 	nexusBaseURL = strings.TrimRight(strings.TrimSpace(nexusBaseURL), "/")
 	userscriptURL := ""
-	if nexusBaseURL != "" && strings.TrimSpace(record.ID) != "" {
-		userscriptURL = nexusBaseURL + "/api/channel/upstream-account/capture-session/" + url.PathEscape(record.ID) + "/userscript.user.js"
+	if nexusBaseURL != "" && strings.TrimSpace(record.ID) != "" && strings.TrimSpace(record.InstallToken) != "" {
+		rawURL := nexusBaseURL + "/api/channel/upstream-account/capture-session/" + url.PathEscape(record.ID) + "/userscript.user.js"
+		if parsed, err := url.Parse(rawURL); err == nil {
+			query := parsed.Query()
+			query.Set("install_token", record.InstallToken)
+			parsed.RawQuery = query.Encode()
+			userscriptURL = parsed.String()
+		} else {
+			userscriptURL = rawURL + "?install_token=" + url.QueryEscape(record.InstallToken)
+		}
 	}
 	return userscriptURL, record.BaseURL
 }

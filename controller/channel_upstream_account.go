@@ -179,12 +179,13 @@ func GetUpstreamAccountCaptureSession(c *gin.Context) {
 
 // GetUpstreamAccountCaptureUserscript 动态生成仅匹配目标站的 Tampermonkey 脚本。
 func GetUpstreamAccountCaptureUserscript(c *gin.Context) {
-	script, err := upstreamaccount.RenderCaptureUserscript(c.GetInt("id"), c.Param("id"), externalRequestBaseURL(c))
+	script, err := upstreamaccount.RenderCaptureUserscriptWithInstallToken(c.Param("id"), c.Query("install_token"), externalRequestBaseURL(c))
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	c.Header("Content-Type", "application/javascript; charset=utf-8")
+	c.Header("Cache-Control", "no-store")
 	c.String(http.StatusOK, script)
 }
 

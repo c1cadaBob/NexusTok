@@ -1,6 +1,7 @@
 package upstreamaccount
 
 import (
+	"net/url"
 	"strings"
 	"testing"
 
@@ -16,13 +17,15 @@ func TestCaptureSessionCompletesSub2APIPayload(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, start.CaptureID)
 	require.Equal(t, "https://sub.example.com", start.Origin)
-	require.Equal(t, "https://nexus.example.com/api/channel/upstream-account/capture-session/"+start.CaptureID+"/userscript.user.js", start.UserscriptURL)
+	require.Contains(t, start.UserscriptURL, "https://nexus.example.com/api/channel/upstream-account/capture-session/"+start.CaptureID+"/userscript.user.js")
+	require.Contains(t, start.UserscriptURL, "install_token=")
 	require.Equal(t, "https://sub.example.com", start.LoginURL)
 
 	record, found, err := captureSessionCache.Get(start.CaptureID)
 	require.NoError(t, err)
 	require.True(t, found)
 	require.NotEmpty(t, record.Secret)
+	require.NotEmpty(t, record.InstallToken)
 
 	_, err = CompleteCaptureSession(start.CaptureID, CaptureSessionCompleteRequest{
 		CaptureSecret: record.Secret,
@@ -88,6 +91,19 @@ func TestCaptureSessionCompletesNewAPIAccessTokenPayloadAndRendersScript(t *test
 	record, found, err := captureSessionCache.Get(start.CaptureID)
 	require.NoError(t, err)
 	require.True(t, found)
+	require.NotEmpty(t, record.InstallToken)
+
+	_, err = RenderCaptureUserscriptWithInstallToken(start.CaptureID, "", "https://nexus.example.com")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "install_token")
+
+	_, err = RenderCaptureUserscriptWithInstallToken(start.CaptureID, "wrong-token", "https://nexus.example.com")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "无效")
+
+	publicScript, err := RenderCaptureUserscriptWithInstallToken(start.CaptureID, record.InstallToken, "https://nexus.example.com")
+	require.NoError(t, err)
+	require.Contains(t, publicScript, "// ==UserScript==")
 
 	_, err = CompleteCaptureSession(start.CaptureID, CaptureSessionCompleteRequest{
 		CaptureSecret: record.Secret,
@@ -103,7 +119,10 @@ func TestCaptureSessionCompletesNewAPIAccessTokenPayloadAndRendersScript(t *test
 	status, err := GetCaptureSessionStatus(9, start.CaptureID, "https://nexus.example.com")
 	require.NoError(t, err)
 	require.Equal(t, "completed", status.Status)
-	require.Equal(t, "https://nexus.example.com/api/channel/upstream-account/capture-session/"+start.CaptureID+"/userscript.user.js", status.UserscriptURL)
+	parsedInstallURL, err := url.Parse(status.UserscriptURL)
+	require.NoError(t, err)
+	require.Equal(t, "/api/channel/upstream-account/capture-session/"+start.CaptureID+"/userscript.user.js", parsedInstallURL.Path)
+	require.NotEmpty(t, parsedInstallURL.Query().Get("install_token"))
 	require.Equal(t, "https://new.example.com/dashboard", status.LoginURL)
 	require.Equal(t, "17", status.Summary.UserID)
 	require.True(t, strings.HasPrefix(status.Summary.AccessTokenMasked, "new-ap"))
