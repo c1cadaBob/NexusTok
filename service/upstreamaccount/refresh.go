@@ -124,6 +124,9 @@ func RefreshChannelFromSnapshot(channelID int, snapshot *Snapshot, req RefreshRe
 			"used_quota":           usedQuotaValue(snapshot.Balance),
 			"settings":             mergeChannelSyncMetadataWithCredential(channel.OtherSettings, snapshot, req.Credential),
 		}
+		if baseURL, ok := syncedChannelBaseURLUpdate(channel, snapshot); ok {
+			updates["base_url"] = baseURL
+		}
 		if syncedChannelType := resolveSyncedChannelType(snapshot, channel.Type); syncedChannelType > 0 && channel.Type != syncedChannelType {
 			// 刷新快照时以后端识别出的上游平台为准修正渠道类型，避免历史 OpenAI
 			// 同步渠道或外部 API 调用刷新后继续显示成普通 OpenAI 渠道。
@@ -207,6 +210,34 @@ func RefreshChannelFromSnapshot(channelID int, snapshot *Snapshot, req RefreshRe
 	}
 	model.InitChannelCache()
 	return result, nil
+}
+
+// syncedChannelBaseURLUpdate 判断刷新成功后是否可以把渠道调用地址迁移到快照地址。
+//
+// Sub2API 面板域名和 API 域名分离时，预览快照会携带实际 API 地址。只有当前渠道
+// base_url 仍等于旧同步元数据地址或为空时才自动更新；如果管理员已经在渠道页改成
+// 其他地址，说明这是本地覆盖，刷新流程不能替管理员覆盖掉。
+func syncedChannelBaseURLUpdate(channel model.Channel, snapshot *Snapshot) (string, bool) {
+	if snapshot == nil {
+		return "", false
+	}
+	nextBaseURL := normalizeSyncMetadataBaseURL(snapshot.Platform, snapshot.BaseURL)
+	if nextBaseURL == "" {
+		return "", false
+	}
+	currentBaseURL := ""
+	if channel.BaseURL != nil {
+		currentBaseURL = strings.TrimRight(strings.TrimSpace(*channel.BaseURL), "/")
+	}
+	if currentBaseURL == nextBaseURL {
+		return "", false
+	}
+	metadata := readChannelSyncMetadata(channel.OtherSettings)
+	oldBaseURL := normalizeSyncMetadataBaseURL(firstNonEmpty(metadata.Platform, snapshot.Platform), metadata.BaseURL)
+	if currentBaseURL == "" || (oldBaseURL != "" && currentBaseURL == oldBaseURL) {
+		return nextBaseURL, true
+	}
+	return "", false
 }
 
 func accountConfigBySyncID(configs []AccountCreateConfig) map[string]AccountCreateConfig {

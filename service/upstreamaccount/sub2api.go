@@ -144,19 +144,22 @@ func (c *Sub2APIClient) FetchSnapshot(ctx context.Context, credential Credential
 // 调用方可以再额外挂载加密后的账号凭据，供 2FA 完成后落库复用。
 func (c *Sub2APIClient) BeginPreview(ctx context.Context, credential Credential) (*Snapshot, *AuthChallengeRecord, error) {
 	credential.BaseURL = normalizeSub2APIBaseURL(credential.BaseURL)
+	if apiBaseURL, ok := c.discoverSub2APIAPIBaseURLFromPanel(ctx, credential.BaseURL); ok {
+		credential.BaseURL = apiBaseURL
+	}
 	api, err := newHTTPClient(credential.BaseURL, c.httpClient)
 	if err != nil {
 		return nil, nil, err
 	}
-	if snapshot, ok := c.fetchSnapshotWithSavedSession(ctx, api, credential.Session); ok {
-		return snapshot, nil, nil
+	if snapshot, ok, err := c.fetchSnapshotWithSavedSession(ctx, api, credential.Session); ok || err != nil {
+		return snapshot, nil, err
 	}
 	if credentialRequiresImportedSession(credential, AuthModeAccessToken) {
 		return nil, nil, fmt.Errorf("sub2api Access Token 登录态不可用：请确认 token 未过期并具备读取分组、密钥和余额的权限")
 	}
 	login, err := c.login(ctx, api, credential)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, friendlySub2APIEndpointError(err)
 	}
 	if login.Requires2FA || strings.TrimSpace(login.TempToken) != "" {
 		tempToken := strings.TrimSpace(login.TempToken)
@@ -176,7 +179,7 @@ func (c *Sub2APIClient) BeginPreview(ctx context.Context, credential Credential)
 	if err == nil {
 		snapshot.AuthSession = buildSub2APIAuthenticatedSession(api.baseURL, login)
 	}
-	return snapshot, nil, err
+	return snapshot, nil, friendlySub2APIEndpointError(err)
 }
 
 // Complete2FA 使用已缓存的 sub2api temp_token 和管理员输入的验证码完成预览。
@@ -211,20 +214,23 @@ func (c *Sub2APIClient) Complete2FA(ctx context.Context, record AuthChallengeRec
 	return snapshot, err
 }
 
-func (c *Sub2APIClient) fetchSnapshotWithSavedSession(ctx context.Context, api *httpClient, session *AuthenticatedSession) (*Snapshot, bool) {
+func (c *Sub2APIClient) fetchSnapshotWithSavedSession(ctx context.Context, api *httpClient, session *AuthenticatedSession) (*Snapshot, bool, error) {
 	if api == nil || !authSessionMatches(session, PlatformSub2API, api.baseURL) || session.Sub2API == nil {
-		return nil, false
+		return nil, false, nil
 	}
 	token := strings.TrimSpace(session.Sub2API.AccessToken)
 	if token == "" {
-		return nil, false
+		return nil, false, nil
 	}
 	refreshToken := strings.TrimSpace(session.Sub2API.RefreshToken)
 	expiresAt := normalizeUnixSeconds(session.Sub2API.ExpiresAt)
 	if expiresAt > 0 && expiresAt <= common.GetTimestamp()+30 {
+		if refreshToken == "" {
+			return nil, true, fmt.Errorf("Sub2API Access Token 已过期，当前登录态没有 refresh_token，请重新使用油猴脚本采集。")
+		}
 		refreshed, err := c.refreshAccessToken(ctx, api, refreshToken)
 		if err != nil {
-			return nil, false
+			return nil, true, fmt.Errorf("Sub2API Access Token 刷新失败：%w", friendlySub2APIEndpointError(err))
 		}
 		token = refreshed.AccessToken
 		refreshToken = firstNonEmpty(refreshed.RefreshToken, refreshToken)
@@ -232,16 +238,19 @@ func (c *Sub2APIClient) fetchSnapshotWithSavedSession(ctx context.Context, api *
 	}
 	snapshot, err := c.fetchSnapshotWithAuthenticatedSession(ctx, api, token, sub2APIUser{})
 	if err != nil {
+		if refreshToken == "" {
+			return nil, true, fmt.Errorf("Sub2API Access Token 不可用，当前登录态没有 refresh_token，请重新使用油猴脚本采集。")
+		}
 		refreshed, refreshErr := c.refreshAccessToken(ctx, api, refreshToken)
 		if refreshErr != nil {
-			return nil, false
+			return nil, true, fmt.Errorf("Sub2API Access Token 不可用且 refresh_token 刷新失败：%w", friendlySub2APIEndpointError(refreshErr))
 		}
 		token = refreshed.AccessToken
 		refreshToken = firstNonEmpty(refreshed.RefreshToken, refreshToken)
 		expiresAt = refreshed.ExpiresAt
 		snapshot, err = c.fetchSnapshotWithAuthenticatedSession(ctx, api, token, sub2APIUser{})
 		if err != nil {
-			return nil, false
+			return nil, true, friendlySub2APIEndpointError(err)
 		}
 	}
 	snapshot.AuthSession = &AuthenticatedSession{
@@ -256,7 +265,7 @@ func (c *Sub2APIClient) fetchSnapshotWithSavedSession(ctx context.Context, api *
 			ExpiresAt:    expiresAt,
 		},
 	}
-	return snapshot, true
+	return snapshot, true, nil
 }
 
 type refreshedSub2APIToken struct {
@@ -372,7 +381,7 @@ func normalizeSub2APIBaseURL(raw string) string {
 		return raw
 	}
 	switch strings.TrimRight(u.EscapedPath(), "/") {
-	case "/login", "/dashboard", "/register", "/setup":
+	case "/login", "/dashboard", "/register", "/setup", "/home":
 		// 用户通常会复制 sub2api 的前端页面地址作为测试地址；后端接口实际固定在
 		// 同站点的 /api/v1 下。只剥离明确的前端路由，避免破坏带反向代理 API
 		// 前缀的部署地址。
@@ -384,6 +393,17 @@ func normalizeSub2APIBaseURL(raw string) string {
 	default:
 		return raw
 	}
+}
+
+func friendlySub2APIEndpointError(err error) error {
+	if err == nil {
+		return nil
+	}
+	message := err.Error()
+	if strings.Contains(message, "status=410") && strings.Contains(message, "endpoint_migrated") {
+		return fmt.Errorf("目标站要求使用已发布 API 端点，请检查 Sub2API 页面配置中的 API 端点")
+	}
+	return err
 }
 
 func (c *Sub2APIClient) login(ctx context.Context, api *httpClient, credential Credential) (*sub2APILoginResponse, error) {

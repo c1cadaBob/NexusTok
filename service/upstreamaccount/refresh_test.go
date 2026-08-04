@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/c1cada/NexusTok/common"
@@ -55,7 +56,7 @@ func TestRefreshChannelBalanceUsesStoredCredential(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path != "/api/v1/auth/login" {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/") && r.URL.Path != "/api/v1/auth/login" {
 			require.Equal(t, "Bearer sub2-token", r.Header.Get("Authorization"))
 		}
 		switch r.URL.Path {
@@ -194,6 +195,63 @@ func TestRefreshChannelFromCredentialConsumesPreviewSnapshot(t *testing.T) {
 
 	_, err = GetPreviewRecord(preview.PreviewID)
 	require.Error(t, err)
+}
+
+func TestRefreshChannelFromSnapshotUpdatesChannelBaseURLWhenSyncSourceMigrates(t *testing.T) {
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ChannelAccount{}))
+	model.DB = db
+	model.LOG_DB = db
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+
+	panelBaseURL := "https://aiapipay.com"
+	apiBaseURL := "https://api.aiapipay.com"
+	channel := model.Channel{
+		Type:          constant.ChannelTypeSub2API,
+		Key:           constant.ChannelCredentialModeAccountPool,
+		Name:          "migrated-sub2-channel",
+		Status:        common.ChannelStatusEnabled,
+		BaseURL:       &panelBaseURL,
+		OtherSettings: mergeChannelSyncMetadata("", &Snapshot{Platform: PlatformSub2API, BaseURL: panelBaseURL}),
+		ChannelInfo: model.ChannelInfo{
+			CredentialMode:     constant.ChannelCredentialModeAccountPool,
+			AccountPoolEnabled: true,
+			AccountPoolMode:    constant.ChannelAccountPoolModePolling,
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	_, err = RefreshChannelFromSnapshot(channel.Id, &Snapshot{
+		Platform: PlatformSub2API,
+		BaseURL:  apiBaseURL,
+		Balance:  &BalanceSnapshot{BalanceUSD: floatPtr(2.5)},
+		Keys: []SyncedKey{{
+			ExternalID: "key-1",
+			Name:       "api-key",
+			Key:        "sk-sub2-full-key",
+			Status:     common.ChannelStatusEnabled,
+			Models:     []string{"gpt-4o"},
+			GroupName:  "default",
+		}},
+	}, RefreshRequest{ChannelID: channel.Id})
+	require.NoError(t, err)
+
+	var refreshed model.Channel
+	require.NoError(t, db.First(&refreshed, channel.Id).Error)
+	require.NotNil(t, refreshed.BaseURL)
+	require.Equal(t, apiBaseURL, *refreshed.BaseURL)
+	metadata := readChannelSyncMetadata(refreshed.OtherSettings)
+	require.Equal(t, apiBaseURL, metadata.BaseURL)
 }
 
 func TestRefreshChannelFromSnapshotUpsertsAccountsAndDisablesMissing(t *testing.T) {

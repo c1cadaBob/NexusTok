@@ -31,12 +31,67 @@ func NormalizeAuthMode(mode string) string {
 	}
 }
 
+// HydrateCredentialFromSession 将已加密保存的登录态回填成同步客户端可直接使用的凭据。
+//
+// StoredCredential 为了安全不会在顶层保存 Access Token / Refresh Token，真正的明文
+// 只存在加密 Session 中。刷新渠道时如果不在后端内存里做这一步，access_token 模式会
+// 因顶层 AccessToken 为空而被误判为“未填写 token”。该函数只操作临时 Credential，
+// 不会把 AT/RT/Cookie 写回 API 响应。
+func HydrateCredentialFromSession(credential Credential) Credential {
+	if credential.Session == nil {
+		return credential
+	}
+	session := normalizeAuthenticatedSession(
+		firstNonEmpty(credential.Platform, credential.Session.Platform),
+		firstNonEmpty(credential.BaseURL, credential.Session.BaseURL),
+		credential.Session,
+	)
+	if session == nil {
+		return credential
+	}
+	credential.Session = session
+	if strings.TrimSpace(credential.Platform) == "" {
+		credential.Platform = session.Platform
+	}
+	if strings.TrimSpace(credential.BaseURL) == "" {
+		credential.BaseURL = session.BaseURL
+	}
+	if strings.TrimSpace(credential.AuthMode) == "" {
+		credential.AuthMode = session.AuthMode
+	}
+	switch NormalizePlatform(session.Platform) {
+	case PlatformNewAPI:
+		if session.NewAPI != nil {
+			if strings.TrimSpace(credential.UserID) == "" {
+				credential.UserID = strings.TrimSpace(session.NewAPI.UserID)
+			}
+			if strings.TrimSpace(credential.AccessToken) == "" {
+				credential.AccessToken = strings.TrimSpace(session.NewAPI.AccessToken)
+			}
+		}
+	case PlatformSub2API:
+		if session.Sub2API != nil {
+			if strings.TrimSpace(credential.AccessToken) == "" {
+				credential.AccessToken = strings.TrimSpace(session.Sub2API.AccessToken)
+			}
+			if strings.TrimSpace(credential.RefreshToken) == "" {
+				credential.RefreshToken = strings.TrimSpace(session.Sub2API.RefreshToken)
+			}
+			if credential.ExpiresAt <= 0 {
+				credential.ExpiresAt = normalizeUnixSeconds(session.Sub2API.ExpiresAt)
+			}
+		}
+	}
+	return credential
+}
+
 // PrepareImportedCredential 将 Cookie/Access Token 导入请求转换成内部可复用登录态。
 //
 // 第一版只导入目标 new-api/sub2api 站点已经签发的登录态，不模拟 GitHub、LinuxDO/L 站
 // 等第三方 OAuth 登录流程。这样可以避开验证码、人机验证、回调域名差异和站点魔改，
 // 同时仍能让管理员把第三方注册的上游账号同步进 NexusTok。
 func PrepareImportedCredential(credential Credential) (Credential, error) {
+	credential = HydrateCredentialFromSession(credential)
 	credential.Platform = NormalizePlatform(credential.Platform)
 	credential.AuthMode = NormalizeAuthMode(credential.AuthMode)
 	if credential.AuthMode == "" {

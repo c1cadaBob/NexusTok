@@ -424,6 +424,7 @@ export interface UpstreamAccountCaptureStartData {
   expires_at: number
   platform: UpstreamAccountPlatform
   base_url: string
+  api_base_url?: string
   origin: string
   userscript_url: string
   login_url: string
@@ -433,6 +434,7 @@ export interface UpstreamAccountCaptureCredentialSummary {
   platform: UpstreamAccountPlatform
   auth_mode: UpstreamAccountAuthMode
   base_url: string
+  api_base_url?: string
   origin: string
   user_id?: string
   username?: string
@@ -467,6 +469,7 @@ export interface UpstreamAccountCaptureStatusData {
   expires_at: number
   platform: UpstreamAccountPlatform
   base_url: string
+  api_base_url?: string
   origin: string
   userscript_url?: string
   login_url?: string

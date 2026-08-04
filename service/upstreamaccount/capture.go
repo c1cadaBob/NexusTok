@@ -49,6 +49,7 @@ type CaptureSessionStartResult struct {
 	ExpiresAt     int64  `json:"expires_at"`
 	Platform      string `json:"platform"`
 	BaseURL       string `json:"base_url"`
+	APIBaseURL    string `json:"api_base_url,omitempty"`
 	Origin        string `json:"origin"`
 	UserscriptURL string `json:"userscript_url"`
 	LoginURL      string `json:"login_url"`
@@ -67,6 +68,7 @@ type CaptureSessionRecord struct {
 	ChannelID    int                       `json:"channel_id,omitempty"`
 	Platform     string                    `json:"platform"`
 	BaseURL      string                    `json:"base_url"`
+	APIBaseURL   string                    `json:"api_base_url,omitempty"`
 	Origin       string                    `json:"origin"`
 	Status       string                    `json:"status"`
 	Error        string                    `json:"error,omitempty"`
@@ -82,6 +84,7 @@ type CaptureCredentialSummary struct {
 	Platform            string `json:"platform"`
 	AuthMode            string `json:"auth_mode"`
 	BaseURL             string `json:"base_url"`
+	APIBaseURL          string `json:"api_base_url,omitempty"`
 	Origin              string `json:"origin"`
 	UserID              string `json:"user_id,omitempty"`
 	Username            string `json:"username,omitempty"`
@@ -122,6 +125,7 @@ type CaptureSessionStatusResult struct {
 	ExpiresAt     int64                     `json:"expires_at"`
 	Platform      string                    `json:"platform"`
 	BaseURL       string                    `json:"base_url"`
+	APIBaseURL    string                    `json:"api_base_url,omitempty"`
 	Origin        string                    `json:"origin"`
 	UserscriptURL string                    `json:"userscript_url,omitempty"`
 	LoginURL      string                    `json:"login_url,omitempty"`
@@ -135,6 +139,7 @@ type CaptureSessionCompleteRequest struct {
 	CaptureSource string              `json:"capture_source,omitempty"`
 	Platform      string              `json:"platform,omitempty"`
 	BaseURL       string              `json:"base_url,omitempty"`
+	APIBaseURL    string              `json:"api_base_url,omitempty"`
 	Origin        string              `json:"origin,omitempty"`
 	AuthMode      string              `json:"auth_mode,omitempty"`
 	UserID        string              `json:"user_id,omitempty"`
@@ -289,6 +294,9 @@ func CompleteCaptureSession(captureID string, req CaptureSessionCompleteRequest)
 	record.Error = ""
 	record.Credential = credential
 	record.Summary = summary
+	if summary != nil {
+		record.APIBaseURL = strings.TrimSpace(summary.APIBaseURL)
+	}
 	record.Diagnostics = sanitizeCaptureDiagnostics(req.Diagnostics)
 	record.UpdatedAt = common.GetTimestamp()
 	if err := captureSessionCache.SetWithTTL(record.ID, record, time.Until(time.Unix(record.ExpiresAt, 0))); err != nil {
@@ -1109,6 +1117,7 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
 
   async function captureSub2API() {
     const params = parseHashParams();
+    const apiBaseURL = appConfigAPIBaseURL();
     let state = readSub2APILoginState();
     let diagnostics = state.diagnostics || collectSub2APIDiagnostics('');
     let authUser = state.authUser || {};
@@ -1166,6 +1175,7 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
       auth_mode: 'access_token',
       access_token: accessToken,
       refresh_token: state.refreshToken,
+      api_base_url: apiBaseURL,
       expires_in: state.expiresIn || (Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn : 0),
       expires_at: normalizeExpiresAt(state.expiresAt),
       auth_user: authUser,
@@ -1209,12 +1219,14 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
     try {
       setStatus('Capturing upstream login...', 'info');
       const captured = config.platform === 'new-api' ? await captureNewAPI() : await captureSub2API();
+      const resolvedBaseURL = captured.api_base_url || captured.base_url || config.baseURL;
       const payload = {
         ...captured,
         capture_secret: config.captureSecret,
         capture_source: captured.capture_source || 'userscript',
         origin: pageWindow.location.origin,
-        base_url: config.baseURL,
+        base_url: resolvedBaseURL,
+        api_base_url: captured.api_base_url || '',
         captured_at: Math.floor(Date.now() / 1000),
         user_agent: navigator.userAgent,
       };
@@ -1222,11 +1234,13 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
       setStatus('Captured. Return to NexusTok and click Sync Keys to validate, preview, and save.', 'success');
     } catch (error) {
       const message = error && error.message ? error.message : String(error);
+      const apiBaseURL = config.platform === 'sub2api' ? appConfigAPIBaseURL() : '';
       const payload = {
         capture_secret: config.captureSecret,
         capture_source: 'userscript',
         origin: pageWindow.location.origin,
-        base_url: config.baseURL,
+        base_url: apiBaseURL || config.baseURL,
+        api_base_url: apiBaseURL,
         platform: config.platform,
         captured_at: Math.floor(Date.now() / 1000),
         error: message,
@@ -1302,13 +1316,22 @@ func sanitizeCaptureRecord(record CaptureSessionRecord, nexusBaseURL string) *Ca
 		message = record.Error
 	}
 	userscriptURL, loginURL := captureSessionLinks(record, nexusBaseURL)
+	baseURL := record.BaseURL
+	apiBaseURL := strings.TrimSpace(record.APIBaseURL)
+	if apiBaseURL == "" && record.Summary != nil {
+		apiBaseURL = strings.TrimSpace(record.Summary.APIBaseURL)
+	}
+	if apiBaseURL != "" {
+		baseURL = apiBaseURL
+	}
 	return &CaptureSessionStatusResult{
 		CaptureID:     record.ID,
 		Status:        record.Status,
 		Message:       message,
 		ExpiresAt:     record.ExpiresAt,
 		Platform:      record.Platform,
-		BaseURL:       record.BaseURL,
+		BaseURL:       baseURL,
+		APIBaseURL:    apiBaseURL,
 		Origin:        record.Origin,
 		UserscriptURL: userscriptURL,
 		LoginURL:      loginURL,
@@ -1426,6 +1449,10 @@ func buildCredentialFromCapture(record CaptureSessionRecord, req CaptureSessionC
 			CaptureSource:     firstNonEmpty(req.CaptureSource, "userscript"),
 		}, nil
 	case PlatformSub2API:
+		apiBaseURL, err := resolveCaptureAPIBaseURL(record, req)
+		if err != nil {
+			return Credential{}, nil, err
+		}
 		accessToken := normalizeImportedBearerToken(firstNonEmpty(
 			req.AccessToken,
 			req.LocalStorage["auth_token"],
@@ -1450,7 +1477,7 @@ func buildCredentialFromCapture(record CaptureSessionRecord, req CaptureSessionC
 		}
 		credential := Credential{
 			Platform:     PlatformSub2API,
-			BaseURL:      record.BaseURL,
+			BaseURL:      apiBaseURL,
 			Username:     strings.TrimSpace(firstNonEmpty(req.Username, valueFromAny(req.AuthUser, "username"))),
 			Email:        strings.TrimSpace(firstNonEmpty(req.Email, valueFromAny(req.AuthUser, "email"))),
 			AuthMode:     AuthModeAccessToken,
@@ -1465,7 +1492,8 @@ func buildCredentialFromCapture(record CaptureSessionRecord, req CaptureSessionC
 		return prepared, &CaptureCredentialSummary{
 			Platform:            PlatformSub2API,
 			AuthMode:            AuthModeAccessToken,
-			BaseURL:             record.BaseURL,
+			BaseURL:             apiBaseURL,
+			APIBaseURL:          apiBaseURL,
 			Origin:              record.Origin,
 			Username:            credential.Username,
 			Email:               credential.Email,
@@ -1497,6 +1525,7 @@ func parseCredentialRawPayload(platform string, baseURL string, raw string) (Cap
 		if err := common.UnmarshalJsonStr(trimmed, &payload); err == nil {
 			payload.Platform = firstNonEmpty(payload.Platform, platform)
 			payload.BaseURL = firstNonEmpty(payload.BaseURL, baseURL)
+			payload.APIBaseURL = strings.TrimSpace(payload.APIBaseURL)
 			payload.Origin = firstNonEmpty(payload.Origin, mustOriginFromURL(baseURL))
 			payload.CaptureSource = firstNonEmpty(payload.CaptureSource, "manual")
 			if payload.AccessToken != "" || payload.UserID != "" || payload.Hash != "" || len(payload.LocalStorage) > 0 {

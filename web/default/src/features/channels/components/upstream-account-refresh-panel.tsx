@@ -1019,7 +1019,15 @@ export function UpstreamAccountRefreshPanel({
 
   const usingSavedCredential =
     savedUpstreamCredentialAvailable && upstreamUseSavedCredential
-  const effectiveAuthMode = usingSavedCredential ? 'password' : upstreamAuthMode
+  const effectiveAuthMode = usingSavedCredential && upstreamPlatform === 'sub2api'
+    ? 'access_token'
+    : usingSavedCredential
+      ? 'password'
+      : upstreamAuthMode
+  const savedCredentialDescription =
+    upstreamPlatform === 'sub2api'
+      ? t('Saved Sub2API Access Token will be reused')
+      : t('Saved upstream login will be reused')
   const loginURL = upstreamBaseUrl.trim()
   const canOpenLoginURL =
     /^https?:\/\//i.test(loginURL) && !previewMutation.isPending
@@ -1035,9 +1043,7 @@ export function UpstreamAccountRefreshPanel({
               </div>
               <div className='text-muted-foreground text-xs'>
                 {savedUpstreamCredentialAvailable
-                  ? t(
-                      'Reuse the encrypted upstream account credential saved after the last successful sync.'
-                    )
+                  ? savedCredentialDescription
                   : t(
                       'No saved upstream login is available yet. Complete a sync once to enable it.'
                     )}
@@ -1147,7 +1153,7 @@ export function UpstreamAccountRefreshPanel({
                 autoComplete='current-password'
                 placeholder={
                   usingSavedCredential
-                    ? t('Saved upstream login will be reused')
+                    ? savedCredentialDescription
                     : t('Password')
                 }
                 disabled={!canSensitiveWrite || usingSavedCredential}
@@ -1210,7 +1216,11 @@ export function UpstreamAccountRefreshPanel({
                 id='upstream-refresh-access-token'
                 value={upstreamAccessToken}
                 onChange={(event) => setUpstreamAccessToken(event.target.value)}
-                placeholder={t('Paste upstream access token')}
+                placeholder={
+                  usingSavedCredential
+                    ? savedCredentialDescription
+                    : t('Paste upstream access token')
+                }
                 disabled={!canSensitiveWrite || usingSavedCredential}
                 className='min-h-20 font-mono text-xs'
               />
@@ -1223,7 +1233,11 @@ export function UpstreamAccountRefreshPanel({
                 id='upstream-refresh-refresh-token'
                 value={upstreamRefreshToken}
                 onChange={(event) => setUpstreamRefreshToken(event.target.value)}
-                placeholder={t('Optional')}
+                placeholder={
+                  usingSavedCredential
+                    ? t('Saved upstream login will be reused')
+                    : t('Optional')
+                }
                 disabled={!canSensitiveWrite || usingSavedCredential}
               />
             </div>

@@ -505,7 +505,7 @@ func TestCompletePreview2FARejectsEmptyCodeWithoutConsumingChallenge(t *testing.
 func TestSub2APIPreviewFetchesKeysRatesAndBalance(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path != "/api/v1/auth/login" {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/") && r.URL.Path != "/api/v1/auth/login" {
 			require.Equal(t, "Bearer sub2-token", r.Header.Get("Authorization"))
 		}
 		switch r.URL.Path {
@@ -553,7 +553,7 @@ func TestSub2APIPreviewFetchesKeysRatesAndBalance(t *testing.T) {
 func TestSub2APIPreviewImportsAccessToken(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path != "/api/v1/auth/login" {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/") && r.URL.Path != "/api/v1/auth/login" {
 			require.Equal(t, "Bearer imported-sub2-token", r.Header.Get("Authorization"))
 		}
 		switch r.URL.Path {
@@ -605,10 +605,104 @@ func TestSub2APIPreviewImportsAccessToken(t *testing.T) {
 	require.Equal(t, "imported-refresh-token", authSession.Sub2API.RefreshToken)
 }
 
+func TestSub2APIPreviewDiscoversAPIBaseURLFromAppConfig(t *testing.T) {
+	apiHits := 0
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasPrefix(r.URL.Path, "/api/v1/") && r.URL.Path != "/api/v1/auth/login" {
+			require.Equal(t, "Bearer imported-sub2-token", r.Header.Get("Authorization"))
+		}
+		apiHits++
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			t.Fatalf("导入 Access Token 时不应调用 sub2api 账号密码登录接口")
+		case "/api/v1/auth/me":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":10}}`))
+		case "/api/v1/user/profile":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":12.5}}`))
+		case "/api/v1/groups/available":
+			_, _ = w.Write([]byte(`{"code":0,"data":[{"id":3,"name":"vip","platform":"openai","rate_multiplier":0.25}]}`))
+		case "/api/v1/groups/rates":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"3":0.25}}`))
+		case "/api/v1/usage/dashboard/stats":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"total_actual_cost":4.75}}`))
+		case "/api/v1/keys":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"items":[{"id":9,"name":"sub-key","key":"sk-sub2-full-key","status":"active","group_id":3,"group":{"id":3,"name":"vip"},"models":["gpt-4o"],"quota":20,"quota_used":3}],"total":1}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer apiServer.Close()
+
+	panelHits := 0
+	panelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		panelHits++
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(`<script>window.__APP_CONFIG__={"api_base_url":"` + apiServer.URL + `"}</script>`))
+	}))
+	defer panelServer.Close()
+
+	result, err := Preview(context.Background(), PreviewRequest{Credential: Credential{
+		Platform:    PlatformSub2API,
+		BaseURL:     panelServer.URL + "/home",
+		AuthMode:    AuthModeAccessToken,
+		AccessToken: "imported-sub2-token",
+		ExpiresAt:   common.GetTimestamp() + 3600,
+	}})
+
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, panelHits, 1)
+	require.Greater(t, apiHits, 0)
+	require.Equal(t, apiServer.URL, result.Snapshot.BaseURL)
+	record, err := GetPreviewRecord(result.PreviewID)
+	require.NoError(t, err)
+	require.Equal(t, apiServer.URL, record.Snapshot.BaseURL)
+	require.NotNil(t, record.Snapshot.StoredCredential)
+	require.Equal(t, apiServer.URL, record.Snapshot.StoredCredential.BaseURL)
+}
+
+func TestReadChannelSyncCredentialHydratesSub2APIAccessTokenFromSession(t *testing.T) {
+	settings := mergeChannelSyncMetadataWithCredential(
+		"",
+		&Snapshot{
+			Platform: PlatformSub2API,
+			BaseURL:  "https://api.sub2api.example",
+			AuthSession: &AuthenticatedSession{
+				Platform: PlatformSub2API,
+				BaseURL:  "https://api.sub2api.example",
+				AuthMode: AuthModeAccessToken,
+				Sub2API: &Sub2APISessionData{
+					AccessToken:  "saved-session-token",
+					RefreshToken: "saved-refresh-token",
+					ExpiresAt:    common.GetTimestamp() + 3600,
+				},
+			},
+		},
+		Credential{
+			Platform: PlatformSub2API,
+			BaseURL:  "https://api.sub2api.example",
+			AuthMode: AuthModeAccessToken,
+		},
+	)
+
+	credential, ok, err := ReadChannelSyncCredential(settings)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, AuthModeAccessToken, credential.AuthMode)
+	require.Equal(t, "saved-session-token", credential.AccessToken)
+	require.Equal(t, "saved-refresh-token", credential.RefreshToken)
+	require.Greater(t, credential.ExpiresAt, common.GetTimestamp())
+
+	prepared, err := PrepareImportedCredential(credential)
+	require.NoError(t, err)
+	require.NotNil(t, prepared.Session)
+	require.Equal(t, "saved-session-token", prepared.Session.Sub2API.AccessToken)
+}
+
 func TestSub2APIPreviewCompletesTwoFAChallenge(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path != "/api/v1/auth/login" && r.URL.Path != "/api/v1/auth/login/2fa" {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/") && r.URL.Path != "/api/v1/auth/login" && r.URL.Path != "/api/v1/auth/login/2fa" {
 			require.Equal(t, "Bearer sub2-2fa-token", r.Header.Get("Authorization"))
 		}
 		switch r.URL.Path {
@@ -736,6 +830,27 @@ func TestSub2APIPreviewRefreshesExpiredImportedToken(t *testing.T) {
 	require.Greater(t, authSession.Sub2API.ExpiresAt, common.GetTimestamp())
 }
 
+func TestSub2APIPreviewExpiredImportedTokenWithoutRefreshTokenNeedsRecapture(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":0,"data":{}}`))
+	}))
+	defer server.Close()
+
+	_, err := Preview(context.Background(), PreviewRequest{Credential: Credential{
+		Platform:    PlatformSub2API,
+		BaseURL:     server.URL,
+		AuthMode:    AuthModeAccessToken,
+		AccessToken: "expired-access",
+		ExpiresAt:   common.GetTimestamp() - 1,
+	}})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Access Token 已过期")
+	require.Contains(t, err.Error(), "重新使用油猴脚本采集")
+	require.NotContains(t, err.Error(), "Access Token 不能为空")
+}
+
 func TestSub2APIPreviewAcceptsLoginPageURL(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -792,7 +907,7 @@ func TestPreviewUsesSavedChannelCredentialWhenChannelIDProvided(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path != "/api/v1/auth/login" {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/") && r.URL.Path != "/api/v1/auth/login" {
 			require.Equal(t, "Bearer sub2-token", r.Header.Get("Authorization"))
 		}
 		switch r.URL.Path {
@@ -877,7 +992,7 @@ func TestPreviewUsesSavedChannelAuthenticatedSessionBeforePassword(t *testing.T)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path != "/api/v1/auth/login" {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/") && r.URL.Path != "/api/v1/auth/login" {
 			require.Equal(t, "Bearer saved-session-token", r.Header.Get("Authorization"))
 		}
 		switch r.URL.Path {

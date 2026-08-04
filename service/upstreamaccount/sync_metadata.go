@@ -272,6 +272,7 @@ func ReadChannelSyncCredential(settings string) (Credential, bool, error) {
 		Password: password,
 		Session:  session,
 	}
+	credential = HydrateCredentialFromSession(credential)
 	if strings.TrimSpace(credential.Username) == "" && strings.TrimSpace(credential.Email) == "" && !hasReusableAuthSession(session) {
 		return Credential{}, false, nil
 	}
@@ -433,7 +434,7 @@ func buildStoredCredential(snapshot *Snapshot, credential Credential) (*StoredCr
 	}
 	return buildStoredCredentialWithBase(
 		firstNonEmpty(credential.Platform, snapshot.Platform),
-		firstNonEmpty(credential.BaseURL, snapshot.BaseURL),
+		firstNonEmpty(snapshot.BaseURL, credential.BaseURL),
 		credential,
 	)
 }
@@ -658,6 +659,11 @@ func syncIdentityKey(platform string, baseURL string, externalID string) string 
 }
 
 func sameSyncSourceBaseURL(platform string, left string, right string) bool {
+	if NormalizePlatform(platform) == PlatformSub2API {
+		if relatedSub2APIBaseURL(left, right) {
+			return true
+		}
+	}
 	return normalizeSyncMetadataBaseURL(platform, left) == normalizeSyncMetadataBaseURL(platform, right)
 }
 

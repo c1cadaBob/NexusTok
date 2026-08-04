@@ -50,6 +50,9 @@ func RefreshChannelBalance(ctx context.Context, channel *model.Channel) (*Channe
 		"used_quota":           usedQuota,
 		"settings":             mergeChannelSyncMetadataWithCredential(channel.OtherSettings, snapshot, credential),
 	}
+	if baseURL, ok := syncedChannelBaseURLUpdate(*channel, snapshot); ok {
+		updates["base_url"] = baseURL
+	}
 	if err := model.DB.Model(channel).Updates(updates).Error; err != nil {
 		return nil, err
 	}
