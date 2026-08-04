@@ -412,9 +412,18 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
     return '';
   }
 
+  function isNumericUserID(value) {
+    return /^\d+$/.test(text(value).trim());
+  }
+
+  function normalizeNewAPIUserID(value) {
+    const trimmed = text(value).trim();
+    return isNumericUserID(trimmed) ? trimmed : '';
+  }
+
   function guessNewAPIUserID() {
     const directUID = text(localStorage.getItem('uid') || sessionStorage.getItem('uid') || '').trim();
-    if (/^\d+$/.test(directUID)) return directUID;
+    if (isNumericUserID(directUID)) return directUID;
     const keys = ['uid', 'user', 'user_info', 'userInfo', 'auth', 'auth_user', 'new-api-user', 'New-Api-User'];
     for (const storage of [window.localStorage, window.sessionStorage]) {
       for (const key of keys) {
@@ -422,18 +431,139 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
         if (!raw) continue;
         const parsed = parseJSON(raw);
         const found = parsed ? findValueDeep(parsed, ['id', 'userid', 'user_id'], 0) : '';
-        if (found) return found;
-        if (/^\d+$/.test(raw.trim())) return raw.trim();
+        const normalizedFound = normalizeNewAPIUserID(found);
+        if (normalizedFound) return normalizedFound;
+        if (isNumericUserID(raw)) return raw.trim();
       }
       for (let i = 0; i < storage.length; i += 1) {
         const key = storage.key(i) || '';
         if (!/user|auth|profile|self/i.test(key)) continue;
         const parsed = parseJSON(storage.getItem(key));
         const found = parsed ? findValueDeep(parsed, ['id', 'userid', 'user_id'], 0) : '';
-        if (found) return found;
+        const normalizedFound = normalizeNewAPIUserID(found);
+        if (normalizedFound) return normalizedFound;
       }
     }
     return '';
+  }
+
+  function promptForNewAPIUserID(reason) {
+    const message = (reason ? reason + '\n\n' : '') +
+      'New-Api-User must be the numeric user ID from the upstream new-api site. ' +
+      'Username/email values such as c1cada or linuxdo-... cannot be used here.';
+    const value = window.prompt(message);
+    const normalized = normalizeNewAPIUserID(value);
+    if (!normalized) {
+      throw new Error('New-Api-User must be a numeric target-site user ID. Username/email cannot be used.');
+    }
+    return normalized;
+  }
+
+  function cleanPathPrefix(pathname) {
+    const commonPageSegments = new Set([
+      'login', 'register', 'dashboard', 'console', 'playground', 'token', 'tokens',
+      'channel', 'channels', 'setting', 'settings', 'models', 'pricing', 'wallet',
+      'topup', 'logs', 'about', 'home', 'panel', 'admin',
+    ]);
+    const parts = text(pathname).split('/').filter(Boolean);
+    while (parts.length > 0 && commonPageSegments.has(parts[parts.length - 1].toLowerCase())) {
+      parts.pop();
+    }
+    if (parts.length === 0) return '';
+    return '/' + parts.join('/');
+  }
+
+  function candidateAPIPrefixes() {
+    const prefixes = new Set(['']);
+    for (const raw of [config.baseURL, window.location.href]) {
+      try {
+        const parsed = new URL(raw, window.location.origin);
+        const prefix = cleanPathPrefix(parsed.pathname);
+        if (prefix && prefix !== '/api') {
+          prefixes.add(prefix.endsWith('/api') ? prefix.slice(0, -4) : prefix);
+          const firstSegment = '/' + prefix.split('/').filter(Boolean)[0];
+          if (firstSegment !== '/') prefixes.add(firstSegment);
+        }
+      } catch (_) {}
+    }
+    return Array.from(prefixes);
+  }
+
+  function joinPath(prefix, path) {
+    if (/^https?:\/\//i.test(path)) return path;
+    const left = text(prefix).replace(/\/+$/, '');
+    const right = text(path).replace(/^\/+/, '');
+    return (left ? left : '') + '/' + right;
+  }
+
+  let discoveredAPIPathsPromise = null;
+
+  async function discoverAPIPaths(kind) {
+    if (!discoveredAPIPathsPromise) {
+      discoveredAPIPathsPromise = (async () => {
+        const sources = new Set();
+        for (const script of Array.from(document.scripts || [])) {
+          if (script.src) sources.add(script.src);
+        }
+        for (const entry of performance.getEntriesByType ? performance.getEntriesByType('resource') : []) {
+          if (entry && entry.name) sources.add(entry.name);
+        }
+        const sameOriginScripts = Array.from(sources)
+          .map((src) => {
+            try { return new URL(src, window.location.href); } catch (_) { return null; }
+          })
+          .filter((src) => src && src.origin === window.location.origin && /\.js(?:$|\?)/i.test(src.href))
+          .slice(0, 12);
+        const discovered = { self: new Set(), token: new Set() };
+        const patterns = [
+          { key: 'self', regex: /["'](\/[^"']*api\/user\/self[^"']*)["']/g },
+          { key: 'token', regex: /["'](\/[^"']*api\/user\/token[^"']*)["']/g },
+        ];
+        for (const scriptURL of sameOriginScripts) {
+          try {
+            const res = await fetch(scriptURL.href, { credentials: 'include', cache: 'force-cache' });
+            if (!res.ok) continue;
+            const body = await res.text();
+            for (const pattern of patterns) {
+              pattern.regex.lastIndex = 0;
+              let match;
+              while ((match = pattern.regex.exec(body)) !== null) {
+                const path = text(match[1]).replace(/\\u0026/g, '&').split('?')[0];
+                if (path.startsWith('/')) discovered[pattern.key].add(path);
+              }
+            }
+          } catch (_) {}
+        }
+        return {
+          self: Array.from(discovered.self),
+          token: Array.from(discovered.token),
+        };
+      })();
+    }
+    const paths = await discoveredAPIPathsPromise;
+    return paths[kind] || [];
+  }
+
+  async function withCandidatePaths(paths, kind) {
+    const discovered = await discoverAPIPaths(kind);
+    const prefixes = candidateAPIPrefixes();
+    const result = new Set();
+    for (const path of [...paths, ...discovered]) {
+      for (const prefix of prefixes) {
+        result.add(joinPath(prefix, path));
+      }
+    }
+    return Array.from(result);
+  }
+
+  function envelopeFailed(data) {
+    return data && typeof data === 'object' &&
+      (data.success === false || (typeof data.code === 'number' && data.code > 0));
+  }
+
+  function responseMessage(data) {
+    if (!data || typeof data !== 'object') return '';
+    return text(data.message || data.error || data.msg || '');
   }
 
   async function readJSON(path, options) {
@@ -446,30 +576,104 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
         ...(options && options.headers ? options.headers : {}),
       },
     });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok || data.success === false || data.code > 0) {
-      throw new Error(data.message || data.error || ('HTTP ' + response.status));
+    const rawBody = await response.text();
+    const data = parseJSON(rawBody) || {};
+    if (!response.ok || envelopeFailed(data)) {
+      const message = responseMessage(data) || ('HTTP ' + response.status);
+      const error = new Error(message);
+      error.status = response.status;
+      error.path = path;
+      throw error;
     }
-    return data.data !== undefined ? data.data : data;
+    return data && typeof data === 'object' && data.data !== undefined ? data.data : data;
+  }
+
+  function summarizeAttempts(attempts) {
+    if (attempts.length === 0) return 'no request was made';
+    return attempts.slice(0, 6).map((item) => item.path + ' -> ' + item.message).join('; ');
+  }
+
+  async function readFirstJSON(paths, options, label, kind) {
+    const candidates = await withCandidatePaths(paths, kind);
+    const attempts = [];
+    for (const path of candidates) {
+      try {
+        return { data: await readJSON(path, options), path };
+      } catch (error) {
+        attempts.push({
+          path,
+          status: error && error.status ? error.status : 0,
+          message: error && error.message ? error.message : String(error),
+        });
+      }
+    }
+    const onlyNotFound = attempts.length > 0 && attempts.every((item) => item.status === 404);
+    const error = new Error(
+      onlyNotFound
+        ? label + ' was not found on this site. The site may use a custom API prefix or may not be a standard new-api deployment. Tried: ' + summarizeAttempts(attempts)
+        : label + ' failed. Tried: ' + summarizeAttempts(attempts)
+    );
+    error.attempts = attempts;
+    throw error;
+  }
+
+  function looksLikeMissingUserID(error) {
+    const message = error && error.message ? error.message : String(error);
+    return /New-Api-User|user id|user_id|用户\s*ID|用户ID|未提供|not provided|mismatch/i.test(message);
+  }
+
+  function newAPIHeaders(userID) {
+    const headers = {};
+    const normalized = normalizeNewAPIUserID(userID);
+    if (normalized) headers['New-Api-User'] = normalized;
+    return headers;
   }
 
   async function captureNewAPI() {
     let userID = guessNewAPIUserID();
-    if (!userID) {
-      userID = window.prompt('New-Api-User / User ID');
+    const selfPaths = ['/api/user/self', '/api/user/me', '/api/user/profile', '/api/user/info'];
+    const tokenPaths = ['/api/user/token', '/api/user/access_token', '/api/user/access-token'];
+    let selfResult;
+    try {
+      selfResult = await readFirstJSON(
+        selfPaths,
+        { headers: newAPIHeaders(userID) },
+        'new-api user profile endpoint',
+        'self'
+      );
+    } catch (error) {
+      if (!userID || looksLikeMissingUserID(error)) {
+        userID = promptForNewAPIUserID(error && error.message ? error.message : '');
+        selfResult = await readFirstJSON(
+          selfPaths,
+          { headers: newAPIHeaders(userID) },
+          'new-api user profile endpoint',
+          'self'
+        );
+      } else {
+        throw error;
+      }
     }
-    userID = text(userID).trim();
-    if (!userID) throw new Error('New-Api-User / User ID is required');
-    const headers = { 'New-Api-User': userID };
-    const self = await readJSON('/api/user/self', { headers });
-    const resolvedUserID = text(self.id || userID).trim();
-    const token = await readJSON('/api/user/token', { headers: { 'New-Api-User': resolvedUserID } });
+    const self = selfResult.data || {};
+    const resolvedUserID = normalizeNewAPIUserID(self.id || self.user_id || userID);
+    if (!resolvedUserID) {
+      userID = promptForNewAPIUserID('The target site did not return a numeric user ID from ' + selfResult.path + '.');
+    }
+    const finalUserID = normalizeNewAPIUserID(resolvedUserID || userID);
+    if (!finalUserID) throw new Error('New-Api-User must be a numeric target-site user ID.');
+    const tokenResult = await readFirstJSON(
+      tokenPaths,
+      { headers: newAPIHeaders(finalUserID) },
+      'new-api access token endpoint',
+      'token'
+    );
+    const token = tokenResult.data;
     const accessToken = typeof token === 'string' ? token : text(token.access_token || token.token || '');
     if (!accessToken) throw new Error('new-api /api/user/token did not return access_token');
     return {
       platform: 'new-api',
       auth_mode: 'access_token',
-      user_id: resolvedUserID,
+      user_id: finalUserID,
       username: text(self.username || ''),
       email: text(self.email || ''),
       access_token: accessToken,

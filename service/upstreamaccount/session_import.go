@@ -71,6 +71,13 @@ func prepareSessionCookieCredential(credential Credential) (Credential, error) {
 	if len(cookies) == 0 {
 		return credential, fmt.Errorf("目标站 Session/Cookie 不能为空")
 	}
+	userID := strings.TrimSpace(credential.UserID)
+	if userID == "" && isNumericNewAPIUserID(credential.Username) {
+		userID = strings.TrimSpace(credential.Username)
+	}
+	if userID != "" && !isNumericNewAPIUserID(userID) {
+		return credential, fmt.Errorf("new-api New-Api-User 必须是目标站数字用户 ID，不能使用用户名或邮箱")
+	}
 	now := common.GetTimestamp()
 	credential.Password = ""
 	credential.Session = &AuthenticatedSession{
@@ -80,7 +87,7 @@ func prepareSessionCookieCredential(credential Credential) (Credential, error) {
 		ImportedAt: now,
 		UpdatedAt:  now,
 		NewAPI: &NewAPISessionData{
-			UserID:  strings.TrimSpace(firstNonEmpty(credential.UserID, credential.Username)),
+			UserID:  userID,
 			Cookies: cookies,
 		},
 	}
@@ -102,6 +109,9 @@ func prepareAccessTokenCredential(credential Credential) (Credential, error) {
 		userID := strings.TrimSpace(firstNonEmpty(credential.UserID, credential.Username))
 		if userID == "" {
 			return credential, fmt.Errorf("new-api Access Token 导入必须同时提供 New-Api-User / User ID")
+		}
+		if !isNumericNewAPIUserID(userID) {
+			return credential, fmt.Errorf("new-api New-Api-User 必须是目标站数字用户 ID，不能使用用户名或邮箱")
 		}
 		credential.Session = &AuthenticatedSession{
 			Platform:   PlatformNewAPI,
@@ -131,6 +141,25 @@ func prepareAccessTokenCredential(credential Credential) (Credential, error) {
 		return credential, fmt.Errorf("Access Token 导入目前支持 new-api 和 sub2api 平台")
 	}
 	return credential, nil
+}
+
+// isNumericNewAPIUserID 判断 new-api 管理接口要求的 New-Api-User 是否为数字 ID。
+//
+// new-api 的 UserAuth 中间件会把 `New-Api-User` 解析为整数，并要求它与当前登录
+// session / access token 对应的用户 ID 一致。LinuxDO、GitHub 等第三方登录只影响
+// 目标站如何完成登录，不会改变该 header 的语义；因此这里明确拒绝用户名、邮箱和
+// linuxdo-connect.invalid 这类第三方登录标识，避免管理员把可读账号名误填成用户 ID。
+func isNumericNewAPIUserID(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return false
+	}
+	for _, r := range trimmed {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func normalizeImportedBearerToken(raw string) string {

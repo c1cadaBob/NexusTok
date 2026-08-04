@@ -87,6 +87,10 @@ func TestCaptureSessionCompletesNewAPIAccessTokenPayloadAndRendersScript(t *test
 	require.Contains(t, script, "@match        https://new.example.com/*")
 	require.Contains(t, script, "/capture-session/"+start.CaptureID+"/complete")
 	require.Contains(t, script, "Send login to NexusTok")
+	require.Contains(t, script, "Username/email values such as c1cada or linuxdo-...")
+	require.Contains(t, script, "candidateAPIPrefixes")
+	require.Contains(t, script, "readFirstJSON")
+	require.Contains(t, script, "normalizeNewAPIUserID")
 
 	record, found, err := captureSessionCache.Get(start.CaptureID)
 	require.NoError(t, err)
@@ -146,4 +150,24 @@ func TestParseCredentialDraftReturnsSanitizedSummary(t *testing.T) {
 	require.Equal(t, "sub2-a...oken", result.Summary.AccessTokenMasked)
 	require.True(t, result.Summary.RefreshTokenPresent)
 	require.Empty(t, result.Summary.UserID)
+}
+
+func TestNewAPICaptureRejectsUsernameAsUserID(t *testing.T) {
+	start, err := StartCaptureSession(12, CaptureSessionStartRequest{
+		Platform: PlatformNewAPI,
+		BaseURL:  "https://new.example.com",
+	}, "https://nexus.example.com")
+	require.NoError(t, err)
+	record, found, err := captureSessionCache.Get(start.CaptureID)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	_, err = CompleteCaptureSession(start.CaptureID, CaptureSessionCompleteRequest{
+		CaptureSecret: record.Secret,
+		Origin:        "https://new.example.com",
+		UserID:        "linuxdo-323305@linuxdo-connect.invalid",
+		AccessToken:   "new-api-access-token",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "数字用户 ID")
 }
