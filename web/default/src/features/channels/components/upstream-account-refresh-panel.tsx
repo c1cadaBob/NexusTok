@@ -40,7 +40,6 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import { Textarea } from '@/components/ui/textarea'
 import { MultiSelect } from '@/components/multi-select'
 import {
   completeUpstreamAccountPreview2FA,
@@ -62,6 +61,8 @@ import {
   buildUpstreamAccountPreviewRequest,
   buildUpstreamAccountRefreshPayload,
   buildUpstreamRatioConversionPayload,
+  DEFAULT_UPSTREAM_PAID_AMOUNT,
+  DEFAULT_UPSTREAM_PLATFORM_CREDIT,
   formatUpstreamModelRatioDetails,
   formatUpstreamPreviewRemaining,
   formatUpstreamRatioCompact,
@@ -89,7 +90,10 @@ import type {
   UpstreamAccountSnapshot,
   UpstreamAccountTwoFactorChallenge,
 } from '../types'
-import { UpstreamAccountCapturePanel } from './upstream-account-capture-panel'
+import {
+  UpstreamAccountCapturePanel,
+  type UpstreamAccountCapturePanelHandle,
+} from './upstream-account-capture-panel'
 
 type UpstreamAccountRefreshPanelProps = {
   open: boolean
@@ -133,7 +137,7 @@ export function UpstreamAccountRefreshPanel({
   const [upstreamUsername, setUpstreamUsername] = useState('')
   const [upstreamPassword, setUpstreamPassword] = useState('')
   const [upstreamAuthMode, setUpstreamAuthMode] =
-    useState<UpstreamAccountAuthMode>('password')
+    useState<UpstreamAccountAuthMode>('oauth_browser')
   const [upstreamSessionCookie, setUpstreamSessionCookie] = useState('')
   const [upstreamUserId, setUpstreamUserId] = useState('')
   const [upstreamAccessToken, setUpstreamAccessToken] = useState('')
@@ -142,9 +146,11 @@ export function UpstreamAccountRefreshPanel({
   const [upstreamCaptureId, setUpstreamCaptureId] = useState('')
   const [upstreamUseSavedCredential, setUpstreamUseSavedCredential] =
     useState(false)
-  const [upstreamPaidCny, setUpstreamPaidCny] = useState('')
+  const [upstreamPaidCny, setUpstreamPaidCny] = useState(
+    DEFAULT_UPSTREAM_PAID_AMOUNT
+  )
   const [upstreamPlatformUsdCredit, setUpstreamPlatformUsdCredit] =
-    useState('')
+    useState(DEFAULT_UPSTREAM_PLATFORM_CREDIT)
   const [upstreamRefreshPreviewId, setUpstreamRefreshPreviewId] = useState('')
   const [upstreamRefreshPreviewExpiresAt, setUpstreamRefreshPreviewExpiresAt] =
     useState(0)
@@ -164,6 +170,8 @@ export function UpstreamAccountRefreshPanel({
     Record<string, UpstreamAccountConfigDraft>
   >({})
   const autoPreviewTriggeredRef = useRef(false)
+  const capturePanelRef = useRef<UpstreamAccountCapturePanelHandle>(null)
+  const ratioConfigLoadedRef = useRef(false)
 
   const allModelsQuery = useQuery({
     queryKey: ['channel_models'],
@@ -235,7 +243,7 @@ export function UpstreamAccountRefreshPanel({
     )
     setUpstreamUsername('')
     setUpstreamPassword('')
-    setUpstreamAuthMode('password')
+    setUpstreamAuthMode('oauth_browser')
     setUpstreamSessionCookie('')
     setUpstreamUserId('')
     setUpstreamAccessToken('')
@@ -243,8 +251,8 @@ export function UpstreamAccountRefreshPanel({
     setUpstreamTokenExpiresAt('')
     setUpstreamCaptureId('')
     setUpstreamUseSavedCredential(savedUpstreamCredentialAvailable)
-    setUpstreamPaidCny('')
-    setUpstreamPlatformUsdCredit('')
+    setUpstreamPaidCny(DEFAULT_UPSTREAM_PAID_AMOUNT)
+    setUpstreamPlatformUsdCredit(DEFAULT_UPSTREAM_PLATFORM_CREDIT)
     setUpstreamRefreshPreviewId('')
     setUpstreamRefreshPreviewExpiresAt(0)
     setUpstreamRefreshSnapshot(null)
@@ -253,6 +261,7 @@ export function UpstreamAccountRefreshPanel({
     setUpstreamApplySuggested(true)
     setUpstreamAccountConfigs({})
     autoPreviewTriggeredRef.current = false
+    ratioConfigLoadedRef.current = false
   }, [
     channelBaseUrl,
     channelSettings,
@@ -549,10 +558,13 @@ export function UpstreamAccountRefreshPanel({
   }, [channelId, onBusyChange, open, resetRefreshState])
 
   useEffect(() => {
-    if (upstreamPlatform === 'sub2api' && upstreamAuthMode === 'session_cookie') {
-      setUpstreamAuthMode('password')
+    if (
+      upstreamAuthMode !== 'password' &&
+      upstreamAuthMode !== 'oauth_browser'
+    ) {
+      setUpstreamAuthMode('oauth_browser')
     }
-  }, [upstreamAuthMode, upstreamPlatform])
+  }, [upstreamAuthMode])
 
   useEffect(() => {
     if (!open || !canReadChannelAccount) {
@@ -579,12 +591,10 @@ export function UpstreamAccountRefreshPanel({
   ])
 
   useEffect(() => {
-    if (!open || upstreamRefreshSnapshot) {
-      return
-    }
     if (
-      upstreamPaidCny.trim() ||
-      upstreamPlatformUsdCredit.trim() ||
+      !open ||
+      upstreamRefreshSnapshot ||
+      ratioConfigLoadedRef.current ||
       refreshAccounts.length === 0
     ) {
       return
@@ -596,19 +606,18 @@ export function UpstreamAccountRefreshPanel({
     setUpstreamPaidCny(
       ratioConfig.paid_cny && Number.isFinite(ratioConfig.paid_cny)
         ? String(ratioConfig.paid_cny)
-        : ''
+        : DEFAULT_UPSTREAM_PAID_AMOUNT
     )
     setUpstreamPlatformUsdCredit(
       ratioConfig.platform_usd_credit &&
         Number.isFinite(ratioConfig.platform_usd_credit)
         ? String(ratioConfig.platform_usd_credit)
-        : ''
+        : DEFAULT_UPSTREAM_PLATFORM_CREDIT
     )
+    ratioConfigLoadedRef.current = true
   }, [
     open,
     refreshAccounts,
-    upstreamPaidCny,
-    upstreamPlatformUsdCredit,
     upstreamRefreshSnapshot,
   ])
 
@@ -1027,48 +1036,40 @@ export function UpstreamAccountRefreshPanel({
 
   const usingSavedCredential =
     savedUpstreamCredentialAvailable && upstreamUseSavedCredential
-  const effectiveAuthMode = usingSavedCredential && upstreamPlatform === 'sub2api'
-    ? 'access_token'
-    : usingSavedCredential
-      ? 'password'
-      : upstreamAuthMode
-  const savedCredentialDescription =
-    upstreamPlatform === 'sub2api'
-      ? t('Saved Sub2API Access Token will be reused')
-      : t('Saved upstream login will be reused')
+  const effectiveAuthMode = usingSavedCredential ? 'password' : upstreamAuthMode
+  const savedCredentialDescription = t('Saved upstream login will be reused')
   const loginURL = upstreamBaseUrl.trim()
   const canOpenLoginURL =
     /^https?:\/\//i.test(loginURL) && !previewMutation.isPending
 
   return (
     <div className='flex flex-col gap-4'>
-      <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-6'>
-        <div className='flex items-end'>
-          <div className='flex items-center gap-3 rounded-lg border px-3 py-3'>
-            <div className='min-w-0 flex-1'>
-              <div className='text-sm font-medium'>
-                {t('Use saved upstream login')}
-              </div>
-              <div className='text-muted-foreground text-xs'>
-                {savedUpstreamCredentialAvailable
-                  ? savedCredentialDescription
-                  : t(
-                      'No saved upstream login is available yet. Complete a sync once to enable it.'
-                    )}
-              </div>
-            </div>
-            <Switch
-              checked={upstreamUseSavedCredential}
-              disabled={
-                !savedUpstreamCredentialAvailable ||
-                previewMutation.isPending ||
-                refreshMutation.isPending
-              }
-              onCheckedChange={setUpstreamUseSavedCredential}
-            />
+      <div className='flex items-center gap-3 rounded-lg border px-3 py-3'>
+        <div className='min-w-0 flex-1'>
+          <div className='text-sm font-medium'>
+            {t('Use saved upstream login')}
+          </div>
+          <div className='text-muted-foreground text-xs'>
+            {savedUpstreamCredentialAvailable
+              ? savedCredentialDescription
+              : t(
+                  'No saved upstream login is available yet. Complete a sync once to enable it.'
+                )}
           </div>
         </div>
-        <div className='flex flex-col gap-2'>
+        <Switch
+          checked={upstreamUseSavedCredential}
+          disabled={
+            !savedUpstreamCredentialAvailable ||
+            previewMutation.isPending ||
+            refreshMutation.isPending
+          }
+          onCheckedChange={setUpstreamUseSavedCredential}
+        />
+      </div>
+
+      <div className='grid gap-3 lg:grid-cols-[1.5fr_7fr_1.5fr]'>
+        <div className='flex min-w-0 flex-col gap-2'>
           <Label htmlFor='upstream-refresh-auth-mode'>
             {t('Authentication method')}
           </Label>
@@ -1078,38 +1079,27 @@ export function UpstreamAccountRefreshPanel({
             onValueChange={(value) =>
               setUpstreamAuthMode(value as UpstreamAccountAuthMode)
             }
-          >
-            <SelectTrigger id='upstream-refresh-auth-mode'>
-              <SelectValue />
-            </SelectTrigger>
+            >
+              <SelectTrigger id='upstream-refresh-auth-mode'>
+                <SelectValue>
+                  {upstreamAuthMode === 'password'
+                    ? t('Account password')
+                    : t('Automatic configuration')}
+                </SelectValue>
+              </SelectTrigger>
             <SelectContent>
               <SelectGroup>
                 <SelectItem value='password'>
                   {t('Account password')}
                 </SelectItem>
-                {upstreamPlatform === 'new-api' ? (
-                  <SelectItem value='session_cookie'>
-                    {t('Session/Cookie')}
-                  </SelectItem>
-                ) : null}
-                {upstreamPlatform === 'sub2api' ? (
-                  <SelectItem value='access_token'>
-                    {t('Access Token')}
-                  </SelectItem>
-                ) : null}
-                {upstreamPlatform === 'new-api' ? (
-                  <SelectItem value='access_token'>
-                    {t('Access Token')}
-                  </SelectItem>
-                ) : null}
                 <SelectItem value='oauth_browser'>
-                  {t('Userscript capture')}
+                  {t('Automatic configuration')}
                 </SelectItem>
               </SelectGroup>
             </SelectContent>
           </Select>
         </div>
-        <div className='flex flex-col gap-2'>
+        <div className='flex min-w-0 flex-col gap-2'>
           <Label htmlFor='upstream-refresh-base-url'>
             {t('Upstream Platform URL')}
           </Label>
@@ -1136,160 +1126,87 @@ export function UpstreamAccountRefreshPanel({
             </Button>
           </div>
         </div>
-        {effectiveAuthMode === 'password' ? (
-          <>
-            <div className='flex flex-col gap-2'>
-              <Label htmlFor='upstream-refresh-account'>{t('Account')}</Label>
-              <Input
-                id='upstream-refresh-account'
-                value={upstreamUsername}
-                onChange={(event) => setUpstreamUsername(event.target.value)}
-                autoComplete='username'
-                placeholder={
-                  upstreamPlatform === 'new-api' ? t('Username') : t('Email')
-                }
-                disabled={!canSensitiveWrite || usingSavedCredential}
-              />
-            </div>
-            <div className='flex flex-col gap-2'>
-              <Label htmlFor='upstream-refresh-password'>{t('Password')}</Label>
-              <Input
-                id='upstream-refresh-password'
-                value={upstreamPassword}
-                onChange={(event) => setUpstreamPassword(event.target.value)}
-                type='password'
-                autoComplete='current-password'
-                placeholder={
-                  usingSavedCredential
-                    ? savedCredentialDescription
-                    : t('Password')
-                }
-                disabled={!canSensitiveWrite || usingSavedCredential}
-              />
-            </div>
-          </>
-        ) : null}
-        {effectiveAuthMode === 'session_cookie' ? (
-          <>
-            <div className='flex flex-col gap-2'>
-              <Label htmlFor='upstream-refresh-user-id'>
-                {t('New-Api-User / User ID')}
-              </Label>
-              <Input
-                id='upstream-refresh-user-id'
-                value={upstreamUserId}
-                onChange={(event) => setUpstreamUserId(event.target.value)}
-                placeholder={t('Optional if /api/user/self can identify it')}
-                disabled={!canSensitiveWrite || usingSavedCredential}
-              />
-            </div>
-            <div className='flex flex-col gap-2 sm:col-span-2 lg:col-span-3'>
-              <Label htmlFor='upstream-refresh-session-cookie'>
-                {t('Session/Cookie')}
-              </Label>
-              <Textarea
-                id='upstream-refresh-session-cookie'
-                value={upstreamSessionCookie}
-                onChange={(event) =>
-                  setUpstreamSessionCookie(event.target.value)
-                }
-                placeholder={t('Paste Cookie header or exported cookie JSON')}
-                disabled={!canSensitiveWrite || usingSavedCredential}
-                className='min-h-20 font-mono text-xs'
-              />
-            </div>
-          </>
-        ) : null}
-        {effectiveAuthMode === 'access_token' ? (
-          <>
-            {upstreamPlatform === 'new-api' ? (
-              <div className='flex flex-col gap-2'>
-                <Label htmlFor='upstream-refresh-token-user-id'>
-                  {t('New-Api-User / User ID')}
-                </Label>
-                <Input
-                  id='upstream-refresh-token-user-id'
-                  value={upstreamUserId}
-                  onChange={(event) => setUpstreamUserId(event.target.value)}
-                  placeholder={t('Required for new-api access token')}
-                  disabled={!canSensitiveWrite || usingSavedCredential}
-                />
-              </div>
-            ) : null}
-            <div className='flex flex-col gap-2 sm:col-span-2'>
-              <Label htmlFor='upstream-refresh-access-token'>
-                {t('Access Token')}
-              </Label>
-              <Textarea
-                id='upstream-refresh-access-token'
-                value={upstreamAccessToken}
-                onChange={(event) => setUpstreamAccessToken(event.target.value)}
-                placeholder={
-                  usingSavedCredential
-                    ? savedCredentialDescription
-                    : t('Paste upstream access token')
-                }
-                disabled={!canSensitiveWrite || usingSavedCredential}
-                className='min-h-20 font-mono text-xs'
-              />
-            </div>
-            <div className='flex flex-col gap-2'>
-              <Label htmlFor='upstream-refresh-refresh-token'>
-                {t('Refresh Token')}
-              </Label>
-              <Input
-                id='upstream-refresh-refresh-token'
-                value={upstreamRefreshToken}
-                onChange={(event) => setUpstreamRefreshToken(event.target.value)}
-                placeholder={
-                  usingSavedCredential
-                    ? t('Saved upstream login will be reused')
-                    : t('Optional')
-                }
-                disabled={!canSensitiveWrite || usingSavedCredential}
-              />
-            </div>
-            <div className='flex flex-col gap-2'>
-              <Label htmlFor='upstream-refresh-token-expires-at'>
-                {t('Token expires at')}
-              </Label>
-              <Input
-                id='upstream-refresh-token-expires-at'
-                value={upstreamTokenExpiresAt}
-                onChange={(event) =>
-                  setUpstreamTokenExpiresAt(event.target.value)
-                }
-                inputMode='numeric'
-                placeholder={t('Unix timestamp, optional')}
-                disabled={!canSensitiveWrite || usingSavedCredential}
-              />
-            </div>
-          </>
-        ) : null}
-        {effectiveAuthMode === 'oauth_browser' ? (
-          <UpstreamAccountCapturePanel
-            platform={forcedUpstreamPlatform ?? upstreamPlatform}
-            baseUrl={upstreamBaseUrl}
-            channelId={channelId}
-            disabled={!canSensitiveWrite || usingSavedCredential}
-            captureId={upstreamCaptureId}
-            onCaptureIdChange={setUpstreamCaptureId}
-          />
-        ) : null}
+        <div className='flex items-end'>
+          <Button
+            type='button'
+            variant='outline'
+            className='w-full'
+            disabled={
+              !canSensitiveWrite ||
+              usingSavedCredential ||
+              effectiveAuthMode !== 'oauth_browser' ||
+              !upstreamBaseUrl.trim()
+            }
+            onClick={() => capturePanelRef.current?.start()}
+          >
+            <RefreshCw data-icon='inline-start' />
+            {t('Create New Session')}
+          </Button>
+        </div>
+      </div>
+
+      {effectiveAuthMode === 'password' ? (
+        <div className='grid gap-3 sm:grid-cols-2'>
+          <div className='flex flex-col gap-2'>
+            <Label htmlFor='upstream-refresh-account'>{t('Account')}</Label>
+            <Input
+              id='upstream-refresh-account'
+              value={upstreamUsername}
+              onChange={(event) => setUpstreamUsername(event.target.value)}
+              autoComplete='username'
+              placeholder={
+                upstreamPlatform === 'new-api' ? t('Username') : t('Email')
+              }
+              disabled={!canSensitiveWrite || usingSavedCredential}
+            />
+          </div>
+          <div className='flex flex-col gap-2'>
+            <Label htmlFor='upstream-refresh-password'>{t('Password')}</Label>
+            <Input
+              id='upstream-refresh-password'
+              value={upstreamPassword}
+              onChange={(event) => setUpstreamPassword(event.target.value)}
+              type='password'
+              autoComplete='current-password'
+              placeholder={
+                usingSavedCredential ? savedCredentialDescription : t('Password')
+              }
+              disabled={!canSensitiveWrite || usingSavedCredential}
+            />
+          </div>
+        </div>
+      ) : null}
+
+      {effectiveAuthMode === 'oauth_browser' ? (
+        <UpstreamAccountCapturePanel
+          ref={capturePanelRef}
+          platform={forcedUpstreamPlatform ?? upstreamPlatform}
+          baseUrl={upstreamBaseUrl}
+          channelId={channelId}
+          disabled={!canSensitiveWrite || usingSavedCredential}
+          captureId={upstreamCaptureId}
+          onCaptureIdChange={setUpstreamCaptureId}
+          onCompleted={() => void handlePreviewUpstreamRefresh()}
+        />
+      ) : null}
+
+      <div className='grid gap-3 sm:grid-cols-2'>
         <div className='flex flex-col gap-2'>
-          <Label htmlFor='upstream-refresh-paid-cny'>{t('Paid CNY')}</Label>
+          <Label htmlFor='upstream-refresh-paid-cny'>
+            {t('Paid Amount')}
+          </Label>
           <Input
             id='upstream-refresh-paid-cny'
             value={upstreamPaidCny}
             onChange={(event) => setUpstreamPaidCny(event.target.value)}
             inputMode='decimal'
-            placeholder='1'
+            placeholder={DEFAULT_UPSTREAM_PAID_AMOUNT}
             disabled={!canSensitiveWrite}
           />
         </div>
         <div className='flex flex-col gap-2'>
           <Label htmlFor='upstream-refresh-platform-usd-credit'>
-            {t('Platform USD Credit')}
+            {t('Upstream Platform Credit')}
           </Label>
           <Input
             id='upstream-refresh-platform-usd-credit'
@@ -1298,7 +1215,7 @@ export function UpstreamAccountRefreshPanel({
               setUpstreamPlatformUsdCredit(event.target.value)
             }
             inputMode='decimal'
-            placeholder='20'
+            placeholder={DEFAULT_UPSTREAM_PLATFORM_CREDIT}
             disabled={!canSensitiveWrite}
           />
         </div>

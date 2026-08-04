@@ -419,6 +419,7 @@ export interface UpstreamAccountCaptureStartRequest {
   platform: UpstreamAccountPlatform
   base_url: string
   channel_id?: number
+  return_url?: string
 }
 
 export interface UpstreamAccountCaptureStartData {
@@ -432,6 +433,7 @@ export interface UpstreamAccountCaptureStartData {
   origin: string
   userscript_url: string
   login_url: string
+  return_url?: string
 }
 
 export interface UpstreamAccountCaptureCredentialSummary {
@@ -481,6 +483,7 @@ export interface UpstreamAccountCaptureStatusData {
   origin: string
   userscript_url?: string
   login_url?: string
+  return_url?: string
   summary?: UpstreamAccountCaptureCredentialSummary
   diagnostics?: UpstreamAccountCaptureDiagnostics
 }

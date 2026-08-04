@@ -16,33 +16,24 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
 import {
-  AlertCircle,
-  CheckCircle2,
-  Code2,
-  Copy,
-  ExternalLink,
-  Loader2,
-  RefreshCw,
-} from 'lucide-react'
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
+import { useMutation, useQuery } from '@tanstack/react-query'
+import { AlertCircle, Loader2, RefreshCw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import {
   getUpstreamAccountCaptureSession,
-  getUpstreamAccountCaptureUserscript,
   startUpstreamAccountCaptureSession,
 } from '../api'
 import type {
@@ -57,7 +48,14 @@ type UpstreamAccountCapturePanelProps = {
   channelId?: number | null
   disabled?: boolean
   captureId: string
+  returnUrl?: string
   onCaptureIdChange: (captureId: string) => void
+  onCompleted?: (captureId: string) => void
+}
+
+export type UpstreamAccountCapturePanelHandle = {
+  start: () => void
+  refresh: () => void
 }
 
 function formatUnixTime(value?: number) {
@@ -90,20 +88,43 @@ function formatBrowserSessionRestoreStatus(
   }
 }
 
-export function UpstreamAccountCapturePanel({
-  platform,
-  baseUrl,
-  channelId,
-  disabled,
-  captureId,
-  onCaptureIdChange,
-}: UpstreamAccountCapturePanelProps) {
+function formatYesNo(value: boolean | undefined, t: (key: string) => string) {
+  return value ? t('Yes') : t('No')
+}
+
+function compactKeys(
+  value: string[] | undefined,
+  t: (key: string, options?: Record<string, unknown>) => string
+) {
+  const count = value?.length ?? 0
+  if (count === 0) return t('None')
+  return t('{{count}} key(s)', { count })
+}
+
+export const UpstreamAccountCapturePanel = forwardRef<
+  UpstreamAccountCapturePanelHandle,
+  UpstreamAccountCapturePanelProps
+>(function UpstreamAccountCapturePanel(
+  {
+    platform,
+    baseUrl,
+    channelId,
+    disabled,
+    captureId,
+    returnUrl,
+    onCaptureIdChange,
+    onCompleted,
+  },
+  ref
+) {
   const { t } = useTranslation()
   const [localSession, setLocalSession] =
     useState<UpstreamAccountCaptureStartData | null>(null)
-  const [scriptDialogOpen, setScriptDialogOpen] = useState(false)
-  const [userscriptSource, setUserscriptSource] = useState('')
   const completedToastRef = useRef('')
+  const pendingCaptureWindowsRef = useRef<{
+    installWindow?: Window | null
+    loginWindow?: Window | null
+  }>({})
 
   const statusQuery = useQuery({
     queryKey: ['upstream-account-capture-session', captureId],
@@ -111,7 +132,8 @@ export function UpstreamAccountCapturePanel({
     enabled: Boolean(captureId),
     refetchInterval: (query) => {
       const data = query.state.data?.data
-      return data?.status === 'pending' ? 3000 : false
+      if (!data) return 3000
+      return data.status === 'completed' ? false : 3000
     },
   })
 
@@ -139,27 +161,63 @@ export function UpstreamAccountCapturePanel({
       userscript_url:
         status?.userscript_url || localSession?.userscript_url || '',
       login_url: status?.login_url || localSession?.login_url || baseUrl,
+      return_url: status?.return_url || localSession?.return_url || '',
       summary: status?.summary,
       diagnostics: status?.diagnostics,
       message: status?.message,
     }
   }, [baseUrl, captureId, localSession, platform, status])
 
+  const openCaptureTargets = useCallback(
+    (
+      sessionData: UpstreamAccountCaptureStartData,
+      installWindow?: Window | null,
+      loginWindow?: Window | null
+    ) => {
+      const installURL = sessionData.userscript_url
+      const loginURL = sessionData.login_url || sessionData.base_url || baseUrl
+      if (installURL) {
+        if (installWindow && !installWindow.closed) {
+          installWindow.location.href = installURL
+        } else {
+          window.open(installURL, '_blank', 'noopener,noreferrer')
+        }
+      }
+      if (loginURL) {
+        window.setTimeout(() => {
+          if (loginWindow && !loginWindow.closed) {
+            loginWindow.location.href = loginURL
+          } else {
+            window.open(loginURL, '_blank', 'noopener,noreferrer')
+          }
+        }, 1200)
+      }
+    },
+    [baseUrl]
+  )
+
   const startMutation = useMutation({
     mutationFn: startUpstreamAccountCaptureSession,
     onSuccess: (res) => {
+      const windows = pendingCaptureWindowsRef.current
+      pendingCaptureWindowsRef.current = {}
       if (!res.success || !res.data) {
         toast.error(res.message || t('Failed to create capture session'))
+        windows.installWindow?.close()
+        windows.loginWindow?.close()
         return
       }
       setLocalSession(res.data)
-      setUserscriptSource('')
-      setScriptDialogOpen(false)
       onCaptureIdChange(res.data.capture_id)
       completedToastRef.current = ''
+      openCaptureTargets(res.data, windows.installWindow, windows.loginWindow)
       toast.success(t('Capture session created'))
     },
     onError: (error: unknown) => {
+      const windows = pendingCaptureWindowsRef.current
+      pendingCaptureWindowsRef.current = {}
+      windows.installWindow?.close()
+      windows.loginWindow?.close()
       const message =
         error instanceof Error
           ? error.message
@@ -173,39 +231,49 @@ export function UpstreamAccountCapturePanel({
     if (completedToastRef.current === status.capture_id) return
     completedToastRef.current = status.capture_id
     toast.success(
-      t('Login state captured. Click Sync Keys to validate, preview, and save it.')
+      t('Login state captured. Previewing upstream account automatically.')
     )
-  }, [status, t])
+    onCompleted?.(status.capture_id)
+  }, [onCompleted, status, t])
 
   const handleStart = useCallback(() => {
+    if (disabled || startMutation.isPending) return
     const trimmedBaseUrl = baseUrl.trim()
     if (!trimmedBaseUrl) {
       toast.error(t('Upstream platform URL is required'))
       return
     }
+    let installWindow: Window | null = null
+    let loginWindow: Window | null = null
+    try {
+      installWindow = window.open('about:blank', '_blank')
+      loginWindow = window.open('about:blank', '_blank')
+      if (installWindow) installWindow.opener = null
+      if (loginWindow) loginWindow.opener = null
+    } catch {
+      installWindow = null
+      loginWindow = null
+    }
+    pendingCaptureWindowsRef.current = { installWindow, loginWindow }
     startMutation.mutate({
       platform,
       base_url: trimmedBaseUrl,
       channel_id: channelId || undefined,
+      return_url: returnUrl || window.location.href,
     })
-  }, [baseUrl, channelId, platform, startMutation, t])
+  }, [baseUrl, channelId, disabled, platform, returnUrl, startMutation, t])
 
-  const handleCopy = useCallback(async (value: string, label: string) => {
-    try {
-      await navigator.clipboard.writeText(value)
-      toast.success(t('{{label}} copied', { label }))
-    } catch {
-      toast.error(t('Failed to copy {{label}}', { label }))
-    }
-  }, [t])
+  useImperativeHandle(
+    ref,
+    () => ({
+      start: handleStart,
+      refresh: () => {
+        if (captureId) void statusQuery.refetch()
+      },
+    }),
+    [captureId, handleStart, statusQuery]
+  )
 
-  const openURL = useCallback((value?: string) => {
-    if (!value) return
-    window.open(value, '_blank', 'noopener,noreferrer')
-  }, [])
-
-  const installURL = session?.userscript_url || ''
-  const loginURL = session?.login_url || baseUrl
   const callbackEndpoint = buildCompleteEndpoint(captureId)
   const isCompleted = status?.status === 'completed'
   const isFailed = status?.status === 'failed'
@@ -225,427 +293,178 @@ export function UpstreamAccountCapturePanel({
     session?.api_base_url ||
     status?.diagnostics?.api_base_url_seen ||
     ''
-  const isBrowserSessionRestore =
-    summary?.capture_source === 'browser_session_restore' &&
-    !summary.refresh_token_present
-
-  const scriptMutation = useMutation({
-    mutationFn: getUpstreamAccountCaptureUserscript,
-  })
-
-  const loadUserscriptSource = useCallback(async () => {
-    if (!installURL) {
-      throw new Error(t('Signed userscript install link is not ready yet'))
-    }
-    if (userscriptSource) return userscriptSource
-    const script = await scriptMutation.mutateAsync(installURL)
-    setUserscriptSource(script)
-    return script
-  }, [installURL, scriptMutation, t, userscriptSource])
-
-  const handleViewScript = useCallback(async () => {
-    try {
-      await loadUserscriptSource()
-      setScriptDialogOpen(true)
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : t('Failed to load userscript source')
-      toast.error(message)
-    }
-  }, [loadUserscriptSource, t])
-
-  const handleCopyFullScript = useCallback(async () => {
-    try {
-      const script = await loadUserscriptSource()
-      await navigator.clipboard.writeText(script)
-      toast.success(t('Userscript source copied'))
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : t('Failed to copy userscript source')
-      toast.error(message)
-    }
-  }, [loadUserscriptSource, t])
+  if (!session) return null
 
   return (
     <div className='flex flex-col gap-3 rounded-lg border p-3 sm:col-span-2 lg:col-span-6'>
-      <div className='flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between'>
-        <div className='flex min-w-0 flex-col gap-1'>
-          <div className='text-sm font-medium'>
-            {t('Userscript login capture')}
+      <div className='grid gap-2 text-xs sm:grid-cols-2 xl:grid-cols-4'>
+        {[
+          {
+            label: t('Status'),
+            value: isCompleted
+              ? t('Completed')
+              : isFailed
+                ? t('Failed')
+                : t('Pending'),
+          },
+          {
+            label: t('Target Origin'),
+            value: session.origin || '-',
+            title: session.origin,
+          },
+          {
+            label: t('Management Panel URL'),
+            value: managementBaseURL || '-',
+            title: managementBaseURL,
+          },
+          {
+            label: t('Model API URL'),
+            value: relayBaseURL || '-',
+            title: relayBaseURL,
+          },
+          {
+            label: t('Expires At'),
+            value: formatUnixTime(session.expires_at) || '-',
+          },
+          {
+            label: t('Captured Token'),
+            value: summary?.access_token_masked || '-',
+          },
+          {
+            label: t('Refresh Token'),
+            value: summary
+              ? summary.refresh_token_present
+                ? t('Present')
+                : t('Not provided')
+              : '-',
+          },
+          {
+            label: t('Callback Endpoint'),
+            value: callbackEndpoint || '-',
+            title: callbackEndpoint,
+          },
+        ].map((item) => (
+          <div key={item.label} className='min-w-0 rounded-md border p-2'>
+            <div className='text-muted-foreground'>{item.label}</div>
+            <div className='truncate font-medium' title={item.title || item.value}>
+              {item.value}
+            </div>
           </div>
-          <div className='text-muted-foreground text-xs'>
-            {platform === 'new-api'
-              ? t(
-                  'The userscript runs inside the upstream new-api site, reads the user ID from localStorage when possible, calls /api/user/self and /api/user/token with your logged-in browser session, then sends only the captured upstream token to NexusTok.'
-                )
-              : t(
-                  'The userscript runs inside the upstream sub2api site, reads auth_token and refresh_token when available, and falls back to /api/v1/auth/session/restore with your logged-in browser session before sending the login state.'
-                )}
-          </div>
-        </div>
+        ))}
+      </div>
+
+      <div className='flex flex-col gap-2 sm:flex-row sm:flex-wrap'>
         <Button
           type='button'
           variant='outline'
-          disabled={disabled || startMutation.isPending}
-          onClick={handleStart}
+          disabled={!captureId || statusQuery.isFetching}
+          onClick={() => void statusQuery.refetch()}
         >
-          {startMutation.isPending ? (
+          {statusQuery.isFetching ? (
             <Loader2 data-icon='inline-start' className='animate-spin' />
           ) : (
             <RefreshCw data-icon='inline-start' />
           )}
-          {session ? t('Create New Session') : t('Create Capture Session')}
+          {t('Refresh Capture Status')}
         </Button>
       </div>
 
-      {platform === 'new-api' ? (
-        <Alert>
+      {status?.message ? (
+        <Alert variant={isFailed ? 'destructive' : 'default'}>
           <AlertCircle aria-hidden='true' />
-          <AlertDescription>
-            {t(
-              'Generating a new-api access token may rotate the upstream user token. Use manual Cookie import if you do not want the upstream token to change.'
-            )}
-          </AlertDescription>
+          <AlertDescription>{status.message}</AlertDescription>
         </Alert>
-      ) : (
-        <Alert>
-          <AlertCircle aria-hidden='true' />
-          <AlertDescription>
-            {t(
-              'If the target sub2api site exposes a refresh token, NexusTok will use it during later syncs; browser-session restores without a refresh token may need to be captured again after the access token expires.'
-            )}
-          </AlertDescription>
-        </Alert>
-      )}
+      ) : null}
 
-      <Alert>
-        <AlertCircle aria-hidden='true' />
-        <AlertDescription>
-          {t(
-            'Capture flow: create a session, install the userscript, open and log in to the upstream site, click Send login to NexusTok on that site, then return here to preview and save.'
-          )}
-        </AlertDescription>
-      </Alert>
-
-      <Alert>
-        <AlertCircle aria-hidden='true' />
-        <AlertDescription>
-          {t(
-            'The userscript install link is signed and expires with this capture session. If it expires, create a new capture session.'
-          )}
-        </AlertDescription>
-      </Alert>
-
-      <Alert>
-        <AlertCircle aria-hidden='true' />
-        <AlertDescription>
-          {t(
-            'In multi-node deployments, enable Redis or sticky routing so the userscript callback and status polling can read the same capture session.'
-          )}
-        </AlertDescription>
-      </Alert>
-
-      {session ? (
-        <div className='flex flex-col gap-3'>
-          <div className='grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-6'>
-            <div className='min-w-0 rounded-md border p-2'>
-              <div className='text-muted-foreground'>{t('Status')}</div>
-              <div className='truncate font-medium'>
-                {isCompleted
-                  ? t('Completed')
-                  : isFailed
-                    ? t('Failed')
-                    : t('Pending')}
-              </div>
-            </div>
-            <div className='min-w-0 rounded-md border p-2'>
-              <div className='text-muted-foreground'>{t('Target Origin')}</div>
-              <div className='truncate font-medium' title={session.origin}>
-                {session.origin}
-              </div>
-            </div>
-            <div className='min-w-0 rounded-md border p-2'>
-              <div className='text-muted-foreground'>
-                {t('Management Panel URL')}
-              </div>
-              <div className='truncate font-medium' title={managementBaseURL}>
-                {managementBaseURL || '-'}
-              </div>
-            </div>
-            <div className='min-w-0 rounded-md border p-2'>
-              <div className='text-muted-foreground'>
-                {t('Model API URL')}
-              </div>
-              <div className='truncate font-medium' title={relayBaseURL}>
-                {relayBaseURL || '-'}
-              </div>
-            </div>
-            <div className='min-w-0 rounded-md border p-2'>
-              <div className='text-muted-foreground'>{t('Expires At')}</div>
-              <div className='truncate font-medium'>
-                {formatUnixTime(session.expires_at)}
-              </div>
-            </div>
-            <div className='min-w-0 rounded-md border p-2'>
-              <div className='text-muted-foreground'>{t('Captured Token')}</div>
-              <div className='truncate font-medium'>
-                {summary?.access_token_masked || '-'}
-              </div>
-            </div>
-            <div className='min-w-0 rounded-md border p-2'>
-              <div className='text-muted-foreground'>{t('Refresh Token')}</div>
-              <div className='truncate font-medium'>
-                {summary
-                  ? summary.refresh_token_present
-                    ? t('Present')
-                    : t('Not provided')
-                  : '-'}
-              </div>
-            </div>
-            <div className='min-w-0 rounded-md border p-2'>
-              <div className='text-muted-foreground'>{t('Callback Endpoint')}</div>
-              <div className='truncate font-medium' title={callbackEndpoint}>
-                {callbackEndpoint || '-'}
-              </div>
-            </div>
-          </div>
-
-          {callbackEndpoint ? (
-            <div className='text-muted-foreground text-xs'>
-              {t(
-                'This script posts captured login state to {{callback}}. It only writes to the temporary capture session; use Sync Keys to preview and save it.',
-                { callback: callbackEndpoint }
-              )}
-            </div>
-          ) : null}
-
-          <div className='flex flex-col gap-2 sm:flex-row sm:flex-wrap'>
-            <Button
-              type='button'
-              variant='outline'
-              disabled={!installURL}
-              onClick={() => openURL(installURL)}
-            >
-              <ExternalLink data-icon='inline-start' />
-              {t('Install Userscript')}
-            </Button>
-            <Button
-              type='button'
-              variant='outline'
-              disabled={!loginURL}
-              onClick={() => openURL(loginURL)}
-            >
-              <ExternalLink data-icon='inline-start' />
-              {t('Open Upstream Site')}
-            </Button>
-            <Button
-              type='button'
-              variant='outline'
-              disabled={!installURL}
-              onClick={() =>
-                installURL &&
-                void handleCopy(installURL, t('Userscript install link'))
-              }
-            >
-              <Copy data-icon='inline-start' />
-              {t('Copy Script Link')}
-            </Button>
-            <Button
-              type='button'
-              variant='outline'
-              disabled={!installURL || scriptMutation.isPending}
-              onClick={() => void handleViewScript()}
-            >
-              {scriptMutation.isPending ? (
-                <Loader2 data-icon='inline-start' className='animate-spin' />
-              ) : (
-                <Code2 data-icon='inline-start' />
-              )}
-              {t('View Script Source')}
-            </Button>
-            <Button
-              type='button'
-              variant='outline'
-              disabled={!installURL || scriptMutation.isPending}
-              onClick={() => void handleCopyFullScript()}
-            >
-              {scriptMutation.isPending ? (
-                <Loader2 data-icon='inline-start' className='animate-spin' />
-              ) : (
-                <Copy data-icon='inline-start' />
-              )}
-              {t('Copy Full Script')}
-            </Button>
-            <Button
-              type='button'
-              variant='outline'
-              disabled={!captureId || statusQuery.isFetching}
-              onClick={() => void statusQuery.refetch()}
-            >
-              {statusQuery.isFetching ? (
-                <Loader2 data-icon='inline-start' className='animate-spin' />
-              ) : (
-                <RefreshCw data-icon='inline-start' />
-              )}
-              {t('Refresh Capture Status')}
-            </Button>
-          </div>
-
-          {summary ? (
-            <Alert>
-              <CheckCircle2 aria-hidden='true' />
-              <AlertDescription>
-                <div className='flex flex-col gap-1'>
-                  <div>
-                    {t(
-                      'Captured {{platform}} login state for {{account}}. The token is stored only in the temporary capture session until you click Sync Keys to validate, preview, and save.',
-                      {
-                        platform: summary.platform,
-                        account:
-                          summary.username ||
-                          summary.email ||
-                          summary.user_id ||
-                          t('the upstream account'),
-                      }
-                    )}
-                  </div>
-                  {managementBaseURL ? (
-                    <div>
-                      {t(
-                        'Management requests will use {{url}} for user, group, key, and balance sync.',
-                        { url: managementBaseURL }
-                      )}
-                    </div>
-                  ) : null}
-                  {relayBaseURL ? (
-                    <div>
-                      {t(
-                        'Created channels will use {{url}} for model requests.',
-                        { url: relayBaseURL }
-                      )}
-                    </div>
-                  ) : null}
+      {status?.diagnostics ? (
+        <div className='flex flex-col gap-2 rounded-md border p-3 text-xs'>
+          <div className='font-medium'>{t('Capture diagnostics')}</div>
+          <div className='grid gap-2 sm:grid-cols-2 xl:grid-cols-4'>
+            {[
+              {
+                label: t('Page origin'),
+                value: status.diagnostics.page_origin || '-',
+              },
+              {
+                label: t('Detected model API URL'),
+                value: status.diagnostics.api_base_url_seen || '-',
+              },
+              {
+                label: t('Session restore endpoint'),
+                value: status.diagnostics.browser_session_restore_path || '-',
+              },
+              {
+                label: t('Auth validation endpoint'),
+                value: status.diagnostics.auth_me_path || '-',
+              },
+              {
+                label: 'auth_token',
+                value: formatYesNo(status.diagnostics.auth_token_present, t),
+                badge: true,
+              },
+              {
+                label: 'access_token',
+                value: formatYesNo(status.diagnostics.access_token_present, t),
+                badge: true,
+              },
+              {
+                label: 'refresh_token',
+                value: formatYesNo(status.diagnostics.refresh_token_present, t),
+                badge: true,
+              },
+              {
+                label: t('Auth Client ID'),
+                value: formatYesNo(status.diagnostics.auth_client_id_present, t),
+                badge: true,
+              },
+              {
+                label: t('Browser session restore'),
+                value: formatBrowserSessionRestoreStatus(
+                  status.diagnostics.browser_session_restore_status,
+                  t
+                ),
+              },
+              {
+                label: t('OAuth hash token'),
+                value: formatYesNo(
+                  status.diagnostics.oauth_hash_token_present,
+                  t
+                ),
+                badge: true,
+              },
+              {
+                label: t('localStorage keys'),
+                value: compactKeys(status.diagnostics.local_storage_keys, t),
+                title: status.diagnostics.local_storage_keys?.join(', ') || '',
+              },
+              {
+                label: t('sessionStorage keys'),
+                value: compactKeys(status.diagnostics.session_storage_keys, t),
+                title:
+                  status.diagnostics.session_storage_keys?.join(', ') || '',
+              },
+            ].map((item) => (
+              <div key={item.label} className='min-w-0 rounded-md border p-2'>
+                <div className='text-muted-foreground truncate'>
+                  {item.label}
                 </div>
-              </AlertDescription>
-            </Alert>
-          ) : null}
-
-          {isBrowserSessionRestore ? (
-            <Alert>
-              <AlertCircle aria-hidden='true' />
-              <AlertDescription>
-                {t(
-                  'This sub2api login state was restored from the upstream browser session. The target site did not expose a refresh token, so this sync can run now but later syncs may require recapturing after the access token expires.'
-                )}
-              </AlertDescription>
-            </Alert>
-          ) : null}
-
-          {status?.message ? (
-            <Alert variant={isFailed ? 'destructive' : 'default'}>
-              <AlertCircle aria-hidden='true' />
-              <AlertDescription>{status.message}</AlertDescription>
-            </Alert>
-          ) : null}
-
-          {status?.diagnostics ? (
-            <Alert>
-              <AlertCircle aria-hidden='true' />
-              <AlertDescription>
-                <div className='flex flex-col gap-1 text-xs'>
-                  <div className='font-medium'>{t('Capture diagnostics')}</div>
-                  <div>
-                    {t('Page origin')}: {status.diagnostics.page_origin || '-'}
-                  </div>
-                  {status.diagnostics.api_base_url_seen ? (
-                    <div>
-                      {t('Detected model API URL')}: {status.diagnostics.api_base_url_seen}
-                    </div>
-                  ) : null}
-                  <div>
-                    {t('localStorage keys')}:{' '}
-                    {status.diagnostics.local_storage_keys?.join(', ') || '-'}
-                  </div>
-                  <div>
-                    {t('sessionStorage keys')}:{' '}
-                    {status.diagnostics.session_storage_keys?.join(', ') || '-'}
-                  </div>
-                  <div className='grid gap-x-4 gap-y-1 sm:grid-cols-2'>
-                    <span>
-                      auth_token: {status.diagnostics.auth_token_present ? t('Yes') : t('No')}
-                    </span>
-                    <span>
-                      access_token: {status.diagnostics.access_token_present ? t('Yes') : t('No')}
-                    </span>
-                    <span>
-                      refresh_token: {status.diagnostics.refresh_token_present ? t('Yes') : t('No')}
-                    </span>
-                    <span>
-                      {t('OAuth hash token')}: {status.diagnostics.oauth_hash_token_present ? t('Yes') : t('No')}
-                    </span>
-                    <span>
-                      {t('Auth Client ID')}: {status.diagnostics.auth_client_id_present ? t('Yes') : t('No')}
-                    </span>
-                  </div>
-                  {status.diagnostics.browser_session_restore_status ? (
-                    <div>
-                      {t('Browser session restore')}:{' '}
-                      {formatBrowserSessionRestoreStatus(
-                        status.diagnostics.browser_session_restore_status,
-                        t
-                      )}
-                    </div>
-                  ) : null}
-                  {status.diagnostics.browser_session_restore_path ? (
-                    <div>
-                      {t('Session restore endpoint')}: {status.diagnostics.browser_session_restore_path}
-                    </div>
-                  ) : null}
-                  {status.diagnostics.browser_session_restore_message ? (
-                    <div>
-                      {t('Session restore message')}: {status.diagnostics.browser_session_restore_message}
-                    </div>
-                  ) : null}
-                  {status.diagnostics.auth_me_path ? (
-                    <div>
-                      {t('Auth validation endpoint')}: {status.diagnostics.auth_me_path}
-                    </div>
-                  ) : null}
+                <div className='truncate font-medium' title={item.title || item.value}>
+                  {item.badge ? (
+                    <Badge variant='outline'>{item.value}</Badge>
+                  ) : (
+                    item.value
+                  )}
                 </div>
-              </AlertDescription>
-            </Alert>
+              </div>
+            ))}
+          </div>
+          {status.diagnostics.browser_session_restore_message ? (
+            <div className='text-muted-foreground truncate' title={status.diagnostics.browser_session_restore_message}>
+              {t('Session restore message')}: {status.diagnostics.browser_session_restore_message}
+            </div>
           ) : null}
         </div>
       ) : null}
-
-      <Dialog open={scriptDialogOpen} onOpenChange={setScriptDialogOpen}>
-        <DialogContent className='flex max-h-[85vh] flex-col gap-0 p-0 sm:max-w-4xl'>
-          <DialogHeader className='border-b px-6 py-4'>
-            <DialogTitle>{t('Userscript source')}</DialogTitle>
-            <DialogDescription>
-              {t(
-                'Read-only userscript generated for this capture session. Install it in Tampermonkey or copy it manually.'
-              )}
-            </DialogDescription>
-          </DialogHeader>
-          <ScrollArea className='min-h-0 flex-1'>
-            <pre className='text-foreground bg-muted/40 m-0 overflow-x-auto p-4 text-xs leading-relaxed'>
-              <code>{userscriptSource}</code>
-            </pre>
-          </ScrollArea>
-          <DialogFooter className='border-t px-6 py-4'>
-            <Button
-              type='button'
-              variant='outline'
-              disabled={!userscriptSource}
-              onClick={() => void handleCopyFullScript()}
-            >
-              <Copy data-icon='inline-start' />
-              {t('Copy Full Script')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
-}
+})

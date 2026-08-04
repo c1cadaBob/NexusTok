@@ -78,6 +78,28 @@ func TestCaptureSessionCompletesSub2APIPayload(t *testing.T) {
 	require.Contains(t, err.Error(), "无权访问")
 }
 
+func TestCaptureSessionKeepsAllowedFrontendReturnURL(t *testing.T) {
+	start, err := StartCaptureSession(27, CaptureSessionStartRequest{
+		Platform:  PlatformSub2API,
+		BaseURL:   "https://sub.example.com",
+		ReturnURL: "http://localhost:3040/channels?upstream_capture_id=old",
+	}, "http://127.0.0.1:3003", "http://localhost:3040")
+	require.NoError(t, err)
+	require.Equal(t, "http://localhost:3040/channels?upstream_capture_id=old", start.ReturnURL)
+
+	status, err := GetCaptureSessionStatus(27, start.CaptureID, "http://127.0.0.1:3003")
+	require.NoError(t, err)
+	require.Equal(t, start.ReturnURL, status.ReturnURL)
+
+	fallback, err := StartCaptureSession(27, CaptureSessionStartRequest{
+		Platform:  PlatformSub2API,
+		BaseURL:   "https://sub.example.com",
+		ReturnURL: "https://evil.example.com/callback",
+	}, "http://127.0.0.1:3003", "http://localhost:3040")
+	require.NoError(t, err)
+	require.Equal(t, "http://127.0.0.1:3003", fallback.ReturnURL)
+}
+
 func TestCaptureSessionCompletesSub2APIBrowserSessionRestorePayload(t *testing.T) {
 	start, err := StartCaptureSession(17, CaptureSessionStartRequest{
 		Platform: PlatformSub2API,

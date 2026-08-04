@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -159,7 +160,7 @@ func StartUpstreamAccountCaptureSession(c *gin.Context) {
 		common.ApiErrorMsg(c, "无效的请求参数: "+err.Error())
 		return
 	}
-	result, err := upstreamaccount.StartCaptureSession(c.GetInt("id"), req, externalRequestBaseURL(c))
+	result, err := upstreamaccount.StartCaptureSession(c.GetInt("id"), req, externalRequestBaseURL(c), frontendRequestBaseURL(c))
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -254,4 +255,30 @@ func externalRequestBaseURL(c *gin.Context) string {
 		host = strings.TrimSpace(c.Request.Host)
 	}
 	return scheme + "://" + host
+}
+
+// frontendRequestBaseURL 返回发起后台页面请求的前端来源。
+//
+// 正式部署通常由同一个域名托管前端和 API，此时 externalRequestBaseURL 足够。
+// 本地开发和部分反向代理会让浏览器访问前端 dev server，再由 dev server 代理 API；
+// 后端看到的 Host 是 API 地址，而 return_url 属于前端地址。这里仅把 Origin/Referer
+// 提取成“允许回跳来源”，不用于生成 userscript 下载地址或 complete 回调地址。
+func frontendRequestBaseURL(c *gin.Context) string {
+	for _, raw := range []string{
+		strings.TrimSpace(c.GetHeader("Origin")),
+		strings.TrimSpace(c.GetHeader("Referer")),
+	} {
+		if raw == "" {
+			continue
+		}
+		parsed, err := url.Parse(raw)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			continue
+		}
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			continue
+		}
+		return parsed.Scheme + "://" + parsed.Host
+	}
+	return ""
 }

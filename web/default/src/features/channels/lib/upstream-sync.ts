@@ -36,6 +36,8 @@ const PREVIEW_EXPIRED_ERROR_TEXT = '预览快照不存在或已过期'
 const UPSTREAM_ACCOUNT_SYNC_SETTINGS_KEY = 'upstream_account_sync'
 const CHANNEL_TYPE_NEW_API = 59
 const CHANNEL_TYPE_SUB2API = 60
+export const DEFAULT_UPSTREAM_PAID_AMOUNT = '1'
+export const DEFAULT_UPSTREAM_PLATFORM_CREDIT = '10'
 
 type RatioDisplaySource = {
   ratio_conversion?: number | null

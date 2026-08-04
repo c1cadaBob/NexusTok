@@ -41,6 +41,7 @@ type CaptureSessionStartRequest struct {
 	Platform  string `json:"platform"`
 	BaseURL   string `json:"base_url"`
 	ChannelID int    `json:"channel_id,omitempty"`
+	ReturnURL string `json:"return_url,omitempty"`
 }
 
 // CaptureSessionStartResult 返回给后台页面的安装信息。
@@ -55,6 +56,7 @@ type CaptureSessionStartResult struct {
 	Origin            string `json:"origin"`
 	UserscriptURL     string `json:"userscript_url"`
 	LoginURL          string `json:"login_url"`
+	ReturnURL         string `json:"return_url,omitempty"`
 }
 
 // CaptureSessionRecord 是短期缓存中的采集会话。
@@ -74,6 +76,7 @@ type CaptureSessionRecord struct {
 	RelayBaseURL      string                    `json:"relay_base_url,omitempty"`
 	APIBaseURL        string                    `json:"api_base_url,omitempty"`
 	Origin            string                    `json:"origin"`
+	ReturnURL         string                    `json:"return_url,omitempty"`
 	Status            string                    `json:"status"`
 	Error             string                    `json:"error,omitempty"`
 	ExpiresAt         int64                     `json:"expires_at"`
@@ -137,6 +140,7 @@ type CaptureSessionStatusResult struct {
 	Origin            string                    `json:"origin"`
 	UserscriptURL     string                    `json:"userscript_url,omitempty"`
 	LoginURL          string                    `json:"login_url,omitempty"`
+	ReturnURL         string                    `json:"return_url,omitempty"`
 	Summary           *CaptureCredentialSummary `json:"summary,omitempty"`
 	Diagnostics       *CaptureDiagnostics       `json:"diagnostics,omitempty"`
 }
@@ -181,7 +185,7 @@ type CredentialParseResult struct {
 }
 
 // StartCaptureSession 创建一次性油猴采集会话。
-func StartCaptureSession(userID int, req CaptureSessionStartRequest, nexusBaseURL string) (*CaptureSessionStartResult, error) {
+func StartCaptureSession(userID int, req CaptureSessionStartRequest, nexusBaseURL string, allowedReturnBaseURLs ...string) (*CaptureSessionStartResult, error) {
 	platform := NormalizePlatform(req.Platform)
 	if platform == "" {
 		return nil, fmt.Errorf("上游平台不能为空")
@@ -205,6 +209,7 @@ func StartCaptureSession(userID int, req CaptureSessionStartRequest, nexusBaseUR
 	if nexusBaseURL == "" {
 		return nil, fmt.Errorf("NexusTok 地址不能为空")
 	}
+	returnURL := normalizeCaptureReturnURL(req.ReturnURL, nexusBaseURL, allowedReturnBaseURLs...)
 	id := common.GetUUID()
 	secret, err := common.GenerateRandomCharsKey(48)
 	if err != nil {
@@ -225,6 +230,7 @@ func StartCaptureSession(userID int, req CaptureSessionStartRequest, nexusBaseUR
 		BaseURL:           normalizedBaseURL,
 		ManagementBaseURL: normalizedBaseURL,
 		Origin:            origin,
+		ReturnURL:         returnURL,
 		Status:            captureStatusPending,
 		ExpiresAt:         expiresAt,
 		UpdatedAt:         common.GetTimestamp(),
@@ -242,6 +248,7 @@ func StartCaptureSession(userID int, req CaptureSessionStartRequest, nexusBaseUR
 		Origin:            origin,
 		UserscriptURL:     userscriptURL,
 		LoginURL:          loginURL,
+		ReturnURL:         returnURL,
 	}, nil
 }
 
@@ -401,6 +408,9 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
 		"baseURL":       record.BaseURL,
 		"origin":        record.Origin,
 		"completeURL":   completeURL,
+		"returnURL":     record.ReturnURL,
+		"expiresAt":     record.ExpiresAt,
+		"autoRun":       true,
 	})
 	if err != nil {
 		return "", err
@@ -429,6 +439,10 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
   const config = %s;
   const buttonId = 'nexustok-upstream-capture-button';
   const panelId = 'nexustok-upstream-capture-panel';
+  let captureStarted = false;
+  let captureCompleted = false;
+  let lastFailurePostAt = 0;
+  let retryTimer = 0;
 
   function text(value) {
     return value == null ? '' : String(value);
@@ -1233,7 +1247,44 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
     panel.dataset.tone = tone || 'info';
   }
 
+  function captureExpired() {
+    const expiresAt = Number.parseInt(text(config.expiresAt || ''), 10);
+    return Number.isFinite(expiresAt) && expiresAt > 0 && Math.floor(Date.now() / 1000) >= expiresAt;
+  }
+
+  function scheduleRetry(message) {
+    if (captureCompleted || captureExpired()) return;
+    if (retryTimer) window.clearTimeout(retryTimer);
+    setStatus(message || 'Waiting for upstream login...', 'info');
+    retryTimer = window.setTimeout(() => {
+      captureStarted = false;
+      runCapture();
+    }, 3000);
+  }
+
+  function returnToNexusTok() {
+    const target = text(config.returnURL || '').trim();
+    if (!target) return;
+    try {
+      const url = new URL(target, window.location.href);
+      url.searchParams.set('upstream_capture_id', config.captureID);
+      window.setTimeout(() => {
+        window.location.href = url.toString();
+      }, 700);
+    } catch (_) {
+      window.setTimeout(() => {
+        window.location.href = target;
+      }, 700);
+    }
+  }
+
   async function runCapture() {
+    if (captureStarted || captureCompleted) return;
+    if (captureExpired()) {
+      setStatus('NexusTok capture session expired. Create a new session in NexusTok.', 'error');
+      return;
+    }
+    captureStarted = true;
     try {
       setStatus('Capturing upstream login...', 'info');
       const captured = config.platform === 'new-api' ? await captureNewAPI() : await captureSub2API();
@@ -1252,7 +1303,9 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
         user_agent: navigator.userAgent,
       };
       await postToNexusTok(payload);
-      setStatus('Captured. Return to NexusTok and click Sync Keys to validate, preview, and save.', 'success');
+      captureCompleted = true;
+      setStatus('Captured. Returning to NexusTok...', 'success');
+      returnToNexusTok();
     } catch (error) {
       const message = error && error.message ? error.message : String(error);
       const relayBaseURL = config.platform === 'sub2api' ? appConfigAPIBaseURL() : '';
@@ -1271,20 +1324,30 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
           ? error.diagnostics
           : collectSub2APIDiagnostics(''),
       };
-      try { await postToNexusTok(payload); } catch (_) {}
-      setStatus('Capture failed: ' + message, 'error');
+      const now = Date.now();
+      if (now - lastFailurePostAt > 15000) {
+        lastFailurePostAt = now;
+        try { await postToNexusTok(payload); } catch (_) {}
+      }
+      captureStarted = false;
+      scheduleRetry('Waiting for upstream login. If you are not logged in, finish login on this page.');
     }
   }
 
   function mount() {
-    if (document.getElementById(buttonId)) return;
+    if (document.getElementById(panelId)) return;
     GM_addStyle('#' + buttonId + '{position:fixed;right:16px;bottom:16px;z-index:2147483647;border:0;border-radius:8px;background:#111827;color:white;padding:10px 12px;font:13px system-ui;box-shadow:0 8px 24px rgba(0,0,0,.24);cursor:pointer}#' + panelId + '{position:fixed;right:16px;bottom:60px;z-index:2147483647;max-width:360px;border-radius:8px;background:white;color:#111827;padding:10px 12px;font:12px system-ui;box-shadow:0 8px 24px rgba(0,0,0,.18)}#' + panelId + '[data-tone=success]{border-left:4px solid #16a34a}#' + panelId + '[data-tone=error]{border-left:4px solid #dc2626}#' + panelId + '[data-tone=info]{border-left:4px solid #2563eb}');
-    const button = document.createElement('button');
-    button.id = buttonId;
-    button.type = 'button';
-    button.textContent = 'Send login to NexusTok';
-    button.addEventListener('click', runCapture);
-    document.body.appendChild(button);
+    setStatus('NexusTok capture helper is ready.', 'info');
+    if (config.autoRun !== false) {
+      window.setTimeout(runCapture, 800);
+    } else {
+      const button = document.createElement('button');
+      button.id = buttonId;
+      button.type = 'button';
+      button.textContent = 'Send login to NexusTok';
+      button.addEventListener('click', runCapture);
+      document.body.appendChild(button);
+    }
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount);
@@ -1359,6 +1422,7 @@ func sanitizeCaptureRecord(record CaptureSessionRecord, nexusBaseURL string) *Ca
 		Origin:            record.Origin,
 		UserscriptURL:     userscriptURL,
 		LoginURL:          loginURL,
+		ReturnURL:         record.ReturnURL,
 		Summary:           record.Summary,
 		Diagnostics:       sanitizeCaptureDiagnostics(record.Diagnostics),
 	}
@@ -1430,6 +1494,60 @@ func captureSessionLinks(record CaptureSessionRecord, nexusBaseURL string) (stri
 		}
 	}
 	return userscriptURL, record.BaseURL
+}
+
+// normalizeCaptureReturnURL 只允许 userscript 回跳到当前 NexusTok 站点。
+//
+// userscript 安装链接是一次性敏感入口，回跳地址由后台页面提交；这里仍按
+// NexusTok 外部访问地址做同源约束，避免第三方目标站借 capture session 把管理员
+// 浏览器重定向到无关站点。无法安全解析时回退到 NexusTok 首页。
+func normalizeCaptureReturnURL(raw string, nexusBaseURL string, allowedBaseURLs ...string) string {
+	nexusBaseURL = strings.TrimRight(strings.TrimSpace(nexusBaseURL), "/")
+	if nexusBaseURL == "" {
+		return ""
+	}
+	base, err := url.Parse(nexusBaseURL)
+	if err != nil || base.Scheme == "" || base.Host == "" {
+		return nexusBaseURL
+	}
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nexusBaseURL
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return nexusBaseURL
+	}
+	resolved := base.ResolveReference(parsed)
+	if captureReturnURLSameOrigin(resolved, base) {
+		return resolved.String()
+	}
+	for _, allowed := range allowedBaseURLs {
+		allowed = strings.TrimRight(strings.TrimSpace(allowed), "/")
+		if allowed == "" {
+			continue
+		}
+		allowedURL, err := url.Parse(allowed)
+		if err != nil || allowedURL.Scheme == "" || allowedURL.Host == "" {
+			continue
+		}
+		if captureReturnURLSameOrigin(resolved, allowedURL) {
+			return resolved.String()
+		}
+	}
+	return nexusBaseURL
+}
+
+// captureReturnURLSameOrigin 判断两个 URL 是否属于同源回跳目标。
+//
+// 采集脚本的下载和 complete 回调仍由签名 URL 与 capture_secret 控制；return_url
+// 只决定采集成功后浏览器回到哪个后台页面。这里允许后端感知到的 NexusTok 地址，
+// 也允许控制器从 Origin/Referer 推导出的前端地址，以兼容本地 dev server 和反代。
+func captureReturnURLSameOrigin(left *url.URL, right *url.URL) bool {
+	if left == nil || right == nil {
+		return false
+	}
+	return strings.EqualFold(left.Scheme, right.Scheme) && strings.EqualFold(left.Host, right.Host)
 }
 
 func buildCredentialFromCapture(record CaptureSessionRecord, req CaptureSessionCompleteRequest) (Credential, *CaptureCredentialSummary, error) {
