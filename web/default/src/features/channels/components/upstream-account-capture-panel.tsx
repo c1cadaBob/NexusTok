@@ -70,6 +70,26 @@ function buildCompleteEndpoint(captureId: string) {
   return `/api/channel/upstream-account/capture-session/${captureId}/complete`
 }
 
+function formatBrowserSessionRestoreStatus(
+  value: string | undefined,
+  t: (key: string) => string
+) {
+  switch (value) {
+    case 'authenticated':
+      return t('Restored')
+    case 'unauthenticated':
+      return t('Unauthenticated')
+    case 'failed':
+      return t('Failed')
+    case 'not_attempted':
+    case '':
+    case undefined:
+      return t('Not attempted')
+    default:
+      return value
+  }
+}
+
 export function UpstreamAccountCapturePanel({
   platform,
   baseUrl,
@@ -180,6 +200,8 @@ export function UpstreamAccountCapturePanel({
   const isCompleted = status?.status === 'completed'
   const isFailed = status?.status === 'failed'
   const summary = status?.summary
+  const isBrowserSessionRestore =
+    summary?.capture_source === 'browser_session_restore'
 
   const scriptMutation = useMutation({
     mutationFn: getUpstreamAccountCaptureUserscript,
@@ -231,7 +253,7 @@ export function UpstreamAccountCapturePanel({
                   'The userscript runs inside the upstream new-api site, reads the user ID from localStorage when possible, calls /api/user/self and /api/user/token with your logged-in browser session, then sends only the captured upstream token to NexusTok.'
                 )
               : t(
-                  'The userscript runs inside the upstream sub2api site, reads auth_token, refresh_token, and token_expires_at from localStorage or the OAuth callback hash, then checks /api/v1/auth/me before sending the login state.'
+                  'The userscript runs inside the upstream sub2api site, reads auth_token and refresh_token when available, and falls back to /api/v1/auth/session/restore with your logged-in browser session before sending the login state.'
                 )}
           </div>
         </div>
@@ -264,7 +286,7 @@ export function UpstreamAccountCapturePanel({
           <AlertCircle aria-hidden='true' />
           <AlertDescription>
             {t(
-              'If sub2api access token expires, NexusTok will use the captured refresh token to refresh it during later syncs.'
+              'If the target sub2api site exposes a refresh token, NexusTok will use it during later syncs; browser-session restores without a refresh token may need to be captured again after the access token expires.'
             )}
           </AlertDescription>
         </Alert>
@@ -436,6 +458,17 @@ export function UpstreamAccountCapturePanel({
             </Alert>
           ) : null}
 
+          {isBrowserSessionRestore ? (
+            <Alert>
+              <AlertCircle aria-hidden='true' />
+              <AlertDescription>
+                {t(
+                  'This sub2api login state was restored from the upstream browser session. The target site did not expose a refresh token, so later syncs may require recapturing the login state.'
+                )}
+              </AlertDescription>
+            </Alert>
+          ) : null}
+
           {status?.message ? (
             <Alert variant={isFailed ? 'destructive' : 'default'}>
               <AlertCircle aria-hidden='true' />
@@ -452,6 +485,11 @@ export function UpstreamAccountCapturePanel({
                   <div>
                     {t('Page origin')}: {status.diagnostics.page_origin || '-'}
                   </div>
+                  {status.diagnostics.api_base_url_seen ? (
+                    <div>
+                      {t('Detected API base URL')}: {status.diagnostics.api_base_url_seen}
+                    </div>
+                  ) : null}
                   <div>
                     {t('localStorage keys')}:{' '}
                     {status.diagnostics.local_storage_keys?.join(', ') || '-'}
@@ -473,7 +511,29 @@ export function UpstreamAccountCapturePanel({
                     <span>
                       {t('OAuth hash token')}: {status.diagnostics.oauth_hash_token_present ? t('Yes') : t('No')}
                     </span>
+                    <span>
+                      {t('Auth Client ID')}: {status.diagnostics.auth_client_id_present ? t('Yes') : t('No')}
+                    </span>
                   </div>
+                  {status.diagnostics.browser_session_restore_status ? (
+                    <div>
+                      {t('Browser session restore')}:{' '}
+                      {formatBrowserSessionRestoreStatus(
+                        status.diagnostics.browser_session_restore_status,
+                        t
+                      )}
+                    </div>
+                  ) : null}
+                  {status.diagnostics.browser_session_restore_path ? (
+                    <div>
+                      {t('Session restore endpoint')}: {status.diagnostics.browser_session_restore_path}
+                    </div>
+                  ) : null}
+                  {status.diagnostics.browser_session_restore_message ? (
+                    <div>
+                      {t('Session restore message')}: {status.diagnostics.browser_session_restore_message}
+                    </div>
+                  ) : null}
                   {status.diagnostics.auth_me_path ? (
                     <div>
                       {t('Auth validation endpoint')}: {status.diagnostics.auth_me_path}

@@ -5900,6 +5900,17 @@
     "Zero retention": "Zero retention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Auth Client ID": "Auth Client ID",
+    "Browser session restore": "Browser session restore",
+    "Detected API base URL": "Detected API base URL",
+    "If the target sub2api site exposes a refresh token, NexusTok will use it during later syncs; browser-session restores without a refresh token may need to be captured again after the access token expires.": "If the target sub2api site exposes a refresh token, NexusTok will use it during later syncs; browser-session restores without a refresh token may need to be captured again after the access token expires.",
+    "Not attempted": "Not attempted",
+    "Restored": "Restored",
+    "Session restore endpoint": "Session restore endpoint",
+    "Session restore message": "Session restore message",
+    "The userscript runs inside the upstream sub2api site, reads auth_token and refresh_token when available, and falls back to /api/v1/auth/session/restore with your logged-in browser session before sending the login state.": "The userscript runs inside the upstream sub2api site, reads auth_token and refresh_token when available, and falls back to /api/v1/auth/session/restore with your logged-in browser session before sending the login state.",
+    "This sub2api login state was restored from the upstream browser session. The target site did not expose a refresh token, so later syncs may require recapturing the login state.": "This sub2api login state was restored from the upstream browser session. The target site did not expose a refresh token, so later syncs may require recapturing the login state.",
+    "Unauthenticated": "Unauthenticated"
   }
 }

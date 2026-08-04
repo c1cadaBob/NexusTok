@@ -78,6 +78,51 @@ func TestCaptureSessionCompletesSub2APIPayload(t *testing.T) {
 	require.Contains(t, err.Error(), "无权访问")
 }
 
+func TestCaptureSessionCompletesSub2APIBrowserSessionRestorePayload(t *testing.T) {
+	start, err := StartCaptureSession(17, CaptureSessionStartRequest{
+		Platform: PlatformSub2API,
+		BaseURL:  "https://sub.example.com",
+	}, "https://nexus.example.com")
+	require.NoError(t, err)
+	record, found, err := captureSessionCache.Get(start.CaptureID)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	result, err := CompleteCaptureSession(start.CaptureID, CaptureSessionCompleteRequest{
+		CaptureSecret: record.Secret,
+		CaptureSource: "browser_session_restore",
+		Origin:        "https://sub.example.com",
+		AccessToken:   "restored-sub2-access-token",
+		ExpiresIn:     900,
+		AuthUser: map[string]any{
+			"email": "linuxdo-user@example.com",
+		},
+		Diagnostics: &CaptureDiagnostics{
+			PageOrigin:                  "https://sub.example.com",
+			APIBaseURLSeen:              "https://api.sub.example.com",
+			AuthClientIDPresent:         true,
+			BrowserSessionRestorePath:   "/api/v1/auth/session/restore",
+			BrowserSessionRestoreStatus: "authenticated",
+			AuthMePath:                  "/api/v1/auth/me",
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, captureStatusCompleted, result.Status)
+	require.NotNil(t, result.Summary)
+	require.Equal(t, "browser_session_restore", result.Summary.CaptureSource)
+	require.False(t, result.Summary.RefreshTokenPresent)
+	require.Greater(t, result.Summary.ExpiresAt, common.GetTimestamp())
+	require.NotNil(t, result.Diagnostics)
+	require.True(t, result.Diagnostics.AuthClientIDPresent)
+	require.Equal(t, "authenticated", result.Diagnostics.BrowserSessionRestoreStatus)
+
+	credential, err := ResolveCaptureCredential(17, start.CaptureID)
+	require.NoError(t, err)
+	require.NotNil(t, credential.Session)
+	require.Equal(t, "restored-sub2-access-token", credential.Session.Sub2API.AccessToken)
+	require.Empty(t, credential.Session.Sub2API.RefreshToken)
+}
+
 func TestCaptureSessionCompletesNewAPIAccessTokenPayloadAndRendersScript(t *testing.T) {
 	start, err := StartCaptureSession(9, CaptureSessionStartRequest{
 		Platform: PlatformNewAPI,
@@ -99,7 +144,11 @@ func TestCaptureSessionCompletesNewAPIAccessTokenPayloadAndRendersScript(t *test
 	require.Contains(t, script, "@grant        unsafeWindow")
 	require.Contains(t, script, "const pageWindow")
 	require.Contains(t, script, "collectSub2APIDiagnostics")
-	require.Contains(t, script, "localStorage.auth_token")
+	require.Contains(t, script, "sub2api browser session restore")
+	require.Contains(t, script, "auth/session/restore")
+	require.Contains(t, script, "X-Sub2API-Auth-Client")
+	require.Contains(t, script, "credentials: 'include'")
+	require.Contains(t, script, "readSub2APIAuthClientID")
 
 	record, found, err := captureSessionCache.Get(start.CaptureID)
 	require.NoError(t, err)
@@ -163,14 +212,18 @@ func TestCaptureSessionStoresOnlySafeDiagnostics(t *testing.T) {
 		Origin:        "https://sub.example.com",
 		Error:         "sub2api access token was not found",
 		Diagnostics: &CaptureDiagnostics{
-			PageOrigin:            "https://sub.example.com",
-			LocalStorageKeys:      []string{"auth_token", "refresh_token", "theme"},
-			SessionStorageKeys:    []string{"temporary"},
-			AuthTokenPresent:      false,
-			AccessTokenPresent:    false,
-			RefreshTokenPresent:   true,
-			OAuthHashTokenPresent: false,
-			AuthMePath:            "",
+			PageOrigin:                   "https://sub.example.com",
+			LocalStorageKeys:             []string{"auth_token", "refresh_token", "theme"},
+			SessionStorageKeys:           []string{"temporary"},
+			AuthTokenPresent:             false,
+			AccessTokenPresent:           false,
+			RefreshTokenPresent:          true,
+			OAuthHashTokenPresent:        false,
+			AuthClientIDPresent:          true,
+			AuthMePath:                   "",
+			BrowserSessionRestorePath:    "/api/v1/auth/session/restore",
+			BrowserSessionRestoreStatus:  "failed",
+			BrowserSessionRestoreMessage: "restore failed",
 		},
 	})
 	require.Error(t, err)
@@ -181,6 +234,8 @@ func TestCaptureSessionStoresOnlySafeDiagnostics(t *testing.T) {
 	require.NotNil(t, status.Diagnostics)
 	require.Equal(t, []string{"auth_token", "refresh_token", "theme"}, status.Diagnostics.LocalStorageKeys)
 	require.True(t, status.Diagnostics.RefreshTokenPresent)
+	require.True(t, status.Diagnostics.AuthClientIDPresent)
+	require.Equal(t, "failed", status.Diagnostics.BrowserSessionRestoreStatus)
 	require.NotContains(t, status.Message, secretToken)
 
 	raw, err := common.Marshal(status)

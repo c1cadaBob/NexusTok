@@ -5900,6 +5900,17 @@
     "Zero retention": "零數據保留",
     "Zhipu": "智譜",
     "Zhipu V4": "智譜 V4",
-    "Zoom": "縮放"
+    "Zoom": "縮放",
+    "Auth Client ID": "認證客戶端 ID",
+    "Browser session restore": "瀏覽器會話恢復",
+    "Detected API base URL": "偵測到的 API 基礎位址",
+    "If the target sub2api site exposes a refresh token, NexusTok will use it during later syncs; browser-session restores without a refresh token may need to be captured again after the access token expires.": "如果目標 sub2api 站點暴露 refresh token，NexusTok 會在後續同步中使用它；透過瀏覽器會話恢復且沒有 refresh token 的登入狀態，在 access token 過期後可能需要重新採集。",
+    "Not attempted": "未嘗試",
+    "Restored": "已恢復",
+    "Session restore endpoint": "會話恢復介面",
+    "Session restore message": "會話恢復訊息",
+    "The userscript runs inside the upstream sub2api site, reads auth_token and refresh_token when available, and falls back to /api/v1/auth/session/restore with your logged-in browser session before sending the login state.": "油猴腳本會在目標 sub2api 站點內執行，在可用時讀取 auth_token 和 refresh_token，並在傳送登入狀態前使用已登入瀏覽器會話降級呼叫 /api/v1/auth/session/restore。",
+    "This sub2api login state was restored from the upstream browser session. The target site did not expose a refresh token, so later syncs may require recapturing the login state.": "此 sub2api 登入狀態是透過上游瀏覽器會話恢復取得。目標站點沒有暴露 refresh token，後續同步可能需要重新採集登入狀態。",
+    "Unauthenticated": "未認證"
   }
 }

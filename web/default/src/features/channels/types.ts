@@ -446,13 +446,18 @@ export interface UpstreamAccountCaptureCredentialSummary {
 
 export interface UpstreamAccountCaptureDiagnostics {
   page_origin?: string
+  api_base_url_seen?: string
   local_storage_keys?: string[]
   session_storage_keys?: string[]
   auth_token_present?: boolean
   access_token_present?: boolean
   refresh_token_present?: boolean
   oauth_hash_token_present?: boolean
+  auth_client_id_present?: boolean
   auth_me_path?: string
+  browser_session_restore_path?: string
+  browser_session_restore_status?: string
+  browser_session_restore_message?: string
 }
 
 export interface UpstreamAccountCaptureStatusData {

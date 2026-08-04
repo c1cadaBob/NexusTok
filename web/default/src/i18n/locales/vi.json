@@ -5900,6 +5900,17 @@
     "Zero retention": "Không lưu dữ liệu",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Auth Client ID": "ID client xác thực",
+    "Browser session restore": "Khôi phục phiên trình duyệt",
+    "Detected API base URL": "API base URL đã phát hiện",
+    "If the target sub2api site exposes a refresh token, NexusTok will use it during later syncs; browser-session restores without a refresh token may need to be captured again after the access token expires.": "Nếu trang sub2api đích cung cấp refresh token, NexusTok sẽ dùng nó trong các lần đồng bộ sau; các phiên khôi phục từ trình duyệt không có refresh token có thể cần thu thập lại sau khi access token hết hạn.",
+    "Not attempted": "Chưa thử",
+    "Restored": "Đã khôi phục",
+    "Session restore endpoint": "Endpoint khôi phục phiên",
+    "Session restore message": "Thông báo khôi phục phiên",
+    "The userscript runs inside the upstream sub2api site, reads auth_token and refresh_token when available, and falls back to /api/v1/auth/session/restore with your logged-in browser session before sending the login state.": "Userscript chạy trong trang sub2api upstream, đọc auth_token và refresh_token khi có, rồi dùng /api/v1/auth/session/restore với phiên trình duyệt đã đăng nhập trước khi gửi trạng thái đăng nhập.",
+    "This sub2api login state was restored from the upstream browser session. The target site did not expose a refresh token, so later syncs may require recapturing the login state.": "Trạng thái đăng nhập sub2api này được khôi phục từ phiên trình duyệt upstream. Trang đích không cung cấp refresh token, nên các lần đồng bộ sau có thể cần thu thập lại trạng thái đăng nhập.",
+    "Unauthenticated": "Chưa xác thực"
   }
 }

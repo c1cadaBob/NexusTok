@@ -99,14 +99,19 @@ type CaptureCredentialSummary struct {
 // 和最后尝试的校验接口。这样管理员可以判断脚本运行上下文是否正确，同时不会
 // 因为错误诊断把第三方登录凭据写入页面响应或普通日志。
 type CaptureDiagnostics struct {
-	PageOrigin            string   `json:"page_origin,omitempty"`
-	LocalStorageKeys      []string `json:"local_storage_keys,omitempty"`
-	SessionStorageKeys    []string `json:"session_storage_keys,omitempty"`
-	AuthTokenPresent      bool     `json:"auth_token_present,omitempty"`
-	AccessTokenPresent    bool     `json:"access_token_present,omitempty"`
-	RefreshTokenPresent   bool     `json:"refresh_token_present,omitempty"`
-	OAuthHashTokenPresent bool     `json:"oauth_hash_token_present,omitempty"`
-	AuthMePath            string   `json:"auth_me_path,omitempty"`
+	PageOrigin                   string   `json:"page_origin,omitempty"`
+	APIBaseURLSeen               string   `json:"api_base_url_seen,omitempty"`
+	LocalStorageKeys             []string `json:"local_storage_keys,omitempty"`
+	SessionStorageKeys           []string `json:"session_storage_keys,omitempty"`
+	AuthTokenPresent             bool     `json:"auth_token_present,omitempty"`
+	AccessTokenPresent           bool     `json:"access_token_present,omitempty"`
+	RefreshTokenPresent          bool     `json:"refresh_token_present,omitempty"`
+	OAuthHashTokenPresent        bool     `json:"oauth_hash_token_present,omitempty"`
+	AuthClientIDPresent          bool     `json:"auth_client_id_present,omitempty"`
+	AuthMePath                   string   `json:"auth_me_path,omitempty"`
+	BrowserSessionRestorePath    string   `json:"browser_session_restore_path,omitempty"`
+	BrowserSessionRestoreStatus  string   `json:"browser_session_restore_status,omitempty"`
+	BrowserSessionRestoreMessage string   `json:"browser_session_restore_message,omitempty"`
 }
 
 // CaptureSessionStatusResult 是后台页面轮询采集状态的响应。
@@ -523,6 +528,89 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
     return keys;
   }
 
+  function cookieValue(name) {
+    if (typeof document === 'undefined') return '';
+    try {
+      const prefix = name + '=';
+      for (const item of document.cookie.split(';')) {
+        const trimmed = item.trim();
+        if (!trimmed.startsWith(prefix)) continue;
+        return decodeURIComponent(trimmed.slice(prefix.length)).trim();
+      }
+    } catch (_) {}
+    return '';
+  }
+
+  function appConfigAPIBaseURL() {
+    try {
+      const value = pageWindow.__APP_CONFIG__ && pageWindow.__APP_CONFIG__.api_base_url;
+      return text(value || '').trim();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function normalizeAuthClientID(value) {
+    const trimmed = text(value).trim();
+    return trimmed && trimmed.length <= 128 ? trimmed : '';
+  }
+
+  function readSub2APIAuthClientIDSync() {
+    return normalizeAuthClientID(
+      directStorageValue(['sub2api_auth_client_id']) ||
+      cookieValue('sub2api_auth_client_id')
+    );
+  }
+
+  function readIndexedDBValue(dbName, storeName, key) {
+    if (typeof indexedDB === 'undefined') return Promise.resolve('');
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        resolve(normalizeAuthClientID(value));
+      };
+      let request;
+      try {
+        // 不指定版本，避免读取时触发目标站 IndexedDB 升级或因版本更高而失败。
+        request = indexedDB.open(dbName);
+      } catch (_) {
+        finish('');
+        return;
+      }
+      request.onerror = () => finish('');
+      request.onblocked = () => finish('');
+      request.onsuccess = () => {
+        const db = request.result;
+        let transaction;
+        try {
+          if (!db.objectStoreNames.contains(storeName)) {
+            db.close();
+            finish('');
+            return;
+          }
+          transaction = db.transaction(storeName, 'readonly');
+          const getRequest = transaction.objectStore(storeName).get(key);
+          getRequest.onsuccess = () => finish(getRequest.result);
+          getRequest.onerror = () => finish('');
+          transaction.oncomplete = () => db.close();
+          transaction.onerror = () => { db.close(); finish(''); };
+          transaction.onabort = () => { db.close(); finish(''); };
+        } catch (_) {
+          try { db.close(); } catch (__) {}
+          finish('');
+        }
+      };
+    });
+  }
+
+  async function readSub2APIAuthClientID() {
+    const direct = readSub2APIAuthClientIDSync();
+    if (direct) return direct;
+    return readIndexedDBValue('sub2api-auth-coordination', 'values', 'sub2api_auth_client_id');
+  }
+
   function hasStorageValue(keys) {
     for (const storage of [pageWindow.localStorage, pageWindow.sessionStorage]) {
       for (const key of keys) {
@@ -545,13 +633,15 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
     );
   }
 
-  function collectSub2APIDiagnostics(authMePath) {
+  function collectSub2APIDiagnostics(authMePath, restoreInfo) {
     let localStorageKeys = [];
     let sessionStorageKeys = [];
     try { localStorageKeys = storageKeyNames(pageWindow.localStorage); } catch (_) {}
     try { sessionStorageKeys = storageKeyNames(pageWindow.sessionStorage); } catch (_) {}
+    const restore = restoreInfo || {};
     return {
       page_origin: text(pageWindow.location && pageWindow.location.origin),
+      api_base_url_seen: appConfigAPIBaseURL(),
       local_storage_keys: localStorageKeys,
       session_storage_keys: sessionStorageKeys,
       auth_token_present: hasStorageValue(['auth_token']),
@@ -560,7 +650,11 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
       refresh_token_present: hasStorageValue(['refresh_token', 'refreshToken', 'rt', 'sub2api_refresh_token']) ||
         Boolean(pageStateValue(['refresh_token', 'refreshtoken', 'rt'])),
       oauth_hash_token_present: hasHashToken(),
+      auth_client_id_present: Boolean(restore.authClientIDPresent || readSub2APIAuthClientIDSync()),
       auth_me_path: text(authMePath || ''),
+      browser_session_restore_path: text(restore.path || ''),
+      browser_session_restore_status: text(restore.status || 'not_attempted'),
+      browser_session_restore_message: text(restore.message || ''),
     };
   }
 
@@ -783,6 +877,84 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
     throw error;
   }
 
+  function normalizeSessionRestoreData(data) {
+    const source = data && typeof data === 'object' && data.data !== undefined ? data.data : data;
+    if (!source || typeof source !== 'object') {
+      return { authenticated: false, accessToken: '', refreshToken: '', expiresIn: 0, user: {} };
+    }
+    const accessToken = text(source.access_token || source.auth_token || source.token || '').replace(/^Bearer\s+/i, '').trim();
+    const authenticated = source.authenticated === true || Boolean(accessToken);
+    const refreshToken = text(source.refresh_token || source.rt || '').trim();
+    const expiresIn = Number.parseInt(text(source.expires_in || source.expiresIn || ''), 10);
+    const user = source.user && typeof source.user === 'object' ? source.user : {};
+    return {
+      authenticated,
+      accessToken,
+      refreshToken,
+      expiresIn: Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn : 0,
+      user,
+    };
+  }
+
+  async function restoreSub2APIBrowserSession() {
+    const authClientID = await readSub2APIAuthClientID();
+    const restoreInfo = {
+      status: 'not_attempted',
+      path: '',
+      message: '',
+      authClientIDPresent: Boolean(authClientID),
+    };
+    const headers = { 'Content-Type': 'application/json' };
+    if (authClientID) headers['X-Sub2API-Auth-Client'] = authClientID;
+    try {
+      const result = await readFirstJSON(
+        ['/api/v1/auth/session/restore', '/api/auth/session/restore', '/auth/session/restore'],
+        { method: 'POST', body: '{}', headers },
+        'sub2api browser session restore endpoint',
+        'sub2_session_restore'
+      );
+      const restored = normalizeSessionRestoreData(result.data);
+      restoreInfo.path = result.path;
+      if (!restored.authenticated) {
+        restoreInfo.status = 'unauthenticated';
+        restoreInfo.message = 'The target browser session is not authenticated.';
+        return { state: null, restoreInfo };
+      }
+      if (!restored.accessToken) {
+        restoreInfo.status = 'failed';
+        restoreInfo.message = 'The target browser session restore response did not include access_token.';
+        return { state: null, restoreInfo };
+      }
+      restoreInfo.status = 'authenticated';
+      restoreInfo.message = 'The target browser session restored an access token.';
+      return {
+        state: {
+          accessToken: restored.accessToken,
+          refreshToken: restored.refreshToken,
+          expiresAt: '',
+          expiresIn: restored.expiresIn,
+          authUser: restored.user,
+          localStorage: {
+            auth_token: restored.accessToken,
+            access_token: restored.accessToken,
+            refresh_token: restored.refreshToken,
+            token_expires_at: '',
+          },
+          captureSource: 'browser_session_restore',
+        },
+        restoreInfo,
+      };
+    } catch (error) {
+      restoreInfo.status = 'failed';
+      restoreInfo.message = error && error.message ? error.message : String(error);
+      const attempts = error && Array.isArray(error.attempts) ? error.attempts : [];
+      if (attempts.length > 0) {
+        restoreInfo.path = attempts.slice(0, 3).map((item) => item.path).join(', ');
+      }
+      return { state: null, restoreInfo };
+    }
+  }
+
   function looksLikeMissingUserID(error) {
     const message = error && error.message ? error.message : String(error);
     return /New-Api-User|user id|user_id|用户\s*ID|用户ID|未提供|not provided|mismatch/i.test(message);
@@ -870,6 +1042,7 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
       accessToken,
       refreshToken,
       expiresAt,
+      expiresIn: 0,
       authUser,
       localStorage: {
         auth_token: accessToken,
@@ -877,6 +1050,7 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
         refresh_token: refreshToken,
         token_expires_at: expiresAt,
       },
+      captureSource: 'userscript',
       diagnostics: collectSub2APIDiagnostics(''),
     };
   }
@@ -935,21 +1109,37 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
 
   async function captureSub2API() {
     const params = parseHashParams();
-    const state = readSub2APILoginState();
-    const diagnostics = state.diagnostics || collectSub2APIDiagnostics('');
+    let state = readSub2APILoginState();
+    let diagnostics = state.diagnostics || collectSub2APIDiagnostics('');
     let authUser = state.authUser || {};
-    const accessToken = state.accessToken;
+    let accessToken = state.accessToken;
+    if (!accessToken) {
+      const restored = await restoreSub2APIBrowserSession();
+      if (restored.state && restored.state.accessToken) {
+        state = restored.state;
+        accessToken = state.accessToken;
+        authUser = state.authUser || {};
+        diagnostics = collectSub2APIDiagnostics('', restored.restoreInfo);
+      } else {
+        diagnostics = collectSub2APIDiagnostics('', restored.restoreInfo);
+      }
+    }
     if (!accessToken) {
       if (await pageLooksLikeNewAPI()) {
         const error = new Error('This page looks like a new-api/NexusTok site, but this capture session was created as sub2api. Open the real sub2api upstream site and make sure its login state is available there.');
         error.diagnostics = diagnostics;
         throw error;
       }
-      const error = new Error(
-        'sub2api access token was not found in the target page context. ' +
-        'Open the logged-in sub2api site in the same browser profile. ' +
-        'If localStorage.auth_token is null, the login state is stored under another origin or was cleared.'
-      );
+      const restoreStatus = diagnostics.browser_session_restore_status || 'not_attempted';
+      const restoreMessage = diagnostics.browser_session_restore_message || '';
+      let message = 'sub2api access token was not found in the target page context.';
+      if (restoreStatus === 'unauthenticated') {
+        message = 'sub2api browser session restore returned unauthenticated. Log in to the upstream sub2api site, wait for the console to finish loading, then run the userscript again.';
+      } else if (restoreStatus === 'failed') {
+        message = 'sub2api browser session restore failed. The site may use a custom API path, or the login session may be unavailable to the browser page.';
+      }
+      if (restoreMessage) message += ' ' + restoreMessage;
+      const error = new Error(message);
       error.diagnostics = diagnostics;
       throw error;
     }
@@ -976,11 +1166,12 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
       auth_mode: 'access_token',
       access_token: accessToken,
       refresh_token: state.refreshToken,
-      expires_in: Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn : 0,
+      expires_in: state.expiresIn || (Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn : 0),
       expires_at: normalizeExpiresAt(state.expiresAt),
       auth_user: authUser,
       hash: pageWindow.location.hash || '',
       local_storage: state.localStorage,
+      capture_source: state.captureSource || 'userscript',
       diagnostics,
     };
   }
@@ -1021,7 +1212,7 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
       const payload = {
         ...captured,
         capture_secret: config.captureSecret,
-        capture_source: 'userscript',
+        capture_source: captured.capture_source || 'userscript',
         origin: pageWindow.location.origin,
         base_url: config.baseURL,
         captured_at: Math.floor(Date.now() / 1000),
@@ -1135,13 +1326,28 @@ func sanitizeCaptureDiagnostics(value *CaptureDiagnostics) *CaptureDiagnostics {
 	if value == nil {
 		return nil
 	}
+	limitText := func(text string, max int) string {
+		text = strings.TrimSpace(common.MaskSensitiveInfo(text))
+		if text == "" || max <= 0 {
+			return ""
+		}
+		if len(text) > max {
+			return text[:max] + "..."
+		}
+		return text
+	}
 	sanitized := &CaptureDiagnostics{
-		PageOrigin:            strings.TrimSpace(value.PageOrigin),
-		AuthTokenPresent:      value.AuthTokenPresent,
-		AccessTokenPresent:    value.AccessTokenPresent,
-		RefreshTokenPresent:   value.RefreshTokenPresent,
-		OAuthHashTokenPresent: value.OAuthHashTokenPresent,
-		AuthMePath:            strings.TrimSpace(value.AuthMePath),
+		PageOrigin:                   limitText(value.PageOrigin, 256),
+		APIBaseURLSeen:               limitText(value.APIBaseURLSeen, 256),
+		AuthTokenPresent:             value.AuthTokenPresent,
+		AccessTokenPresent:           value.AccessTokenPresent,
+		RefreshTokenPresent:          value.RefreshTokenPresent,
+		OAuthHashTokenPresent:        value.OAuthHashTokenPresent,
+		AuthClientIDPresent:          value.AuthClientIDPresent,
+		AuthMePath:                   limitText(value.AuthMePath, 256),
+		BrowserSessionRestorePath:    limitText(value.BrowserSessionRestorePath, 256),
+		BrowserSessionRestoreStatus:  limitText(value.BrowserSessionRestoreStatus, 64),
+		BrowserSessionRestoreMessage: limitText(value.BrowserSessionRestoreMessage, 512),
 	}
 	limitKeys := func(keys []string) []string {
 		limited := make([]string, 0, min(len(keys), 64))
