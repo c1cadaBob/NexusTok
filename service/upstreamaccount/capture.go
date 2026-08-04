@@ -421,6 +421,65 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
     return isNumericUserID(trimmed) ? trimmed : '';
   }
 
+  function storageItems() {
+    const items = [];
+    for (const storage of [window.localStorage, window.sessionStorage]) {
+      try {
+        for (let i = 0; i < storage.length; i += 1) {
+          const key = storage.key(i) || '';
+          items.push({ storage, key, value: storage.getItem(key) || '' });
+        }
+      } catch (_) {}
+    }
+    return items;
+  }
+
+  function directStorageValue(keys) {
+    for (const storage of [window.localStorage, window.sessionStorage]) {
+      for (const key of keys) {
+        try {
+          const value = text(storage.getItem(key) || '').trim();
+          if (value) return value;
+        } catch (_) {}
+      }
+    }
+    return '';
+  }
+
+  function deepStorageValue(keys, names, keyPattern) {
+    for (const item of storageItems()) {
+      if (keys.length > 0 && !keys.includes(item.key)) continue;
+      if (keyPattern && !keyPattern.test(item.key)) continue;
+      const parsed = parseJSON(item.value);
+      const found = parsed ? findValueDeep(parsed, names, 0) : '';
+      if (found) return found;
+    }
+    return '';
+  }
+
+  function parseHashParams() {
+    const rawHash = text(window.location.hash || '').replace(/^#/, '');
+    const candidates = [rawHash];
+    if (rawHash.includes('?')) candidates.push(rawHash.slice(rawHash.indexOf('?') + 1));
+    if (rawHash.includes('&')) candidates.push(rawHash.slice(rawHash.indexOf('&') + 1));
+    for (const candidate of candidates) {
+      const params = new URLSearchParams(candidate);
+      if (params.get('access_token') || params.get('auth_token') || params.get('refresh_token')) {
+        return params;
+      }
+    }
+    return new URLSearchParams(rawHash);
+  }
+
+  function tokenFromHashParam(...names) {
+    const params = parseHashParams();
+    for (const name of names) {
+      const value = text(params.get(name) || '').trim();
+      if (value) return value;
+    }
+    return '';
+  }
+
   function guessNewAPIUserID() {
     const directUID = text(localStorage.getItem('uid') || sessionStorage.getItem('uid') || '').trim();
     if (isNumericUserID(directUID)) return directUID;
@@ -629,6 +688,75 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
     return headers;
   }
 
+  async function pageLooksLikeNewAPI() {
+    if (normalizeNewAPIUserID(directStorageValue(['uid', 'new-api-user', 'New-Api-User']))) {
+      return true;
+    }
+    const storedUserID = deepStorageValue(
+      ['user', 'user_info', 'userInfo', 'auth', 'auth_user'],
+      ['id', 'userid', 'user_id'],
+      /user|auth|profile|self/i
+    );
+    if (normalizeNewAPIUserID(storedUserID)) return true;
+    const discovered = await discoverAPIPaths('self');
+    if (discovered.some((path) => /\/api\/user\/self/.test(path))) return true;
+    try {
+      const response = await fetch('/api/status', { credentials: 'include', cache: 'no-store' });
+      const headerVersion = text(response.headers.get('X-New-Api-Version') || response.headers.get('x-new-api-version') || '');
+      if (headerVersion) return true;
+      const rawBody = await response.text();
+      const body = parseJSON(rawBody) || {};
+      const data = body.data || body;
+      if (data && typeof data === 'object' && (data.quota_per_unit || data.self_use_mode_enabled || data.server_address)) {
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  function readSub2APILoginState() {
+    const accessToken = text(
+      tokenFromHashParam('access_token', 'auth_token', 'token') ||
+      directStorageValue(['auth_token', 'access_token', 'token', 'jwt', 'sub2api_auth_token']) ||
+      deepStorageValue(
+        ['auth', 'auth_user', 'token_info', 'tokenInfo', 'session', 'user'],
+        ['access_token', 'auth_token', 'token', 'jwt'],
+        /auth|token|session|user/i
+      )
+    ).trim();
+    const refreshToken = text(
+      tokenFromHashParam('refresh_token', 'rt') ||
+      directStorageValue(['refresh_token', 'refreshToken', 'rt', 'sub2api_refresh_token']) ||
+      deepStorageValue(
+        ['auth', 'auth_user', 'token_info', 'tokenInfo', 'session', 'user'],
+        ['refresh_token', 'refreshtoken', 'rt'],
+        /auth|token|session|user/i
+      )
+    ).trim();
+    const expiresAt = text(
+      tokenFromHashParam('expires_at', 'expiresAt') ||
+      directStorageValue(['token_expires_at', 'expires_at', 'expiresAt', 'access_token_expires_at']) ||
+      deepStorageValue(
+        ['auth', 'auth_user', 'token_info', 'tokenInfo', 'session', 'user'],
+        ['token_expires_at', 'expires_at', 'expiresat', 'access_token_expires_at'],
+        /auth|token|session|user/i
+      )
+    ).trim();
+    const authUser = parseJSON(directStorageValue(['auth_user', 'user', 'user_info', 'userInfo'])) || {};
+    return {
+      accessToken,
+      refreshToken,
+      expiresAt,
+      authUser,
+      localStorage: {
+        auth_token: accessToken,
+        access_token: accessToken,
+        refresh_token: refreshToken,
+        token_expires_at: expiresAt,
+      },
+    };
+  }
+
   async function captureNewAPI() {
     let userID = guessNewAPIUserID();
     const selfPaths = ['/api/user/self', '/api/user/me', '/api/user/profile', '/api/user/info'];
@@ -682,14 +810,24 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
   }
 
   async function captureSub2API() {
-    const params = new URLSearchParams(window.location.hash.replace(/^#/, ''));
-    let authUser = parseJSON(localStorage.getItem('auth_user')) || null;
-    const accessToken = text(params.get('access_token') || localStorage.getItem('auth_token') || '');
-    if (!accessToken) throw new Error('sub2api auth_token not found. Please sign in to the upstream site first.');
+    const params = parseHashParams();
+    const state = readSub2APILoginState();
+    let authUser = state.authUser || {};
+    const accessToken = state.accessToken;
+    if (!accessToken) {
+      if (await pageLooksLikeNewAPI()) {
+        throw new Error('This page looks like a new-api/NexusTok site, but this capture session was created as sub2api. Recreate the capture session and select new-api, or open the real sub2api upstream site.');
+      }
+      throw new Error('sub2api access token was not found in localStorage/sessionStorage or OAuth callback hash. Make sure you opened the logged-in sub2api site, not the NexusTok page or a new-api site.');
+    }
     try {
-      const me = await readJSON('/api/v1/auth/me', {
-        headers: { Authorization: 'Bearer ' + accessToken },
-      });
+      const meResult = await readFirstJSON(
+        ['/api/v1/auth/me', '/api/auth/me', '/auth/me'],
+        { headers: { Authorization: 'Bearer ' + accessToken } },
+        'sub2api current user endpoint',
+        'sub2_me'
+      );
+      const me = meResult.data;
       authUser = { ...(authUser || {}), ...(me || {}) };
     } catch (error) {
       const message = error && error.message ? error.message : String(error);
@@ -700,16 +838,12 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
       platform: 'sub2api',
       auth_mode: 'access_token',
       access_token: accessToken,
-      refresh_token: text(params.get('refresh_token') || localStorage.getItem('refresh_token') || ''),
+      refresh_token: state.refreshToken,
       expires_in: Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn : 0,
-      expires_at: normalizeExpiresAt(localStorage.getItem('token_expires_at')),
+      expires_at: normalizeExpiresAt(state.expiresAt),
       auth_user: authUser,
       hash: window.location.hash || '',
-      local_storage: {
-        auth_token: text(localStorage.getItem('auth_token') || ''),
-        refresh_token: text(localStorage.getItem('refresh_token') || ''),
-        token_expires_at: text(localStorage.getItem('token_expires_at') || ''),
-      },
+      local_storage: state.localStorage,
     };
   }
 
@@ -908,8 +1042,24 @@ func buildCredentialFromCapture(record CaptureSessionRecord, req CaptureSessionC
 			CaptureSource:     firstNonEmpty(req.CaptureSource, "userscript"),
 		}, nil
 	case PlatformSub2API:
-		accessToken := normalizeImportedBearerToken(firstNonEmpty(req.AccessToken, req.LocalStorage["auth_token"], tokenFromHash(req.Hash, "access_token")))
-		refreshToken := strings.TrimSpace(firstNonEmpty(req.RefreshToken, req.LocalStorage["refresh_token"], tokenFromHash(req.Hash, "refresh_token")))
+		accessToken := normalizeImportedBearerToken(firstNonEmpty(
+			req.AccessToken,
+			req.LocalStorage["auth_token"],
+			req.LocalStorage["access_token"],
+			req.LocalStorage["token"],
+			req.LocalStorage["jwt"],
+			tokenFromHash(req.Hash, "access_token"),
+			tokenFromHash(req.Hash, "auth_token"),
+			tokenFromHash(req.Hash, "token"),
+		))
+		refreshToken := strings.TrimSpace(firstNonEmpty(
+			req.RefreshToken,
+			req.LocalStorage["refresh_token"],
+			req.LocalStorage["refreshToken"],
+			req.LocalStorage["rt"],
+			tokenFromHash(req.Hash, "refresh_token"),
+			tokenFromHash(req.Hash, "rt"),
+		))
 		expiresAt := normalizeCaptureExpiresAt(req)
 		if accessToken == "" {
 			return Credential{}, nil, fmt.Errorf("sub2api 采集结果缺少 access_token")
@@ -1007,7 +1157,12 @@ func normalizeCaptureExpiresAt(req CaptureSessionCompleteRequest) int64 {
 	if req.ExpiresAt > 0 {
 		return normalizeUnixSeconds(req.ExpiresAt)
 	}
-	if raw := req.LocalStorage["token_expires_at"]; strings.TrimSpace(raw) != "" {
+	if raw := firstNonEmpty(
+		req.LocalStorage["token_expires_at"],
+		req.LocalStorage["expires_at"],
+		req.LocalStorage["expiresAt"],
+		req.LocalStorage["access_token_expires_at"],
+	); strings.TrimSpace(raw) != "" {
 		value, _ := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
 		return normalizeUnixSeconds(value)
 	}

@@ -91,6 +91,8 @@ func TestCaptureSessionCompletesNewAPIAccessTokenPayloadAndRendersScript(t *test
 	require.Contains(t, script, "candidateAPIPrefixes")
 	require.Contains(t, script, "readFirstJSON")
 	require.Contains(t, script, "normalizeNewAPIUserID")
+	require.Contains(t, script, "This page looks like a new-api/NexusTok site")
+	require.Contains(t, script, "readSub2APILoginState")
 
 	record, found, err := captureSessionCache.Get(start.CaptureID)
 	require.NoError(t, err)
@@ -150,6 +152,19 @@ func TestParseCredentialDraftReturnsSanitizedSummary(t *testing.T) {
 	require.Equal(t, "sub2-a...oken", result.Summary.AccessTokenMasked)
 	require.True(t, result.Summary.RefreshTokenPresent)
 	require.Empty(t, result.Summary.UserID)
+}
+
+func TestParseCredentialDraftAcceptsSub2APIAccessTokenAliases(t *testing.T) {
+	result, err := ParseCredentialDraft(CredentialParseRequest{
+		Platform: PlatformSub2API,
+		BaseURL:  "https://sub.example.com",
+		Raw:      `{"local_storage":{"access_token":"sub2-access-token","rt":"sub-refresh","expires_at":"1893456000000"},"auth_user":{"email":"alice@example.com"}}`,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result.Summary)
+	require.Equal(t, "sub2-a...oken", result.Summary.AccessTokenMasked)
+	require.True(t, result.Summary.RefreshTokenPresent)
+	require.Equal(t, int64(1893456000), result.Summary.ExpiresAt)
 }
 
 func TestNewAPICaptureRejectsUsernameAsUserID(t *testing.T) {
