@@ -232,9 +232,11 @@ func TestRefreshChannelFromSnapshotUpdatesChannelBaseURLWhenSyncSourceMigrates(t
 	require.NoError(t, db.Create(&channel).Error)
 
 	_, err = RefreshChannelFromSnapshot(channel.Id, &Snapshot{
-		Platform: PlatformSub2API,
-		BaseURL:  apiBaseURL,
-		Balance:  &BalanceSnapshot{BalanceUSD: floatPtr(2.5)},
+		Platform:          PlatformSub2API,
+		BaseURL:           apiBaseURL,
+		ManagementBaseURL: panelBaseURL,
+		RelayBaseURL:      apiBaseURL,
+		Balance:           &BalanceSnapshot{BalanceUSD: floatPtr(2.5)},
 		Keys: []SyncedKey{{
 			ExternalID: "key-1",
 			Name:       "api-key",
@@ -251,7 +253,9 @@ func TestRefreshChannelFromSnapshotUpdatesChannelBaseURLWhenSyncSourceMigrates(t
 	require.NotNil(t, refreshed.BaseURL)
 	require.Equal(t, apiBaseURL, *refreshed.BaseURL)
 	metadata := readChannelSyncMetadata(refreshed.OtherSettings)
-	require.Equal(t, apiBaseURL, metadata.BaseURL)
+	require.Equal(t, panelBaseURL, metadata.BaseURL)
+	require.Equal(t, panelBaseURL, metadata.ManagementBaseURL)
+	require.Equal(t, apiBaseURL, metadata.RelayBaseURL)
 }
 
 func TestRefreshChannelFromSnapshotUpsertsAccountsAndDisablesMissing(t *testing.T) {

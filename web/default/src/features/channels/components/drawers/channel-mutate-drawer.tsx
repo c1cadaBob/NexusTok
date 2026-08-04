@@ -459,7 +459,8 @@ function getUpstreamSyncBaseUrlFromSettings(
   const metadata =
     parseSettingsRecord(settings)[UPSTREAM_ACCOUNT_SYNC_SETTINGS_KEY]
   if (!metadata || typeof metadata !== 'object') return ''
-  return String((metadata as Record<string, unknown>).base_url || '').trim()
+  const record = metadata as Record<string, unknown>
+  return String(record.management_base_url || record.base_url || '').trim()
 }
 
 function getUpstreamSyncPlatformFromSettings(

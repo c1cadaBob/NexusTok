@@ -2,6 +2,7 @@ package upstreamaccount
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -125,6 +126,88 @@ type sub2APIUsageStats struct {
 	TodayActualCost float64 `json:"today_actual_cost"`
 }
 
+type sub2APISnapshotStage string
+
+const (
+	sub2APIStageAuthMe  sub2APISnapshotStage = "auth_me"
+	sub2APIStageProfile sub2APISnapshotStage = "profile"
+	sub2APIStageGroups  sub2APISnapshotStage = "groups"
+	sub2APIStageKeys    sub2APISnapshotStage = "keys"
+	sub2APIStageRefresh sub2APISnapshotStage = "refresh"
+)
+
+// sub2APISnapshotError 保留快照读取失败的具体阶段，避免把管理接口 404、
+// 分组权限不足、密钥列表失败等问题全部误报为 Access Token 不可用。
+type sub2APISnapshotError struct {
+	Stage sub2APISnapshotStage
+	Err   error
+}
+
+func (e *sub2APISnapshotError) Error() string {
+	if e == nil {
+		return ""
+	}
+	label := sub2APIStageMessage(e.Stage)
+	var httpErr *upstreamHTTPError
+	if errors.As(e.Err, &httpErr) {
+		path := firstNonEmpty(httpErr.Path, sub2APIStagePath(e.Stage))
+		method := firstNonEmpty(httpErr.Method, http.MethodGet)
+		return fmt.Sprintf("%s：%s %s 返回 status=%d, body=%s", label, method, path, httpErr.StatusCode, httpErr.Body)
+	}
+	if e.Err != nil {
+		return fmt.Sprintf("%s：%v", label, e.Err)
+	}
+	return label
+}
+
+func (e *sub2APISnapshotError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+func wrapSub2APISnapshotError(stage sub2APISnapshotStage, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &sub2APISnapshotError{Stage: stage, Err: err}
+}
+
+func sub2APIStageMessage(stage sub2APISnapshotStage) string {
+	switch stage {
+	case sub2APIStageAuthMe:
+		return "Sub2API Access Token 校验失败"
+	case sub2APIStageProfile:
+		return "Sub2API 已登录，但读取用户详情失败"
+	case sub2APIStageGroups:
+		return "Sub2API 已登录，但读取分组失败"
+	case sub2APIStageKeys:
+		return "Sub2API 已登录，但读取密钥失败"
+	case sub2APIStageRefresh:
+		return "Sub2API Access Token 刷新失败"
+	default:
+		return "Sub2API 同步失败"
+	}
+}
+
+func sub2APIStagePath(stage sub2APISnapshotStage) string {
+	switch stage {
+	case sub2APIStageAuthMe:
+		return "/api/v1/auth/me"
+	case sub2APIStageProfile:
+		return "/api/v1/user/profile"
+	case sub2APIStageGroups:
+		return "/api/v1/groups/available"
+	case sub2APIStageKeys:
+		return "/api/v1/keys"
+	case sub2APIStageRefresh:
+		return "/api/v1/auth/refresh"
+	default:
+		return ""
+	}
+}
+
 // FetchSnapshot 登录 sub2api 并读取当前账号可见的密钥、分组、倍率和余额。
 func (c *Sub2APIClient) FetchSnapshot(ctx context.Context, credential Credential) (*Snapshot, error) {
 	snapshot, challenge, err := c.BeginPreview(ctx, credential)
@@ -143,15 +226,19 @@ func (c *Sub2APIClient) FetchSnapshot(ctx context.Context, credential Credential
 // 的 challenge 只包含 sub2api 登录接口返回的 temp_token，不包含正式 access_token；
 // 调用方可以再额外挂载加密后的账号凭据，供 2FA 完成后落库复用。
 func (c *Sub2APIClient) BeginPreview(ctx context.Context, credential Credential) (*Snapshot, *AuthChallengeRecord, error) {
-	credential.BaseURL = normalizeSub2APIBaseURL(credential.BaseURL)
-	if apiBaseURL, ok := c.discoverSub2APIAPIBaseURLFromPanel(ctx, credential.BaseURL); ok {
-		credential.BaseURL = apiBaseURL
-	}
-	api, err := newHTTPClient(credential.BaseURL, c.httpClient)
+	managementBaseURL, relayBaseURL, err := c.resolveSub2APIBaseURLs(ctx, credential)
 	if err != nil {
 		return nil, nil, err
 	}
-	if snapshot, ok, err := c.fetchSnapshotWithSavedSession(ctx, api, credential.Session); ok || err != nil {
+	credential.BaseURL = managementBaseURL
+	credential.ManagementBaseURL = managementBaseURL
+	credential.RelayBaseURL = relayBaseURL
+
+	api, err := newHTTPClient(managementBaseURL, c.httpClient)
+	if err != nil {
+		return nil, nil, err
+	}
+	if snapshot, ok, err := c.fetchSnapshotWithSavedSession(ctx, api, credential.Session, relayBaseURL); ok || err != nil {
 		return snapshot, nil, err
 	}
 	if credentialRequiresImportedSession(credential, AuthModeAccessToken) {
@@ -167,19 +254,62 @@ func (c *Sub2APIClient) BeginPreview(ctx context.Context, credential Credential)
 			return nil, nil, fmt.Errorf("sub2api 账号启用了 2FA，但登录响应缺少 temp_token")
 		}
 		return nil, &AuthChallengeRecord{
-			Platform: PlatformSub2API,
-			BaseURL:  api.baseURL,
-			Email:    strings.TrimSpace(firstNonEmpty(credential.Email, credential.Username)),
+			Platform:     PlatformSub2API,
+			BaseURL:      api.baseURL,
+			RelayBaseURL: relayBaseURL,
+			Email:        strings.TrimSpace(firstNonEmpty(credential.Email, credential.Username)),
 			Sub2API: &Sub2APIChallengeData{
 				TempToken: tempToken,
 			},
 		}, nil
 	}
-	snapshot, err := c.fetchSnapshotWithAuthenticatedSession(ctx, api, login.AccessToken, login.User)
+	snapshot, err := c.fetchSnapshotWithAuthenticatedSession(ctx, api, login.AccessToken, login.User, relayBaseURL)
 	if err == nil {
 		snapshot.AuthSession = buildSub2APIAuthenticatedSession(api.baseURL, login)
 	}
 	return snapshot, nil, friendlySub2APIEndpointError(err)
+}
+
+// resolveSub2APIBaseURLs 为账号同步拆出两个不同用途的地址。
+//
+// managementBaseURL 始终用于登录、auth/me、分组、密钥等管理接口；relayBaseURL
+// 仅用于最终创建 NexusTok 渠道时的模型请求地址。aiapipay.com 这类站点会在页面
+// 配置中声明 relay API 域名，但管理接口仍留在面板域名，因此不能再用 relay 覆盖
+// HTTP client 的 baseURL。
+func (c *Sub2APIClient) resolveSub2APIBaseURLs(ctx context.Context, credential Credential) (string, string, error) {
+	managementCandidate := firstNonEmpty(credential.ManagementBaseURL, credential.BaseURL)
+	managementBaseURL, err := normalizeBaseURL(normalizeSub2APIBaseURL(managementCandidate))
+	if err != nil {
+		return "", "", err
+	}
+
+	relayBaseURL := strings.TrimSpace(credential.RelayBaseURL)
+	if isLikelyAPISubdomain(managementBaseURL) {
+		if recoveredManagementBaseURL, ok := c.recoverSub2APIManagementBaseURLFromRelay(ctx, managementBaseURL); ok {
+			if relayBaseURL == "" {
+				relayBaseURL = managementBaseURL
+			}
+			managementBaseURL = recoveredManagementBaseURL
+		}
+	}
+
+	if relayBaseURL == "" {
+		if discoveredRelayBaseURL, ok := c.discoverSub2APIRelayBaseURLFromPanel(ctx, managementBaseURL); ok {
+			relayBaseURL = discoveredRelayBaseURL
+		}
+	}
+	if relayBaseURL == "" {
+		relayBaseURL = managementBaseURL
+	} else {
+		relayBaseURL, err = normalizeBaseURL(normalizeSub2APIBaseURL(relayBaseURL))
+		if err != nil {
+			return "", "", err
+		}
+		if err := validateRelatedAPIBaseURL(managementBaseURL, relayBaseURL); err != nil {
+			return "", "", err
+		}
+	}
+	return managementBaseURL, relayBaseURL, nil
 }
 
 // Complete2FA 使用已缓存的 sub2api temp_token 和管理员输入的验证码完成预览。
@@ -207,14 +337,15 @@ func (c *Sub2APIClient) Complete2FA(ctx context.Context, record AuthChallengeRec
 	if err != nil {
 		return nil, fmt.Errorf("sub2api 2FA 验证失败：%w", err)
 	}
-	snapshot, err := c.fetchSnapshotWithAuthenticatedSession(ctx, api, login.AccessToken, login.User)
+	relayBaseURL := firstNonEmpty(record.RelayBaseURL, record.BaseURL)
+	snapshot, err := c.fetchSnapshotWithAuthenticatedSession(ctx, api, login.AccessToken, login.User, relayBaseURL)
 	if err == nil {
 		snapshot.AuthSession = buildSub2APIAuthenticatedSession(api.baseURL, &login)
 	}
 	return snapshot, err
 }
 
-func (c *Sub2APIClient) fetchSnapshotWithSavedSession(ctx context.Context, api *httpClient, session *AuthenticatedSession) (*Snapshot, bool, error) {
+func (c *Sub2APIClient) fetchSnapshotWithSavedSession(ctx context.Context, api *httpClient, session *AuthenticatedSession, relayBaseURL string) (*Snapshot, bool, error) {
 	if api == nil || !authSessionMatches(session, PlatformSub2API, api.baseURL) || session.Sub2API == nil {
 		return nil, false, nil
 	}
@@ -230,25 +361,28 @@ func (c *Sub2APIClient) fetchSnapshotWithSavedSession(ctx context.Context, api *
 		}
 		refreshed, err := c.refreshAccessToken(ctx, api, refreshToken)
 		if err != nil {
-			return nil, true, fmt.Errorf("Sub2API Access Token 刷新失败：%w", friendlySub2APIEndpointError(err))
+			return nil, true, friendlySub2APIEndpointError(wrapSub2APISnapshotError(sub2APIStageRefresh, err))
 		}
 		token = refreshed.AccessToken
 		refreshToken = firstNonEmpty(refreshed.RefreshToken, refreshToken)
 		expiresAt = refreshed.ExpiresAt
 	}
-	snapshot, err := c.fetchSnapshotWithAuthenticatedSession(ctx, api, token, sub2APIUser{})
+	snapshot, err := c.fetchSnapshotWithAuthenticatedSession(ctx, api, token, sub2APIUser{}, relayBaseURL)
 	if err != nil {
+		if !isSub2APIAuthFailure(err) {
+			return nil, true, friendlySub2APIEndpointError(err)
+		}
 		if refreshToken == "" {
 			return nil, true, fmt.Errorf("Sub2API Access Token 不可用，当前登录态没有 refresh_token，请重新使用油猴脚本采集。")
 		}
 		refreshed, refreshErr := c.refreshAccessToken(ctx, api, refreshToken)
 		if refreshErr != nil {
-			return nil, true, fmt.Errorf("Sub2API Access Token 不可用且 refresh_token 刷新失败：%w", friendlySub2APIEndpointError(refreshErr))
+			return nil, true, fmt.Errorf("Sub2API Access Token 不可用且 refresh_token 刷新失败：%w", friendlySub2APIEndpointError(wrapSub2APISnapshotError(sub2APIStageRefresh, refreshErr)))
 		}
 		token = refreshed.AccessToken
 		refreshToken = firstNonEmpty(refreshed.RefreshToken, refreshToken)
 		expiresAt = refreshed.ExpiresAt
-		snapshot, err = c.fetchSnapshotWithAuthenticatedSession(ctx, api, token, sub2APIUser{})
+		snapshot, err = c.fetchSnapshotWithAuthenticatedSession(ctx, api, token, sub2APIUser{}, relayBaseURL)
 		if err != nil {
 			return nil, true, friendlySub2APIEndpointError(err)
 		}
@@ -266,6 +400,29 @@ func (c *Sub2APIClient) fetchSnapshotWithSavedSession(ctx context.Context, api *
 		},
 	}
 	return snapshot, true, nil
+}
+
+func isSub2APIAuthFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	var snapshotErr *sub2APISnapshotError
+	if !errors.As(err, &snapshotErr) || snapshotErr.Stage != sub2APIStageAuthMe {
+		return false
+	}
+	var httpErr *upstreamHTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr.StatusCode == http.StatusUnauthorized || httpErr.StatusCode == http.StatusForbidden
+	}
+	message := strings.ToLower(snapshotErr.Err.Error())
+	return strings.Contains(message, "token") ||
+		strings.Contains(message, "unauthorized") ||
+		strings.Contains(message, "forbidden") ||
+		strings.Contains(message, "expired") ||
+		strings.Contains(message, "无效") ||
+		strings.Contains(message, "过期") ||
+		strings.Contains(message, "未登录") ||
+		strings.Contains(message, "未授权")
 }
 
 type refreshedSub2APIToken struct {
@@ -323,16 +480,20 @@ func buildSub2APIAuthenticatedSession(baseURL string, login *sub2APILoginRespons
 	}
 }
 
-func (c *Sub2APIClient) fetchSnapshotWithAuthenticatedSession(ctx context.Context, api *httpClient, accessToken string, user sub2APIUser) (*Snapshot, error) {
+func (c *Sub2APIClient) fetchSnapshotWithAuthenticatedSession(ctx context.Context, api *httpClient, accessToken string, user sub2APIUser, relayBaseURL string) (*Snapshot, error) {
 	if strings.TrimSpace(accessToken) == "" {
 		return nil, fmt.Errorf("sub2api 登录响应缺少 access_token")
 	}
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+accessToken)
 
-	if me, err := c.fetchMe(ctx, api, headers); err == nil {
-		user = me
+	me, err := c.fetchMe(ctx, api, headers)
+	if err != nil {
+		return nil, wrapSub2APISnapshotError(sub2APIStageAuthMe, err)
 	}
+	user = me
+
+	warnings := make([]string, 0, 2)
 	profile, profileErr := c.fetchProfile(ctx, api, headers)
 	if profileErr == nil {
 		user.Balance = profile.Balance
@@ -342,20 +503,26 @@ func (c *Sub2APIClient) fetchSnapshotWithAuthenticatedSession(ctx context.Contex
 		if strings.TrimSpace(user.Username) == "" {
 			user.Username = profile.Username
 		}
+	} else {
+		warnings = append(warnings, "sub2api 用户详情不可用，已使用 auth/me 返回的基础信息")
 	}
 	groups, groupRates, err := c.fetchGroups(ctx, api, headers)
 	if err != nil {
-		return nil, err
+		return nil, wrapSub2APISnapshotError(sub2APIStageGroups, err)
 	}
-	usage, warnings := c.fetchUsage(ctx, api, headers)
+	usage, usageWarnings := c.fetchUsage(ctx, api, headers)
+	warnings = append(warnings, usageWarnings...)
 	keys, err := c.fetchKeys(ctx, api, headers, groupRates)
 	if err != nil {
-		return nil, err
+		return nil, wrapSub2APISnapshotError(sub2APIStageKeys, err)
 	}
+	relayBaseURL = normalizeSyncMetadataBaseURL(PlatformSub2API, firstNonEmpty(relayBaseURL, api.baseURL))
 
 	snapshot := &Snapshot{
-		Platform: PlatformSub2API,
-		BaseURL:  api.baseURL,
+		Platform:          PlatformSub2API,
+		BaseURL:           relayBaseURL,
+		ManagementBaseURL: api.baseURL,
+		RelayBaseURL:      relayBaseURL,
 		User: &UserSnapshot{
 			ID:       stringValue(user.ID),
 			Username: user.Username,
@@ -398,6 +565,10 @@ func normalizeSub2APIBaseURL(raw string) string {
 func friendlySub2APIEndpointError(err error) error {
 	if err == nil {
 		return nil
+	}
+	var snapshotErr *sub2APISnapshotError
+	if errors.As(err, &snapshotErr) {
+		return err
 	}
 	message := err.Error()
 	if strings.Contains(message, "status=410") && strings.Contains(message, "endpoint_migrated") {

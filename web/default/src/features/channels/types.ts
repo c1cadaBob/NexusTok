@@ -279,6 +279,8 @@ export interface UpstreamAccountRatioConversion {
 export interface UpstreamAccountSnapshot {
   platform: UpstreamAccountPlatform
   base_url: string
+  management_base_url?: string
+  relay_base_url?: string
   balance?: UpstreamAccountBalanceSnapshot
   groups: UpstreamAccountGroup[]
   keys: UpstreamAccountKey[]
@@ -424,6 +426,8 @@ export interface UpstreamAccountCaptureStartData {
   expires_at: number
   platform: UpstreamAccountPlatform
   base_url: string
+  management_base_url?: string
+  relay_base_url?: string
   api_base_url?: string
   origin: string
   userscript_url: string
@@ -434,6 +438,8 @@ export interface UpstreamAccountCaptureCredentialSummary {
   platform: UpstreamAccountPlatform
   auth_mode: UpstreamAccountAuthMode
   base_url: string
+  management_base_url?: string
+  relay_base_url?: string
   api_base_url?: string
   origin: string
   user_id?: string
@@ -469,6 +475,8 @@ export interface UpstreamAccountCaptureStatusData {
   expires_at: number
   platform: UpstreamAccountPlatform
   base_url: string
+  management_base_url?: string
+  relay_base_url?: string
   api_base_url?: string
   origin: string
   userscript_url?: string

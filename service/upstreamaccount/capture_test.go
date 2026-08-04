@@ -92,7 +92,7 @@ func TestCaptureSessionCompletesSub2APIBrowserSessionRestorePayload(t *testing.T
 		CaptureSecret: record.Secret,
 		CaptureSource: "browser_session_restore",
 		Origin:        "https://sub.example.com",
-		BaseURL:       "https://api.sub.example.com",
+		BaseURL:       "https://sub.example.com",
 		APIBaseURL:    "https://api.sub.example.com",
 		AccessToken:   "restored-sub2-access-token",
 		ExpiresIn:     900,
@@ -112,9 +112,13 @@ func TestCaptureSessionCompletesSub2APIBrowserSessionRestorePayload(t *testing.T
 	require.Equal(t, captureStatusCompleted, result.Status)
 	require.NotNil(t, result.Summary)
 	require.Equal(t, "browser_session_restore", result.Summary.CaptureSource)
-	require.Equal(t, "https://api.sub.example.com", result.BaseURL)
+	require.Equal(t, "https://sub.example.com", result.BaseURL)
+	require.Equal(t, "https://sub.example.com", result.ManagementBaseURL)
+	require.Equal(t, "https://api.sub.example.com", result.RelayBaseURL)
 	require.Equal(t, "https://api.sub.example.com", result.APIBaseURL)
-	require.Equal(t, "https://api.sub.example.com", result.Summary.BaseURL)
+	require.Equal(t, "https://sub.example.com", result.Summary.BaseURL)
+	require.Equal(t, "https://sub.example.com", result.Summary.ManagementBaseURL)
+	require.Equal(t, "https://api.sub.example.com", result.Summary.RelayBaseURL)
 	require.Equal(t, "https://api.sub.example.com", result.Summary.APIBaseURL)
 	require.False(t, result.Summary.RefreshTokenPresent)
 	require.Greater(t, result.Summary.ExpiresAt, common.GetTimestamp())
@@ -125,8 +129,10 @@ func TestCaptureSessionCompletesSub2APIBrowserSessionRestorePayload(t *testing.T
 	credential, err := ResolveCaptureCredential(17, start.CaptureID)
 	require.NoError(t, err)
 	require.NotNil(t, credential.Session)
-	require.Equal(t, "https://api.sub.example.com", credential.BaseURL)
-	require.Equal(t, "https://api.sub.example.com", credential.Session.BaseURL)
+	require.Equal(t, "https://sub.example.com", credential.BaseURL)
+	require.Equal(t, "https://sub.example.com", credential.ManagementBaseURL)
+	require.Equal(t, "https://api.sub.example.com", credential.RelayBaseURL)
+	require.Equal(t, "https://sub.example.com", credential.Session.BaseURL)
 	require.Equal(t, "restored-sub2-access-token", credential.Session.Sub2API.AccessToken)
 	require.Empty(t, credential.Session.Sub2API.RefreshToken)
 }
@@ -180,7 +186,8 @@ func TestCaptureSessionCompletesNewAPIAccessTokenPayloadAndRendersScript(t *test
 	require.Contains(t, script, "credentials: 'include'")
 	require.Contains(t, script, "readSub2APIAuthClientID")
 	require.Contains(t, script, "api_base_url")
-	require.Contains(t, script, "resolvedBaseURL")
+	require.Contains(t, script, "management_base_url")
+	require.Contains(t, script, "relay_base_url")
 
 	record, found, err := captureSessionCache.Get(start.CaptureID)
 	require.NoError(t, err)

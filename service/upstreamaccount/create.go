@@ -216,7 +216,7 @@ func resolveSyncedChannelType(snapshot *Snapshot, requestedType int) int {
 // `base_url`，导致后续 Relay 拼出 `//v1/...` 或 `/login/v1/...` 这类错误上游路径。
 func normalizeSyncedChannelBaseURL(value *string, snapshot *Snapshot) *string {
 	if snapshot != nil {
-		baseURL := normalizeSyncMetadataBaseURL(snapshot.Platform, snapshot.BaseURL)
+		baseURL := normalizeSyncMetadataBaseURL(snapshot.Platform, firstNonEmpty(snapshotRelayBaseURL(snapshot), snapshot.BaseURL))
 		if baseURL != "" {
 			return &baseURL
 		}

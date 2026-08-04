@@ -149,9 +149,12 @@ func RefreshChannelFromSnapshot(channelID int, snapshot *Snapshot, req RefreshRe
 			if config.Enabled != nil {
 				enabled = *config.Enabled
 			}
-			identity := syncIdentityKey(snapshot.Platform, snapshot.BaseURL, key.ExternalID)
+			identity := syncIdentityKey(snapshot.Platform, snapshotManagementBaseURL(snapshot), key.ExternalID)
 			digest := keyDigest(key.Key)
 			account := byIdentity[identity]
+			if account == nil && NormalizePlatform(snapshot.Platform) == PlatformSub2API {
+				account = byIdentity[syncIdentityKey(snapshot.Platform, snapshotRelayBaseURL(snapshot), key.ExternalID)]
+			}
 			if account == nil && digest != "" {
 				account = byDigest[digest]
 			}
@@ -221,7 +224,7 @@ func syncedChannelBaseURLUpdate(channel model.Channel, snapshot *Snapshot) (stri
 	if snapshot == nil {
 		return "", false
 	}
-	nextBaseURL := normalizeSyncMetadataBaseURL(snapshot.Platform, snapshot.BaseURL)
+	nextBaseURL := normalizeSyncMetadataBaseURL(snapshot.Platform, firstNonEmpty(snapshotRelayBaseURL(snapshot), snapshot.BaseURL))
 	if nextBaseURL == "" {
 		return "", false
 	}
@@ -233,8 +236,12 @@ func syncedChannelBaseURLUpdate(channel model.Channel, snapshot *Snapshot) (stri
 		return "", false
 	}
 	metadata := readChannelSyncMetadata(channel.OtherSettings)
-	oldBaseURL := normalizeSyncMetadataBaseURL(firstNonEmpty(metadata.Platform, snapshot.Platform), metadata.BaseURL)
-	if currentBaseURL == "" || (oldBaseURL != "" && currentBaseURL == oldBaseURL) {
+	metadataPlatform := firstNonEmpty(metadata.Platform, snapshot.Platform)
+	oldRelayBaseURL := normalizeSyncMetadataBaseURL(metadataPlatform, firstNonEmpty(metadata.RelayBaseURL, metadata.BaseURL))
+	oldManagementBaseURL := normalizeSyncMetadataBaseURL(metadataPlatform, firstNonEmpty(metadata.ManagementBaseURL, metadata.BaseURL))
+	if currentBaseURL == "" ||
+		(oldRelayBaseURL != "" && currentBaseURL == oldRelayBaseURL) ||
+		(oldManagementBaseURL != "" && currentBaseURL == oldManagementBaseURL) {
 		return nextBaseURL, true
 	}
 	return "", false
@@ -276,8 +283,14 @@ func indexExistingAccounts(accounts []model.ChannelAccount) (map[string]*model.C
 	for i := range accounts {
 		account := &accounts[i]
 		metadata := readAccountSyncMetadata(account.OtherSettings)
-		if key := syncIdentityKey(metadata.Platform, metadata.BaseURL, metadata.ExternalID); key != "" {
-			byIdentity[key] = account
+		baseURLs := []string{metadata.BaseURL}
+		if NormalizePlatform(metadata.Platform) == PlatformSub2API {
+			baseURLs = append(baseURLs, metadata.ManagementBaseURL, metadata.RelayBaseURL)
+		}
+		for _, baseURL := range baseURLs {
+			if key := syncIdentityKey(metadata.Platform, baseURL, metadata.ExternalID); key != "" {
+				byIdentity[key] = account
+			}
 		}
 		if metadata.KeyDigest != "" {
 			byDigest[metadata.KeyDigest] = account
@@ -425,7 +438,9 @@ func buildAccountRefreshUpdates(existing *model.ChannelAccount, snapshot *Snapsh
 }
 
 func sameSyncSource(metadata syncMetadata, snapshot *Snapshot) bool {
-	return syncIdentityKey(metadata.Platform, metadata.BaseURL, metadata.ExternalID) != "" &&
+	metadataBaseURL := firstNonEmpty(metadata.ManagementBaseURL, metadata.BaseURL)
+	snapshotBaseURL := snapshotManagementBaseURL(snapshot)
+	return syncIdentityKey(metadata.Platform, metadataBaseURL, metadata.ExternalID) != "" &&
 		NormalizePlatform(metadata.Platform) == NormalizePlatform(snapshot.Platform) &&
-		sameSyncSourceBaseURL(snapshot.Platform, metadata.BaseURL, snapshot.BaseURL)
+		sameSyncSourceBaseURL(snapshot.Platform, metadataBaseURL, snapshotBaseURL)
 }

@@ -608,37 +608,46 @@ func TestSub2APIPreviewImportsAccessToken(t *testing.T) {
 func TestSub2APIPreviewDiscoversAPIBaseURLFromAppConfig(t *testing.T) {
 	apiHits := 0
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+		apiHits++
+		http.NotFound(w, r)
+	}))
+	defer apiServer.Close()
+
+	panelPageHits := 0
+	panelManagementHits := 0
+	panelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/v1/") && r.URL.Path != "/api/v1/auth/login" {
+			panelManagementHits++
 			require.Equal(t, "Bearer imported-sub2-token", r.Header.Get("Authorization"))
 		}
-		apiHits++
 		switch r.URL.Path {
+		case "/", "/home":
+			panelPageHits++
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(`<script>window.__APP_CONFIG__={"api_base_url":"` + apiServer.URL + `"}</script>`))
 		case "/api/v1/auth/login":
 			t.Fatalf("导入 Access Token 时不应调用 sub2api 账号密码登录接口")
 		case "/api/v1/auth/me":
+			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":10}}`))
 		case "/api/v1/user/profile":
+			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":12.5}}`))
 		case "/api/v1/groups/available":
+			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"code":0,"data":[{"id":3,"name":"vip","platform":"openai","rate_multiplier":0.25}]}`))
 		case "/api/v1/groups/rates":
+			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"code":0,"data":{"3":0.25}}`))
 		case "/api/v1/usage/dashboard/stats":
+			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"code":0,"data":{"total_actual_cost":4.75}}`))
 		case "/api/v1/keys":
+			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"code":0,"data":{"items":[{"id":9,"name":"sub-key","key":"sk-sub2-full-key","status":"active","group_id":3,"group":{"id":3,"name":"vip"},"models":["gpt-4o"],"quota":20,"quota_used":3}],"total":1}}`))
 		default:
 			http.NotFound(w, r)
 		}
-	}))
-	defer apiServer.Close()
-
-	panelHits := 0
-	panelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		panelHits++
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(`<script>window.__APP_CONFIG__={"api_base_url":"` + apiServer.URL + `"}</script>`))
 	}))
 	defer panelServer.Close()
 
@@ -651,14 +660,21 @@ func TestSub2APIPreviewDiscoversAPIBaseURLFromAppConfig(t *testing.T) {
 	}})
 
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, panelHits, 1)
-	require.Greater(t, apiHits, 0)
+	require.GreaterOrEqual(t, panelPageHits, 1)
+	require.Greater(t, panelManagementHits, 0)
+	require.Equal(t, 0, apiHits)
 	require.Equal(t, apiServer.URL, result.Snapshot.BaseURL)
+	require.Equal(t, panelServer.URL, result.Snapshot.ManagementBaseURL)
+	require.Equal(t, apiServer.URL, result.Snapshot.RelayBaseURL)
 	record, err := GetPreviewRecord(result.PreviewID)
 	require.NoError(t, err)
 	require.Equal(t, apiServer.URL, record.Snapshot.BaseURL)
+	require.Equal(t, panelServer.URL, record.Snapshot.ManagementBaseURL)
+	require.Equal(t, apiServer.URL, record.Snapshot.RelayBaseURL)
 	require.NotNil(t, record.Snapshot.StoredCredential)
-	require.Equal(t, apiServer.URL, record.Snapshot.StoredCredential.BaseURL)
+	require.Equal(t, panelServer.URL, record.Snapshot.StoredCredential.BaseURL)
+	require.Equal(t, panelServer.URL, record.Snapshot.StoredCredential.ManagementBaseURL)
+	require.Equal(t, apiServer.URL, record.Snapshot.StoredCredential.RelayBaseURL)
 }
 
 func TestReadChannelSyncCredentialHydratesSub2APIAccessTokenFromSession(t *testing.T) {
@@ -848,6 +864,75 @@ func TestSub2APIPreviewExpiredImportedTokenWithoutRefreshTokenNeedsRecapture(t *
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Access Token 已过期")
 	require.Contains(t, err.Error(), "重新使用油猴脚本采集")
+	require.NotContains(t, err.Error(), "Access Token 不能为空")
+}
+
+func TestSub2APIPreviewUnauthorizedAuthMeWithoutRefreshTokenNeedsRecapture(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/auth/me":
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"code":401,"message":"unauthorized"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	_, err := Preview(context.Background(), PreviewRequest{Credential: Credential{
+		Platform:    PlatformSub2API,
+		BaseURL:     server.URL,
+		AuthMode:    AuthModeAccessToken,
+		AccessToken: "invalid-access",
+		ExpiresAt:   common.GetTimestamp() + 3600,
+	}})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Access Token 不可用")
+	require.Contains(t, err.Error(), "重新使用油猴脚本采集")
+	require.NotContains(t, err.Error(), "Access Token 不能为空")
+}
+
+func TestSub2APIPreviewKeysFailureReportsStageInsteadOfTokenFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasPrefix(r.URL.Path, "/api/v1/") {
+			require.Equal(t, "Bearer short-lived-access", r.Header.Get("Authorization"))
+		}
+		switch r.URL.Path {
+		case "/api/v1/auth/me":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":10}}`))
+		case "/api/v1/user/profile":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":12.5}}`))
+		case "/api/v1/groups/available":
+			_, _ = w.Write([]byte(`{"code":0,"data":[{"id":3,"name":"vip","platform":"openai","rate_multiplier":0.25}]}`))
+		case "/api/v1/groups/rates":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"3":0.25}}`))
+		case "/api/v1/usage/dashboard/stats":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"total_actual_cost":4.75}}`))
+		case "/api/v1/keys":
+			http.NotFound(w, r)
+			_, _ = w.Write([]byte(`{"code":404,"message":"not found"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	_, err := Preview(context.Background(), PreviewRequest{Credential: Credential{
+		Platform:    PlatformSub2API,
+		BaseURL:     server.URL,
+		AuthMode:    AuthModeAccessToken,
+		AccessToken: "short-lived-access",
+		ExpiresAt:   common.GetTimestamp() + 3600,
+	}})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "读取密钥失败")
+	require.Contains(t, err.Error(), "/api/v1/keys")
+	require.NotContains(t, err.Error(), "重新使用油猴脚本采集")
+	require.NotContains(t, err.Error(), "refresh_token")
 	require.NotContains(t, err.Error(), "Access Token 不能为空")
 }
 

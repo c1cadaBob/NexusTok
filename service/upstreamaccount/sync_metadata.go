@@ -13,6 +13,8 @@ const upstreamAccountSyncMetadataKey = "upstream_account_sync"
 type syncMetadata struct {
 	Platform              string                   `json:"platform,omitempty"`
 	BaseURL               string                   `json:"base_url,omitempty"`
+	ManagementBaseURL     string                   `json:"management_base_url,omitempty"`
+	RelayBaseURL          string                   `json:"relay_base_url,omitempty"`
 	Credentials           *StoredCredential        `json:"credentials,omitempty"`
 	ExternalID            string                   `json:"external_id,omitempty"`
 	KeyDigest             string                   `json:"key_digest,omitempty"`
@@ -59,8 +61,14 @@ func mergeChannelSyncMetadata(existing string, snapshot *Snapshot) string {
 	}
 	next := map[string]any{
 		"platform":  snapshot.Platform,
-		"base_url":  normalizeSyncMetadataBaseURL(snapshot.Platform, snapshot.BaseURL),
+		"base_url":  snapshotSyncMetadataBaseURL(snapshot),
 		"synced_at": common.GetTimestamp(),
+	}
+	if managementBaseURL := snapshotManagementBaseURL(snapshot); managementBaseURL != "" {
+		next["management_base_url"] = managementBaseURL
+	}
+	if relayBaseURL := snapshotRelayBaseURL(snapshot); relayBaseURL != "" {
+		next["relay_base_url"] = relayBaseURL
 	}
 	if existingMetadata := readChannelSyncMetadata(existing); existingMetadata.Credentials != nil {
 		next["credentials"] = existingMetadata.Credentials
@@ -97,6 +105,12 @@ func mergeChannelSyncMetadataWithCredential(existing string, snapshot *Snapshot,
 	if raw == nil {
 		raw = map[string]any{}
 	}
+	if stored.ManagementBaseURL == "" {
+		stored.ManagementBaseURL = snapshotManagementBaseURL(snapshot)
+	}
+	if stored.RelayBaseURL == "" {
+		stored.RelayBaseURL = snapshotRelayBaseURL(snapshot)
+	}
 	raw["credentials"] = stored
 	data[upstreamAccountSyncMetadataKey] = raw
 	bytes, err := common.Marshal(data)
@@ -116,7 +130,9 @@ func mergeAccountSyncMetadata(existing string, snapshot *Snapshot, key SyncedKey
 	}
 	data[upstreamAccountSyncMetadataKey] = syncMetadata{
 		Platform:              snapshot.Platform,
-		BaseURL:               snapshot.BaseURL,
+		BaseURL:               snapshotSyncMetadataBaseURL(snapshot),
+		ManagementBaseURL:     snapshotManagementBaseURL(snapshot),
+		RelayBaseURL:          snapshotRelayBaseURL(snapshot),
 		ExternalID:            key.ExternalID,
 		KeyDigest:             keyDigest(key.Key),
 		SyncedAt:              common.GetTimestamp(),
@@ -245,7 +261,7 @@ func PreserveChannelSyncCredential(existing string, next string) string {
 // ReadChannelSyncCredential 从渠道 settings 中读取并解密上游账号登录凭据。
 func ReadChannelSyncCredential(settings string) (Credential, bool, error) {
 	metadata := readChannelSyncMetadata(settings)
-	if metadata.Platform == "" && metadata.BaseURL == "" {
+	if metadata.Platform == "" && metadata.BaseURL == "" && metadata.ManagementBaseURL == "" && metadata.RelayBaseURL == "" {
 		return Credential{}, false, nil
 	}
 	if metadata.Credentials == nil {
@@ -264,13 +280,15 @@ func ReadChannelSyncCredential(settings string) (Credential, bool, error) {
 		return Credential{}, false, err
 	}
 	credential := Credential{
-		Platform: firstNonEmpty(metadata.Credentials.Platform, metadata.Platform),
-		BaseURL:  firstNonEmpty(metadata.Credentials.BaseURL, metadata.BaseURL),
-		Username: metadata.Credentials.Username,
-		Email:    metadata.Credentials.Email,
-		AuthMode: metadata.Credentials.AuthMode,
-		Password: password,
-		Session:  session,
+		Platform:          firstNonEmpty(metadata.Credentials.Platform, metadata.Platform),
+		BaseURL:           firstNonEmpty(metadata.Credentials.ManagementBaseURL, metadata.Credentials.BaseURL, metadata.ManagementBaseURL, metadata.BaseURL),
+		ManagementBaseURL: firstNonEmpty(metadata.Credentials.ManagementBaseURL, metadata.Credentials.BaseURL, metadata.ManagementBaseURL, metadata.BaseURL),
+		RelayBaseURL:      firstNonEmpty(metadata.Credentials.RelayBaseURL, metadata.RelayBaseURL),
+		Username:          metadata.Credentials.Username,
+		Email:             metadata.Credentials.Email,
+		AuthMode:          metadata.Credentials.AuthMode,
+		Password:          password,
+		Session:           session,
 	}
 	credential = HydrateCredentialFromSession(credential)
 	if strings.TrimSpace(credential.Username) == "" && strings.TrimSpace(credential.Email) == "" && !hasReusableAuthSession(session) {
@@ -328,7 +346,13 @@ func channelSyncCredentialSourceMatches(existing syncMetadata, next map[string]a
 		return false
 	}
 	existingBaseURL := firstNonEmpty(credential.BaseURL, existing.BaseURL)
+	if existingPlatform == PlatformSub2API {
+		existingBaseURL = firstNonEmpty(credential.ManagementBaseURL, credential.BaseURL, existing.ManagementBaseURL, existing.BaseURL)
+	}
 	nextBaseURL := stringFromMetadata(next, "base_url")
+	if nextPlatform == PlatformSub2API {
+		nextBaseURL = firstNonEmpty(stringFromMetadata(next, "management_base_url"), nextBaseURL)
+	}
 	if nextBaseURL != "" && existingBaseURL != "" {
 		platform := firstNonEmpty(nextPlatform, existingPlatform)
 		if !sameSyncSourceBaseURL(platform, existingBaseURL, nextBaseURL) {
@@ -432,9 +456,12 @@ func buildStoredCredential(snapshot *Snapshot, credential Credential) (*StoredCr
 	if snapshot.AuthSession != nil {
 		credential.Session = snapshot.AuthSession
 	}
+	if credential.RelayBaseURL == "" {
+		credential.RelayBaseURL = snapshotRelayBaseURL(snapshot)
+	}
 	return buildStoredCredentialWithBase(
 		firstNonEmpty(credential.Platform, snapshot.Platform),
-		firstNonEmpty(snapshot.BaseURL, credential.BaseURL),
+		firstNonEmpty(snapshotManagementBaseURL(snapshot), credential.ManagementBaseURL, credential.BaseURL),
 		credential,
 	)
 }
@@ -448,10 +475,16 @@ func snapshotStoredCredential(snapshot *Snapshot) *StoredCredential {
 		stored.Platform = NormalizePlatform(snapshot.Platform)
 	}
 	if stored.BaseURL == "" {
-		stored.BaseURL = normalizeSyncMetadataBaseURL(stored.Platform, snapshot.BaseURL)
+		stored.BaseURL = snapshotSyncMetadataBaseURL(snapshot)
+	}
+	if stored.ManagementBaseURL == "" {
+		stored.ManagementBaseURL = snapshotManagementBaseURL(snapshot)
+	}
+	if stored.RelayBaseURL == "" {
+		stored.RelayBaseURL = snapshotRelayBaseURL(snapshot)
 	}
 	if snapshot.AuthSession != nil {
-		if err := attachEncryptedAuthSessionToStoredCredential(&stored, stored.Platform, stored.BaseURL, snapshot.AuthSession); err != nil {
+		if err := attachEncryptedAuthSessionToStoredCredential(&stored, stored.Platform, firstNonEmpty(stored.ManagementBaseURL, stored.BaseURL), snapshot.AuthSession); err != nil {
 			common.SysLog("failed to encrypt upstream authenticated session: " + err.Error())
 		}
 	}
@@ -479,14 +512,19 @@ func buildStoredCredentialWithBase(platform string, baseURL string, credential C
 		}
 	}
 	stored := &StoredCredential{
-		Platform:   NormalizePlatform(platform),
-		BaseURL:    normalizeSyncMetadataBaseURL(platform, baseURL),
-		Username:   strings.TrimSpace(credential.Username),
-		Email:      strings.TrimSpace(credential.Email),
-		AuthMode:   NormalizeAuthMode(credential.AuthMode),
-		Password:   encryptedPassword,
-		ImportedAt: credentialImportedAt(credential),
-		UpdatedAt:  common.GetTimestamp(),
+		Platform: NormalizePlatform(platform),
+		BaseURL:  normalizeSyncMetadataBaseURL(platform, baseURL),
+		ManagementBaseURL: normalizeSyncMetadataBaseURL(
+			platform,
+			firstNonEmpty(credential.ManagementBaseURL, baseURL),
+		),
+		RelayBaseURL: normalizeSyncMetadataBaseURL(platform, credential.RelayBaseURL),
+		Username:     strings.TrimSpace(credential.Username),
+		Email:        strings.TrimSpace(credential.Email),
+		AuthMode:     NormalizeAuthMode(credential.AuthMode),
+		Password:     encryptedPassword,
+		ImportedAt:   credentialImportedAt(credential),
+		UpdatedAt:    common.GetTimestamp(),
 	}
 	if stored.Platform == "" {
 		stored.Platform = NormalizePlatform(platform)
@@ -494,7 +532,10 @@ func buildStoredCredentialWithBase(platform string, baseURL string, credential C
 	if stored.BaseURL == "" {
 		stored.BaseURL = normalizeSyncMetadataBaseURL(stored.Platform, baseURL)
 	}
-	if err := attachEncryptedAuthSessionToStoredCredential(stored, stored.Platform, stored.BaseURL, credential.Session); err != nil {
+	if stored.ManagementBaseURL == "" {
+		stored.ManagementBaseURL = stored.BaseURL
+	}
+	if err := attachEncryptedAuthSessionToStoredCredential(stored, stored.Platform, stored.ManagementBaseURL, credential.Session); err != nil {
 		return nil, err
 	}
 	return stored, nil
@@ -515,8 +556,14 @@ func attachStoredCredentialFromChallenge(snapshot *Snapshot, record *AuthChallen
 	if stored.BaseURL == "" {
 		stored.BaseURL = normalizeSyncMetadataBaseURL(stored.Platform, record.BaseURL)
 	}
+	if stored.ManagementBaseURL == "" {
+		stored.ManagementBaseURL = stored.BaseURL
+	}
+	if stored.RelayBaseURL == "" {
+		stored.RelayBaseURL = record.RelayBaseURL
+	}
 	if snapshot.AuthSession != nil {
-		if err := attachEncryptedAuthSessionToStoredCredential(&stored, stored.Platform, stored.BaseURL, snapshot.AuthSession); err != nil {
+		if err := attachEncryptedAuthSessionToStoredCredential(&stored, stored.Platform, stored.ManagementBaseURL, snapshot.AuthSession); err != nil {
 			common.SysLog("failed to encrypt upstream authenticated session from challenge: " + err.Error())
 		}
 	}
@@ -531,6 +578,15 @@ func attachStoredCredentialFromChallenge(snapshot *Snapshot, record *AuthChallen
 func attachStoredCredentialToChallenge(record *AuthChallengeRecord, credential Credential) {
 	if record == nil {
 		return
+	}
+	if credential.ManagementBaseURL == "" {
+		credential.ManagementBaseURL = record.BaseURL
+	}
+	if credential.BaseURL == "" {
+		credential.BaseURL = record.BaseURL
+	}
+	if credential.RelayBaseURL == "" {
+		credential.RelayBaseURL = record.RelayBaseURL
 	}
 	stored, err := buildStoredCredentialWithBase(record.Platform, record.BaseURL, credential)
 	if err != nil {
@@ -632,6 +688,39 @@ func credentialImportedAt(credential Credential) int64 {
 		return common.GetTimestamp()
 	}
 	return 0
+}
+
+func snapshotManagementBaseURL(snapshot *Snapshot) string {
+	if snapshot == nil {
+		return ""
+	}
+	platform := NormalizePlatform(snapshot.Platform)
+	if platform == PlatformSub2API {
+		return normalizeSyncMetadataBaseURL(platform, firstNonEmpty(snapshot.ManagementBaseURL, snapshot.BaseURL))
+	}
+	return normalizeSyncMetadataBaseURL(platform, snapshot.BaseURL)
+}
+
+func snapshotRelayBaseURL(snapshot *Snapshot) string {
+	if snapshot == nil {
+		return ""
+	}
+	platform := NormalizePlatform(snapshot.Platform)
+	if platform == PlatformSub2API {
+		return normalizeSyncMetadataBaseURL(platform, firstNonEmpty(snapshot.RelayBaseURL, snapshot.BaseURL, snapshot.ManagementBaseURL))
+	}
+	return ""
+}
+
+func snapshotSyncMetadataBaseURL(snapshot *Snapshot) string {
+	if snapshot == nil {
+		return ""
+	}
+	platform := NormalizePlatform(snapshot.Platform)
+	if platform == PlatformSub2API {
+		return snapshotManagementBaseURL(snapshot)
+	}
+	return normalizeSyncMetadataBaseURL(platform, snapshot.BaseURL)
 }
 
 func authSessionMatches(session *AuthenticatedSession, platform string, baseURL string) bool {

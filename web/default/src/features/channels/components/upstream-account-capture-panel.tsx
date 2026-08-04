@@ -126,6 +126,14 @@ export function UpstreamAccountCapturePanel({
       expires_at: status?.expires_at || localSession?.expires_at || 0,
       platform: status?.platform || localSession?.platform || platform,
       base_url: status?.base_url || localSession?.base_url || baseUrl,
+      management_base_url:
+        status?.management_base_url ||
+        localSession?.management_base_url ||
+        status?.base_url ||
+        localSession?.base_url ||
+        baseUrl,
+      relay_base_url:
+        status?.relay_base_url || localSession?.relay_base_url || '',
       api_base_url: status?.api_base_url || localSession?.api_base_url || '',
       origin: status?.origin || localSession?.origin || '',
       userscript_url:
@@ -202,15 +210,24 @@ export function UpstreamAccountCapturePanel({
   const isCompleted = status?.status === 'completed'
   const isFailed = status?.status === 'failed'
   const summary = status?.summary
-  const isBrowserSessionRestore =
-    summary?.capture_source === 'browser_session_restore' &&
-    !summary.refresh_token_present
-  const apiBaseURL =
+  const managementBaseURL =
+    summary?.management_base_url ||
+    status?.management_base_url ||
+    session?.management_base_url ||
+    session?.base_url ||
+    ''
+  const relayBaseURL =
+    summary?.relay_base_url ||
+    status?.relay_base_url ||
+    session?.relay_base_url ||
     summary?.api_base_url ||
     status?.api_base_url ||
     session?.api_base_url ||
     status?.diagnostics?.api_base_url_seen ||
     ''
+  const isBrowserSessionRestore =
+    summary?.capture_source === 'browser_session_restore' &&
+    !summary.refresh_token_present
 
   const scriptMutation = useMutation({
     mutationFn: getUpstreamAccountCaptureUserscript,
@@ -348,15 +365,19 @@ export function UpstreamAccountCapturePanel({
               </div>
             </div>
             <div className='min-w-0 rounded-md border p-2'>
-              <div className='text-muted-foreground'>{t('Panel URL')}</div>
-              <div className='truncate font-medium' title={loginURL}>
-                {loginURL || '-'}
+              <div className='text-muted-foreground'>
+                {t('Management Panel URL')}
+              </div>
+              <div className='truncate font-medium' title={managementBaseURL}>
+                {managementBaseURL || '-'}
               </div>
             </div>
             <div className='min-w-0 rounded-md border p-2'>
-              <div className='text-muted-foreground'>{t('API Base URL')}</div>
-              <div className='truncate font-medium' title={apiBaseURL}>
-                {apiBaseURL || '-'}
+              <div className='text-muted-foreground'>
+                {t('Model API URL')}
+              </div>
+              <div className='truncate font-medium' title={relayBaseURL}>
+                {relayBaseURL || '-'}
               </div>
             </div>
             <div className='min-w-0 rounded-md border p-2'>
@@ -369,6 +390,16 @@ export function UpstreamAccountCapturePanel({
               <div className='text-muted-foreground'>{t('Captured Token')}</div>
               <div className='truncate font-medium'>
                 {summary?.access_token_masked || '-'}
+              </div>
+            </div>
+            <div className='min-w-0 rounded-md border p-2'>
+              <div className='text-muted-foreground'>{t('Refresh Token')}</div>
+              <div className='truncate font-medium'>
+                {summary
+                  ? summary.refresh_token_present
+                    ? t('Present')
+                    : t('Not provided')
+                  : '-'}
               </div>
             </div>
             <div className='min-w-0 rounded-md border p-2'>
@@ -464,7 +495,7 @@ export function UpstreamAccountCapturePanel({
             <Alert>
               <CheckCircle2 aria-hidden='true' />
               <AlertDescription>
-                <div className='space-y-1'>
+                <div className='flex flex-col gap-1'>
                   <div>
                     {t(
                       'Captured {{platform}} login state for {{account}}. The token is stored only in the temporary capture session until you click Sync Keys to validate, preview, and save.',
@@ -478,11 +509,19 @@ export function UpstreamAccountCapturePanel({
                       }
                     )}
                   </div>
-                  {apiBaseURL ? (
+                  {managementBaseURL ? (
                     <div>
                       {t(
-                        'Detected upstream API endpoint: {{url}}. Keys, groups, and balance requests will use this address.',
-                        { url: apiBaseURL }
+                        'Management requests will use {{url}} for user, group, key, and balance sync.',
+                        { url: managementBaseURL }
+                      )}
+                    </div>
+                  ) : null}
+                  {relayBaseURL ? (
+                    <div>
+                      {t(
+                        'Created channels will use {{url}} for model requests.',
+                        { url: relayBaseURL }
                       )}
                     </div>
                   ) : null}
@@ -496,7 +535,7 @@ export function UpstreamAccountCapturePanel({
               <AlertCircle aria-hidden='true' />
               <AlertDescription>
                 {t(
-                  'This sub2api login state was restored from the upstream browser session. The target site did not expose a refresh token, so later syncs may require recapturing the login state.'
+                  'This sub2api login state was restored from the upstream browser session. The target site did not expose a refresh token, so this sync can run now but later syncs may require recapturing after the access token expires.'
                 )}
               </AlertDescription>
             </Alert>
@@ -513,14 +552,14 @@ export function UpstreamAccountCapturePanel({
             <Alert>
               <AlertCircle aria-hidden='true' />
               <AlertDescription>
-                <div className='space-y-1 text-xs'>
+                <div className='flex flex-col gap-1 text-xs'>
                   <div className='font-medium'>{t('Capture diagnostics')}</div>
                   <div>
                     {t('Page origin')}: {status.diagnostics.page_origin || '-'}
                   </div>
                   {status.diagnostics.api_base_url_seen ? (
                     <div>
-                      {t('Detected API base URL')}: {status.diagnostics.api_base_url_seen}
+                      {t('Detected model API URL')}: {status.diagnostics.api_base_url_seen}
                     </div>
                   ) : null}
                   <div>

@@ -45,14 +45,16 @@ type CaptureSessionStartRequest struct {
 
 // CaptureSessionStartResult 返回给后台页面的安装信息。
 type CaptureSessionStartResult struct {
-	CaptureID     string `json:"capture_id"`
-	ExpiresAt     int64  `json:"expires_at"`
-	Platform      string `json:"platform"`
-	BaseURL       string `json:"base_url"`
-	APIBaseURL    string `json:"api_base_url,omitempty"`
-	Origin        string `json:"origin"`
-	UserscriptURL string `json:"userscript_url"`
-	LoginURL      string `json:"login_url"`
+	CaptureID         string `json:"capture_id"`
+	ExpiresAt         int64  `json:"expires_at"`
+	Platform          string `json:"platform"`
+	BaseURL           string `json:"base_url"`
+	ManagementBaseURL string `json:"management_base_url,omitempty"`
+	RelayBaseURL      string `json:"relay_base_url,omitempty"`
+	APIBaseURL        string `json:"api_base_url,omitempty"`
+	Origin            string `json:"origin"`
+	UserscriptURL     string `json:"userscript_url"`
+	LoginURL          string `json:"login_url"`
 }
 
 // CaptureSessionRecord 是短期缓存中的采集会话。
@@ -61,22 +63,24 @@ type CaptureSessionStartResult struct {
 // status 查询只返回脱敏摘要；真正预览时后端按 capture_id 取出登录态使用，避免把
 // 明文 token 再回传到浏览器页面。
 type CaptureSessionRecord struct {
-	ID           string                    `json:"id"`
-	Secret       string                    `json:"secret"`
-	InstallToken string                    `json:"install_token,omitempty"`
-	UserID       int                       `json:"user_id"`
-	ChannelID    int                       `json:"channel_id,omitempty"`
-	Platform     string                    `json:"platform"`
-	BaseURL      string                    `json:"base_url"`
-	APIBaseURL   string                    `json:"api_base_url,omitempty"`
-	Origin       string                    `json:"origin"`
-	Status       string                    `json:"status"`
-	Error        string                    `json:"error,omitempty"`
-	ExpiresAt    int64                     `json:"expires_at"`
-	UpdatedAt    int64                     `json:"updated_at"`
-	Credential   Credential                `json:"credential,omitempty"`
-	Summary      *CaptureCredentialSummary `json:"summary,omitempty"`
-	Diagnostics  *CaptureDiagnostics       `json:"diagnostics,omitempty"`
+	ID                string                    `json:"id"`
+	Secret            string                    `json:"secret"`
+	InstallToken      string                    `json:"install_token,omitempty"`
+	UserID            int                       `json:"user_id"`
+	ChannelID         int                       `json:"channel_id,omitempty"`
+	Platform          string                    `json:"platform"`
+	BaseURL           string                    `json:"base_url"`
+	ManagementBaseURL string                    `json:"management_base_url,omitempty"`
+	RelayBaseURL      string                    `json:"relay_base_url,omitempty"`
+	APIBaseURL        string                    `json:"api_base_url,omitempty"`
+	Origin            string                    `json:"origin"`
+	Status            string                    `json:"status"`
+	Error             string                    `json:"error,omitempty"`
+	ExpiresAt         int64                     `json:"expires_at"`
+	UpdatedAt         int64                     `json:"updated_at"`
+	Credential        Credential                `json:"credential,omitempty"`
+	Summary           *CaptureCredentialSummary `json:"summary,omitempty"`
+	Diagnostics       *CaptureDiagnostics       `json:"diagnostics,omitempty"`
 }
 
 // CaptureCredentialSummary 是安全返回给前端的采集摘要。
@@ -84,6 +88,8 @@ type CaptureCredentialSummary struct {
 	Platform            string `json:"platform"`
 	AuthMode            string `json:"auth_mode"`
 	BaseURL             string `json:"base_url"`
+	ManagementBaseURL   string `json:"management_base_url,omitempty"`
+	RelayBaseURL        string `json:"relay_base_url,omitempty"`
 	APIBaseURL          string `json:"api_base_url,omitempty"`
 	Origin              string `json:"origin"`
 	UserID              string `json:"user_id,omitempty"`
@@ -119,43 +125,47 @@ type CaptureDiagnostics struct {
 
 // CaptureSessionStatusResult 是后台页面轮询采集状态的响应。
 type CaptureSessionStatusResult struct {
-	CaptureID     string                    `json:"capture_id"`
-	Status        string                    `json:"status"`
-	Message       string                    `json:"message,omitempty"`
-	ExpiresAt     int64                     `json:"expires_at"`
-	Platform      string                    `json:"platform"`
-	BaseURL       string                    `json:"base_url"`
-	APIBaseURL    string                    `json:"api_base_url,omitempty"`
-	Origin        string                    `json:"origin"`
-	UserscriptURL string                    `json:"userscript_url,omitempty"`
-	LoginURL      string                    `json:"login_url,omitempty"`
-	Summary       *CaptureCredentialSummary `json:"summary,omitempty"`
-	Diagnostics   *CaptureDiagnostics       `json:"diagnostics,omitempty"`
+	CaptureID         string                    `json:"capture_id"`
+	Status            string                    `json:"status"`
+	Message           string                    `json:"message,omitempty"`
+	ExpiresAt         int64                     `json:"expires_at"`
+	Platform          string                    `json:"platform"`
+	BaseURL           string                    `json:"base_url"`
+	ManagementBaseURL string                    `json:"management_base_url,omitempty"`
+	RelayBaseURL      string                    `json:"relay_base_url,omitempty"`
+	APIBaseURL        string                    `json:"api_base_url,omitempty"`
+	Origin            string                    `json:"origin"`
+	UserscriptURL     string                    `json:"userscript_url,omitempty"`
+	LoginURL          string                    `json:"login_url,omitempty"`
+	Summary           *CaptureCredentialSummary `json:"summary,omitempty"`
+	Diagnostics       *CaptureDiagnostics       `json:"diagnostics,omitempty"`
 }
 
 // CaptureSessionCompleteRequest 是油猴脚本回传的登录态负载。
 type CaptureSessionCompleteRequest struct {
-	CaptureSecret string              `json:"capture_secret"`
-	CaptureSource string              `json:"capture_source,omitempty"`
-	Platform      string              `json:"platform,omitempty"`
-	BaseURL       string              `json:"base_url,omitempty"`
-	APIBaseURL    string              `json:"api_base_url,omitempty"`
-	Origin        string              `json:"origin,omitempty"`
-	AuthMode      string              `json:"auth_mode,omitempty"`
-	UserID        string              `json:"user_id,omitempty"`
-	Username      string              `json:"username,omitempty"`
-	Email         string              `json:"email,omitempty"`
-	AccessToken   string              `json:"access_token,omitempty"`
-	RefreshToken  string              `json:"refresh_token,omitempty"`
-	ExpiresAt     int64               `json:"expires_at,omitempty"`
-	ExpiresIn     int64               `json:"expires_in,omitempty"`
-	Hash          string              `json:"hash,omitempty"`
-	LocalStorage  map[string]string   `json:"local_storage,omitempty"`
-	AuthUser      map[string]any      `json:"auth_user,omitempty"`
-	CapturedAt    int64               `json:"captured_at,omitempty"`
-	UserAgent     string              `json:"user_agent,omitempty"`
-	Error         string              `json:"error,omitempty"`
-	Diagnostics   *CaptureDiagnostics `json:"diagnostics,omitempty"`
+	CaptureSecret     string              `json:"capture_secret"`
+	CaptureSource     string              `json:"capture_source,omitempty"`
+	Platform          string              `json:"platform,omitempty"`
+	BaseURL           string              `json:"base_url,omitempty"`
+	ManagementBaseURL string              `json:"management_base_url,omitempty"`
+	RelayBaseURL      string              `json:"relay_base_url,omitempty"`
+	APIBaseURL        string              `json:"api_base_url,omitempty"`
+	Origin            string              `json:"origin,omitempty"`
+	AuthMode          string              `json:"auth_mode,omitempty"`
+	UserID            string              `json:"user_id,omitempty"`
+	Username          string              `json:"username,omitempty"`
+	Email             string              `json:"email,omitempty"`
+	AccessToken       string              `json:"access_token,omitempty"`
+	RefreshToken      string              `json:"refresh_token,omitempty"`
+	ExpiresAt         int64               `json:"expires_at,omitempty"`
+	ExpiresIn         int64               `json:"expires_in,omitempty"`
+	Hash              string              `json:"hash,omitempty"`
+	LocalStorage      map[string]string   `json:"local_storage,omitempty"`
+	AuthUser          map[string]any      `json:"auth_user,omitempty"`
+	CapturedAt        int64               `json:"captured_at,omitempty"`
+	UserAgent         string              `json:"user_agent,omitempty"`
+	Error             string              `json:"error,omitempty"`
+	Diagnostics       *CaptureDiagnostics `json:"diagnostics,omitempty"`
 }
 
 // CredentialParseRequest 允许手动粘贴内容复用采集解析器。
@@ -206,30 +216,32 @@ func StartCaptureSession(userID int, req CaptureSessionStartRequest, nexusBaseUR
 	}
 	expiresAt := time.Now().Add(captureTTL).Unix()
 	record := CaptureSessionRecord{
-		ID:           id,
-		Secret:       secret,
-		InstallToken: installToken,
-		UserID:       userID,
-		ChannelID:    req.ChannelID,
-		Platform:     platform,
-		BaseURL:      normalizedBaseURL,
-		Origin:       origin,
-		Status:       captureStatusPending,
-		ExpiresAt:    expiresAt,
-		UpdatedAt:    common.GetTimestamp(),
+		ID:                id,
+		Secret:            secret,
+		InstallToken:      installToken,
+		UserID:            userID,
+		ChannelID:         req.ChannelID,
+		Platform:          platform,
+		BaseURL:           normalizedBaseURL,
+		ManagementBaseURL: normalizedBaseURL,
+		Origin:            origin,
+		Status:            captureStatusPending,
+		ExpiresAt:         expiresAt,
+		UpdatedAt:         common.GetTimestamp(),
 	}
 	if err := captureSessionCache.SetWithTTL(id, record, captureTTL); err != nil {
 		return nil, fmt.Errorf("保存采集会话失败：%w", err)
 	}
 	userscriptURL, loginURL := captureSessionLinks(record, nexusBaseURL)
 	return &CaptureSessionStartResult{
-		CaptureID:     id,
-		ExpiresAt:     expiresAt,
-		Platform:      platform,
-		BaseURL:       normalizedBaseURL,
-		Origin:        origin,
-		UserscriptURL: userscriptURL,
-		LoginURL:      loginURL,
+		CaptureID:         id,
+		ExpiresAt:         expiresAt,
+		Platform:          platform,
+		BaseURL:           normalizedBaseURL,
+		ManagementBaseURL: normalizedBaseURL,
+		Origin:            origin,
+		UserscriptURL:     userscriptURL,
+		LoginURL:          loginURL,
 	}, nil
 }
 
@@ -295,6 +307,8 @@ func CompleteCaptureSession(captureID string, req CaptureSessionCompleteRequest)
 	record.Credential = credential
 	record.Summary = summary
 	if summary != nil {
+		record.ManagementBaseURL = strings.TrimSpace(summary.ManagementBaseURL)
+		record.RelayBaseURL = strings.TrimSpace(summary.RelayBaseURL)
 		record.APIBaseURL = strings.TrimSpace(summary.APIBaseURL)
 	}
 	record.Diagnostics = sanitizeCaptureDiagnostics(req.Diagnostics)
@@ -394,7 +408,7 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
 	return fmt.Sprintf(`// ==UserScript==
 // @name         NexusTok Upstream Login Capture
 // @namespace    https://github.com/c1cadaBob/NexusTok
-// @version      1.1.0
+// @version      1.1.1
 // @description  Capture logged-in new-api/sub2api credentials for NexusTok upstream account sync.
 // @match        %s
 // @run-at       document-idle
@@ -1117,7 +1131,8 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
 
   async function captureSub2API() {
     const params = parseHashParams();
-    const apiBaseURL = appConfigAPIBaseURL();
+    const relayBaseURL = appConfigAPIBaseURL();
+    const managementBaseURL = config.baseURL;
     let state = readSub2APILoginState();
     let diagnostics = state.diagnostics || collectSub2APIDiagnostics('');
     let authUser = state.authUser || {};
@@ -1173,9 +1188,12 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
     return {
       platform: 'sub2api',
       auth_mode: 'access_token',
+      base_url: managementBaseURL,
+      management_base_url: managementBaseURL,
+      relay_base_url: relayBaseURL,
       access_token: accessToken,
       refresh_token: state.refreshToken,
-      api_base_url: apiBaseURL,
+      api_base_url: relayBaseURL,
       expires_in: state.expiresIn || (Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn : 0),
       expires_at: normalizeExpiresAt(state.expiresAt),
       auth_user: authUser,
@@ -1219,14 +1237,17 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
     try {
       setStatus('Capturing upstream login...', 'info');
       const captured = config.platform === 'new-api' ? await captureNewAPI() : await captureSub2API();
-      const resolvedBaseURL = captured.api_base_url || captured.base_url || config.baseURL;
+      const managementBaseURL = captured.management_base_url || captured.base_url || config.baseURL;
+      const relayBaseURL = captured.relay_base_url || captured.api_base_url || '';
       const payload = {
         ...captured,
         capture_secret: config.captureSecret,
         capture_source: captured.capture_source || 'userscript',
         origin: pageWindow.location.origin,
-        base_url: resolvedBaseURL,
-        api_base_url: captured.api_base_url || '',
+        base_url: managementBaseURL,
+        management_base_url: managementBaseURL,
+        relay_base_url: relayBaseURL,
+        api_base_url: relayBaseURL,
         captured_at: Math.floor(Date.now() / 1000),
         user_agent: navigator.userAgent,
       };
@@ -1234,13 +1255,15 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
       setStatus('Captured. Return to NexusTok and click Sync Keys to validate, preview, and save.', 'success');
     } catch (error) {
       const message = error && error.message ? error.message : String(error);
-      const apiBaseURL = config.platform === 'sub2api' ? appConfigAPIBaseURL() : '';
+      const relayBaseURL = config.platform === 'sub2api' ? appConfigAPIBaseURL() : '';
       const payload = {
         capture_secret: config.captureSecret,
         capture_source: 'userscript',
         origin: pageWindow.location.origin,
-        base_url: apiBaseURL || config.baseURL,
-        api_base_url: apiBaseURL,
+        base_url: config.baseURL,
+        management_base_url: config.baseURL,
+        relay_base_url: relayBaseURL,
+        api_base_url: relayBaseURL,
         platform: config.platform,
         captured_at: Math.floor(Date.now() / 1000),
         error: message,
@@ -1316,27 +1339,28 @@ func sanitizeCaptureRecord(record CaptureSessionRecord, nexusBaseURL string) *Ca
 		message = record.Error
 	}
 	userscriptURL, loginURL := captureSessionLinks(record, nexusBaseURL)
-	baseURL := record.BaseURL
-	apiBaseURL := strings.TrimSpace(record.APIBaseURL)
-	if apiBaseURL == "" && record.Summary != nil {
-		apiBaseURL = strings.TrimSpace(record.Summary.APIBaseURL)
+	managementBaseURL := firstNonEmpty(record.ManagementBaseURL, record.BaseURL)
+	relayBaseURL := firstNonEmpty(record.RelayBaseURL, record.APIBaseURL)
+	if record.Summary != nil {
+		managementBaseURL = firstNonEmpty(record.Summary.ManagementBaseURL, record.Summary.BaseURL, managementBaseURL)
+		relayBaseURL = firstNonEmpty(record.Summary.RelayBaseURL, record.Summary.APIBaseURL, relayBaseURL)
 	}
-	if apiBaseURL != "" {
-		baseURL = apiBaseURL
-	}
+	baseURL := managementBaseURL
 	return &CaptureSessionStatusResult{
-		CaptureID:     record.ID,
-		Status:        record.Status,
-		Message:       message,
-		ExpiresAt:     record.ExpiresAt,
-		Platform:      record.Platform,
-		BaseURL:       baseURL,
-		APIBaseURL:    apiBaseURL,
-		Origin:        record.Origin,
-		UserscriptURL: userscriptURL,
-		LoginURL:      loginURL,
-		Summary:       record.Summary,
-		Diagnostics:   sanitizeCaptureDiagnostics(record.Diagnostics),
+		CaptureID:         record.ID,
+		Status:            record.Status,
+		Message:           message,
+		ExpiresAt:         record.ExpiresAt,
+		Platform:          record.Platform,
+		BaseURL:           baseURL,
+		ManagementBaseURL: managementBaseURL,
+		RelayBaseURL:      relayBaseURL,
+		APIBaseURL:        relayBaseURL,
+		Origin:            record.Origin,
+		UserscriptURL:     userscriptURL,
+		LoginURL:          loginURL,
+		Summary:           record.Summary,
+		Diagnostics:       sanitizeCaptureDiagnostics(record.Diagnostics),
 	}
 }
 
@@ -1449,7 +1473,7 @@ func buildCredentialFromCapture(record CaptureSessionRecord, req CaptureSessionC
 			CaptureSource:     firstNonEmpty(req.CaptureSource, "userscript"),
 		}, nil
 	case PlatformSub2API:
-		apiBaseURL, err := resolveCaptureAPIBaseURL(record, req)
+		managementBaseURL, relayBaseURL, err := resolveCaptureSub2APIBaseURLs(record, req)
 		if err != nil {
 			return Credential{}, nil, err
 		}
@@ -1476,14 +1500,16 @@ func buildCredentialFromCapture(record CaptureSessionRecord, req CaptureSessionC
 			return Credential{}, nil, fmt.Errorf("sub2api 采集结果缺少 access_token")
 		}
 		credential := Credential{
-			Platform:     PlatformSub2API,
-			BaseURL:      apiBaseURL,
-			Username:     strings.TrimSpace(firstNonEmpty(req.Username, valueFromAny(req.AuthUser, "username"))),
-			Email:        strings.TrimSpace(firstNonEmpty(req.Email, valueFromAny(req.AuthUser, "email"))),
-			AuthMode:     AuthModeAccessToken,
-			AccessToken:  accessToken,
-			RefreshToken: refreshToken,
-			ExpiresAt:    expiresAt,
+			Platform:          PlatformSub2API,
+			BaseURL:           managementBaseURL,
+			ManagementBaseURL: managementBaseURL,
+			RelayBaseURL:      relayBaseURL,
+			Username:          strings.TrimSpace(firstNonEmpty(req.Username, valueFromAny(req.AuthUser, "username"))),
+			Email:             strings.TrimSpace(firstNonEmpty(req.Email, valueFromAny(req.AuthUser, "email"))),
+			AuthMode:          AuthModeAccessToken,
+			AccessToken:       accessToken,
+			RefreshToken:      refreshToken,
+			ExpiresAt:         expiresAt,
 		}
 		prepared, err := prepareAccessTokenCredential(credential)
 		if err != nil {
@@ -1492,8 +1518,10 @@ func buildCredentialFromCapture(record CaptureSessionRecord, req CaptureSessionC
 		return prepared, &CaptureCredentialSummary{
 			Platform:            PlatformSub2API,
 			AuthMode:            AuthModeAccessToken,
-			BaseURL:             apiBaseURL,
-			APIBaseURL:          apiBaseURL,
+			BaseURL:             managementBaseURL,
+			ManagementBaseURL:   managementBaseURL,
+			RelayBaseURL:        relayBaseURL,
+			APIBaseURL:          relayBaseURL,
 			Origin:              record.Origin,
 			Username:            credential.Username,
 			Email:               credential.Email,

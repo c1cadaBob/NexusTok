@@ -16,30 +16,42 @@ import (
 
 var sub2APIAppConfigAPIBaseURLPattern = regexp.MustCompile(`(?i)["']api_base_url["']\s*:\s*["']([^"']+)["']`)
 
-// resolveCaptureAPIBaseURL 将油猴脚本回传的 API 地址转成后端实际调用地址。
+// resolveCaptureSub2APIBaseURLs 将油猴脚本回传的地址拆分成管理地址和模型转发地址。
 //
-// 回调来源仍然使用目标页面 origin 校验；api_base_url 只决定后续请求发往哪个
-// Sub2API API 端点。这里要求 API 地址与面板同 host 或同一可注册主域名，避免
-// 恶意页面把 access token 静默转存到完全无关的第三方站点。
-func resolveCaptureAPIBaseURL(record CaptureSessionRecord, req CaptureSessionCompleteRequest) (string, error) {
-	panelBaseURL := firstNonEmpty(record.BaseURL, record.Origin)
-	candidate := firstNonEmpty(req.APIBaseURL, req.BaseURL, panelBaseURL)
-	normalized, err := normalizeBaseURL(normalizeSub2APIBaseURL(candidate))
+// `base_url` 和 `management_base_url` 表示登录、分组、密钥等后台管理接口所在的面板
+// 地址；`api_base_url` / `relay_base_url` 表示最终模型请求使用的 OpenAI 兼容地址。
+// 两类地址都要求与面板同 host 或同一可注册主域名，避免脚本把登录态转给无关站点。
+func resolveCaptureSub2APIBaseURLs(record CaptureSessionRecord, req CaptureSessionCompleteRequest) (string, string, error) {
+	panelBaseURL := firstNonEmpty(record.ManagementBaseURL, record.BaseURL, record.Origin)
+	managementCandidate := firstNonEmpty(req.ManagementBaseURL, record.ManagementBaseURL, record.BaseURL, req.BaseURL, panelBaseURL)
+	managementBaseURL, err := normalizeBaseURL(normalizeSub2APIBaseURL(managementCandidate))
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	if err := validateRelatedAPIBaseURL(panelBaseURL, normalized); err != nil {
-		return "", err
+	if err := validateRelatedAPIBaseURL(panelBaseURL, managementBaseURL); err != nil {
+		return "", "", err
 	}
-	return normalized, nil
+
+	relayCandidate := firstNonEmpty(req.RelayBaseURL, req.APIBaseURL)
+	if relayCandidate == "" {
+		return managementBaseURL, managementBaseURL, nil
+	}
+	relayBaseURL, err := normalizeBaseURL(normalizeSub2APIBaseURL(relayCandidate))
+	if err != nil {
+		return "", "", err
+	}
+	if err := validateRelatedAPIBaseURL(managementBaseURL, relayBaseURL); err != nil {
+		return "", "", err
+	}
+	return managementBaseURL, relayBaseURL, nil
 }
 
-// discoverSub2APIAPIBaseURLFromPanel 尝试从 Sub2API 前端页面配置中发现实际 API 端点。
+// discoverSub2APIRelayBaseURLFromPanel 尝试从 Sub2API 前端页面配置中发现模型转发端点。
 //
 // aiapipay.com 这类部署会把管理面板和 API 服务拆成两个域名。管理员常复制面板地址，
-// 但真正的模型 relay 和账号同步必须请求 window.__APP_CONFIG__.api_base_url 指向的
-// API 域名。发现失败时返回 ok=false，调用方继续使用原地址以保持兼容。
-func (c *Sub2APIClient) discoverSub2APIAPIBaseURLFromPanel(ctx context.Context, panelBaseURL string) (string, bool) {
+// 但真正的模型 relay 应请求 window.__APP_CONFIG__.api_base_url 指向的 API 域名。
+// 注意：该地址不是账号同步管理接口；密钥、分组、余额仍走面板域名下的 /api/v1。
+func (c *Sub2APIClient) discoverSub2APIRelayBaseURLFromPanel(ctx context.Context, panelBaseURL string) (string, bool) {
 	panelBaseURL = strings.TrimSpace(normalizeSub2APIBaseURL(panelBaseURL))
 	if panelBaseURL == "" {
 		return "", false
@@ -86,6 +98,64 @@ func (c *Sub2APIClient) discoverSub2APIAPIBaseURLFromPanel(ctx context.Context, 
 		return "", false
 	}
 	return normalizedCandidate, true
+}
+
+// recoverSub2APIManagementBaseURLFromRelay 兼容上一版误把 api.* 模型端点保存成管理地址的历史数据。
+//
+// 该函数只对 `api.` 子域名做保守推断，把 `https://api.example.com` 还原为
+// `https://example.com`，再用无需凭据的 `/api/v1/auth/me` 探测路由是否像 Sub2API 管理 API。
+// 返回 200/401/403 均说明管理路由存在；404 或 HTML 网关错误则保持原地址并让上层给出明确提示。
+func (c *Sub2APIClient) recoverSub2APIManagementBaseURLFromRelay(ctx context.Context, relayBaseURL string) (string, bool) {
+	normalizedRelay, err := normalizeBaseURL(normalizeSub2APIBaseURL(relayBaseURL))
+	if err != nil || !isLikelyAPISubdomain(normalizedRelay) {
+		return "", false
+	}
+	parsed, err := url.Parse(normalizedRelay)
+	if err != nil {
+		return "", false
+	}
+	host := parsed.Hostname()
+	if !strings.HasPrefix(strings.ToLower(host), "api.") {
+		return "", false
+	}
+	parsed.Host = strings.TrimPrefix(parsed.Host, "api.")
+	parsed.Path = ""
+	parsed.RawPath = ""
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	candidate := strings.TrimRight(parsed.String(), "/")
+	if candidate == "" {
+		return "", false
+	}
+	if c.probeSub2APIManagementEndpoint(ctx, candidate) {
+		return candidate, true
+	}
+	return "", false
+}
+
+func (c *Sub2APIClient) probeSub2APIManagementEndpoint(ctx context.Context, candidate string) bool {
+	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, strings.TrimRight(candidate, "/")+"/api/v1/auth/me", nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Accept", "application/json")
+	client := c.httpClient
+	if client == nil {
+		client = (&httpClient{}).defaultClient()
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusUnauthorized, http.StatusForbidden:
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *httpClient) defaultClient() *http.Client {

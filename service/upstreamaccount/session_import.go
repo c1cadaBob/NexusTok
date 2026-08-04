@@ -56,6 +56,9 @@ func HydrateCredentialFromSession(credential Credential) Credential {
 	if strings.TrimSpace(credential.BaseURL) == "" {
 		credential.BaseURL = session.BaseURL
 	}
+	if strings.TrimSpace(credential.ManagementBaseURL) == "" {
+		credential.ManagementBaseURL = firstNonEmpty(credential.BaseURL, session.BaseURL)
+	}
 	if strings.TrimSpace(credential.AuthMode) == "" {
 		credential.AuthMode = session.AuthMode
 	}
@@ -96,6 +99,11 @@ func PrepareImportedCredential(credential Credential) (Credential, error) {
 	credential.AuthMode = NormalizeAuthMode(credential.AuthMode)
 	if credential.AuthMode == "" {
 		credential.AuthMode = AuthModePassword
+	}
+	if credential.Platform == PlatformSub2API {
+		managementBaseURL := firstNonEmpty(credential.ManagementBaseURL, credential.BaseURL)
+		credential.ManagementBaseURL = managementBaseURL
+		credential.BaseURL = managementBaseURL
 	}
 
 	switch credential.AuthMode {
@@ -180,9 +188,10 @@ func prepareAccessTokenCredential(credential Credential) (Credential, error) {
 			},
 		}
 	case PlatformSub2API:
+		managementBaseURL := firstNonEmpty(credential.ManagementBaseURL, credential.BaseURL)
 		credential.Session = &AuthenticatedSession{
 			Platform:   PlatformSub2API,
-			BaseURL:    credential.BaseURL,
+			BaseURL:    managementBaseURL,
 			AuthMode:   AuthModeAccessToken,
 			ImportedAt: now,
 			UpdatedAt:  now,

@@ -45,15 +45,16 @@ var (
 // new-api 2FA 仍只需要首次登录时目标站点写入的 pending session cookie；sub2api 2FA
 // 仍只需要目标平台返回的短期 temp_token。
 type AuthChallengeRecord struct {
-	ID         string                `json:"id"`
-	Platform   string                `json:"platform"`
-	BaseURL    string                `json:"base_url"`
-	Username   string                `json:"username,omitempty"`
-	Email      string                `json:"email,omitempty"`
-	ExpiresAt  int64                 `json:"expires_at"`
-	Credential *StoredCredential     `json:"credential,omitempty"`
-	NewAPI     *NewAPIChallengeData  `json:"new_api,omitempty"`
-	Sub2API    *Sub2APIChallengeData `json:"sub2api,omitempty"`
+	ID           string                `json:"id"`
+	Platform     string                `json:"platform"`
+	BaseURL      string                `json:"base_url"`
+	RelayBaseURL string                `json:"relay_base_url,omitempty"`
+	Username     string                `json:"username,omitempty"`
+	Email        string                `json:"email,omitempty"`
+	ExpiresAt    int64                 `json:"expires_at"`
+	Credential   *StoredCredential     `json:"credential,omitempty"`
+	NewAPI       *NewAPIChallengeData  `json:"new_api,omitempty"`
+	Sub2API      *Sub2APIChallengeData `json:"sub2api,omitempty"`
 }
 
 // NewAPIChallengeData 保存 new-api 2FA 二阶段需要复用的上下文。

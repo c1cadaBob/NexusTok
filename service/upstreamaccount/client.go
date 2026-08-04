@@ -27,6 +27,20 @@ type httpClient struct {
 	client  *http.Client
 }
 
+type upstreamHTTPError struct {
+	Method     string
+	Path       string
+	StatusCode int
+	Body       string
+}
+
+func (e *upstreamHTTPError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return fmt.Sprintf("上游平台请求失败：status=%d, body=%s", e.StatusCode, e.Body)
+}
+
 // newHTTPClient 创建带 cookie jar 的 HTTP 客户端。
 func newHTTPClient(baseURL string, client *http.Client) (*httpClient, error) {
 	normalized, err := normalizeBaseURL(baseURL)
@@ -106,7 +120,12 @@ func (c *httpClient) doJSON(ctx context.Context, method string, path string, hea
 		return err
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return fmt.Errorf("上游平台请求失败：status=%d, body=%s", resp.StatusCode, common.MaskSensitiveInfo(string(data)))
+		return &upstreamHTTPError{
+			Method:     method,
+			Path:       path,
+			StatusCode: resp.StatusCode,
+			Body:       common.MaskSensitiveInfo(string(data)),
+		}
 	}
 	if out == nil {
 		return nil

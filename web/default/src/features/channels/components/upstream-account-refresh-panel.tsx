@@ -657,6 +657,14 @@ export function UpstreamAccountRefreshPanel({
 
   const showLoadedWarning =
     canReadChannelAccount && refreshAccountsTotal > refreshAccountsLoadedCount
+  const previewManagementBaseURL =
+    upstreamRefreshSnapshot?.management_base_url ||
+    upstreamRefreshSnapshot?.base_url ||
+    ''
+  const previewRelayBaseURL =
+    upstreamRefreshSnapshot?.relay_base_url ||
+    upstreamRefreshSnapshot?.base_url ||
+    ''
 
   const renderUpstreamPreviewExpiryNotice = useCallback(
     (remainingSeconds: number, expired: boolean) => (
@@ -1371,6 +1379,33 @@ export function UpstreamAccountRefreshPanel({
           <AlertCircle aria-hidden='true' />
           <AlertDescription>
             {upstreamRefreshSnapshot.warnings.join('；')}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {upstreamRefreshSnapshot &&
+      (previewManagementBaseURL || previewRelayBaseURL) ? (
+        <Alert>
+          <AlertCircle aria-hidden='true' />
+          <AlertDescription>
+            <div className='flex flex-col gap-1'>
+              {previewManagementBaseURL ? (
+                <div>
+                  {t(
+                    'Management requests will use {{url}} for user, group, key, and balance sync.',
+                    { url: previewManagementBaseURL }
+                  )}
+                </div>
+              ) : null}
+              {previewRelayBaseURL ? (
+                <div>
+                  {t(
+                    'Created channels will use {{url}} for model requests.',
+                    { url: previewRelayBaseURL }
+                  )}
+                </div>
+              ) : null}
+            </div>
           </AlertDescription>
         </Alert>
       ) : null}

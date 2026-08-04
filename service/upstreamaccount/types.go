@@ -32,19 +32,21 @@ const (
 
 // Credential 是管理员发起同步时输入的临时凭证。
 type Credential struct {
-	Platform      string                `json:"platform"`
-	BaseURL       string                `json:"base_url"`
-	Username      string                `json:"username"`
-	Password      string                `json:"password,omitempty"`
-	Email         string                `json:"email,omitempty"`
-	AuthMode      string                `json:"auth_mode,omitempty"`
-	CaptureID     string                `json:"capture_id,omitempty"`
-	SessionCookie string                `json:"session_cookie,omitempty"`
-	UserID        string                `json:"user_id,omitempty"`
-	AccessToken   string                `json:"access_token,omitempty"`
-	RefreshToken  string                `json:"refresh_token,omitempty"`
-	ExpiresAt     int64                 `json:"expires_at,omitempty"`
-	Session       *AuthenticatedSession `json:"-"`
+	Platform          string                `json:"platform"`
+	BaseURL           string                `json:"base_url"`
+	ManagementBaseURL string                `json:"management_base_url,omitempty"`
+	RelayBaseURL      string                `json:"relay_base_url,omitempty"`
+	Username          string                `json:"username"`
+	Password          string                `json:"password,omitempty"`
+	Email             string                `json:"email,omitempty"`
+	AuthMode          string                `json:"auth_mode,omitempty"`
+	CaptureID         string                `json:"capture_id,omitempty"`
+	SessionCookie     string                `json:"session_cookie,omitempty"`
+	UserID            string                `json:"user_id,omitempty"`
+	AccessToken       string                `json:"access_token,omitempty"`
+	RefreshToken      string                `json:"refresh_token,omitempty"`
+	ExpiresAt         int64                 `json:"expires_at,omitempty"`
+	Session           *AuthenticatedSession `json:"-"`
 }
 
 // StoredCredential 是保存到渠道 settings 的上游账号登录凭据。
@@ -55,16 +57,18 @@ type Credential struct {
 // 可离线解密的敏感密文。Session 保存的是已通过上游 2FA 的登录态，用于降低刷新时
 // 反复输入验证码的频率；失效后仍会自动回退到保存的账号密码登录。
 type StoredCredential struct {
-	Platform         string `json:"platform,omitempty"`
-	BaseURL          string `json:"base_url,omitempty"`
-	Username         string `json:"username,omitempty"`
-	Email            string `json:"email,omitempty"`
-	AuthMode         string `json:"auth_mode,omitempty"`
-	Password         string `json:"password,omitempty"`
-	Session          string `json:"session,omitempty"`
-	ImportedAt       int64  `json:"imported_at,omitempty"`
-	SessionUpdatedAt int64  `json:"session_updated_at,omitempty"`
-	UpdatedAt        int64  `json:"updated_at,omitempty"`
+	Platform          string `json:"platform,omitempty"`
+	BaseURL           string `json:"base_url,omitempty"`
+	ManagementBaseURL string `json:"management_base_url,omitempty"`
+	RelayBaseURL      string `json:"relay_base_url,omitempty"`
+	Username          string `json:"username,omitempty"`
+	Email             string `json:"email,omitempty"`
+	AuthMode          string `json:"auth_mode,omitempty"`
+	Password          string `json:"password,omitempty"`
+	Session           string `json:"session,omitempty"`
+	ImportedAt        int64  `json:"imported_at,omitempty"`
+	SessionUpdatedAt  int64  `json:"session_updated_at,omitempty"`
+	UpdatedAt         int64  `json:"updated_at,omitempty"`
 }
 
 // AuthenticatedSession 是已通过上游登录和 2FA 的短期登录态。
@@ -120,18 +124,20 @@ type Preview2FARequest struct {
 
 // Snapshot 表示目标平台账号当前可见的密钥、分组、倍率和余额快照。
 type Snapshot struct {
-	Platform         string                   `json:"platform"`
-	BaseURL          string                   `json:"base_url"`
-	User             *UserSnapshot            `json:"user,omitempty"`
-	Balance          *BalanceSnapshot         `json:"balance,omitempty"`
-	Groups           []SyncedGroup            `json:"groups"`
-	Keys             []SyncedKey              `json:"keys"`
-	Rates            *RateSnapshot            `json:"rates,omitempty"`
-	RatioConversion  *RatioConversionSnapshot `json:"ratio_conversion,omitempty"`
-	StoredCredential *StoredCredential        `json:"-"`
-	AuthSession      *AuthenticatedSession    `json:"-"`
-	Warnings         []string                 `json:"warnings,omitempty"`
-	Raw              map[string]any           `json:"raw,omitempty"`
+	Platform          string                   `json:"platform"`
+	BaseURL           string                   `json:"base_url"`
+	ManagementBaseURL string                   `json:"management_base_url,omitempty"`
+	RelayBaseURL      string                   `json:"relay_base_url,omitempty"`
+	User              *UserSnapshot            `json:"user,omitempty"`
+	Balance           *BalanceSnapshot         `json:"balance,omitempty"`
+	Groups            []SyncedGroup            `json:"groups"`
+	Keys              []SyncedKey              `json:"keys"`
+	Rates             *RateSnapshot            `json:"rates,omitempty"`
+	RatioConversion   *RatioConversionSnapshot `json:"ratio_conversion,omitempty"`
+	StoredCredential  *StoredCredential        `json:"-"`
+	AuthSession       *AuthenticatedSession    `json:"-"`
+	Warnings          []string                 `json:"warnings,omitempty"`
+	Raw               map[string]any           `json:"raw,omitempty"`
 }
 
 // UserSnapshot 表示目标平台当前登录用户的基础信息。
