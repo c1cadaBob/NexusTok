@@ -194,6 +194,7 @@ func SanitizeChannelSyncSettings(settings string) string {
 		return settings
 	}
 	hasCredential := false
+	credentialAuthMode := ""
 	if rawCredential, ok := metadata["credentials"]; ok {
 		if credentialMap, ok := rawCredential.(map[string]any); ok {
 			if password, ok := credentialMap["password"].(string); ok && strings.TrimSpace(password) != "" {
@@ -202,12 +203,21 @@ func SanitizeChannelSyncSettings(settings string) string {
 			if session, ok := credentialMap["session"].(string); ok && strings.TrimSpace(session) != "" {
 				hasCredential = true
 			}
+			if authMode, ok := credentialMap["auth_mode"].(string); ok {
+				credentialAuthMode = NormalizeAuthMode(authMode)
+			}
 		}
 	}
 	delete(metadata, "credentials")
 	delete(metadata, "credential_saved")
+	delete(metadata, "credential_auth_mode")
 	if hasCredential {
 		metadata["credential_saved"] = true
+		if credentialAuthMode != "" {
+			// 只暴露认证方式摘要，帮助前端正确展示“账号密码”或“自动配置”。
+			// 真正的 password/session 密文仍会被移除，浏览器无法用该字段恢复任何凭据。
+			metadata["credential_auth_mode"] = credentialAuthMode
+		}
 	}
 	data[upstreamAccountSyncMetadataKey] = metadata
 	bytes, err := common.Marshal(data)

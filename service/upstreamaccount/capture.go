@@ -2,6 +2,7 @@ package upstreamaccount
 
 import (
 	"crypto/subtle"
+	"encoding/base64"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -17,6 +18,8 @@ import (
 const (
 	captureCacheNamespace = "upstream-account-capture"
 	captureTTL            = 10 * time.Minute
+	captureHelperVersion  = "1.2.0"
+	captureHandoffParam   = "nexustok_capture"
 
 	captureStatusPending   = "pending"
 	captureStatusCompleted = "completed"
@@ -55,6 +58,9 @@ type CaptureSessionStartResult struct {
 	APIBaseURL        string `json:"api_base_url,omitempty"`
 	Origin            string `json:"origin"`
 	UserscriptURL     string `json:"userscript_url"`
+	HelperInstallURL  string `json:"helper_install_url,omitempty"`
+	HandoffURL        string `json:"handoff_url,omitempty"`
+	HelperVersion     string `json:"helper_version,omitempty"`
 	LoginURL          string `json:"login_url"`
 	ReturnURL         string `json:"return_url,omitempty"`
 }
@@ -139,6 +145,9 @@ type CaptureSessionStatusResult struct {
 	APIBaseURL        string                    `json:"api_base_url,omitempty"`
 	Origin            string                    `json:"origin"`
 	UserscriptURL     string                    `json:"userscript_url,omitempty"`
+	HelperInstallURL  string                    `json:"helper_install_url,omitempty"`
+	HandoffURL        string                    `json:"handoff_url,omitempty"`
+	HelperVersion     string                    `json:"helper_version,omitempty"`
 	LoginURL          string                    `json:"login_url,omitempty"`
 	ReturnURL         string                    `json:"return_url,omitempty"`
 	Summary           *CaptureCredentialSummary `json:"summary,omitempty"`
@@ -239,6 +248,8 @@ func StartCaptureSession(userID int, req CaptureSessionStartRequest, nexusBaseUR
 		return nil, fmt.Errorf("保存采集会话失败：%w", err)
 	}
 	userscriptURL, loginURL := captureSessionLinks(record, nexusBaseURL)
+	helperInstallURL := captureHelperInstallURL(nexusBaseURL)
+	handoffURL := captureHandoffURL(record, userscriptURL)
 	return &CaptureSessionStartResult{
 		CaptureID:         id,
 		ExpiresAt:         expiresAt,
@@ -247,6 +258,9 @@ func StartCaptureSession(userID int, req CaptureSessionStartRequest, nexusBaseUR
 		ManagementBaseURL: normalizedBaseURL,
 		Origin:            origin,
 		UserscriptURL:     userscriptURL,
+		HelperInstallURL:  helperInstallURL,
+		HandoffURL:        handoffURL,
+		HelperVersion:     captureHelperVersion,
 		LoginURL:          loginURL,
 		ReturnURL:         returnURL,
 	}, nil
@@ -385,6 +399,228 @@ func RenderCaptureUserscriptWithInstallToken(captureID string, installToken stri
 		return "", err
 	}
 	return renderCaptureUserscript(record, nexusBaseURL)
+}
+
+// RenderCaptureHelperUserscript 生成稳定版自动采集助手脚本。
+//
+// 稳定助手不内置任何 capture_secret 或上游登录态，只负责在管理员主动从 NexusTok
+// 创建会话后，从当前页 URL fragment/sessionStorage 读取一次性 handoff 参数，再加载
+// 对应会话的签名脚本执行真实采集。这样脚本可以安装一次长期复用，同时不会把固定的
+// NexusTok 管理权限或第三方账号凭据暴露给任意站点。
+func RenderCaptureHelperUserscript(nexusBaseURL string) (string, error) {
+	nexusBaseURL = strings.TrimRight(strings.TrimSpace(nexusBaseURL), "/")
+	if nexusBaseURL == "" {
+		return "", fmt.Errorf("NexusTok 地址不能为空")
+	}
+	connectHost := "*"
+	if u, err := url.Parse(nexusBaseURL); err == nil && u.Hostname() != "" {
+		connectHost = u.Hostname()
+	}
+	configBytes, err := common.Marshal(map[string]any{
+		"nexusBaseURL": nexusBaseURL,
+		"version":      captureHelperVersion,
+		"paramName":    captureHandoffParam,
+		"storageKey":   "nexustok_upstream_capture_handoff",
+	})
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf(`// ==UserScript==
+// @name         NexusTok Upstream Login Capture Helper
+// @namespace    https://github.com/c1cadaBob/NexusTok
+// @version      %s
+// @description  Stable helper for NexusTok upstream account automatic capture.
+// @match        http://*/*
+// @match        https://*/*
+// @run-at       document-start
+// @grant        GM_xmlhttpRequest
+// @grant        GM_addStyle
+// @grant        unsafeWindow
+// @connect      %s
+// ==/UserScript==
+
+(function () {
+  'use strict';
+  const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+  const config = %s;
+  const readyEvent = 'nexustok-upstream-capture-helper-ready';
+  const panelId = 'nexustok-upstream-capture-helper-panel';
+
+  function text(value) {
+    return value == null ? '' : String(value);
+  }
+
+  function markReady() {
+    try {
+      pageWindow.__NEXUSTOK_UPSTREAM_CAPTURE_HELPER_VERSION__ = config.version;
+      pageWindow.dispatchEvent(new CustomEvent(readyEvent, {
+        detail: { version: config.version },
+      }));
+    } catch (_) {}
+  }
+
+  function parseJSON(value) {
+    try {
+      return value ? JSON.parse(value) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function decodeBase64URL(value) {
+    const normalized = text(value).replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized + '='.repeat((4 - normalized.length %% 4) %% 4);
+    try {
+      return decodeURIComponent(escape(atob(padded)));
+    } catch (_) {
+      try { return atob(padded); } catch (__) { return ''; }
+    }
+  }
+
+  function findHandoffToken() {
+    const name = config.paramName || 'nexustok_capture';
+    try {
+      const url = new URL(pageWindow.location.href);
+      const queryValue = url.searchParams.get(name);
+      if (queryValue) return { value: queryValue, source: 'query' };
+      const rawHash = text(url.hash || '').replace(/^#/, '');
+      const hashParams = new URLSearchParams(rawHash);
+      const hashValue = hashParams.get(name);
+      if (hashValue) return { value: hashValue, source: 'hash' };
+      const matched = rawHash.match(new RegExp('(?:^|[?&])' + name + '=([^&]+)'));
+      if (matched && matched[1]) return { value: decodeURIComponent(matched[1]), source: 'hash' };
+    } catch (_) {}
+    return { value: '', source: '' };
+  }
+
+  function clearHandoffFromURL(source) {
+    const name = config.paramName || 'nexustok_capture';
+    try {
+      const url = new URL(pageWindow.location.href);
+      if (source === 'query') {
+        url.searchParams.delete(name);
+      }
+      if (source === 'hash') {
+        const rawHash = text(url.hash || '').replace(/^#/, '');
+        const hashParams = new URLSearchParams(rawHash);
+        if (hashParams.has(name)) {
+          hashParams.delete(name);
+          url.hash = hashParams.toString();
+        } else if (rawHash.includes(name + '=')) {
+          url.hash = '';
+        }
+      }
+      pageWindow.history.replaceState(pageWindow.history.state, '', url.toString());
+    } catch (_) {}
+  }
+
+  function readStoredHandoff() {
+    try {
+      return parseJSON(pageWindow.sessionStorage.getItem(config.storageKey));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function writeStoredHandoff(payload) {
+    try {
+      pageWindow.sessionStorage.setItem(config.storageKey, JSON.stringify(payload));
+    } catch (_) {}
+  }
+
+  function removeStoredHandoff() {
+    try {
+      pageWindow.sessionStorage.removeItem(config.storageKey);
+    } catch (_) {}
+  }
+
+  function readHandoff() {
+    const token = findHandoffToken();
+    if (token.value) {
+      const payload = parseJSON(decodeBase64URL(token.value));
+      if (payload && typeof payload === 'object') {
+        writeStoredHandoff(payload);
+        clearHandoffFromURL(token.source);
+        return payload;
+      }
+    }
+    return readStoredHandoff();
+  }
+
+  function showStatus(message, tone) {
+    if (!document.body) return;
+    if (typeof GM_addStyle === 'function') {
+      GM_addStyle('#' + panelId + '{position:fixed;right:16px;bottom:16px;z-index:2147483647;max-width:360px;border-radius:8px;background:white;color:#111827;padding:10px 12px;font:12px system-ui;box-shadow:0 8px 24px rgba(0,0,0,.18)}#' + panelId + '[data-tone=error]{border-left:4px solid #dc2626}#' + panelId + '[data-tone=info]{border-left:4px solid #2563eb}');
+    }
+    let panel = document.getElementById(panelId);
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.id = panelId;
+      document.body.appendChild(panel);
+    }
+    panel.textContent = message;
+    panel.dataset.tone = tone || 'info';
+  }
+
+  function handoffExpired(payload) {
+    const expiresAt = Number.parseInt(text(payload && payload.expiresAt), 10);
+    return Number.isFinite(expiresAt) && expiresAt > 0 && Math.floor(Date.now() / 1000) >= expiresAt;
+  }
+
+  function loadSessionScript(payload) {
+    return new Promise((resolve, reject) => {
+      if (!payload || !payload.userscriptURL) {
+        reject(new Error('NexusTok capture handoff is missing userscriptURL.'));
+        return;
+      }
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url: payload.userscriptURL,
+        headers: { Accept: 'application/javascript,text/javascript,*/*' },
+        onload: (res) => {
+          const source = text(res.responseText || '');
+          if (res.status < 200 || res.status >= 300 || !source.trimStart().startsWith('// ==UserScript==')) {
+            reject(new Error('NexusTok capture script could not be loaded. Create a new capture session and try again.'));
+            return;
+          }
+          try {
+            // 这里执行的是当前 NexusTok 会话生成的短时脚本；脚本内仍会校验 capture_secret、
+            // origin 和 TTL。稳定助手本身不保存任何长期密钥。
+            eval(source + '\n//# sourceURL=nexustok-upstream-capture-session.user.js');
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
+        },
+        onerror: () => reject(new Error('Cannot connect to NexusTok to load the capture script.')),
+      });
+    });
+  }
+
+  async function boot() {
+    markReady();
+    const payload = readHandoff();
+    if (!payload) return;
+    if (payload.origin && pageWindow.location.origin !== payload.origin) return;
+    if (handoffExpired(payload)) {
+      removeStoredHandoff();
+      showStatus('NexusTok capture session expired. Create a new session.', 'error');
+      return;
+    }
+    try {
+      await loadSessionScript(payload);
+    } catch (error) {
+      showStatus(error && error.message ? error.message : String(error), 'error');
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot, { once: true });
+    markReady();
+  } else {
+    boot();
+  }
+})();`, captureHelperVersion, connectHost, string(configBytes)), nil
 }
 
 func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (string, error) {
@@ -1402,6 +1638,8 @@ func sanitizeCaptureRecord(record CaptureSessionRecord, nexusBaseURL string) *Ca
 		message = record.Error
 	}
 	userscriptURL, loginURL := captureSessionLinks(record, nexusBaseURL)
+	helperInstallURL := captureHelperInstallURL(nexusBaseURL)
+	handoffURL := captureHandoffURL(record, userscriptURL)
 	managementBaseURL := firstNonEmpty(record.ManagementBaseURL, record.BaseURL)
 	relayBaseURL := firstNonEmpty(record.RelayBaseURL, record.APIBaseURL)
 	if record.Summary != nil {
@@ -1421,6 +1659,9 @@ func sanitizeCaptureRecord(record CaptureSessionRecord, nexusBaseURL string) *Ca
 		APIBaseURL:        relayBaseURL,
 		Origin:            record.Origin,
 		UserscriptURL:     userscriptURL,
+		HelperInstallURL:  helperInstallURL,
+		HandoffURL:        handoffURL,
+		HelperVersion:     captureHelperVersion,
 		LoginURL:          loginURL,
 		ReturnURL:         record.ReturnURL,
 		Summary:           record.Summary,
@@ -1494,6 +1735,42 @@ func captureSessionLinks(record CaptureSessionRecord, nexusBaseURL string) (stri
 		}
 	}
 	return userscriptURL, record.BaseURL
+}
+
+func captureHelperInstallURL(nexusBaseURL string) string {
+	nexusBaseURL = strings.TrimRight(strings.TrimSpace(nexusBaseURL), "/")
+	if nexusBaseURL == "" {
+		return ""
+	}
+	return nexusBaseURL + "/api/channel/upstream-account/capture-helper.user.js"
+}
+
+func captureHandoffURL(record CaptureSessionRecord, userscriptURL string) string {
+	baseURL := strings.TrimSpace(record.BaseURL)
+	if baseURL == "" || strings.TrimSpace(userscriptURL) == "" {
+		return baseURL
+	}
+	payloadBytes, err := common.Marshal(map[string]any{
+		"captureID":     record.ID,
+		"userscriptURL": userscriptURL,
+		"returnURL":     record.ReturnURL,
+		"expiresAt":     record.ExpiresAt,
+		"origin":        record.Origin,
+		"platform":      record.Platform,
+		"baseURL":       record.BaseURL,
+		"helperVersion": captureHelperVersion,
+	})
+	if err != nil {
+		return baseURL
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return baseURL
+	}
+	params := url.Values{}
+	params.Set(captureHandoffParam, base64.RawURLEncoding.EncodeToString(payloadBytes))
+	parsed.Fragment = params.Encode()
+	return parsed.String()
 }
 
 // normalizeCaptureReturnURL 只允许 userscript 回跳到当前 NexusTok 站点。

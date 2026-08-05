@@ -38,6 +38,11 @@ func registerChannelRoutes(apiRouter *gin.RouterGroup) {
 		middleware.CriticalRateLimit(),
 		controller.GetUpstreamAccountCaptureUserscript,
 	)
+	apiRouter.GET(
+		"/channel/upstream-account/capture-helper.user.js",
+		middleware.CriticalRateLimit(),
+		controller.GetUpstreamAccountCaptureHelperUserscript,
+	)
 
 	channelRoute := apiRouter.Group("/channel")
 	channelRoute.Use(middleware.AdminAuth())

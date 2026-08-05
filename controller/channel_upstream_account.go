@@ -190,6 +190,21 @@ func GetUpstreamAccountCaptureUserscript(c *gin.Context) {
 	c.String(http.StatusOK, script)
 }
 
+// GetUpstreamAccountCaptureHelperUserscript 返回可长期安装的稳定采集助手脚本。
+//
+// 该脚本本身不包含 capture_secret 或目标站登录态，只在管理员创建短时采集会话并跳转
+// 到目标站时，加载对应会话的一次性签名脚本。公开下载不会授予 NexusTok 管理权限。
+func GetUpstreamAccountCaptureHelperUserscript(c *gin.Context) {
+	script, err := upstreamaccount.RenderCaptureHelperUserscript(externalRequestBaseURL(c))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.Header("Content-Type", "application/javascript; charset=utf-8")
+	c.Header("Cache-Control", "no-store")
+	c.String(http.StatusOK, script)
+}
+
 // CompleteUpstreamAccountCaptureSession 接收油猴脚本回传的目标站登录态。
 //
 // 该接口不依赖 NexusTok 登录态，因为脚本运行在目标站页面中，无法稳定携带 NexusTok

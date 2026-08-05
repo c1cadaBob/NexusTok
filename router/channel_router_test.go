@@ -34,6 +34,7 @@ func TestRegisterChannelRoutesKeepsCoreHandlers(t *testing.T) {
 	assertRouteHandler(t, engine, http.MethodPost, "/api/channel/upstream-account/capture-session/start", controller.StartUpstreamAccountCaptureSession)
 	assertRouteHandler(t, engine, http.MethodGet, "/api/channel/upstream-account/capture-session/:id", controller.GetUpstreamAccountCaptureSession)
 	assertRouteHandler(t, engine, http.MethodGet, "/api/channel/upstream-account/capture-session/:id/userscript.user.js", controller.GetUpstreamAccountCaptureUserscript)
+	assertRouteHandler(t, engine, http.MethodGet, "/api/channel/upstream-account/capture-helper.user.js", controller.GetUpstreamAccountCaptureHelperUserscript)
 	assertRouteHandler(t, engine, http.MethodPost, "/api/channel/upstream-account/capture-session/:id/complete", controller.CompleteUpstreamAccountCaptureSession)
 	assertRouteHandler(t, engine, http.MethodPost, "/api/channel/upstream-account/credentials/parse", controller.ParseUpstreamAccountCredential)
 	assertRouteHandler(t, engine, http.MethodPost, "/api/channel/upstream-account/preview/2fa", controller.CompleteUpstreamAccount2FA)
