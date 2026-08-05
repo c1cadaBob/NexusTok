@@ -432,6 +432,9 @@ export interface UpstreamAccountCaptureStartData {
   api_base_url?: string
   origin: string
   userscript_url: string
+  helper_install_url?: string
+  handoff_url?: string
+  helper_version?: string
   login_url: string
   return_url?: string
 }
@@ -482,6 +485,9 @@ export interface UpstreamAccountCaptureStatusData {
   api_base_url?: string
   origin: string
   userscript_url?: string
+  helper_install_url?: string
+  handoff_url?: string
+  helper_version?: string
   login_url?: string
   return_url?: string
   summary?: UpstreamAccountCaptureCredentialSummary

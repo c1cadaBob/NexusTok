@@ -63,11 +63,6 @@ function formatUnixTime(value?: number) {
   return new Date(value * 1000).toLocaleString()
 }
 
-function buildCompleteEndpoint(captureId: string) {
-  if (!captureId) return ''
-  return `/api/channel/upstream-account/capture-session/${captureId}/complete`
-}
-
 function formatBrowserSessionRestoreStatus(
   value: string | undefined,
   t: (key: string) => string
@@ -99,6 +94,22 @@ function compactKeys(
   const count = value?.length ?? 0
   if (count === 0) return t('None')
   return t('{{count}} key(s)', { count })
+}
+
+const CAPTURE_HELPER_READY_EVENT = 'nexustok-upstream-capture-helper-ready'
+const CAPTURE_HELPER_VERSION_KEY =
+  '__NEXUSTOK_UPSTREAM_CAPTURE_HELPER_VERSION__'
+
+type CaptureHelperWindow = Window & {
+  [CAPTURE_HELPER_VERSION_KEY]?: string
+}
+
+function getInstalledCaptureHelperVersion() {
+  if (typeof window === 'undefined') return ''
+  return (
+    String((window as CaptureHelperWindow)[CAPTURE_HELPER_VERSION_KEY] || '')
+      .trim()
+  )
 }
 
 function openCaptureURL(url: string, targetWindow?: Window | null) {
@@ -148,18 +159,14 @@ export const UpstreamAccountCapturePanel = forwardRef<
   const [localSession, setLocalSession] =
     useState<UpstreamAccountCaptureStartData | null>(null)
   const [fallbackVisible, setFallbackVisible] = useState(false)
-  const [captureOpenState, setCaptureOpenState] = useState({
-    installOpened: false,
-    loginOpened: false,
-    installBlocked: false,
-    loginBlocked: false,
-  })
+  const [helperVersion, setHelperVersion] = useState(
+    getInstalledCaptureHelperVersion
+  )
+  const [handoffStarted, setHandoffStarted] = useState(false)
   const completedToastRef = useRef('')
   const fallbackTimerRef = useRef<number | null>(null)
-  const pendingCaptureWindowsRef = useRef<{
-    installWindow?: Window | null
-    loginWindow?: Window | null
-  }>({})
+
+  const helperInstalled = Boolean(helperVersion)
 
   const statusQuery = useQuery({
     queryKey: ['upstream-account-capture-session', captureId],
@@ -195,6 +202,11 @@ export const UpstreamAccountCapturePanel = forwardRef<
       origin: status?.origin || localSession?.origin || '',
       userscript_url:
         status?.userscript_url || localSession?.userscript_url || '',
+      helper_install_url:
+        status?.helper_install_url || localSession?.helper_install_url || '',
+      handoff_url: status?.handoff_url || localSession?.handoff_url || '',
+      helper_version:
+        status?.helper_version || localSession?.helper_version || '',
       login_url: status?.login_url || localSession?.login_url || baseUrl,
       return_url: status?.return_url || localSession?.return_url || '',
       summary: status?.summary,
@@ -203,44 +215,16 @@ export const UpstreamAccountCapturePanel = forwardRef<
     }
   }, [baseUrl, captureId, localSession, platform, status])
 
-  const openCaptureTargets = useCallback(
-    (
-      sessionData: UpstreamAccountCaptureStartData,
-      installWindow?: Window | null,
-      loginWindow?: Window | null
-    ) => {
-      const installURL = sessionData.userscript_url
-      const loginURL = sessionData.login_url || sessionData.base_url || baseUrl
-      const installOpened = installURL
-        ? openCaptureURL(installURL, installWindow)
-        : false
-      setCaptureOpenState({
-        installOpened,
-        loginOpened: false,
-        installBlocked: Boolean(installURL && !installOpened),
-        loginBlocked: false,
-      })
-      if (installURL) {
-        setFallbackVisible(!installOpened)
+  const navigateToHandoff = useCallback(
+    (sessionData: UpstreamAccountCaptureStartData | UpstreamAccountCaptureStatusData | null) => {
+      const handoffURL = sessionData?.handoff_url || sessionData?.login_url || sessionData?.base_url || baseUrl
+      if (!handoffURL.trim()) {
+        toast.error(t('Upstream platform URL is required'))
+        return false
       }
-      if (loginURL) {
-        window.setTimeout(() => {
-          const loginOpened = openCaptureURL(loginURL, loginWindow)
-          setCaptureOpenState((previous) => ({
-            ...previous,
-            loginOpened,
-            loginBlocked: Boolean(loginURL && !loginOpened),
-          }))
-          if (!installOpened || !loginOpened) {
-            setFallbackVisible(true)
-            toast.warning(
-              t(
-                'Automatic capture tabs were blocked. Use the fallback buttons to continue.'
-              )
-            )
-          }
-        }, 1200)
-      }
+      setHandoffStarted(true)
+      window.location.assign(handoffURL)
+      return true
     },
     [baseUrl, t]
   )
@@ -248,26 +232,23 @@ export const UpstreamAccountCapturePanel = forwardRef<
   const startMutation = useMutation({
     mutationFn: startUpstreamAccountCaptureSession,
     onSuccess: (res) => {
-      const windows = pendingCaptureWindowsRef.current
-      pendingCaptureWindowsRef.current = {}
       if (!res.success || !res.data) {
         toast.error(res.message || t('Failed to create capture session'))
-        windows.installWindow?.close()
-        windows.loginWindow?.close()
         return
       }
       setLocalSession(res.data)
       onCaptureIdChange(res.data.capture_id)
       completedToastRef.current = ''
       setFallbackVisible(false)
-      openCaptureTargets(res.data, windows.installWindow, windows.loginWindow)
+      if (getInstalledCaptureHelperVersion()) {
+        navigateToHandoff(res.data)
+      } else {
+        setFallbackVisible(true)
+        toast.info(t('Install the automatic capture helper, then continue capture.'))
+      }
       toast.success(t('Capture session created'))
     },
     onError: (error: unknown) => {
-      const windows = pendingCaptureWindowsRef.current
-      pendingCaptureWindowsRef.current = {}
-      windows.installWindow?.close()
-      windows.loginWindow?.close()
       const message =
         error instanceof Error
           ? error.message
@@ -286,6 +267,19 @@ export const UpstreamAccountCapturePanel = forwardRef<
     onCompleted?.(status.capture_id)
   }, [onCompleted, status, t])
 
+  useEffect(() => {
+    const updateHelperState = () => {
+      setHelperVersion(getInstalledCaptureHelperVersion())
+    }
+    updateHelperState()
+    window.addEventListener(CAPTURE_HELPER_READY_EVENT, updateHelperState)
+    const timer = window.setTimeout(updateHelperState, 800)
+    return () => {
+      window.removeEventListener(CAPTURE_HELPER_READY_EVENT, updateHelperState)
+      window.clearTimeout(timer)
+    }
+  }, [])
+
   const handleStart = useCallback(() => {
     if (disabled || startMutation.isPending) return
     const trimmedBaseUrl = baseUrl.trim()
@@ -293,16 +287,7 @@ export const UpstreamAccountCapturePanel = forwardRef<
       toast.error(t('Upstream platform URL is required'))
       return
     }
-    let installWindow: Window | null = null
-    let loginWindow: Window | null = null
-    try {
-      installWindow = window.open('about:blank', '_blank')
-      loginWindow = window.open('about:blank', '_blank')
-    } catch {
-      installWindow = null
-      loginWindow = null
-    }
-    pendingCaptureWindowsRef.current = { installWindow, loginWindow }
+    setHandoffStarted(false)
     startMutation.mutate({
       platform,
       base_url: trimmedBaseUrl,
@@ -312,18 +297,13 @@ export const UpstreamAccountCapturePanel = forwardRef<
   }, [baseUrl, channelId, disabled, platform, returnUrl, startMutation, t])
 
   const handleOpenInstaller = useCallback(() => {
-    const installURL = session?.userscript_url || ''
+    const installURL = session?.helper_install_url || session?.userscript_url || ''
     if (!installURL) {
       toast.error(t('Signed userscript install link is not ready yet'))
       return
     }
     const opened = openCaptureURL(installURL)
     setFallbackVisible(true)
-    setCaptureOpenState((previous) => ({
-      ...previous,
-      installOpened: previous.installOpened || opened,
-      installBlocked: !opened,
-    }))
     if (!opened) {
       toast.error(
         t(
@@ -331,29 +311,16 @@ export const UpstreamAccountCapturePanel = forwardRef<
         )
       )
     }
-  }, [session?.userscript_url, t])
+  }, [session?.helper_install_url, session?.userscript_url, t])
 
   const handleOpenUpstreamSite = useCallback(() => {
-    const loginURL = session?.login_url || session?.base_url || baseUrl
-    if (!loginURL.trim()) {
-      toast.error(t('Upstream platform URL is required'))
+    if (!helperInstalled) {
+      setFallbackVisible(true)
+      toast.info(t('Install the automatic capture helper, then continue capture.'))
       return
     }
-    const opened = openCaptureURL(loginURL)
-    setFallbackVisible(true)
-    setCaptureOpenState((previous) => ({
-      ...previous,
-      loginOpened: previous.loginOpened || opened,
-      loginBlocked: !opened,
-    }))
-    if (!opened) {
-      toast.error(
-        t(
-          'Browser blocked the upstream site tab. Allow pop-ups for NexusTok and try again.'
-        )
-      )
-    }
-  }, [baseUrl, session?.base_url, session?.login_url, t])
+    navigateToHandoff(session)
+  }, [helperInstalled, navigateToHandoff, session, t])
 
   useImperativeHandle(
     ref,
@@ -366,7 +333,6 @@ export const UpstreamAccountCapturePanel = forwardRef<
     [captureId, handleStart, statusQuery]
   )
 
-  const callbackEndpoint = buildCompleteEndpoint(captureId)
   const isCompleted = status?.status === 'completed'
   const isFailed = status?.status === 'failed'
   const summary = status?.summary
@@ -410,125 +376,139 @@ export const UpstreamAccountCapturePanel = forwardRef<
 
   const showFallbackNotice =
     !isCompleted &&
-    (fallbackVisible ||
-      captureOpenState.installBlocked ||
-      captureOpenState.loginBlocked ||
-      isFailed)
+    (fallbackVisible || isFailed || (session?.capture_id && !helperInstalled && !handoffStarted))
 
   if (!session) return null
 
   return (
     <div className='flex flex-col gap-3 rounded-lg border p-3 sm:col-span-2 lg:col-span-6'>
-      <div className='grid gap-2 text-xs sm:grid-cols-2 xl:grid-cols-4'>
-        {[
-          {
-            label: t('Status'),
-            value: isCompleted
-              ? t('Completed')
-              : isFailed
-                ? t('Failed')
-                : t('Pending'),
-          },
-          {
-            label: t('Target Origin'),
-            value: session.origin || '-',
-            title: session.origin,
-          },
-          {
-            label: t('Management Panel URL'),
-            value: managementBaseURL || '-',
-            title: managementBaseURL,
-          },
-          {
-            label: t('Model API URL'),
-            value: relayBaseURL || '-',
-            title: relayBaseURL,
-          },
-          {
-            label: t('Expires At'),
-            value: formatUnixTime(session.expires_at) || '-',
-          },
-          {
-            label: t('Captured Token'),
-            value: summary?.access_token_masked || '-',
-          },
-          {
-            label: t('Refresh Token'),
-            value: summary
-              ? summary.refresh_token_present
-                ? t('Present')
-                : t('Not provided')
-              : '-',
-          },
-          {
-            label: t('Callback Endpoint'),
-            value: callbackEndpoint || '-',
-            title: callbackEndpoint,
-          },
-        ].map((item) => (
-          <div key={item.label} className='min-w-0 rounded-md border p-2'>
-            <div className='text-muted-foreground'>{item.label}</div>
-            <div className='truncate font-medium' title={item.title || item.value}>
-              {item.value}
+      <div className='flex flex-col gap-3 rounded-md border p-3'>
+        <div className='flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between'>
+          <div className='min-w-0'>
+            <div className='flex flex-wrap items-center gap-2'>
+              <span className='text-sm font-medium'>
+                {t('Capture Status')}
+              </span>
+              <Badge
+                variant={
+                  isCompleted ? 'default' : isFailed ? 'destructive' : 'outline'
+                }
+              >
+                {isCompleted ? t('Completed') : isFailed ? t('Failed') : t('Pending')}
+              </Badge>
+              <Badge variant={helperInstalled ? 'default' : 'outline'}>
+                {helperInstalled
+                  ? t('Helper installed')
+                  : t('Helper not installed')}
+              </Badge>
             </div>
+            {!summary?.refresh_token_present && summary ? (
+              <div className='text-muted-foreground mt-1 text-xs'>
+                {t('This login can sync now; collect again after it expires.')}
+              </div>
+            ) : null}
           </div>
-        ))}
-      </div>
+          <Button
+            type='button'
+            variant='outline'
+            size='sm'
+            className='sm:self-end'
+            disabled={!captureId || statusQuery.isFetching}
+            onClick={() => void statusQuery.refetch()}
+          >
+            {statusQuery.isFetching ? (
+              <Loader2 data-icon='inline-start' className='animate-spin' />
+            ) : (
+              <RefreshCw data-icon='inline-start' />
+            )}
+            {t('Refresh Capture Status')}
+          </Button>
+        </div>
 
-      <div className='flex flex-col gap-2 sm:flex-row sm:flex-wrap'>
-        <Button
-          type='button'
-          variant='outline'
-          disabled={!captureId || statusQuery.isFetching}
-          onClick={() => void statusQuery.refetch()}
-        >
-          {statusQuery.isFetching ? (
-            <Loader2 data-icon='inline-start' className='animate-spin' />
-          ) : (
-            <RefreshCw data-icon='inline-start' />
-          )}
-          {t('Refresh Capture Status')}
-        </Button>
-        {!isCompleted ? (
-          <>
-            <Button
-              type='button'
-              variant='outline'
-              disabled={!session.userscript_url}
-              onClick={handleOpenInstaller}
-            >
-              <ExternalLink data-icon='inline-start' />
-              {t('Reopen Script Installer')}
-            </Button>
-            <Button
-              type='button'
-              variant='outline'
-              disabled={!(session.login_url || session.base_url || baseUrl)}
-              onClick={handleOpenUpstreamSite}
-            >
-              <ExternalLink data-icon='inline-start' />
-              {t('Open Upstream Site')}
-            </Button>
-          </>
-        ) : null}
+        <div className='grid gap-2 text-xs md:grid-cols-5'>
+          {[
+            {
+              label: t('Management URL'),
+              value: managementBaseURL || '-',
+              title: managementBaseURL,
+            },
+            {
+              label: t('Model API URL'),
+              value: relayBaseURL || '-',
+              title: relayBaseURL,
+            },
+            {
+              label: t('Token'),
+              value: summary?.access_token_masked || '-',
+            },
+            {
+              label: t('Refresh Token'),
+              value: summary
+                ? summary.refresh_token_present
+                  ? t('Present')
+                  : t('Not provided')
+                : '-',
+            },
+            {
+              label: t('Expires At'),
+              value: formatUnixTime(session.expires_at) || '-',
+            },
+          ].map((item) => (
+            <div key={item.label} className='min-w-0'>
+              <div className='text-muted-foreground truncate'>{item.label}</div>
+              <div
+                className='truncate font-medium'
+                title={item.title || item.value}
+              >
+                {item.value}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
       {showFallbackNotice ? (
         <Alert variant={isFailed ? 'destructive' : 'default'}>
           <AlertCircle aria-hidden='true' />
-          <AlertDescription>
-            {captureOpenState.installBlocked || captureOpenState.loginBlocked
-              ? t(
-                  'Automatic capture tabs were blocked. Use the fallback buttons to continue.'
-                )
-              : t(
-                  'If the installer tab stays open, confirm the userscript, then continue on the upstream site.'
-                )}
+          <AlertDescription className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
+            <span>
+              {isFailed
+                ? status?.message || t('Capture failed. Refresh status or create a new session.')
+                : helperInstalled
+                  ? t('Continue capture in this tab.')
+                  : t('Install the automatic capture helper, then continue capture.')}
+            </span>
+            <span className='flex flex-wrap gap-2'>
+              {!helperInstalled ? (
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='sm'
+                  disabled={!session.helper_install_url && !session.userscript_url}
+                  onClick={handleOpenInstaller}
+                >
+                  <ExternalLink data-icon='inline-start' />
+                  {t('Install Capture Helper')}
+                </Button>
+              ) : null}
+              {!isCompleted ? (
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='sm'
+                  disabled={!session.handoff_url && !session.login_url && !session.base_url}
+                  onClick={handleOpenUpstreamSite}
+                >
+                  <ExternalLink data-icon='inline-start' />
+                  {t('Continue Capture')}
+                </Button>
+              ) : null}
+            </span>
           </AlertDescription>
         </Alert>
       ) : null}
 
-      {status?.message ? (
+      {status?.message && !showFallbackNotice ? (
         <Alert variant={isFailed ? 'destructive' : 'default'}>
           <AlertCircle aria-hidden='true' />
           <AlertDescription>{status.message}</AlertDescription>
@@ -536,9 +516,11 @@ export const UpstreamAccountCapturePanel = forwardRef<
       ) : null}
 
       {status?.diagnostics ? (
-        <div className='flex flex-col gap-2 rounded-md border p-3 text-xs'>
-          <div className='font-medium'>{t('Capture diagnostics')}</div>
-          <div className='grid gap-2 sm:grid-cols-2 xl:grid-cols-4'>
+        <details className='rounded-md border p-3 text-xs'>
+          <summary className='cursor-pointer font-medium'>
+            {t('Capture diagnostics')}
+          </summary>
+          <div className='mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3'>
             {[
               {
                 label: t('Page origin'),
@@ -603,11 +585,15 @@ export const UpstreamAccountCapturePanel = forwardRef<
                   status.diagnostics.session_storage_keys?.join(', ') || '',
               },
             ].map((item) => (
-              <div key={item.label} className='min-w-0 rounded-md border p-2'>
-                <div className='text-muted-foreground truncate'>
-                  {item.label}
-                </div>
-                <div className='truncate font-medium' title={item.title || item.value}>
+              <div
+                key={item.label}
+                className='grid min-w-0 grid-cols-[8.5rem_minmax(0,1fr)] items-center gap-2'
+              >
+                <div className='text-muted-foreground truncate'>{item.label}</div>
+                <div
+                  className='truncate font-medium'
+                  title={item.title || item.value}
+                >
                   {item.badge ? (
                     <Badge variant='outline'>{item.value}</Badge>
                   ) : (
@@ -618,11 +604,14 @@ export const UpstreamAccountCapturePanel = forwardRef<
             ))}
           </div>
           {status.diagnostics.browser_session_restore_message ? (
-            <div className='text-muted-foreground truncate' title={status.diagnostics.browser_session_restore_message}>
+            <div
+              className='text-muted-foreground mt-2 truncate'
+              title={status.diagnostics.browser_session_restore_message}
+            >
               {t('Session restore message')}: {status.diagnostics.browser_session_restore_message}
             </div>
           ) : null}
-        </div>
+        </details>
       ) : null}
     </div>
   )

@@ -66,6 +66,7 @@ import {
   formatUpstreamModelRatioDetails,
   formatUpstreamPreviewRemaining,
   formatUpstreamRatioCompact,
+  getUpstreamSyncCredentialAuthModeFromSettings,
   getUpstreamKeyGroupLabel,
   getUpstreamKeyRatioDisplayValue,
   getUpstreamPreviewChallenge,
@@ -125,6 +126,10 @@ export function UpstreamAccountRefreshPanel({
   const { t } = useTranslation()
   const savedUpstreamCredentialAvailable = useMemo(
     () => hasUpstreamSyncSavedCredential(channelSettings),
+    [channelSettings]
+  )
+  const savedUpstreamCredentialAuthMode = useMemo(
+    () => getUpstreamSyncCredentialAuthModeFromSettings(channelSettings),
     [channelSettings]
   )
   const forcedUpstreamPlatform = useMemo(
@@ -312,12 +317,12 @@ export function UpstreamAccountRefreshPanel({
       setUpstreamPaidCny(
         ratio?.paid_cny && Number.isFinite(ratio.paid_cny)
           ? String(ratio.paid_cny)
-          : ''
+          : DEFAULT_UPSTREAM_PAID_AMOUNT
       )
       setUpstreamPlatformUsdCredit(
         ratio?.platform_usd_credit && Number.isFinite(ratio.platform_usd_credit)
           ? String(ratio.platform_usd_credit)
-          : ''
+          : DEFAULT_UPSTREAM_PLATFORM_CREDIT
       )
       toast.success(
         t('Synced {{count}} upstream key(s)', {
@@ -1063,7 +1068,13 @@ export function UpstreamAccountRefreshPanel({
 
   const usingSavedCredential =
     savedUpstreamCredentialAvailable && upstreamUseSavedCredential
-  const effectiveAuthMode = usingSavedCredential ? 'password' : upstreamAuthMode
+  const savedCredentialDisplayAuthMode =
+    savedUpstreamCredentialAuthMode === 'password'
+      ? 'password'
+      : 'oauth_browser'
+  const effectiveAuthMode = usingSavedCredential
+    ? savedCredentialDisplayAuthMode
+    : upstreamAuthMode
   const savedCredentialDescription = t('Saved upstream login will be reused')
   const loginURL = upstreamBaseUrl.trim()
   const canOpenLoginURL =
@@ -1107,9 +1118,9 @@ export function UpstreamAccountRefreshPanel({
               setUpstreamAuthMode(value as UpstreamAccountAuthMode)
             }
           >
-            <SelectTrigger id='upstream-refresh-auth-mode'>
+            <SelectTrigger id='upstream-refresh-auth-mode' className='w-full min-w-0'>
               <SelectValue>
-                {upstreamAuthMode === 'password'
+                {effectiveAuthMode === 'password'
                   ? t('Account password')
                   : t('Automatic configuration')}
               </SelectValue>
@@ -1172,7 +1183,7 @@ export function UpstreamAccountRefreshPanel({
         </div>
       </div>
 
-      {effectiveAuthMode === 'password' ? (
+      {!usingSavedCredential && effectiveAuthMode === 'password' ? (
         <div className='grid gap-3 sm:grid-cols-2'>
           <div className='flex flex-col gap-2'>
             <Label htmlFor='upstream-refresh-account'>{t('Account')}</Label>
@@ -1206,7 +1217,7 @@ export function UpstreamAccountRefreshPanel({
         </div>
       ) : null}
 
-      {effectiveAuthMode === 'oauth_browser' ? (
+      {!usingSavedCredential && effectiveAuthMode === 'oauth_browser' ? (
         <UpstreamAccountCapturePanel
           ref={capturePanelRef}
           platform={forcedUpstreamPlatform ?? upstreamPlatform}
@@ -1220,7 +1231,7 @@ export function UpstreamAccountRefreshPanel({
         />
       ) : null}
 
-      <div className='grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(15rem,auto)] sm:items-end'>
+      <div className='grid gap-3 sm:grid-cols-2'>
         <div className='flex flex-col gap-2'>
           <Label htmlFor='upstream-refresh-paid-cny'>{t('Paid Amount')}</Label>
           <Input
@@ -1247,75 +1258,65 @@ export function UpstreamAccountRefreshPanel({
             disabled={!canSensitiveWrite}
           />
         </div>
-        <div className='flex min-w-0 flex-col items-stretch gap-2 sm:flex-row sm:items-end'>
-          <Button
-            type='button'
-            variant='outline'
-            className='min-w-0 flex-1 whitespace-nowrap'
-            disabled={refreshPreviewButtonsDisabled}
-            onClick={() => void handlePreviewUpstreamRefresh()}
-          >
-            {previewMutation.isPending ? (
-              <Loader2 data-icon='inline-start' className='animate-spin' />
-            ) : (
-              <RefreshCw data-icon='inline-start' />
-            )}
-            {t('Preview Refresh')}
-          </Button>
-          <Button
-            type='button'
-            className='min-w-0 flex-1 whitespace-nowrap'
-            disabled={
-              !upstreamRefreshSnapshot ||
-              upstreamRefreshSnapshot.keys.length === 0 ||
-              isUpstreamRefreshPreviewExpired ||
-              refreshPreviewButtonsDisabled
-            }
-            onClick={() => {
-              if (!channelId || !upstreamRefreshSnapshot) return
-              if (isUpstreamRefreshPreviewExpired) {
-                clearRefreshPreview()
-                setUpstreamAccountConfigs({})
-                toast.error(
-                  t(
-                    'The upstream account preview expired or was already used. Sync the upstream account again.'
-                  )
-                )
-                return
-              }
-              void refreshMutation.mutateAsync({
-                id: channelId,
-                payload: buildUpstreamAccountRefreshPayload({
-                  previewId: upstreamRefreshPreviewId,
-                  keys: upstreamRefreshSnapshot.keys,
-                  configs: upstreamAccountConfigs,
-                  applySuggested: upstreamApplySuggested,
-                  ratioConversion: buildUpstreamRatioConversionPayload(
-                    upstreamPaidCny,
-                    upstreamPlatformUsdCredit
-                  ),
-                }),
-              })
-            }}
-          >
-            {refreshMutation.isPending ? (
-              <Loader2 data-icon='inline-start' className='animate-spin' />
-            ) : (
-              <CheckCircle2 data-icon='inline-start' />
-            )}
-            {t('Apply Refresh')}
-          </Button>
-        </div>
       </div>
-
-      <div className='text-muted-foreground text-xs'>
-        {usingSavedCredential
-          ? t(
-              'This refresh will reuse the saved upstream login. If the upstream site asks for 2FA again, only the code is needed.'
-            )
-          : t(
-              'Use this only when you need to log in to the upstream account again. The main save button below only saves per-key models, groups, priority, weight, and enabled state.'
-            )}
+      <div className='flex min-w-0 flex-col items-stretch gap-2 sm:flex-row sm:items-end sm:justify-end'>
+        <Button
+          type='button'
+          variant='outline'
+          className='min-w-0 whitespace-nowrap sm:min-w-36'
+          disabled={refreshPreviewButtonsDisabled}
+          onClick={() => void handlePreviewUpstreamRefresh()}
+        >
+          {previewMutation.isPending ? (
+            <Loader2 data-icon='inline-start' className='animate-spin' />
+          ) : (
+            <RefreshCw data-icon='inline-start' />
+          )}
+          {t('Preview Refresh')}
+        </Button>
+        <Button
+          type='button'
+          className='min-w-0 whitespace-nowrap sm:min-w-36'
+          disabled={
+            !upstreamRefreshSnapshot ||
+            upstreamRefreshSnapshot.keys.length === 0 ||
+            isUpstreamRefreshPreviewExpired ||
+            refreshPreviewButtonsDisabled
+          }
+          onClick={() => {
+            if (!channelId || !upstreamRefreshSnapshot) return
+            if (isUpstreamRefreshPreviewExpired) {
+              clearRefreshPreview()
+              setUpstreamAccountConfigs({})
+              toast.error(
+                t(
+                  'The upstream account preview expired or was already used. Sync the upstream account again.'
+                )
+              )
+              return
+            }
+            void refreshMutation.mutateAsync({
+              id: channelId,
+              payload: buildUpstreamAccountRefreshPayload({
+                previewId: upstreamRefreshPreviewId,
+                keys: upstreamRefreshSnapshot.keys,
+                configs: upstreamAccountConfigs,
+                applySuggested: upstreamApplySuggested,
+                ratioConversion: buildUpstreamRatioConversionPayload(
+                  upstreamPaidCny,
+                  upstreamPlatformUsdCredit
+                ),
+              }),
+            })
+          }}
+        >
+          {refreshMutation.isPending ? (
+            <Loader2 data-icon='inline-start' className='animate-spin' />
+          ) : (
+            <CheckCircle2 data-icon='inline-start' />
+          )}
+          {t('Apply Refresh')}
+        </Button>
       </div>
 
       {upstreamRefreshTwoFactorChallenge && renderTwoFactorChallenge()}

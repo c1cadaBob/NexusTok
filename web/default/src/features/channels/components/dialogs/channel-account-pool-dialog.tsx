@@ -532,7 +532,7 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
             </DialogDescription>
           </DialogHeader>
 
-          <div className='flex min-h-0 flex-1 flex-col gap-4 overflow-hidden'>
+          <div className='flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pr-1'>
             <div className='grid gap-3 sm:grid-cols-4'>
               <StatusBadge
                 label={`${t('Total')}: ${stats?.total ?? 0}`}
@@ -679,11 +679,6 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                   <div className='min-w-0'>
                     <div className='text-sm font-semibold'>
                       {t('Refresh Upstream Account')}
-                    </div>
-                    <div className='text-muted-foreground text-xs'>
-                      {t(
-                        'Optional upstream re-sync. It does not replace the current synced key configuration until you apply the refresh.'
-                      )}
                     </div>
                   </div>
                   <Button
@@ -859,7 +854,7 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
               </div>
             )}
 
-            <div className='min-h-0 flex-1 overflow-auto rounded-md border'>
+            <div className='max-h-[52vh] overflow-auto rounded-md border'>
               <Table className='w-full min-w-[1080px] table-fixed xl:min-w-0'>
                 <TableHeader>
                   <TableRow>

@@ -316,6 +316,26 @@ export function hasUpstreamSyncSavedCredential(
   return Boolean(record.credential_saved || record.credentials)
 }
 
+export function getUpstreamSyncCredentialAuthModeFromSettings(
+  settings: string | undefined
+): UpstreamAccountAuthMode | '' {
+  const metadata =
+    parseSettingsRecord(settings)[UPSTREAM_ACCOUNT_SYNC_SETTINGS_KEY]
+  if (!metadata || typeof metadata !== 'object') return ''
+  const record = metadata as Record<string, unknown>
+  const mode = String(
+    record.credential_auth_mode || record.auth_mode || ''
+  )
+    .trim()
+    .toLowerCase()
+    .replaceAll('_', '-')
+  if (mode === 'password') return 'password'
+  if (mode === 'session-cookie') return 'session_cookie'
+  if (mode === 'access-token') return 'access_token'
+  if (mode === 'oauth-browser') return 'oauth_browser'
+  return ''
+}
+
 export function normalizeUpstreamChannelBaseUrl(value?: string | null) {
   return String(value || '')
     .trim()

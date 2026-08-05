@@ -192,6 +192,7 @@ import {
   DEFAULT_UPSTREAM_PLATFORM_CREDIT,
   formatUpstreamModelRatioDetails,
   formatUpstreamRatioCompact,
+  getUpstreamSyncCredentialAuthModeFromSettings,
   getUpstreamKeyRatioDisplayValue,
   getUpstreamKeyGroupLabel,
   getUpstreamRatioDisplayValue,
@@ -2550,6 +2551,13 @@ export function ChannelMutateDrawer({
       ),
     [channelData?.data?.settings, renderCurrentRow?.settings]
   )
+  const savedUpstreamCredentialAuthMode = useMemo(
+    () =>
+      getUpstreamSyncCredentialAuthModeFromSettings(
+        channelData?.data?.settings ?? renderCurrentRow?.settings
+      ),
+    [channelData?.data?.settings, renderCurrentRow?.settings]
+  )
 
   const upstreamDetectedModelsPreview = upstreamUpdateMeta.detectedModels.slice(
     0,
@@ -4371,6 +4379,18 @@ export function ChannelMutateDrawer({
     [handleAdvancedSettingsOpenChange, t]
   )
 
+  const savedCredentialDisplayAuthMode =
+    savedUpstreamCredentialAuthMode === 'password'
+      ? 'password'
+      : 'oauth_browser'
+  const upstreamRefreshUsingSavedCredential =
+    isUpstreamAccountSyncedChannel &&
+    upstreamUseSavedCredential &&
+    savedUpstreamCredentialAvailable
+  const upstreamRefreshEffectiveAuthMode = upstreamRefreshUsingSavedCredential
+    ? savedCredentialDisplayAuthMode
+    : upstreamAuthMode
+
   return (
     <>
       <Sheet open={open} onOpenChange={handleOpenChange}>
@@ -4625,7 +4645,10 @@ export function ChannelMutateDrawer({
                                     )
                                   }
                                 >
-                                  <SelectTrigger id='upstream-sync-auth-mode'>
+                                  <SelectTrigger
+                                    id='upstream-sync-auth-mode'
+                                    className='w-full min-w-0'
+                                  >
                                     <SelectValue>
                                       {upstreamAuthMode === 'password'
                                         ? t('Account password')
@@ -4763,7 +4786,7 @@ export function ChannelMutateDrawer({
                               />
                             ) : null}
 
-                            <div className='grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end'>
+                            <div className='grid gap-3 sm:grid-cols-2'>
                               <div className='flex flex-col gap-2'>
                                 <Label htmlFor='upstream-sync-paid-cny'>
                                   {t('Paid Amount')}
@@ -4794,7 +4817,9 @@ export function ChannelMutateDrawer({
                                   placeholder={DEFAULT_UPSTREAM_PLATFORM_CREDIT}
                                 />
                               </div>
-                              <div className='flex items-end'>
+                            </div>
+                            <div className='flex justify-end'>
+                              <div className='w-full sm:w-auto'>
                                 <Button
                                   type='button'
                                   variant='outline'
@@ -4818,11 +4843,6 @@ export function ChannelMutateDrawer({
                                 </Button>
                               </div>
                             </div>
-                            <p className='text-muted-foreground text-xs'>
-                              {t(
-                                'Used to calculate synced key ratio conversion. The default is paid 1 and upstream credit 10; clear both fields to use the upstream ratio directly.'
-                              )}
-                            </p>
 
                             {upstreamTwoFactorChallenge &&
                               renderUpstreamTwoFactorChallenge(
@@ -4990,14 +5010,10 @@ export function ChannelMutateDrawer({
                                     {t('Authentication method')}
                                   </Label>
                                   <Select
-                                    value={
-                                      upstreamUseSavedCredential
-                                        ? 'password'
-                                        : upstreamAuthMode
-                                    }
+                                    value={upstreamRefreshEffectiveAuthMode}
                                     disabled={
                                       !canEditSensitiveFields ||
-                                      upstreamUseSavedCredential
+                                      upstreamRefreshUsingSavedCredential
                                     }
                                     onValueChange={(value) =>
                                       setUpstreamAuthMode(
@@ -5005,10 +5021,13 @@ export function ChannelMutateDrawer({
                                       )
                                     }
                                   >
-                                    <SelectTrigger id='upstream-refresh-auth-mode'>
+                                    <SelectTrigger
+                                      id='upstream-refresh-auth-mode'
+                                      className='w-full min-w-0'
+                                    >
                                       <SelectValue>
-                                        {upstreamUseSavedCredential ||
-                                        upstreamAuthMode === 'password'
+                                        {upstreamRefreshEffectiveAuthMode ===
+                                        'password'
                                           ? t('Account password')
                                           : t('Automatic configuration')}
                                       </SelectValue>
@@ -5041,7 +5060,7 @@ export function ChannelMutateDrawer({
                                       )}
                                       disabled={
                                         !canEditSensitiveFields ||
-                                        upstreamUseSavedCredential
+                                        upstreamRefreshUsingSavedCredential
                                       }
                                     />
                                     <Button
@@ -5079,8 +5098,9 @@ export function ChannelMutateDrawer({
                                     className='w-full'
                                     disabled={
                                       !canEditSensitiveFields ||
-                                      upstreamUseSavedCredential ||
-                                      upstreamAuthMode !== 'oauth_browser' ||
+                                      upstreamRefreshUsingSavedCredential ||
+                                      upstreamRefreshEffectiveAuthMode !==
+                                        'oauth_browser' ||
                                       !upstreamBaseUrl.trim()
                                     }
                                     onClick={() =>
@@ -5093,9 +5113,9 @@ export function ChannelMutateDrawer({
                                 </div>
                               </div>
 
-                              {(!upstreamUseSavedCredential &&
-                                upstreamAuthMode === 'password') ||
-                              upstreamUseSavedCredential ? (
+                              {!upstreamRefreshUsingSavedCredential &&
+                              upstreamRefreshEffectiveAuthMode ===
+                                'password' ? (
                                 <div className='grid gap-3 sm:grid-cols-2'>
                                   <div className='flex flex-col gap-2'>
                                     <Label htmlFor='upstream-refresh-account'>
@@ -5113,7 +5133,6 @@ export function ChannelMutateDrawer({
                                           ? t('Username')
                                           : t('Email')
                                       }
-                                      disabled={upstreamUseSavedCredential}
                                     />
                                   </div>
                                   <div className='flex flex-col gap-2'>
@@ -5128,21 +5147,15 @@ export function ChannelMutateDrawer({
                                       }
                                       type='password'
                                       autoComplete='current-password'
-                                      placeholder={
-                                        upstreamUseSavedCredential
-                                          ? t(
-                                              'Saved upstream login will be reused'
-                                            )
-                                          : t('Password')
-                                      }
-                                      disabled={upstreamUseSavedCredential}
+                                      placeholder={t('Password')}
                                     />
                                   </div>
                                 </div>
                               ) : null}
 
-                              {!upstreamUseSavedCredential &&
-                              upstreamAuthMode === 'oauth_browser' ? (
+                              {!upstreamRefreshUsingSavedCredential &&
+                              upstreamRefreshEffectiveAuthMode ===
+                                'oauth_browser' ? (
                                 <UpstreamAccountCapturePanel
                                   ref={upstreamRefreshCapturePanelRef}
                                   platform={
@@ -5162,7 +5175,7 @@ export function ChannelMutateDrawer({
                                 />
                               ) : null}
 
-                              <div className='grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(15rem,auto)] sm:items-end'>
+                              <div className='grid gap-3 sm:grid-cols-2'>
                                 <div className='flex flex-col gap-2'>
                                   <Label htmlFor='upstream-refresh-paid-cny'>
                                     {t('Paid Amount')}
@@ -5195,7 +5208,9 @@ export function ChannelMutateDrawer({
                                     }
                                   />
                                 </div>
-                                <div className='flex min-w-0 flex-col items-stretch gap-2 sm:flex-row sm:items-end'>
+                              </div>
+                              <div className='flex justify-end'>
+                                <div className='flex w-full min-w-0 flex-col items-stretch gap-2 sm:w-auto sm:flex-row sm:items-end'>
                                   <Button
                                     type='button'
                                     variant='outline'
@@ -5239,24 +5254,6 @@ export function ChannelMutateDrawer({
                                   </Button>
                                 </div>
                               </div>
-                              <p className='text-muted-foreground text-xs'>
-                                {t(
-                                  'Used to calculate synced key ratio conversion. The default is paid 1 and upstream credit 10; clear both fields to use the upstream ratio directly.'
-                                )}
-                              </p>
-
-                              <Alert>
-                                <AlertCircle aria-hidden='true' />
-                                <AlertDescription>
-                                  {upstreamUseSavedCredential
-                                    ? t(
-                                        'This refresh will reuse the saved upstream login. If the upstream site asks for 2FA again, only the code is needed.'
-                                      )
-                                    : t(
-                                        'Use this only when you need to log in to the upstream account again. The main save button below only saves per-key models, groups, priority, weight, and enabled state.'
-                                      )}
-                                </AlertDescription>
-                              </Alert>
 
                               {upstreamRefreshTwoFactorChallenge &&
                                 renderUpstreamTwoFactorChallenge(
