@@ -79,6 +79,7 @@ const TYPE_LABEL: Record<string, string> = {
   async_task_poll: 'Async task polling',
   account_pool_check: 'Account pool check',
   subscription_maintenance: 'Subscription maintenance',
+  models_dev_sync: 'Models.dev model sync',
   upstream_account_sync: 'Upstream account sync',
   system_update: 'System update',
   system_rollback: 'System rollback',
@@ -205,7 +206,9 @@ function taskStatusDotClass(status: SystemTaskStatus) {
       ? 'bg-destructive'
       : status === 'running'
         ? 'bg-primary'
-        : 'bg-muted-foreground'
+        : status === 'succeeded'
+          ? 'bg-success'
+          : 'bg-muted-foreground'
   )
 }
 
@@ -295,7 +298,13 @@ function SystemTasksTable(props: SystemTasksTableProps) {
                 <TableCell className='py-2.5 align-middle'>
                   <Badge
                     variant={STATUS_BADGE_VARIANT[task.status]}
-                    className='gap-1.5'
+                    className={cn(
+                      'gap-1.5',
+                      task.status === 'succeeded' &&
+                        'border-success/30 bg-success/10 text-success',
+                      task.status === 'failed' &&
+                        'border-destructive/30 bg-destructive/10 text-destructive'
+                    )}
                   >
                     <span
                       className={taskStatusDotClass(task.status)}
@@ -306,7 +315,16 @@ function SystemTasksTable(props: SystemTasksTableProps) {
                 </TableCell>
                 <TableCell className='py-2.5 align-middle'>
                   <div className='flex items-center gap-2'>
-                    <Progress value={progress ?? 0} className='w-24' />
+                    <Progress
+                      value={progress ?? 0}
+                      className={cn(
+                        'w-24',
+                        task.status === 'succeeded' &&
+                          '[&_[data-slot=progress-indicator]]:bg-success',
+                        task.status === 'failed' &&
+                          '[&_[data-slot=progress-indicator]]:bg-destructive'
+                      )}
+                    />
                     <span className='text-muted-foreground w-10 text-right text-xs tabular-nums'>
                       {progress === null ? '-' : `${progress}%`}
                     </span>

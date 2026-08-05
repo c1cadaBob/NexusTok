@@ -28,6 +28,7 @@ const (
 	SystemTaskTypeAsyncTaskPoll           = "async_task_poll"
 	SystemTaskTypeAccountPoolCheck        = "account_pool_check"
 	SystemTaskTypeSubscriptionMaintenance = "subscription_maintenance"
+	SystemTaskTypeModelsDevSync           = "models_dev_sync"
 	SystemTaskTypeUpstreamAccountSync     = "upstream_account_sync"
 	SystemTaskTypeSystemUpdate            = "system_update"
 	SystemTaskTypeSystemRollback          = "system_rollback"

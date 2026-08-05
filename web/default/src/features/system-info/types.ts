@@ -41,6 +41,9 @@ export type SystemInstanceInfo = {
   }
   host?: {
     hostname?: string
+    ip_address?: string
+    ip_addresses?: string[]
+    platform_address?: string
     [key: string]: unknown
   }
   resources?: {

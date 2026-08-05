@@ -24,6 +24,7 @@ import (
 	"github.com/c1cada/NexusTok/model"
 	"github.com/c1cada/NexusTok/relay/channel/task/taskcommon"
 	relaycommon "github.com/c1cada/NexusTok/relay/common"
+	"github.com/c1cada/NexusTok/setting/operation_setting"
 
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/samber/lo"
@@ -61,7 +62,7 @@ func (asyncTaskPollHandler) Type() string {
 }
 
 func (asyncTaskPollHandler) Enabled() bool {
-	return constant.UpdateTask
+	return constant.UpdateTask && operation_setting.GetSystemTaskSetting().AsyncTaskPollEnabled
 }
 
 func (asyncTaskPollHandler) Interval() time.Duration {
@@ -73,6 +74,16 @@ func (asyncTaskPollHandler) NewPayload() any {
 }
 
 func (asyncTaskPollHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	if !operation_setting.GetSystemTaskSetting().AsyncTaskPollEnabled {
+		summary := map[string]any{
+			"skipped":     true,
+			"skip_reason": "异步任务轮询已关闭",
+		}
+		if err := model.FinishSystemTask(task.TaskID, runnerID, model.SystemTaskStatusSucceeded, summary, ""); err != nil {
+			logSystemTaskLockError(ctx, task, err)
+		}
+		return
+	}
 	summary, err := RunAsyncTaskPollingOnce(ctx, NewSystemTaskProgressReporter(task, runnerID))
 	if err != nil {
 		if finishErr := model.FinishSystemTask(task.TaskID, runnerID, model.SystemTaskStatusFailed, summary, err.Error()); finishErr != nil {
@@ -147,7 +158,7 @@ func sweepTimedOutTasks(ctx context.Context) int {
 // 后续周期调度由 asyncTaskPollHandler 交给 SystemTask scheduler 完成，避免多实例部署时
 // 每个进程都运行独立 goroutine 重复轮询同一批异步任务。
 func TaskPollingLoop() {
-	if !common.IsMasterNode || !constant.UpdateTask {
+	if !common.IsMasterNode || !(asyncTaskPollHandler{}).Enabled() {
 		return
 	}
 	if _, _, err := EnqueueSystemTask(model.SystemTaskTypeAsyncTaskPoll, nil); err != nil {

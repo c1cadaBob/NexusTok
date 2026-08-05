@@ -72,16 +72,16 @@ const INSTANCE_POLL_INTERVAL_MS = 30_000
 
 const STATUS_BADGE_VARIANT: Record<
   SystemInstanceStatus,
-  'default' | 'secondary'
+  'default' | 'destructive'
 > = {
   online: 'default',
-  stale: 'secondary',
+  stale: 'destructive',
 }
 
 function statusDotClass(status: SystemInstanceStatus) {
   return cn(
     'size-1.5 rounded-full',
-    status === 'online' ? 'bg-primary' : 'bg-muted-foreground'
+    status === 'online' ? 'bg-success' : 'bg-destructive'
   )
 }
 
@@ -104,6 +104,15 @@ function runtimeLabel(instance: SystemInstance) {
   const runtime = instance.info?.runtime
   const value = [runtime?.goos, runtime?.goarch].filter(Boolean).join('/')
   return value || '-'
+}
+
+function platformAddressLabel(instance: SystemInstance) {
+  return (
+    instance.info?.host?.platform_address ||
+    instance.info?.host?.ip_address ||
+    instance.info?.host?.hostname ||
+    '-'
+  )
 }
 
 function formatPercent(value?: number) {
@@ -136,9 +145,9 @@ function formatRelativeTimestamp(timestamp?: number) {
 
 function ringColorClass(percent: number | null) {
   if (percent === null) return 'text-muted-foreground/40'
-  if (percent >= 90) return 'text-destructive'
-  if (percent >= 70) return 'text-muted-foreground'
-  return 'text-primary'
+  if (percent > 85) return 'text-destructive'
+  if (percent > 60) return 'text-warning'
+  return 'text-success'
 }
 
 type RingProgressProps = {
@@ -251,8 +260,8 @@ function SystemInstancesTable(props: SystemInstancesTableProps) {
             <TableHead className='h-9 w-[100px] text-xs'>
               {t('Version')}
             </TableHead>
-            <TableHead className='h-9 w-[140px] text-xs'>
-              {t('Runtime')}
+            <TableHead className='h-9 w-[180px] text-xs'>
+              {t('Platform Address')}
             </TableHead>
             <TableHead className='h-9 w-[170px] text-xs'>
               {t('Started')}
@@ -394,6 +403,9 @@ function SystemInstancesTable(props: SystemInstancesTableProps) {
                 </TableCell>
                 <TableCell className='py-2.5 align-middle'>
                   <div className='truncate font-mono text-xs'>
+                    {platformAddressLabel(instance)}
+                  </div>
+                  <div className='text-muted-foreground truncate text-[11px]'>
                     {runtimeLabel(instance)}
                   </div>
                 </TableCell>

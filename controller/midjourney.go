@@ -29,6 +29,7 @@ import (
 	"github.com/c1cada/NexusTok/model"
 	"github.com/c1cada/NexusTok/service"
 	"github.com/c1cada/NexusTok/setting"
+	"github.com/c1cada/NexusTok/setting/operation_setting"
 	"github.com/c1cada/NexusTok/setting/system_setting"
 
 	"github.com/gin-gonic/gin"
@@ -53,7 +54,7 @@ func (midjourneyPollHandler) Type() string {
 }
 
 func (midjourneyPollHandler) Enabled() bool {
-	return constant.UpdateTask
+	return constant.UpdateTask && operation_setting.GetSystemTaskSetting().MidjourneyPollEnabled
 }
 
 func (midjourneyPollHandler) Interval() time.Duration {
@@ -65,6 +66,13 @@ func (midjourneyPollHandler) NewPayload() any {
 }
 
 func (midjourneyPollHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	if !operation_setting.GetSystemTaskSetting().MidjourneyPollEnabled {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, map[string]any{
+			"skipped":     true,
+			"skip_reason": "绘图任务轮询已关闭",
+		}, nil)
+		return
+	}
 	summary, err := RunMidjourneyPollingOnce(ctx, service.NewSystemTaskProgressReporter(task, runnerID))
 	if err != nil {
 		if finishErr := model.FinishSystemTask(task.TaskID, runnerID, model.SystemTaskStatusFailed, summary, err.Error()); finishErr != nil {
@@ -90,7 +98,7 @@ func logMidjourneySystemTaskError(ctx context.Context, task *model.SystemTask, e
 // 后续周期调度由 midjourneyPollHandler 交给 SystemTask scheduler 完成，避免多节点
 // 部署时每个进程都启动独立 goroutine 重复轮询同一批 Midjourney 任务。
 func UpdateMidjourneyTaskBulk() {
-	if !common.IsMasterNode || !constant.UpdateTask {
+	if !common.IsMasterNode || !(midjourneyPollHandler{}).Enabled() {
 		return
 	}
 	if _, _, err := service.EnqueueSystemTask(model.SystemTaskTypeMidjourneyPoll, nil); err != nil {

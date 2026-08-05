@@ -20,6 +20,9 @@ import (
 
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/logger"
+	"github.com/c1cada/NexusTok/model"
+	"github.com/c1cada/NexusTok/service"
+	"github.com/c1cada/NexusTok/setting/operation_setting"
 
 	"github.com/bytedance/gopkg/util/gopool"
 )
@@ -45,39 +48,59 @@ func StartModelsDevSyncTask() {
 		if !common.IsMasterNode {
 			return
 		}
-		if !common.GetEnvOrDefaultBool("MODELS_DEV_AUTO_SYNC_ENABLED", true) {
-			logger.LogInfo(context.Background(), "models.dev model sync task disabled by MODELS_DEV_AUTO_SYNC_ENABLED")
-			return
-		}
-
-		scheduleTime := common.GetEnvOrDefaultString("MODELS_DEV_AUTO_SYNC_TIME", modelsDevSyncDefaultTime)
-		hour, minute, ok := parseDailyScheduleTime(scheduleTime)
-		if !ok {
-			logger.LogWarn(context.Background(), fmt.Sprintf("models.dev model sync task got invalid MODELS_DEV_AUTO_SYNC_TIME=%q, fallback to %s", scheduleTime, modelsDevSyncDefaultTime))
-			hour, minute, _ = parseDailyScheduleTime(modelsDevSyncDefaultTime)
-			scheduleTime = modelsDevSyncDefaultTime
-		}
 
 		gopool.Go(func() {
-			logger.LogInfo(context.Background(), fmt.Sprintf("models.dev model sync task started: time=%s source=%s", scheduleTime, getModelsDevCatalogURL()))
 			for {
+				taskSetting := operation_setting.GetSystemTaskSetting()
+				scheduleTime := taskSetting.ModelsDevSyncTime
+				if !taskSetting.ModelsDevSyncEnabled {
+					time.Sleep(time.Minute)
+					continue
+				}
+				hour, minute, ok := parseDailyScheduleTime(scheduleTime)
+				if !ok {
+					logger.LogWarn(context.Background(), fmt.Sprintf("models.dev model sync task got invalid configured time=%q, fallback to %s", scheduleTime, modelsDevSyncDefaultTime))
+					hour, minute, _ = parseDailyScheduleTime(modelsDevSyncDefaultTime)
+					scheduleTime = modelsDevSyncDefaultTime
+				}
+				logger.LogInfo(context.Background(), fmt.Sprintf("models.dev model sync task scheduled: time=%s source=%s", scheduleTime, getModelsDevCatalogURL()))
 				nextRun := nextDailyScheduleTime(time.Now(), hour, minute)
 				timer := time.NewTimer(time.Until(nextRun))
 				<-timer.C
-				runModelsDevSyncTaskOnce()
+				if operation_setting.GetSystemTaskSetting().ModelsDevSyncEnabled {
+					if _, _, err := service.EnqueueSystemTask(model.SystemTaskTypeModelsDevSync, nil); err != nil {
+						logger.LogWarn(context.Background(), fmt.Sprintf("models.dev model sync task enqueue failed: %v", err))
+					}
+				}
 			}
 		})
 	})
 }
 
-// runModelsDevSyncTaskOnce 执行一次 models.dev 自动同步。
-func runModelsDevSyncTaskOnce() {
+type modelsDevSyncHandler struct{}
+
+func (modelsDevSyncHandler) Type() string {
+	return model.SystemTaskTypeModelsDevSync
+}
+
+// Run 执行一次 models.dev 自动同步，并把结果写入 SystemTask。
+func (modelsDevSyncHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	report := service.NewSystemTaskProgressReporter(task, runnerID)
+	report(0, 1)
 	if !modelsDevSyncTaskRunning.CompareAndSwap(false, true) {
+		finishModelsDevSyncTask(task, runnerID, model.SystemTaskStatusSucceeded, nil, nil)
 		return
 	}
 	defer modelsDevSyncTaskRunning.Store(false)
 
-	ctx, cancel := context.WithTimeout(context.Background(), modelsDevSyncDefaultTimeout)
+	if !operation_setting.GetSystemTaskSetting().ModelsDevSyncEnabled {
+		finishModelsDevSyncTask(task, runnerID, model.SystemTaskStatusSucceeded, map[string]any{
+			"skipped":     true,
+			"skip_reason": "模型目录自动同步已关闭",
+		}, nil)
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, modelsDevSyncDefaultTimeout)
 	defer cancel()
 
 	result, err := syncUpstreamModelsCore(ctx, syncRequest{
@@ -89,9 +112,10 @@ func runModelsDevSyncTaskOnce() {
 		},
 	}, syncUpstreamOptions{CreateAllUpstream: true})
 	if err != nil {
-		logger.LogWarn(ctx, fmt.Sprintf("models.dev model sync failed: %v", err))
+		finishModelsDevSyncTask(task, runnerID, model.SystemTaskStatusFailed, result, err)
 		return
 	}
+	report(1, 1)
 	logger.LogInfo(ctx, fmt.Sprintf(
 		"models.dev model sync completed: created_models=%d created_vendors=%d updated_models=%d pricing_updated=%d pricing_skipped=%d skipped_models=%d source=%s",
 		result.CreatedModels,
@@ -102,6 +126,21 @@ func runModelsDevSyncTaskOnce() {
 		len(result.SkippedModels),
 		result.Source.CatalogURL,
 	))
+	finishModelsDevSyncTask(task, runnerID, model.SystemTaskStatusSucceeded, result, nil)
+}
+
+func finishModelsDevSyncTask(task *model.SystemTask, runnerID string, status model.SystemTaskStatus, result any, runErr error) {
+	errorMessage := ""
+	if runErr != nil {
+		errorMessage = runErr.Error()
+	}
+	if err := model.FinishSystemTask(task.TaskID, runnerID, status, result, errorMessage); err != nil {
+		logger.LogWarn(context.Background(), fmt.Sprintf("models.dev model sync task finish failed: %v", err))
+	}
+}
+
+func init() {
+	service.RegisterSystemTaskHandler(modelsDevSyncHandler{})
 }
 
 // parseModelsDevProviderOrderEnv 读取自动同步的价格 provider 降级链。

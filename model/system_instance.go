@@ -17,6 +17,10 @@ const (
 	// SystemInstanceStaleAfterSeconds 表示多久未上报后将节点视为 stale。
 	// 上报周期当前为 30 秒，因此 90 秒可以容忍一次短暂 GC、网络抖动或数据库慢查询。
 	SystemInstanceStaleAfterSeconds int64 = 90
+
+	// SystemInstanceExpireAfterSeconds 表示过期实例保留多久后自动清理。
+	// 过期实例只用于短期排障，长期保留会让系统信息页不断堆积无效节点。
+	SystemInstanceExpireAfterSeconds int64 = 24 * 60 * 60
 )
 
 // SystemInstance 保存一个运行中服务节点的最近心跳。
@@ -86,6 +90,10 @@ func UpsertSystemInstance(nodeName string, info any, startedAt int64, lastSeenAt
 
 // ListSystemInstances 按最近心跳倒序列出所有节点。
 func ListSystemInstances() ([]*SystemInstance, error) {
+	cutoff := common.GetTimestamp() - SystemInstanceExpireAfterSeconds
+	if err := DB.Where("last_seen_at < ?", cutoff).Delete(&SystemInstance{}).Error; err != nil {
+		return nil, err
+	}
 	var instances []*SystemInstance
 	err := DB.Order("last_seen_at desc").Find(&instances).Error
 	return instances, err

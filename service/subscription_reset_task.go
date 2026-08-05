@@ -21,6 +21,7 @@ import (
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/logger"
 	"github.com/c1cada/NexusTok/model"
+	"github.com/c1cada/NexusTok/setting/operation_setting"
 )
 
 // 订阅维护任务的配置常量
@@ -67,7 +68,7 @@ func (subscriptionMaintenanceHandler) Type() string {
 }
 
 func (subscriptionMaintenanceHandler) Enabled() bool {
-	return true
+	return operation_setting.GetSystemTaskSetting().SubscriptionMaintenanceEnabled
 }
 
 func (subscriptionMaintenanceHandler) Interval() time.Duration {
@@ -79,6 +80,21 @@ func (subscriptionMaintenanceHandler) NewPayload() any {
 }
 
 func (subscriptionMaintenanceHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	if !operation_setting.GetSystemTaskSetting().SubscriptionMaintenanceEnabled {
+		if err := model.FinishSystemTask(
+			task.TaskID,
+			runnerID,
+			model.SystemTaskStatusSucceeded,
+			map[string]any{
+				"skipped":     true,
+				"skip_reason": "订阅维护已关闭",
+			},
+			"",
+		); err != nil {
+			logSystemTaskLockError(ctx, task, err)
+		}
+		return
+	}
 	result, err := RunSubscriptionMaintenanceOnce(ctx, func(state SubscriptionMaintenanceState) error {
 		return model.UpdateSystemTaskState(task.TaskID, runnerID, state)
 	})
@@ -108,7 +124,8 @@ func init() {
 // 清理都会进入统一任务历史，并复用数据库租约处理多节点互斥。
 func StartSubscriptionQuotaResetTask() {
 	subscriptionResetOnce.Do(func() {
-		if !common.IsMasterNode {
+		if !common.IsMasterNode ||
+			!operation_setting.GetSystemTaskSetting().SubscriptionMaintenanceEnabled {
 			return
 		}
 		task, created, err := enqueueSubscriptionMaintenanceSystemTask()

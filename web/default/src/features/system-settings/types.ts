@@ -472,6 +472,11 @@ export type OperationsSettings = {
     | 'hour'
     | 'minute'
     | 'second'
+  'system_task_setting.async_task_poll_enabled': boolean
+  'system_task_setting.midjourney_poll_enabled': boolean
+  'system_task_setting.subscription_maintenance_enabled': boolean
+  'system_task_setting.models_dev_sync_enabled': boolean
+  'system_task_setting.models_dev_sync_time': string
   SMTPServer: string
   SMTPPort: string
   SMTPAccount: string

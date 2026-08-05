@@ -66,6 +66,16 @@ const OPERATIONS_SECTIONS = [
           'upstream_account_sync.interval':
             settings['upstream_account_sync.interval'],
           'upstream_account_sync.unit': settings['upstream_account_sync.unit'],
+          'system_task_setting.async_task_poll_enabled':
+            settings['system_task_setting.async_task_poll_enabled'],
+          'system_task_setting.midjourney_poll_enabled':
+            settings['system_task_setting.midjourney_poll_enabled'],
+          'system_task_setting.subscription_maintenance_enabled':
+            settings['system_task_setting.subscription_maintenance_enabled'],
+          'system_task_setting.models_dev_sync_enabled':
+            settings['system_task_setting.models_dev_sync_enabled'],
+          'system_task_setting.models_dev_sync_time':
+            settings['system_task_setting.models_dev_sync_time'],
         }}
       />
     ),
