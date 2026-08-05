@@ -208,7 +208,10 @@ import type {
   UpstreamAccountSnapshot,
 } from '../../types'
 import { ChannelTypeIcon } from '../channel-type-icon'
-import { useChannels } from '../channels-provider'
+import {
+  type UpstreamCaptureReturnContext,
+  useChannels,
+} from '../channels-provider'
 import { AdvancedCustomEditorDialog } from '../dialogs/advanced-custom-editor-dialog'
 import { CodexOAuthDialog } from '../dialogs/codex-oauth-dialog'
 import { FetchModelsDialog } from '../dialogs/fetch-models-dialog'
@@ -236,6 +239,7 @@ type ChannelMutateDrawerProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
   currentRow?: Channel | null
+  captureReturnContext?: UpstreamCaptureReturnContext | null
 }
 
 type ModelMappingGuardrail = {
@@ -304,6 +308,35 @@ function channelTypeFromUpstreamPlatform(platform: string | undefined | null) {
     return CHANNEL_TYPE_SUB2API
   }
   return undefined
+}
+
+function buildUpstreamCaptureReturnUrl({
+  mode,
+  platform,
+  baseUrl,
+  channelId,
+}: {
+  mode: 'create' | 'refresh'
+  platform: UpstreamAccountPlatform
+  baseUrl: string
+  channelId: number | null
+}) {
+  if (typeof window === 'undefined') return ''
+  const url = new URL(window.location.href)
+  url.searchParams.set('upstream_capture_mode', mode)
+  url.searchParams.set('upstream_capture_platform', platform)
+  if (baseUrl.trim()) {
+    url.searchParams.set('upstream_capture_base_url', baseUrl.trim())
+  } else {
+    url.searchParams.delete('upstream_capture_base_url')
+  }
+  if (mode === 'refresh' && channelId) {
+    url.searchParams.set('upstream_capture_channel_id', String(channelId))
+  } else {
+    url.searchParams.delete('upstream_capture_channel_id')
+  }
+  url.searchParams.delete('upstream_capture_id')
+  return url.toString()
 }
 
 export function defaultUpstreamChannelName(baseUrl: string, fallback = '') {
@@ -1093,6 +1126,7 @@ export function ChannelMutateDrawer({
   open,
   onOpenChange,
   currentRow,
+  captureReturnContext,
 }: ChannelMutateDrawerProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
@@ -1180,6 +1214,7 @@ export function ChannelMutateDrawer({
     useRef<UpstreamAccountCapturePanelHandle>(null)
   const upstreamRefreshCapturePanelRef =
     useRef<UpstreamAccountCapturePanelHandle>(null)
+  const upstreamCaptureReturnAppliedRef = useRef('')
   const upstreamRatioConfigLoadedRef = useRef(false)
   const [statusCodeRiskOpen, setStatusCodeRiskOpen] = useState(false)
   const [statusCodeRiskDetailItems, setStatusCodeRiskDetailItems] = useState<
@@ -1565,6 +1600,23 @@ export function ChannelMutateDrawer({
   const isUpstreamAccountSyncedChannel =
     isEditing && hasUpstreamAccountSyncMetadata
   const forcedUpstreamPlatform = upstreamPlatformFromChannelType(currentType)
+  const upstreamCaptureReturnUrl = useMemo(
+    () =>
+      buildUpstreamCaptureReturnUrl({
+        mode: isEditing ? 'refresh' : 'create',
+        platform: forcedUpstreamPlatform ?? upstreamPlatform,
+        baseUrl: upstreamBaseUrl,
+        channelId,
+      }),
+    [
+      channelId,
+      isEditing,
+      upstreamBaseUrl,
+      upstreamPlatform,
+      // 当前渠道类型会决定自动配置平台；创建抽屉中则使用用户选定的平台。
+      forcedUpstreamPlatform,
+    ]
+  )
   const currentTypeRequiresUpstreamSync = Boolean(forcedUpstreamPlatform)
   const isCreateUpstreamSyncMode = !isEditing && currentTypeRequiresUpstreamSync
   const isEditingUnsupportedUnsyncedUpstreamType =
@@ -2510,6 +2562,11 @@ export function ChannelMutateDrawer({
   // 编辑模式加载渠道数据并写入表单，同时记录初始模型配置用于后续风险提示。
   useEffect(() => {
     if (isEditing && channelData?.data) {
+      const captureRefreshContext =
+        captureReturnContext?.mode === 'refresh' &&
+        captureReturnContext.channelId === channelData.data.id
+          ? captureReturnContext
+          : null
       const isSyncedChannel =
         isUpstreamAccountSyncChannel(channelData.data) ||
         (channelData.data.channel_info?.credential_mode === 'account_pool' &&
@@ -2521,26 +2578,34 @@ export function ChannelMutateDrawer({
       form.reset(defaults)
       clearAllUpstreamPreviews()
       setUpstreamPlatform(
-        getUpstreamSyncPlatformFromSettings(channelData.data.settings) ||
+        captureRefreshContext?.platform ||
+          getUpstreamSyncPlatformFromSettings(channelData.data.settings) ||
           upstreamPlatformFromChannelType(channelData.data.type) ||
           'new-api'
       )
       setUpstreamBaseUrl(
-        getUpstreamSyncBaseUrlFromSettings(channelData.data.settings) ||
+        captureRefreshContext?.baseUrl ||
+          getUpstreamSyncBaseUrlFromSettings(channelData.data.settings) ||
           channelData.data.base_url ||
           ''
       )
-      setUpstreamUseSavedCredential(savedUpstreamCredentialAvailable)
+      setUpstreamUseSavedCredential(
+        captureRefreshContext ? false : savedUpstreamCredentialAvailable
+      )
       setUpstreamUsername('')
       setUpstreamPassword('')
       resetUpstreamImportedLogin()
+      if (captureRefreshContext) {
+        setUpstreamAuthMode('oauth_browser')
+        setUpstreamRefreshCaptureId(captureRefreshContext.captureId)
+      }
       setUpstreamRatioConversionState(
         syncedChannelAccounts[0]?.ratio_conversion_config,
         setUpstreamPaidCny,
         setUpstreamPlatformUsdCredit
       )
       upstreamRatioConfigLoadedRef.current = true
-      setSyncRefreshOpen(false)
+      setSyncRefreshOpen(Boolean(captureRefreshContext))
       setAdvancedSettingsOpen(
         readAdvancedSettingsPreference() || hasAdvancedSettingsValues(defaults)
       )
@@ -2577,6 +2642,75 @@ export function ChannelMutateDrawer({
     resetUpstreamImportedLogin,
     syncedChannelAccounts,
     savedUpstreamCredentialAvailable,
+    captureReturnContext,
+  ])
+
+  // 油猴脚本回跳后，恢复抽屉上下文和临时 capture ID。刷新场景要等渠道详情
+  // 完整回填后再写入，避免现有编辑初始化 effect 随后把采集状态清空。
+  useEffect(() => {
+    const context = captureReturnContext
+    if (!open || !context) return
+
+    const contextKey = [
+      context.mode,
+      context.captureId,
+      context.channelId || '',
+    ].join(':')
+    if (upstreamCaptureReturnAppliedRef.current === contextKey) return
+
+    if (context.mode === 'refresh') {
+      if (!isEditing || channelId !== context.channelId || !channelData?.data) {
+        return
+      }
+      setUpstreamPlatform(
+        context.platform ||
+          getUpstreamSyncPlatformFromSettings(channelData.data.settings) ||
+          upstreamPlatform
+      )
+      if (context.baseUrl) setUpstreamBaseUrl(context.baseUrl)
+      setUpstreamAuthMode('oauth_browser')
+      setUpstreamUseSavedCredential(false)
+      setUpstreamRefreshCaptureId(context.captureId)
+      setUpstreamCaptureId('')
+      setSyncRefreshOpen(true)
+      setActiveEditorSectionId(CHANNEL_EDITOR_SECTION_IDS.credentials)
+    } else {
+      if (isEditing) return
+      const channelType = channelTypeFromUpstreamPlatform(context.platform)
+      if (channelType) {
+        form.setValue('type', channelType, {
+          shouldDirty: false,
+          shouldValidate: true,
+        })
+      }
+      form.setValue('upstream_account_sync', true, {
+        shouldDirty: false,
+        shouldValidate: true,
+      })
+      if (!(form.getValues('group') || []).length) {
+        form.setValue('group', ['default'], {
+          shouldDirty: true,
+          shouldValidate: true,
+        })
+      }
+      if (context.platform) setUpstreamPlatform(context.platform)
+      if (context.baseUrl) setUpstreamBaseUrl(context.baseUrl)
+      setUpstreamAuthMode('oauth_browser')
+      setUpstreamUseSavedCredential(false)
+      setUpstreamCaptureId(context.captureId)
+      setUpstreamRefreshCaptureId('')
+      setActiveEditorSectionId(CHANNEL_EDITOR_SECTION_IDS.credentials)
+    }
+
+    upstreamCaptureReturnAppliedRef.current = contextKey
+  }, [
+    captureReturnContext,
+    channelData?.data,
+    channelId,
+    form,
+    isEditing,
+    open,
+    upstreamPlatform,
   ])
 
   useEffect(() => {
@@ -3044,11 +3178,17 @@ export function ChannelMutateDrawer({
       return
     }
     const previewPlatform = forcedUpstreamPlatform ?? upstreamPlatform
-    if (upstreamAuthMode === 'password' && (!upstreamUsername.trim() || !upstreamPassword.trim())) {
+    if (
+      upstreamAuthMode === 'password' &&
+      (!upstreamUsername.trim() || !upstreamPassword.trim())
+    ) {
       toast.error(t('Account and password are required'))
       return
     }
-    if (upstreamAuthMode === 'session_cookie' && !upstreamSessionCookie.trim()) {
+    if (
+      upstreamAuthMode === 'session_cookie' &&
+      !upstreamSessionCookie.trim()
+    ) {
       toast.error(t('Session/Cookie is required'))
       return
     }
@@ -3061,12 +3201,18 @@ export function ChannelMutateDrawer({
       upstreamAuthMode === 'access_token' &&
       !upstreamUserId.trim()
     ) {
-      toast.error(t('New-Api-User / User ID is required for new-api access token'))
+      toast.error(
+        t('New-Api-User / User ID is required for new-api access token')
+      )
       return
     }
     if (upstreamAuthMode === 'oauth_browser') {
       if (!upstreamCaptureId.trim()) {
-        toast.error(t('Complete userscript capture before previewing the upstream account'))
+        toast.error(
+          t(
+            'Complete userscript capture before previewing the upstream account'
+          )
+        )
         return
       }
     }
@@ -3551,11 +3697,17 @@ export function ChannelMutateDrawer({
         toast.error(t('Upstream platform URL is required'))
         return
       }
-      if (upstreamAuthMode === 'password' && (!upstreamUsername.trim() || !upstreamPassword.trim())) {
+      if (
+        upstreamAuthMode === 'password' &&
+        (!upstreamUsername.trim() || !upstreamPassword.trim())
+      ) {
         toast.error(t('Account and password are required'))
         return
       }
-      if (upstreamAuthMode === 'session_cookie' && !upstreamSessionCookie.trim()) {
+      if (
+        upstreamAuthMode === 'session_cookie' &&
+        !upstreamSessionCookie.trim()
+      ) {
         toast.error(t('Session/Cookie is required'))
         return
       }
@@ -3568,12 +3720,18 @@ export function ChannelMutateDrawer({
         upstreamAuthMode === 'access_token' &&
         !upstreamUserId.trim()
       ) {
-        toast.error(t('New-Api-User / User ID is required for new-api access token'))
+        toast.error(
+          t('New-Api-User / User ID is required for new-api access token')
+        )
         return
       }
       if (upstreamAuthMode === 'oauth_browser') {
         if (!upstreamRefreshCaptureId.trim()) {
-          toast.error(t('Complete userscript capture before previewing the upstream account'))
+          toast.error(
+            t(
+              'Complete userscript capture before previewing the upstream account'
+            )
+          )
           return
         }
       }
@@ -4520,7 +4678,10 @@ export function ChannelMutateDrawer({
                                     }
                                     title={t('Open upstream login page')}
                                   >
-                                    <Link2 data-icon='icon' aria-hidden='true' />
+                                    <Link2
+                                      data-icon='icon'
+                                      aria-hidden='true'
+                                    />
                                     <span className='sr-only'>
                                       {t('Open upstream login page')}
                                     </span>
@@ -4594,6 +4755,7 @@ export function ChannelMutateDrawer({
                                 baseUrl={upstreamBaseUrl}
                                 disabled={!canEditSensitiveFields}
                                 captureId={upstreamCaptureId}
+                                returnUrl={upstreamCaptureReturnUrl}
                                 onCaptureIdChange={setUpstreamCaptureId}
                                 onCompleted={() =>
                                   void handlePreviewUpstreamAccount()
@@ -4601,7 +4763,7 @@ export function ChannelMutateDrawer({
                               />
                             ) : null}
 
-                            <div className='grid gap-3 sm:grid-cols-2'>
+                            <div className='grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end'>
                               <div className='flex flex-col gap-2'>
                                 <Label htmlFor='upstream-sync-paid-cny'>
                                   {t('Paid Amount')}
@@ -4632,13 +4794,11 @@ export function ChannelMutateDrawer({
                                   placeholder={DEFAULT_UPSTREAM_PLATFORM_CREDIT}
                                 />
                               </div>
-                            </div>
-                            <div className='grid gap-3 sm:grid-cols-2'>
                               <div className='flex items-end'>
                                 <Button
                                   type='button'
                                   variant='outline'
-                                  className='w-full'
+                                  className='w-full whitespace-nowrap sm:w-auto sm:min-w-28'
                                   disabled={
                                     upstreamPreviewMutation.isPending ||
                                     upstreamPreview2FAMutation.isPending ||
@@ -4819,7 +4979,9 @@ export function ChannelMutateDrawer({
                                     upstreamPreviewMutation.isPending ||
                                     upstreamRefreshMutation.isPending
                                   }
-                                  onCheckedChange={setUpstreamUseSavedCredential}
+                                  onCheckedChange={
+                                    setUpstreamUseSavedCredential
+                                  }
                                 />
                               </div>
                               <div className='grid gap-3 lg:grid-cols-[1.5fr_7fr_1.5fr]'>
@@ -4968,7 +5130,9 @@ export function ChannelMutateDrawer({
                                       autoComplete='current-password'
                                       placeholder={
                                         upstreamUseSavedCredential
-                                          ? t('Saved upstream login will be reused')
+                                          ? t(
+                                              'Saved upstream login will be reused'
+                                            )
                                           : t('Password')
                                       }
                                       disabled={upstreamUseSavedCredential}
@@ -4988,6 +5152,7 @@ export function ChannelMutateDrawer({
                                   channelId={channelId}
                                   disabled={!canEditSensitiveFields}
                                   captureId={upstreamRefreshCaptureId}
+                                  returnUrl={upstreamCaptureReturnUrl}
                                   onCaptureIdChange={
                                     setUpstreamRefreshCaptureId
                                   }
@@ -4997,7 +5162,7 @@ export function ChannelMutateDrawer({
                                 />
                               ) : null}
 
-                              <div className='grid gap-3 sm:grid-cols-2'>
+                              <div className='grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(15rem,auto)] sm:items-end'>
                                 <div className='flex flex-col gap-2'>
                                   <Label htmlFor='upstream-refresh-paid-cny'>
                                     {t('Paid Amount')}
@@ -5025,16 +5190,16 @@ export function ChannelMutateDrawer({
                                       )
                                     }
                                     inputMode='decimal'
-                                    placeholder={DEFAULT_UPSTREAM_PLATFORM_CREDIT}
+                                    placeholder={
+                                      DEFAULT_UPSTREAM_PLATFORM_CREDIT
+                                    }
                                   />
                                 </div>
-                              </div>
-                              <div className='grid gap-3 sm:grid-cols-2'>
-                                <div className='flex flex-col justify-end gap-2'>
+                                <div className='flex min-w-0 flex-col items-stretch gap-2 sm:flex-row sm:items-end'>
                                   <Button
                                     type='button'
                                     variant='outline'
-                                    className='flex-1'
+                                    className='min-w-0 flex-1 whitespace-nowrap'
                                     disabled={upstreamPreviewMutation.isPending}
                                     onClick={handlePreviewUpstreamRefresh}
                                   >
@@ -5050,7 +5215,7 @@ export function ChannelMutateDrawer({
                                   </Button>
                                   <Button
                                     type='button'
-                                    className='flex-1'
+                                    className='min-w-0 flex-1 whitespace-nowrap'
                                     disabled={
                                       !upstreamRefreshSnapshot ||
                                       upstreamRefreshSnapshot.keys.length ===

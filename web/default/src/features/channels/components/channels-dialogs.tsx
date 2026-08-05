@@ -33,7 +33,8 @@ import { ChannelMutateDrawer } from './drawers/channel-mutate-drawer'
 
 export function ChannelsDialogs() {
   const { t } = useTranslation()
-  const { open, setOpen, currentRow, upstream } = useChannels()
+  const { open, setOpen, currentRow, upstream, upstreamCaptureReturnContext } =
+    useChannels()
   const permissions = useChannelPermissions()
 
   return (
@@ -43,6 +44,7 @@ export function ChannelsDialogs() {
         open={open === 'create-channel' || open === 'update-channel'}
         onOpenChange={(v) => !v && setOpen(null)}
         currentRow={open === 'update-channel' ? currentRow : null}
+        captureReturnContext={upstreamCaptureReturnContext}
       />
 
       {/* Test Channel Dialog */}

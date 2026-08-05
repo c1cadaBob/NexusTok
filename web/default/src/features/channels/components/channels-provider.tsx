@@ -21,13 +21,16 @@ import React, {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { getChannel } from '../api'
 import { useChannelUpstreamUpdates } from '../hooks/use-channel-upstream-updates'
 import { channelsQueryKeys } from '../lib'
-import type { Channel } from '../types'
+import type { Channel, UpstreamAccountPlatform } from '../types'
 
 // ============================================================================
 // 类型定义
@@ -49,11 +52,20 @@ type DialogType =
 
 type UpstreamUpdateState = ReturnType<typeof useChannelUpstreamUpdates>
 
+export type UpstreamCaptureReturnContext = {
+  captureId: string
+  mode: 'create' | 'refresh'
+  platform?: UpstreamAccountPlatform
+  baseUrl?: string
+  channelId?: number
+}
+
 type ChannelsContextType = {
   open: DialogType
   setOpen: (open: DialogType) => void
   currentRow: Channel | null
   setCurrentRow: (row: Channel | null) => void
+  upstreamCaptureReturnContext: UpstreamCaptureReturnContext | null
   currentTag: string | null
   setCurrentTag: (tag: string | null) => void
   enableTagMode: boolean
@@ -78,6 +90,61 @@ const ChannelsContext = createContext<ChannelsContextType | undefined>(
   undefined
 )
 
+function parseUpstreamCaptureReturnContext(): UpstreamCaptureReturnContext | null {
+  if (typeof window === 'undefined') return null
+
+  const searchParams = new URLSearchParams(window.location.search)
+  const captureId = searchParams.get('upstream_capture_id')?.trim() || ''
+  if (!captureId) return null
+
+  const modeParam = searchParams.get('upstream_capture_mode')
+  const mode = modeParam === 'refresh' ? 'refresh' : 'create'
+  const platformParam = searchParams
+    .get('upstream_capture_platform')
+    ?.trim()
+    .toLowerCase()
+  const platform =
+    platformParam === 'new-api' || platformParam === 'sub2api'
+      ? platformParam
+      : undefined
+  const channelIdValue = Number(
+    searchParams.get('upstream_capture_channel_id') || ''
+  )
+  const channelId =
+    Number.isInteger(channelIdValue) && channelIdValue > 0
+      ? channelIdValue
+      : undefined
+
+  if (mode === 'refresh' && !channelId) return null
+
+  return {
+    captureId,
+    mode,
+    platform,
+    baseUrl: searchParams.get('upstream_capture_base_url')?.trim() || undefined,
+    channelId,
+  }
+}
+
+function clearUpstreamCaptureReturnParams() {
+  if (typeof window === 'undefined') return
+  const url = new URL(window.location.href)
+  for (const key of [
+    'upstream_capture_id',
+    'upstream_capture_mode',
+    'upstream_capture_platform',
+    'upstream_capture_base_url',
+    'upstream_capture_channel_id',
+  ]) {
+    url.searchParams.delete(key)
+  }
+  window.history.replaceState(
+    window.history.state,
+    '',
+    `${url.pathname}${url.search}${url.hash}`
+  )
+}
+
 // ============================================================================
 // Provider
 // ============================================================================
@@ -85,6 +152,11 @@ const ChannelsContext = createContext<ChannelsContextType | undefined>(
 export function ChannelsProvider({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState<DialogType>(null)
   const [currentRow, setCurrentRow] = useState<Channel | null>(null)
+  const [upstreamCaptureReturnContext] =
+    useState<UpstreamCaptureReturnContext | null>(
+      parseUpstreamCaptureReturnContext
+    )
+  const captureReturnAppliedRef = useRef('')
   const [currentTag, setCurrentTag] = useState<string | null>(null)
   const [enableTagMode, setEnableTagMode] = useState(() => {
     return localStorage.getItem('enable-tag-mode') === 'true'
@@ -98,6 +170,41 @@ export function ChannelsProvider({ children }: { children: React.ReactNode }) {
     useState<Set<number>>(() => new Set())
 
   const queryClient = useQueryClient()
+  const captureChannelQuery = useQuery({
+    queryKey: channelsQueryKeys.detail(
+      upstreamCaptureReturnContext?.channelId || 0
+    ),
+    queryFn: () => getChannel(upstreamCaptureReturnContext!.channelId!),
+    enabled:
+      upstreamCaptureReturnContext?.mode === 'refresh' &&
+      Boolean(upstreamCaptureReturnContext.channelId),
+  })
+
+  useEffect(() => {
+    const context = upstreamCaptureReturnContext
+    if (!context) return
+
+    const contextKey = [
+      context.mode,
+      context.captureId,
+      context.channelId || '',
+    ].join(':')
+    if (captureReturnAppliedRef.current === contextKey) return
+
+    if (context.mode === 'refresh') {
+      const channel = captureChannelQuery.data?.data
+      if (!channel) return
+      setCurrentRow(channel)
+      setOpen('update-channel')
+    } else {
+      setCurrentRow(null)
+      setOpen('create-channel')
+    }
+
+    captureReturnAppliedRef.current = contextKey
+    clearUpstreamCaptureReturnParams()
+  }, [captureChannelQuery.data?.data, upstreamCaptureReturnContext])
+
   const refreshChannels = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: channelsQueryKeys.all })
   }, [queryClient])
@@ -127,6 +234,7 @@ export function ChannelsProvider({ children }: { children: React.ReactNode }) {
       setOpen,
       currentRow,
       setCurrentRow,
+      upstreamCaptureReturnContext,
       currentTag,
       setCurrentTag,
       enableTagMode,
@@ -145,6 +253,7 @@ export function ChannelsProvider({ children }: { children: React.ReactNode }) {
     [
       open,
       currentRow,
+      upstreamCaptureReturnContext,
       currentTag,
       enableTagMode,
       idSort,

@@ -131,6 +131,26 @@ export function UpstreamAccountRefreshPanel({
     () => upstreamPlatformFromChannelType(channelType ?? 0),
     [channelType]
   )
+  const captureReturnUrl = useMemo(() => {
+    if (typeof window === 'undefined') return ''
+    const url = new URL(window.location.href)
+    url.searchParams.set('upstream_capture_mode', 'refresh')
+    if (forcedUpstreamPlatform) {
+      url.searchParams.set('upstream_capture_platform', forcedUpstreamPlatform)
+    }
+    if (channelId) {
+      url.searchParams.set('upstream_capture_channel_id', String(channelId))
+    }
+    const managementBaseUrl =
+      getUpstreamSyncBaseUrlFromSettings(channelSettings) ||
+      normalizeUpstreamChannelBaseUrl(channelBaseUrl) ||
+      ''
+    if (managementBaseUrl) {
+      url.searchParams.set('upstream_capture_base_url', managementBaseUrl)
+    }
+    url.searchParams.delete('upstream_capture_id')
+    return url.toString()
+  }, [channelBaseUrl, channelId, channelSettings, forcedUpstreamPlatform])
   const [upstreamPlatform, setUpstreamPlatform] =
     useState<UpstreamAccountPlatform>('new-api')
   const [upstreamBaseUrl, setUpstreamBaseUrl] = useState('')
@@ -149,8 +169,9 @@ export function UpstreamAccountRefreshPanel({
   const [upstreamPaidCny, setUpstreamPaidCny] = useState(
     DEFAULT_UPSTREAM_PAID_AMOUNT
   )
-  const [upstreamPlatformUsdCredit, setUpstreamPlatformUsdCredit] =
-    useState(DEFAULT_UPSTREAM_PLATFORM_CREDIT)
+  const [upstreamPlatformUsdCredit, setUpstreamPlatformUsdCredit] = useState(
+    DEFAULT_UPSTREAM_PLATFORM_CREDIT
+  )
   const [upstreamRefreshPreviewId, setUpstreamRefreshPreviewId] = useState('')
   const [upstreamRefreshPreviewExpiresAt, setUpstreamRefreshPreviewExpiresAt] =
     useState(0)
@@ -201,7 +222,8 @@ export function UpstreamAccountRefreshPanel({
     refreshAccountsQuery.data?.data?.accounts.total ?? 0
   const refreshAccountsLoadedCount = refreshAccounts.length
   const allModelsList = useMemo(
-    () => allModelsQuery.data?.data?.map((model) => model.id).filter(Boolean) || [],
+    () =>
+      allModelsQuery.data?.data?.map((model) => model.id).filter(Boolean) || [],
     [allModelsQuery.data]
   )
   const currentModelsArray = useMemo(
@@ -226,8 +248,7 @@ export function UpstreamAccountRefreshPanel({
     upstreamPreviewNowMs
   )
   const isUpstreamRefreshTwoFactorExpired = Boolean(
-    upstreamRefreshTwoFactorChallenge &&
-    upstreamRefreshTwoFactorRemaining <= 0
+    upstreamRefreshTwoFactorChallenge && upstreamRefreshTwoFactorRemaining <= 0
   )
 
   const resetRefreshState = useCallback(() => {
@@ -294,8 +315,7 @@ export function UpstreamAccountRefreshPanel({
           : ''
       )
       setUpstreamPlatformUsdCredit(
-        ratio?.platform_usd_credit &&
-          Number.isFinite(ratio.platform_usd_credit)
+        ratio?.platform_usd_credit && Number.isFinite(ratio.platform_usd_credit)
           ? String(ratio.platform_usd_credit)
           : ''
       )
@@ -387,11 +407,17 @@ export function UpstreamAccountRefreshPanel({
         toast.error(t('Upstream platform URL is required'))
         return
       }
-      if (upstreamAuthMode === 'password' && (!upstreamUsername.trim() || !upstreamPassword.trim())) {
+      if (
+        upstreamAuthMode === 'password' &&
+        (!upstreamUsername.trim() || !upstreamPassword.trim())
+      ) {
         toast.error(t('Account and password are required'))
         return
       }
-      if (upstreamAuthMode === 'session_cookie' && !upstreamSessionCookie.trim()) {
+      if (
+        upstreamAuthMode === 'session_cookie' &&
+        !upstreamSessionCookie.trim()
+      ) {
         toast.error(t('Session/Cookie is required'))
         return
       }
@@ -404,12 +430,18 @@ export function UpstreamAccountRefreshPanel({
         upstreamAuthMode === 'access_token' &&
         !upstreamUserId.trim()
       ) {
-        toast.error(t('New-Api-User / User ID is required for new-api access token'))
+        toast.error(
+          t('New-Api-User / User ID is required for new-api access token')
+        )
         return
       }
       if (upstreamAuthMode === 'oauth_browser') {
         if (!upstreamCaptureId.trim()) {
-          toast.error(t('Complete userscript capture before previewing the upstream account'))
+          toast.error(
+            t(
+              'Complete userscript capture before previewing the upstream account'
+            )
+          )
           return
         }
       }
@@ -440,7 +472,9 @@ export function UpstreamAccountRefreshPanel({
       )
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : t('Failed to sync upstream account')
+        error instanceof Error
+          ? error.message
+          : t('Failed to sync upstream account')
       toast.error(message)
       return
     }
@@ -495,7 +529,9 @@ export function UpstreamAccountRefreshPanel({
     if (!challenge) return
     if (isUpstreamRefreshTwoFactorExpired) {
       toast.error(
-        t('The upstream 2FA challenge expired. Sync the upstream account again.')
+        t(
+          'The upstream 2FA challenge expired. Sync the upstream account again.'
+        )
       )
       clearRefreshPreview()
       setUpstreamAccountConfigs({})
@@ -615,11 +651,7 @@ export function UpstreamAccountRefreshPanel({
         : DEFAULT_UPSTREAM_PLATFORM_CREDIT
     )
     ratioConfigLoadedRef.current = true
-  }, [
-    open,
-    refreshAccounts,
-    upstreamRefreshSnapshot,
-  ])
+  }, [open, refreshAccounts, upstreamRefreshSnapshot])
 
   useEffect(() => {
     if (
@@ -701,9 +733,7 @@ export function UpstreamAccountRefreshPanel({
     return (
       <div className='grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]'>
         <div className='flex flex-col gap-2'>
-          <Label htmlFor='upstream-refresh-2fa-code'>
-            {t('2FA code')}
-          </Label>
+          <Label htmlFor='upstream-refresh-2fa-code'>{t('2FA code')}</Label>
           <Input
             id='upstream-refresh-2fa-code'
             value={upstreamRefreshTwoFactorCode}
@@ -850,11 +880,12 @@ export function UpstreamAccountRefreshPanel({
                   const config = upstreamAccountConfigs[configId]
                   const currentModelsArrayValue =
                     upstreamAccountModelsArrayValue(key, config)
-                  const upstreamKeyModelOptions = buildUpstreamAccountModelOptions(
-                    key,
-                    config,
-                    candidateModelNames
-                  )
+                  const upstreamKeyModelOptions =
+                    buildUpstreamAccountModelOptions(
+                      key,
+                      config,
+                      candidateModelNames
+                    )
                   const updateConfig = (
                     updater: (
                       previous: UpstreamAccountConfigDraft | undefined
@@ -886,7 +917,8 @@ export function UpstreamAccountRefreshPanel({
                     setConfigValue({
                       models: formatModelsArray(dedupeModelNames(values)),
                     })
-                  const upstreamGroupValue = key.group_name || key.group_id || ''
+                  const upstreamGroupValue =
+                    key.group_name || key.group_id || ''
                   const currentGroupValue = config?.group ?? upstreamGroupValue
                   const currentPriorityValue =
                     config?.priority ?? key.suggested_priority ?? 0
@@ -1016,12 +1048,7 @@ export function UpstreamAccountRefreshPanel({
         </div>
       )
     },
-    [
-      candidateModelNames,
-      t,
-      upstreamAccountConfigs,
-      upstreamApplySuggested,
-    ]
+    [candidateModelNames, t, upstreamAccountConfigs, upstreamApplySuggested]
   )
 
   if (!open || !channelId) {
@@ -1079,14 +1106,14 @@ export function UpstreamAccountRefreshPanel({
             onValueChange={(value) =>
               setUpstreamAuthMode(value as UpstreamAccountAuthMode)
             }
-            >
-              <SelectTrigger id='upstream-refresh-auth-mode'>
-                <SelectValue>
-                  {upstreamAuthMode === 'password'
-                    ? t('Account password')
-                    : t('Automatic configuration')}
-                </SelectValue>
-              </SelectTrigger>
+          >
+            <SelectTrigger id='upstream-refresh-auth-mode'>
+              <SelectValue>
+                {upstreamAuthMode === 'password'
+                  ? t('Account password')
+                  : t('Automatic configuration')}
+              </SelectValue>
+            </SelectTrigger>
             <SelectContent>
               <SelectGroup>
                 <SelectItem value='password'>
@@ -1169,7 +1196,9 @@ export function UpstreamAccountRefreshPanel({
               type='password'
               autoComplete='current-password'
               placeholder={
-                usingSavedCredential ? savedCredentialDescription : t('Password')
+                usingSavedCredential
+                  ? savedCredentialDescription
+                  : t('Password')
               }
               disabled={!canSensitiveWrite || usingSavedCredential}
             />
@@ -1185,16 +1214,15 @@ export function UpstreamAccountRefreshPanel({
           channelId={channelId}
           disabled={!canSensitiveWrite || usingSavedCredential}
           captureId={upstreamCaptureId}
+          returnUrl={captureReturnUrl}
           onCaptureIdChange={setUpstreamCaptureId}
           onCompleted={() => void handlePreviewUpstreamRefresh()}
         />
       ) : null}
 
-      <div className='grid gap-3 sm:grid-cols-2'>
+      <div className='grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(15rem,auto)] sm:items-end'>
         <div className='flex flex-col gap-2'>
-          <Label htmlFor='upstream-refresh-paid-cny'>
-            {t('Paid Amount')}
-          </Label>
+          <Label htmlFor='upstream-refresh-paid-cny'>{t('Paid Amount')}</Label>
           <Input
             id='upstream-refresh-paid-cny'
             value={upstreamPaidCny}
@@ -1219,64 +1247,65 @@ export function UpstreamAccountRefreshPanel({
             disabled={!canSensitiveWrite}
           />
         </div>
-      </div>
-
-      <div className='grid gap-3 sm:grid-cols-2'>
-        <Button
-          type='button'
-          variant='outline'
-          disabled={refreshPreviewButtonsDisabled}
-          onClick={() => void handlePreviewUpstreamRefresh()}
-        >
-          {previewMutation.isPending ? (
-            <Loader2 data-icon='inline-start' className='animate-spin' />
-          ) : (
-            <RefreshCw data-icon='inline-start' />
-          )}
-          {t('Preview Refresh')}
-        </Button>
-        <Button
-          type='button'
-          disabled={
-            !upstreamRefreshSnapshot ||
-            upstreamRefreshSnapshot.keys.length === 0 ||
-            isUpstreamRefreshPreviewExpired ||
-            refreshPreviewButtonsDisabled
-          }
-          onClick={() => {
-            if (!channelId || !upstreamRefreshSnapshot) return
-            if (isUpstreamRefreshPreviewExpired) {
-              clearRefreshPreview()
-              setUpstreamAccountConfigs({})
-              toast.error(
-                t(
-                  'The upstream account preview expired or was already used. Sync the upstream account again.'
-                )
-              )
-              return
+        <div className='flex min-w-0 flex-col items-stretch gap-2 sm:flex-row sm:items-end'>
+          <Button
+            type='button'
+            variant='outline'
+            className='min-w-0 flex-1 whitespace-nowrap'
+            disabled={refreshPreviewButtonsDisabled}
+            onClick={() => void handlePreviewUpstreamRefresh()}
+          >
+            {previewMutation.isPending ? (
+              <Loader2 data-icon='inline-start' className='animate-spin' />
+            ) : (
+              <RefreshCw data-icon='inline-start' />
+            )}
+            {t('Preview Refresh')}
+          </Button>
+          <Button
+            type='button'
+            className='min-w-0 flex-1 whitespace-nowrap'
+            disabled={
+              !upstreamRefreshSnapshot ||
+              upstreamRefreshSnapshot.keys.length === 0 ||
+              isUpstreamRefreshPreviewExpired ||
+              refreshPreviewButtonsDisabled
             }
-            void refreshMutation.mutateAsync({
-              id: channelId,
-              payload: buildUpstreamAccountRefreshPayload({
-                previewId: upstreamRefreshPreviewId,
-                keys: upstreamRefreshSnapshot.keys,
-                configs: upstreamAccountConfigs,
-                applySuggested: upstreamApplySuggested,
-                ratioConversion: buildUpstreamRatioConversionPayload(
-                  upstreamPaidCny,
-                  upstreamPlatformUsdCredit
-                ),
-              }),
-            })
-          }}
-        >
-          {refreshMutation.isPending ? (
-            <Loader2 data-icon='inline-start' className='animate-spin' />
-          ) : (
-            <CheckCircle2 data-icon='inline-start' />
-          )}
-          {t('Apply Refresh')}
-        </Button>
+            onClick={() => {
+              if (!channelId || !upstreamRefreshSnapshot) return
+              if (isUpstreamRefreshPreviewExpired) {
+                clearRefreshPreview()
+                setUpstreamAccountConfigs({})
+                toast.error(
+                  t(
+                    'The upstream account preview expired or was already used. Sync the upstream account again.'
+                  )
+                )
+                return
+              }
+              void refreshMutation.mutateAsync({
+                id: channelId,
+                payload: buildUpstreamAccountRefreshPayload({
+                  previewId: upstreamRefreshPreviewId,
+                  keys: upstreamRefreshSnapshot.keys,
+                  configs: upstreamAccountConfigs,
+                  applySuggested: upstreamApplySuggested,
+                  ratioConversion: buildUpstreamRatioConversionPayload(
+                    upstreamPaidCny,
+                    upstreamPlatformUsdCredit
+                  ),
+                }),
+              })
+            }}
+          >
+            {refreshMutation.isPending ? (
+              <Loader2 data-icon='inline-start' className='animate-spin' />
+            ) : (
+              <CheckCircle2 data-icon='inline-start' />
+            )}
+            {t('Apply Refresh')}
+          </Button>
+        </div>
       </div>
 
       <div className='text-muted-foreground text-xs'>
@@ -1316,10 +1345,9 @@ export function UpstreamAccountRefreshPanel({
               ) : null}
               {previewRelayBaseURL ? (
                 <div>
-                  {t(
-                    'Created channels will use {{url}} for model requests.',
-                    { url: previewRelayBaseURL }
-                  )}
+                  {t('Created channels will use {{url}} for model requests.', {
+                    url: previewRelayBaseURL,
+                  })}
                 </div>
               ) : null}
             </div>
