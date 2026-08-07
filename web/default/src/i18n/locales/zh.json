@@ -5934,6 +5934,11 @@
     "Zero retention": "零数据保留",
     "Zhipu": "智谱",
     "Zhipu V4": "智谱 V4",
-    "Zoom": "缩放"
+    "Zoom": "缩放",
+    "Browser blocked the upstream capture tab. Allow pop-ups for NexusTok and try again.": "浏览器阻止了上游采集标签页，请允许 NexusTok 弹窗后重试。",
+    "Browser blocked the upstream capture tab. Use the buttons below to continue.": "浏览器阻止了上游采集标签页，请使用下方按钮继续。",
+    "Capture session expired. Creating a fresh session.": "采集会话已过期，正在创建新会话。",
+    "Open the upstream platform in a new tab to continue capture.": "在新标签页打开上游平台继续采集。",
+    "Install the capture helper, then open the upstream platform to capture.": "安装采集助手，然后打开上游平台获取登录态。"
   }
 }

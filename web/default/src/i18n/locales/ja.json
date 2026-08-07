@@ -5934,6 +5934,11 @@
     "Zero retention": "データ保持なし",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V 4",
-    "Zoom": "ズーム"
+    "Zoom": "ズーム",
+    "Browser blocked the upstream capture tab. Allow pop-ups for NexusTok and try again.": "ブラウザが上流取得タブをブロックしました。NexusTok のポップアップを許可して再試行してください。",
+    "Browser blocked the upstream capture tab. Use the buttons below to continue.": "ブラウザが上流取得タブをブロックしました。下のボタンで続行してください。",
+    "Capture session expired. Creating a fresh session.": "取得セッションの期限が切れました。新しいセッションを作成しています。",
+    "Open the upstream platform in a new tab to continue capture.": "新しいタブで上流プラットフォームを開いて取得を続けます。",
+    "Install the capture helper, then open the upstream platform to capture.": "取得ヘルパーをインストールしてから、上流プラットフォームを開いてください。"
   }
 }

@@ -5934,6 +5934,11 @@
     "Zero retention": "Aucune rétention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Browser blocked the upstream capture tab. Allow pop-ups for NexusTok and try again.": "Le navigateur a bloqué l’onglet de capture amont. Autorisez les fenêtres contextuelles de NexusTok et réessayez.",
+    "Browser blocked the upstream capture tab. Use the buttons below to continue.": "Le navigateur a bloqué l’onglet de capture amont. Utilisez les boutons ci-dessous pour continuer.",
+    "Capture session expired. Creating a fresh session.": "La session de capture a expiré. Création d’une nouvelle session.",
+    "Open the upstream platform in a new tab to continue capture.": "Ouvrez la plateforme amont dans un nouvel onglet pour continuer la capture.",
+    "Install the capture helper, then open the upstream platform to capture.": "Installez l’assistant de capture, puis ouvrez la plateforme amont."
   }
 }

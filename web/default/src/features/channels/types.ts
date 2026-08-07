@@ -420,6 +420,7 @@ export interface UpstreamAccountCaptureStartRequest {
   base_url: string
   channel_id?: number
   return_url?: string
+  locale?: string
 }
 
 export interface UpstreamAccountCaptureStartData {
@@ -435,8 +436,11 @@ export interface UpstreamAccountCaptureStartData {
   helper_install_url?: string
   handoff_url?: string
   helper_version?: string
+  helper_required_version?: string
+  helper_status_message?: string
   login_url: string
   return_url?: string
+  locale?: string
 }
 
 export interface UpstreamAccountCaptureCredentialSummary {
@@ -488,8 +492,11 @@ export interface UpstreamAccountCaptureStatusData {
   helper_install_url?: string
   handoff_url?: string
   helper_version?: string
+  helper_required_version?: string
+  helper_status_message?: string
   login_url?: string
   return_url?: string
+  locale?: string
   summary?: UpstreamAccountCaptureCredentialSummary
   diagnostics?: UpstreamAccountCaptureDiagnostics
 }

@@ -63,6 +63,12 @@ function formatUnixTime(value?: number) {
   return new Date(value * 1000).toLocaleString()
 }
 
+function isUnixExpired(value?: number) {
+  return Boolean(
+    value && value > 0 && Math.floor(Date.now() / 1000) >= value
+  )
+}
+
 function formatBrowserSessionRestoreStatus(
   value: string | undefined,
   t: (key: string) => string
@@ -112,7 +118,11 @@ function getInstalledCaptureHelperVersion() {
   )
 }
 
-function openCaptureURL(url: string, targetWindow?: Window | null) {
+function openCaptureURL(
+  url: string,
+  targetWindow?: Window | null,
+  preserveOpener = false
+) {
   const trimmedURL = url.trim()
   if (!trimmedURL) return false
   try {
@@ -127,10 +137,12 @@ function openCaptureURL(url: string, targetWindow?: Window | null) {
   try {
     const nextWindow = window.open(trimmedURL, '_blank')
     if (!nextWindow) return false
-    try {
-      nextWindow.opener = null
-    } catch {
-      // 部分浏览器在跨域导航后不允许再触碰 opener，打开结果本身仍然有效。
+    if (!preserveOpener) {
+      try {
+        nextWindow.opener = null
+      } catch {
+        // 部分浏览器在跨域导航后不允许再触碰 opener，打开结果本身仍然有效。
+      }
     }
     nextWindow.focus()
     return true
@@ -155,16 +167,14 @@ export const UpstreamAccountCapturePanel = forwardRef<
   },
   ref
 ) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [localSession, setLocalSession] =
     useState<UpstreamAccountCaptureStartData | null>(null)
-  const [fallbackVisible, setFallbackVisible] = useState(false)
   const [helperVersion, setHelperVersion] = useState(
     getInstalledCaptureHelperVersion
   )
-  const [handoffStarted, setHandoffStarted] = useState(false)
   const completedToastRef = useRef('')
-  const fallbackTimerRef = useRef<number | null>(null)
+  const pendingCaptureWindowRef = useRef<Window | null>(null)
 
   const helperInstalled = Boolean(helperVersion)
 
@@ -207,8 +217,17 @@ export const UpstreamAccountCapturePanel = forwardRef<
       handoff_url: status?.handoff_url || localSession?.handoff_url || '',
       helper_version:
         status?.helper_version || localSession?.helper_version || '',
+      helper_required_version:
+        status?.helper_required_version ||
+        localSession?.helper_required_version ||
+        '',
+      helper_status_message:
+        status?.helper_status_message ||
+        localSession?.helper_status_message ||
+        '',
       login_url: status?.login_url || localSession?.login_url || baseUrl,
       return_url: status?.return_url || localSession?.return_url || '',
+      locale: status?.locale || localSession?.locale || '',
       summary: status?.summary,
       diagnostics: status?.diagnostics,
       message: status?.message,
@@ -216,15 +235,27 @@ export const UpstreamAccountCapturePanel = forwardRef<
   }, [baseUrl, captureId, localSession, platform, status])
 
   const navigateToHandoff = useCallback(
-    (sessionData: UpstreamAccountCaptureStartData | UpstreamAccountCaptureStatusData | null) => {
+    (
+      sessionData:
+        | UpstreamAccountCaptureStartData
+        | UpstreamAccountCaptureStatusData
+        | null,
+      targetWindow?: Window | null
+    ) => {
       const handoffURL = sessionData?.handoff_url || sessionData?.login_url || sessionData?.base_url || baseUrl
       if (!handoffURL.trim()) {
         toast.error(t('Upstream platform URL is required'))
         return false
       }
-      setHandoffStarted(true)
-      window.location.assign(handoffURL)
-      return true
+      const opened = openCaptureURL(handoffURL, targetWindow, true)
+      if (!opened) {
+        toast.error(
+          t(
+            'Browser blocked the upstream capture tab. Allow pop-ups for NexusTok and try again.'
+          )
+        )
+      }
+      return opened
     },
     [baseUrl, t]
   )
@@ -239,16 +270,27 @@ export const UpstreamAccountCapturePanel = forwardRef<
       setLocalSession(res.data)
       onCaptureIdChange(res.data.capture_id)
       completedToastRef.current = ''
-      setFallbackVisible(false)
+      const targetWindow = pendingCaptureWindowRef.current
+      pendingCaptureWindowRef.current = null
       if (getInstalledCaptureHelperVersion()) {
-        navigateToHandoff(res.data)
+        navigateToHandoff(res.data, targetWindow)
       } else {
-        setFallbackVisible(true)
+        const installURL = res.data.helper_install_url || res.data.userscript_url || ''
+        if (installURL && targetWindow && !targetWindow.closed) {
+          openCaptureURL(installURL, targetWindow)
+        }
         toast.info(t('Install the automatic capture helper, then continue capture.'))
       }
       toast.success(t('Capture session created'))
     },
     onError: (error: unknown) => {
+      if (
+        pendingCaptureWindowRef.current &&
+        !pendingCaptureWindowRef.current.closed
+      ) {
+        pendingCaptureWindowRef.current.close()
+      }
+      pendingCaptureWindowRef.current = null
       const message =
         error instanceof Error
           ? error.message
@@ -256,6 +298,31 @@ export const UpstreamAccountCapturePanel = forwardRef<
       toast.error(message)
     },
   })
+
+  useEffect(() => {
+    const handleCaptureMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return
+      const data = event.data as
+        | { type?: string; captureID?: string; capture_id?: string }
+        | undefined
+      if (data?.type !== 'nexustok-upstream-capture-completed') return
+      const nextCaptureId = data.captureID || data.capture_id || ''
+      if (!nextCaptureId) return
+      const currentCaptureId = captureId || localSession?.capture_id || ''
+      if (currentCaptureId && currentCaptureId !== nextCaptureId) return
+      onCaptureIdChange(nextCaptureId)
+      void statusQuery.refetch()
+    }
+    window.addEventListener('message', handleCaptureMessage)
+    return () => {
+      window.removeEventListener('message', handleCaptureMessage)
+    }
+  }, [
+    captureId,
+    localSession?.capture_id,
+    onCaptureIdChange,
+    statusQuery,
+  ])
 
   useEffect(() => {
     if (!status || status.status !== 'completed') return
@@ -287,14 +354,32 @@ export const UpstreamAccountCapturePanel = forwardRef<
       toast.error(t('Upstream platform URL is required'))
       return
     }
-    setHandoffStarted(false)
+    try {
+      pendingCaptureWindowRef.current = window.open('about:blank', '_blank')
+    } catch {
+      pendingCaptureWindowRef.current = null
+    }
+    if (!pendingCaptureWindowRef.current) {
+      toast.info(t('Browser blocked the upstream capture tab. Use the buttons below to continue.'))
+    }
     startMutation.mutate({
       platform,
       base_url: trimmedBaseUrl,
       channel_id: channelId || undefined,
       return_url: returnUrl || window.location.href,
+      locale: i18n.resolvedLanguage || i18n.language,
     })
-  }, [baseUrl, channelId, disabled, platform, returnUrl, startMutation, t])
+  }, [
+    baseUrl,
+    channelId,
+    disabled,
+    i18n.language,
+    i18n.resolvedLanguage,
+    platform,
+    returnUrl,
+    startMutation,
+    t,
+  ])
 
   const handleOpenInstaller = useCallback(() => {
     const installURL = session?.helper_install_url || session?.userscript_url || ''
@@ -303,7 +388,6 @@ export const UpstreamAccountCapturePanel = forwardRef<
       return
     }
     const opened = openCaptureURL(installURL)
-    setFallbackVisible(true)
     if (!opened) {
       toast.error(
         t(
@@ -314,13 +398,13 @@ export const UpstreamAccountCapturePanel = forwardRef<
   }, [session?.helper_install_url, session?.userscript_url, t])
 
   const handleOpenUpstreamSite = useCallback(() => {
-    if (!helperInstalled) {
-      setFallbackVisible(true)
-      toast.info(t('Install the automatic capture helper, then continue capture.'))
+    if (isUnixExpired(session?.expires_at)) {
+      toast.info(t('Capture session expired. Creating a fresh session.'))
+      handleStart()
       return
     }
     navigateToHandoff(session)
-  }, [helperInstalled, navigateToHandoff, session, t])
+  }, [handleStart, navigateToHandoff, session, t])
 
   useImperativeHandle(
     ref,
@@ -351,32 +435,7 @@ export const UpstreamAccountCapturePanel = forwardRef<
     session?.api_base_url ||
     status?.diagnostics?.api_base_url_seen ||
     ''
-  useEffect(() => {
-    if (!session?.capture_id || isCompleted) {
-      if (fallbackTimerRef.current) {
-        window.clearTimeout(fallbackTimerRef.current)
-        fallbackTimerRef.current = null
-      }
-      setFallbackVisible(false)
-      return
-    }
-    if (fallbackTimerRef.current) {
-      window.clearTimeout(fallbackTimerRef.current)
-    }
-    fallbackTimerRef.current = window.setTimeout(() => {
-      setFallbackVisible(true)
-    }, 5000)
-    return () => {
-      if (fallbackTimerRef.current) {
-        window.clearTimeout(fallbackTimerRef.current)
-        fallbackTimerRef.current = null
-      }
-    }
-  }, [isCompleted, session?.capture_id])
-
-  const showFallbackNotice =
-    !isCompleted &&
-    (fallbackVisible || isFailed || (session?.capture_id && !helperInstalled && !handoffStarted))
+  const showFallbackNotice = !isCompleted && Boolean(session?.capture_id)
 
   if (!session) return null
 
@@ -475,22 +534,20 @@ export const UpstreamAccountCapturePanel = forwardRef<
               {isFailed
                 ? status?.message || t('Capture failed. Refresh status or create a new session.')
                 : helperInstalled
-                  ? t('Continue capture in this tab.')
-                  : t('Install the automatic capture helper, then continue capture.')}
+                  ? t('Open the upstream platform in a new tab to continue capture.')
+                  : t('Install the capture helper, then open the upstream platform to capture.')}
             </span>
             <span className='flex flex-wrap gap-2'>
-              {!helperInstalled ? (
-                <Button
-                  type='button'
-                  variant='outline'
-                  size='sm'
-                  disabled={!session.helper_install_url && !session.userscript_url}
-                  onClick={handleOpenInstaller}
-                >
-                  <ExternalLink data-icon='inline-start' />
-                  {t('Install Capture Helper')}
-                </Button>
-              ) : null}
+              <Button
+                type='button'
+                variant='outline'
+                size='sm'
+                disabled={!session.helper_install_url && !session.userscript_url}
+                onClick={handleOpenInstaller}
+              >
+                <ExternalLink data-icon='inline-start' />
+                {t('Install Capture Helper')}
+              </Button>
               {!isCompleted ? (
                 <Button
                   type='button'

@@ -5934,6 +5934,11 @@
     "Zero retention": "Không lưu dữ liệu",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Browser blocked the upstream capture tab. Allow pop-ups for NexusTok and try again.": "Trình duyệt đã chặn tab thu thập upstream. Hãy cho phép cửa sổ bật lên của NexusTok rồi thử lại.",
+    "Browser blocked the upstream capture tab. Use the buttons below to continue.": "Trình duyệt đã chặn tab thu thập upstream. Hãy dùng các nút bên dưới để tiếp tục.",
+    "Capture session expired. Creating a fresh session.": "Phiên thu thập đã hết hạn. Đang tạo phiên mới.",
+    "Open the upstream platform in a new tab to continue capture.": "Mở nền tảng upstream trong tab mới để tiếp tục thu thập.",
+    "Install the capture helper, then open the upstream platform to capture.": "Cài trợ lý thu thập, sau đó mở nền tảng upstream."
   }
 }

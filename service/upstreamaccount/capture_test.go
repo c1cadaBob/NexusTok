@@ -16,6 +16,7 @@ func TestCaptureSessionCompletesSub2APIPayload(t *testing.T) {
 	start, err := StartCaptureSession(7, CaptureSessionStartRequest{
 		Platform: PlatformSub2API,
 		BaseURL:  "https://sub.example.com/login",
+		Locale:   "zh-CN",
 	}, "https://nexus.example.com")
 	require.NoError(t, err)
 	require.NotEmpty(t, start.CaptureID)
@@ -24,6 +25,8 @@ func TestCaptureSessionCompletesSub2APIPayload(t *testing.T) {
 	require.Contains(t, start.UserscriptURL, "install_token=")
 	require.Equal(t, "https://nexus.example.com/api/channel/upstream-account/capture-helper.user.js", start.HelperInstallURL)
 	require.Equal(t, captureHelperVersion, start.HelperVersion)
+	require.Equal(t, captureHelperVersion, start.HelperRequiredVersion)
+	require.Equal(t, "zh", start.Locale)
 	require.Contains(t, start.HandoffURL, "nexustok_capture=")
 	require.Equal(t, "https://sub.example.com", start.LoginURL)
 
@@ -216,11 +219,14 @@ func TestCaptureSessionCompletesNewAPIAccessTokenPayloadAndRendersScript(t *test
 
 	helperScript, err := RenderCaptureHelperUserscript("https://nexus.example.com")
 	require.NoError(t, err)
-	require.Contains(t, helperScript, "NexusTok Upstream Login Capture Helper")
+	require.Contains(t, helperScript, "NexusTok Capture Helper - nexus.example.com")
 	require.Contains(t, helperScript, "@match        https://*/*")
 	require.Contains(t, helperScript, "nexustok-upstream-capture-helper-ready")
-	require.Contains(t, helperScript, "userscriptURL")
-	require.Contains(t, helperScript, "eval(source")
+	require.Contains(t, helperScript, "captureSecret")
+	require.Contains(t, helperScript, "auth/session/restore")
+	require.Contains(t, helperScript, "Send login to NexusTok")
+	require.NotContains(t, helperScript, "eval(")
+	require.NotContains(t, helperScript, "new Function(")
 
 	record, found, err := captureSessionCache.Get(start.CaptureID)
 	require.NoError(t, err)
@@ -345,6 +351,13 @@ func TestRenderedCaptureUserscriptHasValidJavaScriptSyntax(t *testing.T) {
 	// 生成脚本最终会直接交给 Tampermonkey；在单测中先用 Node 的语法检查拦截
 	// 模板拼接造成的括号、引号或转义错误，避免只能到浏览器里才发现脚本无法安装。
 	output, err := exec.Command(nodePath, "--check", scriptPath).CombinedOutput()
+	require.NoError(t, err, string(output))
+
+	helperScript, err := RenderCaptureHelperUserscript("https://nexus.example.com")
+	require.NoError(t, err)
+	helperPath := filepath.Join(t.TempDir(), "capture-helper.user.js")
+	require.NoError(t, os.WriteFile(helperPath, []byte(helperScript), 0o600))
+	output, err = exec.Command(nodePath, "--check", helperPath).CombinedOutput()
 	require.NoError(t, err, string(output))
 }
 

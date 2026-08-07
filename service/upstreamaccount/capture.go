@@ -18,7 +18,7 @@ import (
 const (
 	captureCacheNamespace = "upstream-account-capture"
 	captureTTL            = 10 * time.Minute
-	captureHelperVersion  = "1.2.0"
+	captureHelperVersion  = "1.3.0"
 	captureHandoffParam   = "nexustok_capture"
 
 	captureStatusPending   = "pending"
@@ -45,24 +45,28 @@ type CaptureSessionStartRequest struct {
 	BaseURL   string `json:"base_url"`
 	ChannelID int    `json:"channel_id,omitempty"`
 	ReturnURL string `json:"return_url,omitempty"`
+	Locale    string `json:"locale,omitempty"`
 }
 
 // CaptureSessionStartResult 返回给后台页面的安装信息。
 type CaptureSessionStartResult struct {
-	CaptureID         string `json:"capture_id"`
-	ExpiresAt         int64  `json:"expires_at"`
-	Platform          string `json:"platform"`
-	BaseURL           string `json:"base_url"`
-	ManagementBaseURL string `json:"management_base_url,omitempty"`
-	RelayBaseURL      string `json:"relay_base_url,omitempty"`
-	APIBaseURL        string `json:"api_base_url,omitempty"`
-	Origin            string `json:"origin"`
-	UserscriptURL     string `json:"userscript_url"`
-	HelperInstallURL  string `json:"helper_install_url,omitempty"`
-	HandoffURL        string `json:"handoff_url,omitempty"`
-	HelperVersion     string `json:"helper_version,omitempty"`
-	LoginURL          string `json:"login_url"`
-	ReturnURL         string `json:"return_url,omitempty"`
+	CaptureID             string `json:"capture_id"`
+	ExpiresAt             int64  `json:"expires_at"`
+	Platform              string `json:"platform"`
+	BaseURL               string `json:"base_url"`
+	ManagementBaseURL     string `json:"management_base_url,omitempty"`
+	RelayBaseURL          string `json:"relay_base_url,omitempty"`
+	APIBaseURL            string `json:"api_base_url,omitempty"`
+	Origin                string `json:"origin"`
+	UserscriptURL         string `json:"userscript_url"`
+	HelperInstallURL      string `json:"helper_install_url,omitempty"`
+	HandoffURL            string `json:"handoff_url,omitempty"`
+	HelperVersion         string `json:"helper_version,omitempty"`
+	HelperRequiredVersion string `json:"helper_required_version,omitempty"`
+	HelperStatusMessage   string `json:"helper_status_message,omitempty"`
+	LoginURL              string `json:"login_url"`
+	ReturnURL             string `json:"return_url,omitempty"`
+	Locale                string `json:"locale,omitempty"`
 }
 
 // CaptureSessionRecord 是短期缓存中的采集会话。
@@ -83,6 +87,7 @@ type CaptureSessionRecord struct {
 	APIBaseURL        string                    `json:"api_base_url,omitempty"`
 	Origin            string                    `json:"origin"`
 	ReturnURL         string                    `json:"return_url,omitempty"`
+	Locale            string                    `json:"locale,omitempty"`
 	Status            string                    `json:"status"`
 	Error             string                    `json:"error,omitempty"`
 	ExpiresAt         int64                     `json:"expires_at"`
@@ -134,24 +139,27 @@ type CaptureDiagnostics struct {
 
 // CaptureSessionStatusResult 是后台页面轮询采集状态的响应。
 type CaptureSessionStatusResult struct {
-	CaptureID         string                    `json:"capture_id"`
-	Status            string                    `json:"status"`
-	Message           string                    `json:"message,omitempty"`
-	ExpiresAt         int64                     `json:"expires_at"`
-	Platform          string                    `json:"platform"`
-	BaseURL           string                    `json:"base_url"`
-	ManagementBaseURL string                    `json:"management_base_url,omitempty"`
-	RelayBaseURL      string                    `json:"relay_base_url,omitempty"`
-	APIBaseURL        string                    `json:"api_base_url,omitempty"`
-	Origin            string                    `json:"origin"`
-	UserscriptURL     string                    `json:"userscript_url,omitempty"`
-	HelperInstallURL  string                    `json:"helper_install_url,omitempty"`
-	HandoffURL        string                    `json:"handoff_url,omitempty"`
-	HelperVersion     string                    `json:"helper_version,omitempty"`
-	LoginURL          string                    `json:"login_url,omitempty"`
-	ReturnURL         string                    `json:"return_url,omitempty"`
-	Summary           *CaptureCredentialSummary `json:"summary,omitempty"`
-	Diagnostics       *CaptureDiagnostics       `json:"diagnostics,omitempty"`
+	CaptureID             string                    `json:"capture_id"`
+	Status                string                    `json:"status"`
+	Message               string                    `json:"message,omitempty"`
+	ExpiresAt             int64                     `json:"expires_at"`
+	Platform              string                    `json:"platform"`
+	BaseURL               string                    `json:"base_url"`
+	ManagementBaseURL     string                    `json:"management_base_url,omitempty"`
+	RelayBaseURL          string                    `json:"relay_base_url,omitempty"`
+	APIBaseURL            string                    `json:"api_base_url,omitempty"`
+	Origin                string                    `json:"origin"`
+	UserscriptURL         string                    `json:"userscript_url,omitempty"`
+	HelperInstallURL      string                    `json:"helper_install_url,omitempty"`
+	HandoffURL            string                    `json:"handoff_url,omitempty"`
+	HelperVersion         string                    `json:"helper_version,omitempty"`
+	HelperRequiredVersion string                    `json:"helper_required_version,omitempty"`
+	HelperStatusMessage   string                    `json:"helper_status_message,omitempty"`
+	LoginURL              string                    `json:"login_url,omitempty"`
+	ReturnURL             string                    `json:"return_url,omitempty"`
+	Locale                string                    `json:"locale,omitempty"`
+	Summary               *CaptureCredentialSummary `json:"summary,omitempty"`
+	Diagnostics           *CaptureDiagnostics       `json:"diagnostics,omitempty"`
 }
 
 // CaptureSessionCompleteRequest 是油猴脚本回传的登录态负载。
@@ -219,6 +227,7 @@ func StartCaptureSession(userID int, req CaptureSessionStartRequest, nexusBaseUR
 		return nil, fmt.Errorf("NexusTok 地址不能为空")
 	}
 	returnURL := normalizeCaptureReturnURL(req.ReturnURL, nexusBaseURL, allowedReturnBaseURLs...)
+	locale := normalizeCaptureLocale(req.Locale)
 	id := common.GetUUID()
 	secret, err := common.GenerateRandomCharsKey(48)
 	if err != nil {
@@ -240,6 +249,7 @@ func StartCaptureSession(userID int, req CaptureSessionStartRequest, nexusBaseUR
 		ManagementBaseURL: normalizedBaseURL,
 		Origin:            origin,
 		ReturnURL:         returnURL,
+		Locale:            locale,
 		Status:            captureStatusPending,
 		ExpiresAt:         expiresAt,
 		UpdatedAt:         common.GetTimestamp(),
@@ -249,20 +259,23 @@ func StartCaptureSession(userID int, req CaptureSessionStartRequest, nexusBaseUR
 	}
 	userscriptURL, loginURL := captureSessionLinks(record, nexusBaseURL)
 	helperInstallURL := captureHelperInstallURL(nexusBaseURL)
-	handoffURL := captureHandoffURL(record, userscriptURL)
+	handoffURL := captureHandoffURL(record, nexusBaseURL, userscriptURL)
 	return &CaptureSessionStartResult{
-		CaptureID:         id,
-		ExpiresAt:         expiresAt,
-		Platform:          platform,
-		BaseURL:           normalizedBaseURL,
-		ManagementBaseURL: normalizedBaseURL,
-		Origin:            origin,
-		UserscriptURL:     userscriptURL,
-		HelperInstallURL:  helperInstallURL,
-		HandoffURL:        handoffURL,
-		HelperVersion:     captureHelperVersion,
-		LoginURL:          loginURL,
-		ReturnURL:         returnURL,
+		CaptureID:             id,
+		ExpiresAt:             expiresAt,
+		Platform:              platform,
+		BaseURL:               normalizedBaseURL,
+		ManagementBaseURL:     normalizedBaseURL,
+		Origin:                origin,
+		UserscriptURL:         userscriptURL,
+		HelperInstallURL:      helperInstallURL,
+		HandoffURL:            handoffURL,
+		HelperVersion:         captureHelperVersion,
+		HelperRequiredVersion: captureHelperVersion,
+		HelperStatusMessage:   captureHelperStatusMessage(captureHelperVersion),
+		LoginURL:              loginURL,
+		ReturnURL:             returnURL,
+		Locale:                locale,
 	}, nil
 }
 
@@ -403,10 +416,9 @@ func RenderCaptureUserscriptWithInstallToken(captureID string, installToken stri
 
 // RenderCaptureHelperUserscript 生成稳定版自动采集助手脚本。
 //
-// 稳定助手不内置任何 capture_secret 或上游登录态，只负责在管理员主动从 NexusTok
-// 创建会话后，从当前页 URL fragment/sessionStorage 读取一次性 handoff 参数，再加载
-// 对应会话的签名脚本执行真实采集。这样脚本可以安装一次长期复用，同时不会把固定的
-// NexusTok 管理权限或第三方账号凭据暴露给任意站点。
+// 稳定助手脚本安装一次后长期复用。真实采集所需的一次性 capture_secret 只从
+// handoff URL 中读取，脚本会立即清理 URL 并写入目标站 sessionStorage。这里刻意
+// 不再通过 eval 动态执行会话脚本，避免被目标站 CSP 的 unsafe-eval 策略拦截。
 func RenderCaptureHelperUserscript(nexusBaseURL string) (string, error) {
 	nexusBaseURL = strings.TrimRight(strings.TrimSpace(nexusBaseURL), "/")
 	if nexusBaseURL == "" {
@@ -426,7 +438,7 @@ func RenderCaptureHelperUserscript(nexusBaseURL string) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf(`// ==UserScript==
-// @name         NexusTok Upstream Login Capture Helper
+// @name         %s
 // @namespace    https://github.com/c1cadaBob/NexusTok
 // @version      %s
 // @description  Stable helper for NexusTok upstream account automatic capture.
@@ -442,9 +454,112 @@ func RenderCaptureHelperUserscript(nexusBaseURL string) (string, error) {
 (function () {
   'use strict';
   const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+  const pageFetch = typeof pageWindow.fetch === 'function'
+    ? pageWindow.fetch.bind(pageWindow)
+    : window.fetch.bind(window);
   const config = %s;
   const readyEvent = 'nexustok-upstream-capture-helper-ready';
   const panelId = 'nexustok-upstream-capture-helper-panel';
+  const buttonId = 'nexustok-upstream-capture-helper-button';
+  const messages = {
+    en: {
+      ready: 'NexusTok capture helper is ready.',
+      send: 'Send login to NexusTok',
+      retry: 'Retry capture',
+      capturing: 'Capturing upstream login...',
+      waiting: 'Waiting for upstream login. Finish login, then click the button if it does not continue automatically.',
+      expired: 'NexusTok capture session expired. Create a new session in NexusTok.',
+      captured: 'Captured. Returning to NexusTok...',
+      invalidHandoff: 'NexusTok capture handoff is invalid. Create a new session.',
+      wrongOrigin: 'This capture session belongs to another upstream site.',
+      noToken: 'Login token was not found on this page.',
+      newAPIUserIDPrompt: 'Enter the numeric user ID from the upstream new-api site. Username/email cannot be used.',
+    },
+    zh: {
+      ready: 'NexusTok 采集助手已就绪。',
+      send: '发送登录态到 NexusTok',
+      retry: '重新采集',
+      capturing: '正在采集上游登录态...',
+      waiting: '正在等待上游登录。请完成登录；如果没有自动继续，请点击按钮。',
+      expired: 'NexusTok 采集会话已过期，请回到 NexusTok 重新创建会话。',
+      captured: '采集完成，正在返回 NexusTok...',
+      invalidHandoff: 'NexusTok 采集参数无效，请重新创建会话。',
+      wrongOrigin: '这个采集会话不属于当前上游站点。',
+      noToken: '当前页面没有找到可用登录态。',
+      newAPIUserIDPrompt: '请输入上游 new-api 站点中的数字用户 ID，用户名或邮箱不能用于 New-Api-User。',
+    },
+    'zh-TW': {
+      ready: 'NexusTok 採集助手已就緒。',
+      send: '傳送登入態到 NexusTok',
+      retry: '重新採集',
+      capturing: '正在採集上游登入態...',
+      waiting: '正在等待上游登入。請完成登入；如果沒有自動繼續，請點擊按鈕。',
+      expired: 'NexusTok 採集工作階段已過期，請回到 NexusTok 重新建立工作階段。',
+      captured: '採集完成，正在返回 NexusTok...',
+      invalidHandoff: 'NexusTok 採集參數無效，請重新建立工作階段。',
+      wrongOrigin: '這個採集工作階段不屬於目前上游站點。',
+      noToken: '目前頁面沒有找到可用登入態。',
+      newAPIUserIDPrompt: '請輸入上游 new-api 站點中的數字使用者 ID，使用者名稱或信箱不能用於 New-Api-User。',
+    },
+    fr: {
+      ready: 'L’assistant de capture NexusTok est prêt.',
+      send: 'Envoyer la connexion à NexusTok',
+      retry: 'Réessayer la capture',
+      capturing: 'Capture de la connexion en cours...',
+      waiting: 'Connexion amont en attente. Connectez-vous puis cliquez sur le bouton si rien ne continue automatiquement.',
+      expired: 'La session de capture NexusTok a expiré. Créez une nouvelle session dans NexusTok.',
+      captured: 'Capture terminée. Retour vers NexusTok...',
+      invalidHandoff: 'Les paramètres de capture NexusTok sont invalides. Créez une nouvelle session.',
+      wrongOrigin: 'Cette session de capture appartient à un autre site amont.',
+      noToken: 'Aucun jeton de connexion utilisable trouvé sur cette page.',
+      newAPIUserIDPrompt: 'Saisissez l’ID utilisateur numérique du site new-api amont. Le nom ou l’e-mail ne convient pas.',
+    },
+    ja: {
+      ready: 'NexusTok 取得ヘルパーの準備ができました。',
+      send: 'ログイン状態を NexusTok に送信',
+      retry: '再取得',
+      capturing: '上流ログイン状態を取得しています...',
+      waiting: '上流ログインを待っています。ログイン後、自動で進まない場合はボタンをクリックしてください。',
+      expired: 'NexusTok の取得セッションが期限切れです。NexusTok で新しいセッションを作成してください。',
+      captured: '取得完了。NexusTok に戻ります...',
+      invalidHandoff: 'NexusTok の取得パラメータが無効です。新しいセッションを作成してください。',
+      wrongOrigin: 'この取得セッションは別の上流サイト用です。',
+      noToken: 'このページで利用可能なログイン状態が見つかりません。',
+      newAPIUserIDPrompt: '上流 new-api サイトの数値ユーザー ID を入力してください。ユーザー名やメールは使えません。',
+    },
+    ru: {
+      ready: 'Помощник захвата NexusTok готов.',
+      send: 'Отправить вход в NexusTok',
+      retry: 'Повторить захват',
+      capturing: 'Захват входа вышестоящей платформы...',
+      waiting: 'Ожидание входа на вышестоящей платформе. Войдите и нажмите кнопку, если процесс не продолжится автоматически.',
+      expired: 'Сессия захвата NexusTok истекла. Создайте новую сессию в NexusTok.',
+      captured: 'Захват завершён. Возврат в NexusTok...',
+      invalidHandoff: 'Параметры захвата NexusTok недействительны. Создайте новую сессию.',
+      wrongOrigin: 'Эта сессия захвата относится к другому вышестоящему сайту.',
+      noToken: 'На этой странице не найден пригодный токен входа.',
+      newAPIUserIDPrompt: 'Введите числовой ID пользователя на сайте new-api. Имя пользователя или e-mail не подходят.',
+    },
+    vi: {
+      ready: 'Trợ lý thu thập NexusTok đã sẵn sàng.',
+      send: 'Gửi trạng thái đăng nhập tới NexusTok',
+      retry: 'Thu thập lại',
+      capturing: 'Đang thu thập trạng thái đăng nhập upstream...',
+      waiting: 'Đang chờ đăng nhập upstream. Hãy đăng nhập, rồi bấm nút nếu không tự tiếp tục.',
+      expired: 'Phiên thu thập NexusTok đã hết hạn. Hãy tạo phiên mới trong NexusTok.',
+      captured: 'Đã thu thập. Đang quay lại NexusTok...',
+      invalidHandoff: 'Tham số thu thập NexusTok không hợp lệ. Hãy tạo phiên mới.',
+      wrongOrigin: 'Phiên thu thập này thuộc về một trang upstream khác.',
+      noToken: 'Không tìm thấy trạng thái đăng nhập khả dụng trên trang này.',
+      newAPIUserIDPrompt: 'Nhập ID người dùng dạng số từ trang new-api upstream. Không dùng tên hoặc email.',
+    },
+  };
+  let runtimeConfig = null;
+  let captureStarted = false;
+  let captureCompleted = false;
+  let lastFailurePostAt = 0;
+  let retryTimer = 0;
+  let styleMounted = false;
 
   function text(value) {
     return value == null ? '' : String(value);
@@ -467,6 +582,23 @@ func RenderCaptureHelperUserscript(nexusBaseURL string) (string, error) {
     }
   }
 
+  function normalizeLocale(value) {
+    const lower = text(value || (navigator && navigator.language) || '').replace(/_/g, '-').toLowerCase();
+    if (lower === 'zh-tw' || lower === 'zh-hant' || lower.startsWith('zh-hant-')) return 'zh-TW';
+    if (lower === 'zh' || lower.startsWith('zh-')) return 'zh';
+    if (lower === 'fr' || lower.startsWith('fr-')) return 'fr';
+    if (lower === 'ja' || lower.startsWith('ja-')) return 'ja';
+    if (lower === 'ru' || lower.startsWith('ru-')) return 'ru';
+    if (lower === 'vi' || lower.startsWith('vi-')) return 'vi';
+    return 'en';
+  }
+
+  function tr(key) {
+    const locale = normalizeLocale(runtimeConfig && runtimeConfig.locale);
+    const table = messages[locale] || messages.en;
+    return table[key] || messages.en[key] || key;
+  }
+
   function decodeBase64URL(value) {
     const normalized = text(value).replace(/-/g, '+').replace(/_/g, '/');
     const padded = normalized + '='.repeat((4 - normalized.length %% 4) %% 4);
@@ -475,6 +607,249 @@ func RenderCaptureHelperUserscript(nexusBaseURL string) (string, error) {
     } catch (_) {
       try { return atob(padded); } catch (__) { return ''; }
     }
+  }
+
+  function normalizeExpiresAt(value) {
+    const parsed = Number.parseInt(text(value), 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+    return parsed > 1000000000000 ? Math.floor(parsed / 1000) : parsed;
+  }
+
+  function findValueDeep(value, names, depth) {
+    if (!value || depth > 4) return '';
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = findValueDeep(item, names, depth + 1);
+        if (found) return found;
+      }
+      return '';
+    }
+    if (typeof value === 'object') {
+      for (const [key, child] of Object.entries(value)) {
+        if (names.includes(key.toLowerCase()) && child != null && typeof child !== 'object') {
+          return text(child).trim();
+        }
+        const found = findValueDeep(child, names, depth + 1);
+        if (found) return found;
+      }
+    }
+    return '';
+  }
+
+  function isNumericUserID(value) {
+    return /^\d+$/.test(text(value).trim());
+  }
+
+  function normalizeNewAPIUserID(value) {
+    const trimmed = text(value).trim();
+    return isNumericUserID(trimmed) ? trimmed : '';
+  }
+
+  function storageItems() {
+    const items = [];
+    for (const storage of [pageWindow.localStorage, pageWindow.sessionStorage]) {
+      try {
+        for (let i = 0; i < storage.length; i += 1) {
+          const key = storage.key(i) || '';
+          items.push({ storage, key, value: storage.getItem(key) || '' });
+        }
+      } catch (_) {}
+    }
+    return items;
+  }
+
+  function directStorageValue(keys) {
+    for (const storage of [pageWindow.localStorage, pageWindow.sessionStorage]) {
+      for (const key of keys) {
+        try {
+          const value = text(storage.getItem(key) || '').trim();
+          if (value) return value;
+        } catch (_) {}
+      }
+    }
+    return '';
+  }
+
+  function deepStorageValue(keys, names, keyPattern) {
+    for (const item of storageItems()) {
+      if (keys.length > 0 && !keys.includes(item.key)) continue;
+      if (keyPattern && !keyPattern.test(item.key)) continue;
+      const parsed = parseJSON(item.value);
+      const found = parsed ? findValueDeep(parsed, names, 0) : '';
+      if (found) return found;
+    }
+    return '';
+  }
+
+  function pageStateValue(names) {
+    const stateNames = ['__INITIAL_STATE__', '__APP_STATE__', '__NUXT__', '__NEXT_DATA__', '__PINIA__'];
+    for (const stateName of stateNames) {
+      try {
+        const found = findValueDeep(pageWindow[stateName], names, 0);
+        if (found) return found;
+      } catch (_) {}
+    }
+    return '';
+  }
+
+  function normalizeTokenCandidate(value, names) {
+    const raw = text(value).trim();
+    if (!raw) return '';
+    const parsed = parseJSON(raw);
+    if (parsed) return text(findValueDeep(parsed, names, 0)).trim();
+    return raw.replace(/^Bearer\s+/i, '').trim();
+  }
+
+  function directStorageToken(keys, names) {
+    return normalizeTokenCandidate(directStorageValue(keys), names);
+  }
+
+  function storageKeyNames(storage) {
+    const keys = [];
+    try {
+      for (let index = 0; index < storage.length && keys.length < 64; index += 1) {
+        const key = text(storage.key(index) || '').trim();
+        if (key && key.length <= 128) keys.push(key);
+      }
+    } catch (_) {}
+    return keys;
+  }
+
+  function cookieValue(name) {
+    if (typeof document === 'undefined') return '';
+    try {
+      const prefix = name + '=';
+      for (const item of document.cookie.split(';')) {
+        const trimmed = item.trim();
+        if (trimmed.startsWith(prefix)) return decodeURIComponent(trimmed.slice(prefix.length)).trim();
+      }
+    } catch (_) {}
+    return '';
+  }
+
+  function appConfigAPIBaseURL() {
+    try {
+      const value = pageWindow.__APP_CONFIG__ && pageWindow.__APP_CONFIG__.api_base_url;
+      return text(value || '').trim();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function parseHashParams() {
+    const rawHash = text(pageWindow.location.hash || '').replace(/^#/, '');
+    const candidates = [rawHash];
+    if (rawHash.includes('?')) candidates.push(rawHash.slice(rawHash.indexOf('?') + 1));
+    if (rawHash.includes('&')) candidates.push(rawHash.slice(rawHash.indexOf('&') + 1));
+    for (const candidate of candidates) {
+      const params = new URLSearchParams(candidate);
+      if (params.get('access_token') || params.get('auth_token') || params.get('refresh_token')) return params;
+    }
+    return new URLSearchParams(rawHash);
+  }
+
+  function tokenFromHashParam() {
+    const params = parseHashParams();
+    for (const name of Array.from(arguments)) {
+      const value = text(params.get(name) || '').trim();
+      if (value) return value;
+    }
+    return '';
+  }
+
+  function hasStorageValue(keys) {
+    for (const storage of [pageWindow.localStorage, pageWindow.sessionStorage]) {
+      for (const key of keys) {
+        try {
+          if (text(storage.getItem(key) || '').trim()) return true;
+        } catch (_) {}
+      }
+    }
+    return false;
+  }
+
+  function hasHashToken() {
+    const params = parseHashParams();
+    return Boolean(params.get('access_token') || params.get('auth_token') || params.get('token') || params.get('refresh_token') || params.get('rt'));
+  }
+
+  function normalizeAuthClientID(value) {
+    const trimmed = text(value).trim();
+    return trimmed && trimmed.length <= 128 ? trimmed : '';
+  }
+
+  function readSub2APIAuthClientIDSync() {
+    return normalizeAuthClientID(directStorageValue(['sub2api_auth_client_id']) || cookieValue('sub2api_auth_client_id'));
+  }
+
+  function readIndexedDBValue(dbName, storeName, key) {
+    if (typeof indexedDB === 'undefined') return Promise.resolve('');
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        resolve(normalizeAuthClientID(value));
+      };
+      let request;
+      try {
+        request = indexedDB.open(dbName);
+      } catch (_) {
+        finish('');
+        return;
+      }
+      request.onerror = () => finish('');
+      request.onblocked = () => finish('');
+      request.onsuccess = () => {
+        const db = request.result;
+        try {
+          if (!db.objectStoreNames.contains(storeName)) {
+            db.close();
+            finish('');
+            return;
+          }
+          const transaction = db.transaction(storeName, 'readonly');
+          const getRequest = transaction.objectStore(storeName).get(key);
+          getRequest.onsuccess = () => finish(getRequest.result);
+          getRequest.onerror = () => finish('');
+          transaction.oncomplete = () => db.close();
+          transaction.onerror = () => { db.close(); finish(''); };
+          transaction.onabort = () => { db.close(); finish(''); };
+        } catch (_) {
+          try { db.close(); } catch (__) {}
+          finish('');
+        }
+      };
+    });
+  }
+
+  async function readSub2APIAuthClientID() {
+    const direct = readSub2APIAuthClientIDSync();
+    if (direct) return direct;
+    return readIndexedDBValue('sub2api-auth-coordination', 'values', 'sub2api_auth_client_id');
+  }
+
+  function collectSub2APIDiagnostics(authMePath, restoreInfo) {
+    let localStorageKeys = [];
+    let sessionStorageKeys = [];
+    try { localStorageKeys = storageKeyNames(pageWindow.localStorage); } catch (_) {}
+    try { sessionStorageKeys = storageKeyNames(pageWindow.sessionStorage); } catch (_) {}
+    const restore = restoreInfo || {};
+    return {
+      page_origin: text(pageWindow.location && pageWindow.location.origin),
+      api_base_url_seen: appConfigAPIBaseURL(),
+      local_storage_keys: localStorageKeys,
+      session_storage_keys: sessionStorageKeys,
+      auth_token_present: hasStorageValue(['auth_token']),
+      access_token_present: hasStorageValue(['access_token', 'token', 'jwt', 'sub2api_auth_token']) || Boolean(pageStateValue(['access_token', 'auth_token', 'token', 'jwt'])),
+      refresh_token_present: hasStorageValue(['refresh_token', 'refreshToken', 'rt', 'sub2api_refresh_token']) || Boolean(pageStateValue(['refresh_token', 'refreshtoken', 'rt'])),
+      oauth_hash_token_present: hasHashToken(),
+      auth_client_id_present: Boolean(restore.authClientIDPresent || readSub2APIAuthClientIDSync()),
+      auth_me_path: text(authMePath || ''),
+      browser_session_restore_path: text(restore.path || ''),
+      browser_session_restore_status: text(restore.status || 'not_attempted'),
+      browser_session_restore_message: text(restore.message || ''),
+    };
   }
 
   function findHandoffToken() {
@@ -547,11 +922,15 @@ func RenderCaptureHelperUserscript(nexusBaseURL string) (string, error) {
     return readStoredHandoff();
   }
 
-  function showStatus(message, tone) {
+  function mountStyle() {
+    if (styleMounted || typeof GM_addStyle !== 'function') return;
+    styleMounted = true;
+    GM_addStyle('#' + panelId + '{position:fixed;right:16px;bottom:64px;z-index:2147483647;max-width:360px;border-radius:8px;background:white;color:#111827;padding:10px 12px;font:12px system-ui;box-shadow:0 8px 24px rgba(0,0,0,.18);line-height:1.45}#' + panelId + '[data-tone=success]{border-left:4px solid #16a34a}#' + panelId + '[data-tone=error]{border-left:4px solid #dc2626}#' + panelId + '[data-tone=info]{border-left:4px solid #2563eb}#' + buttonId + '{position:fixed;right:16px;bottom:16px;z-index:2147483647;border:0;border-radius:8px;background:#111827;color:white;padding:10px 12px;font:13px system-ui;box-shadow:0 8px 24px rgba(0,0,0,.24);cursor:pointer}#' + buttonId + ':disabled{opacity:.65;cursor:default}');
+  }
+
+  function showStatus(message, tone, buttonLabel) {
     if (!document.body) return;
-    if (typeof GM_addStyle === 'function') {
-      GM_addStyle('#' + panelId + '{position:fixed;right:16px;bottom:16px;z-index:2147483647;max-width:360px;border-radius:8px;background:white;color:#111827;padding:10px 12px;font:12px system-ui;box-shadow:0 8px 24px rgba(0,0,0,.18)}#' + panelId + '[data-tone=error]{border-left:4px solid #dc2626}#' + panelId + '[data-tone=info]{border-left:4px solid #2563eb}');
-    }
+    mountStyle();
     let panel = document.getElementById(panelId);
     if (!panel) {
       panel = document.createElement('div');
@@ -560,6 +939,16 @@ func RenderCaptureHelperUserscript(nexusBaseURL string) (string, error) {
     }
     panel.textContent = message;
     panel.dataset.tone = tone || 'info';
+    let button = document.getElementById(buttonId);
+    if (!button) {
+      button = document.createElement('button');
+      button.id = buttonId;
+      button.type = 'button';
+      button.addEventListener('click', () => runCapture(true));
+      document.body.appendChild(button);
+    }
+    button.textContent = buttonLabel || tr('send');
+    button.disabled = captureStarted || captureCompleted;
   }
 
   function handoffExpired(payload) {
@@ -567,34 +956,359 @@ func RenderCaptureHelperUserscript(nexusBaseURL string) (string, error) {
     return Number.isFinite(expiresAt) && expiresAt > 0 && Math.floor(Date.now() / 1000) >= expiresAt;
   }
 
-  function loadSessionScript(payload) {
+  function envelopeFailed(data) {
+    return data && typeof data === 'object' && (data.success === false || (typeof data.code === 'number' && data.code > 0));
+  }
+
+  function responseMessage(data) {
+    if (!data || typeof data !== 'object') return '';
+    return text(data.message || data.error || data.msg || '');
+  }
+
+  function candidatePaths(paths) {
+    const result = new Set(paths);
+    let prefix = '';
+    try {
+      const parsed = new URL(runtimeConfig.baseURL || pageWindow.location.href, pageWindow.location.origin);
+      const parts = parsed.pathname.split('/').filter(Boolean);
+      const pageSegments = new Set(['login', 'register', 'dashboard', 'console', 'playground', 'token', 'tokens', 'channel', 'channels', 'setting', 'settings', 'models', 'pricing', 'wallet', 'topup', 'logs', 'about', 'home', 'panel', 'admin']);
+      while (parts.length > 0 && pageSegments.has(parts[parts.length - 1].toLowerCase())) parts.pop();
+      if (parts.length > 0) prefix = '/' + parts.join('/');
+    } catch (_) {}
+    if (prefix) {
+      for (const path of paths) result.add(prefix.replace(/\/+$/, '') + '/' + text(path).replace(/^\/+/, ''));
+    }
+    return Array.from(result);
+  }
+
+  async function readJSON(path, options) {
+    const response = await pageFetch(path, {
+      credentials: 'include',
+      cache: 'no-store',
+      ...(options || {}),
+      headers: {
+        Accept: 'application/json',
+        ...((options && options.headers) ? options.headers : {}),
+      },
+    });
+    const rawBody = await response.text();
+    const data = parseJSON(rawBody) || {};
+    if (!response.ok || envelopeFailed(data)) {
+      const message = responseMessage(data) || ('HTTP ' + response.status);
+      const error = new Error(message);
+      error.status = response.status;
+      error.path = path;
+      throw error;
+    }
+    return data && typeof data === 'object' && data.data !== undefined ? data.data : data;
+  }
+
+  async function readFirstJSON(paths, options, label) {
+    const attempts = [];
+    for (const path of candidatePaths(paths)) {
+      try {
+        return { data: await readJSON(path, options), path };
+      } catch (error) {
+        attempts.push({ path, status: error && error.status ? error.status : 0, message: error && error.message ? error.message : String(error) });
+      }
+    }
+    const error = new Error(label + ' failed. Tried: ' + attempts.slice(0, 6).map((item) => item.path + ' -> ' + item.message).join('; '));
+    error.attempts = attempts;
+    throw error;
+  }
+
+  function normalizeSessionRestoreData(data) {
+    const source = data && typeof data === 'object' && data.data !== undefined ? data.data : data;
+    if (!source || typeof source !== 'object') return { authenticated: false, accessToken: '', refreshToken: '', expiresIn: 0, user: {} };
+    const accessToken = text(source.access_token || source.auth_token || source.token || '').replace(/^Bearer\s+/i, '').trim();
+    return {
+      authenticated: source.authenticated === true || Boolean(accessToken),
+      accessToken,
+      refreshToken: text(source.refresh_token || source.rt || '').trim(),
+      expiresIn: Number.parseInt(text(source.expires_in || source.expiresIn || ''), 10) || 0,
+      user: source.user && typeof source.user === 'object' ? source.user : {},
+    };
+  }
+
+  async function restoreSub2APIBrowserSession() {
+    const authClientID = await readSub2APIAuthClientID();
+    const restoreInfo = { status: 'not_attempted', path: '', message: '', authClientIDPresent: Boolean(authClientID) };
+    const headers = { 'Content-Type': 'application/json' };
+    if (authClientID) headers['X-Sub2API-Auth-Client'] = authClientID;
+    try {
+      const result = await readFirstJSON(['/api/v1/auth/session/restore', '/api/auth/session/restore', '/auth/session/restore'], { method: 'POST', body: '{}', headers }, 'sub2api browser session restore endpoint');
+      const restored = normalizeSessionRestoreData(result.data);
+      restoreInfo.path = result.path;
+      if (!restored.authenticated) {
+        restoreInfo.status = 'unauthenticated';
+        restoreInfo.message = 'The target browser session is not authenticated.';
+        return { state: null, restoreInfo };
+      }
+      if (!restored.accessToken) {
+        restoreInfo.status = 'failed';
+        restoreInfo.message = 'The target browser session restore response did not include access_token.';
+        return { state: null, restoreInfo };
+      }
+      restoreInfo.status = 'authenticated';
+      restoreInfo.message = 'The target browser session restored an access token.';
+      return {
+        state: {
+          accessToken: restored.accessToken,
+          refreshToken: restored.refreshToken,
+          expiresAt: '',
+          expiresIn: restored.expiresIn,
+          authUser: restored.user,
+          localStorage: {
+            auth_token: restored.accessToken,
+            access_token: restored.accessToken,
+            refresh_token: restored.refreshToken,
+            token_expires_at: '',
+          },
+          captureSource: 'browser_session_restore',
+        },
+        restoreInfo,
+      };
+    } catch (error) {
+      restoreInfo.status = 'failed';
+      restoreInfo.message = error && error.message ? error.message : String(error);
+      const attempts = error && Array.isArray(error.attempts) ? error.attempts : [];
+      if (attempts.length > 0) restoreInfo.path = attempts.slice(0, 3).map((item) => item.path).join(', ');
+      return { state: null, restoreInfo };
+    }
+  }
+
+  function guessNewAPIUserID() {
+    const directUID = text(directStorageValue(['uid', 'new-api-user', 'New-Api-User'])).trim();
+    if (isNumericUserID(directUID)) return directUID;
+    const storedUserID = deepStorageValue(['user', 'user_info', 'userInfo', 'auth', 'auth_user'], ['id', 'userid', 'user_id'], /user|auth|profile|self/i);
+    return normalizeNewAPIUserID(storedUserID);
+  }
+
+  function newAPIHeaders(userID) {
+    const headers = {};
+    const normalized = normalizeNewAPIUserID(userID);
+    if (normalized) headers['New-Api-User'] = normalized;
+    return headers;
+  }
+
+  async function captureNewAPI() {
+    let userID = guessNewAPIUserID();
+    let selfResult;
+    try {
+      selfResult = await readFirstJSON(['/api/user/self', '/api/user/me', '/api/user/profile', '/api/user/info'], { headers: newAPIHeaders(userID) }, 'new-api user profile endpoint');
+    } catch (error) {
+      if (!userID) {
+        const prompted = window.prompt(tr('newAPIUserIDPrompt'));
+        userID = normalizeNewAPIUserID(prompted);
+        if (!userID) throw new Error('New-Api-User must be a numeric target-site user ID.');
+        selfResult = await readFirstJSON(['/api/user/self', '/api/user/me', '/api/user/profile', '/api/user/info'], { headers: newAPIHeaders(userID) }, 'new-api user profile endpoint');
+      } else {
+        throw error;
+      }
+    }
+    const self = selfResult.data || {};
+    const finalUserID = normalizeNewAPIUserID(self.id || self.user_id || userID);
+    if (!finalUserID) throw new Error('New-Api-User must be a numeric target-site user ID.');
+    const tokenResult = await readFirstJSON(['/api/user/token', '/api/user/access_token', '/api/user/access-token'], { headers: newAPIHeaders(finalUserID) }, 'new-api access token endpoint');
+    const token = tokenResult.data;
+    const accessToken = typeof token === 'string' ? token : text(token.access_token || token.token || '');
+    if (!accessToken) throw new Error('new-api /api/user/token did not return access_token');
+    return {
+      platform: 'new-api',
+      auth_mode: 'access_token',
+      user_id: finalUserID,
+      username: text(self.username || ''),
+      email: text(self.email || ''),
+      access_token: accessToken,
+      auth_user: self,
+    };
+  }
+
+  function readSub2APILoginState() {
+    const accessToken = normalizeTokenCandidate(tokenFromHashParam('access_token', 'auth_token', 'token') || directStorageToken(['auth_token', 'access_token', 'token', 'jwt', 'sub2api_auth_token'], ['access_token', 'auth_token', 'token', 'jwt']) || deepStorageValue(['auth', 'auth_user', 'token_info', 'tokenInfo', 'session', 'user'], ['access_token', 'auth_token', 'token', 'jwt'], /auth|token|session|user/i) || pageStateValue(['access_token', 'auth_token', 'token', 'jwt']), ['access_token', 'auth_token', 'token', 'jwt']);
+    const refreshToken = normalizeTokenCandidate(tokenFromHashParam('refresh_token', 'rt') || directStorageToken(['refresh_token', 'refreshToken', 'rt', 'sub2api_refresh_token'], ['refresh_token', 'refreshtoken', 'rt']) || deepStorageValue(['auth', 'auth_user', 'token_info', 'tokenInfo', 'session', 'user'], ['refresh_token', 'refreshtoken', 'rt'], /auth|token|session|user/i) || pageStateValue(['refresh_token', 'refreshtoken', 'rt']), ['refresh_token', 'refreshtoken', 'rt']);
+    const expiresAt = text(tokenFromHashParam('expires_at', 'expiresAt') || directStorageValue(['token_expires_at', 'expires_at', 'expiresAt', 'access_token_expires_at']) || deepStorageValue(['auth', 'auth_user', 'token_info', 'tokenInfo', 'session', 'user'], ['token_expires_at', 'expires_at', 'expiresat', 'access_token_expires_at'], /auth|token|session|user/i)).trim();
+    const storedAuthUser = parseJSON(directStorageValue(['auth_user', 'user', 'user_info', 'userInfo']));
+    const authUser = storedAuthUser && typeof storedAuthUser === 'object' ? storedAuthUser : {};
+    return {
+      accessToken,
+      refreshToken,
+      expiresAt,
+      expiresIn: 0,
+      authUser,
+      localStorage: {
+        auth_token: accessToken,
+        access_token: accessToken,
+        refresh_token: refreshToken,
+        token_expires_at: expiresAt,
+      },
+      captureSource: 'userscript',
+      diagnostics: collectSub2APIDiagnostics(''),
+    };
+  }
+
+  async function captureSub2API() {
+    const relayBaseURL = appConfigAPIBaseURL();
+    const managementBaseURL = runtimeConfig.baseURL;
+    let state = readSub2APILoginState();
+    let diagnostics = state.diagnostics || collectSub2APIDiagnostics('');
+    let authUser = state.authUser || {};
+    let accessToken = state.accessToken;
+    if (!accessToken) {
+      const restored = await restoreSub2APIBrowserSession();
+      if (restored.state && restored.state.accessToken) {
+        state = restored.state;
+        accessToken = state.accessToken;
+        authUser = state.authUser || {};
+        diagnostics = collectSub2APIDiagnostics('', restored.restoreInfo);
+      } else {
+        diagnostics = collectSub2APIDiagnostics('', restored.restoreInfo);
+      }
+    }
+    if (!accessToken) {
+      const error = new Error(tr('noToken') + ' ' + text(diagnostics.browser_session_restore_message || ''));
+      error.diagnostics = diagnostics;
+      throw error;
+    }
+    try {
+      const meResult = await readFirstJSON(['/api/v1/auth/me', '/api/auth/me', '/auth/me'], { headers: { Authorization: 'Bearer ' + accessToken } }, 'sub2api current user endpoint');
+      diagnostics.auth_me_path = meResult.path;
+      authUser = { ...(authUser || {}), ...(meResult.data || {}) };
+    } catch (error) {
+      diagnostics.auth_me_path = 'failed';
+      const wrapped = new Error('sub2api access token is invalid or expired: ' + (error && error.message ? error.message : String(error)));
+      wrapped.diagnostics = diagnostics;
+      throw wrapped;
+    }
+    const params = parseHashParams();
+    const expiresIn = Number.parseInt(text(params.get('expires_in')), 10);
+    return {
+      platform: 'sub2api',
+      auth_mode: 'access_token',
+      base_url: managementBaseURL,
+      management_base_url: managementBaseURL,
+      relay_base_url: relayBaseURL,
+      access_token: accessToken,
+      refresh_token: state.refreshToken,
+      api_base_url: relayBaseURL,
+      expires_in: state.expiresIn || (Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn : 0),
+      expires_at: normalizeExpiresAt(state.expiresAt),
+      auth_user: authUser,
+      hash: pageWindow.location.hash || '',
+      local_storage: state.localStorage,
+      capture_source: state.captureSource || 'userscript',
+      diagnostics,
+    };
+  }
+
+  function postToNexusTok(payload) {
     return new Promise((resolve, reject) => {
-      if (!payload || !payload.userscriptURL) {
-        reject(new Error('NexusTok capture handoff is missing userscriptURL.'));
+      if (!runtimeConfig || !runtimeConfig.completeURL) {
+        reject(new Error('NexusTok complete URL is missing.'));
         return;
       }
       GM_xmlhttpRequest({
-        method: 'GET',
-        url: payload.userscriptURL,
-        headers: { Accept: 'application/javascript,text/javascript,*/*' },
+        method: 'POST',
+        url: runtimeConfig.completeURL,
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        data: JSON.stringify(payload),
         onload: (res) => {
-          const source = text(res.responseText || '');
-          if (res.status < 200 || res.status >= 300 || !source.trimStart().startsWith('// ==UserScript==')) {
-            reject(new Error('NexusTok capture script could not be loaded. Create a new capture session and try again.'));
-            return;
-          }
-          try {
-            // 这里执行的是当前 NexusTok 会话生成的短时脚本；脚本内仍会校验 capture_secret、
-            // origin 和 TTL。稳定助手本身不保存任何长期密钥。
-            eval(source + '\n//# sourceURL=nexustok-upstream-capture-session.user.js');
-            resolve();
-          } catch (error) {
-            reject(error);
-          }
+          let body = {};
+          try { body = JSON.parse(res.responseText || '{}'); } catch (_) {}
+          if (res.status >= 200 && res.status < 300 && body.success !== false) resolve(body);
+          else reject(new Error(body.message || ('NexusTok HTTP ' + res.status)));
         },
-        onerror: () => reject(new Error('Cannot connect to NexusTok to load the capture script.')),
+        onerror: () => reject(new Error('Cannot connect to NexusTok')),
       });
     });
+  }
+
+  function returnToNexusTok() {
+    const target = text(runtimeConfig && runtimeConfig.returnURL || '').trim();
+    if (!target) return;
+    try {
+      const url = new URL(target, window.location.href);
+      url.searchParams.set('upstream_capture_id', runtimeConfig.captureID || '');
+      const message = { type: 'nexustok-upstream-capture-completed', captureID: runtimeConfig.captureID || '' };
+      try {
+        if (window.opener && !window.opener.closed) {
+          window.opener.postMessage(message, url.origin);
+        }
+      } catch (_) {}
+      window.setTimeout(() => {
+        window.location.replace(url.toString());
+      }, 700);
+    } catch (_) {
+      window.setTimeout(() => {
+        window.location.replace(target);
+      }, 700);
+    }
+  }
+
+  function scheduleRetry() {
+    if (captureCompleted || !runtimeConfig || handoffExpired(runtimeConfig)) return;
+    if (retryTimer) window.clearTimeout(retryTimer);
+    showStatus(tr('waiting'), 'info', tr('retry'));
+    retryTimer = window.setTimeout(() => {
+      captureStarted = false;
+      runCapture(false);
+    }, 3000);
+  }
+
+  async function runCapture(manual) {
+    if (!runtimeConfig || captureStarted || captureCompleted) return;
+    if (handoffExpired(runtimeConfig)) {
+      removeStoredHandoff();
+      showStatus(tr('expired'), 'error', tr('retry'));
+      return;
+    }
+    captureStarted = true;
+    showStatus(tr('capturing'), 'info', tr('send'));
+    try {
+      const captured = runtimeConfig.platform === 'new-api' ? await captureNewAPI() : await captureSub2API();
+      const managementBaseURL = captured.management_base_url || captured.base_url || runtimeConfig.baseURL;
+      const relayBaseURL = captured.relay_base_url || captured.api_base_url || '';
+      const payload = {
+        ...captured,
+        capture_secret: runtimeConfig.captureSecret,
+        capture_source: captured.capture_source || 'userscript',
+        origin: pageWindow.location.origin,
+        base_url: managementBaseURL,
+        management_base_url: managementBaseURL,
+        relay_base_url: relayBaseURL,
+        api_base_url: relayBaseURL,
+        captured_at: Math.floor(Date.now() / 1000),
+        user_agent: navigator.userAgent,
+      };
+      await postToNexusTok(payload);
+      captureCompleted = true;
+      showStatus(tr('captured'), 'success', tr('send'));
+      returnToNexusTok();
+    } catch (error) {
+      const message = error && error.message ? error.message : String(error);
+      const relayBaseURL = runtimeConfig.platform === 'sub2api' ? appConfigAPIBaseURL() : '';
+      const payload = {
+        capture_secret: runtimeConfig.captureSecret,
+        capture_source: 'userscript',
+        origin: pageWindow.location.origin,
+        base_url: runtimeConfig.baseURL,
+        management_base_url: runtimeConfig.baseURL,
+        relay_base_url: relayBaseURL,
+        api_base_url: relayBaseURL,
+        platform: runtimeConfig.platform,
+        captured_at: Math.floor(Date.now() / 1000),
+        error: message,
+        diagnostics: error && error.diagnostics ? error.diagnostics : collectSub2APIDiagnostics(''),
+      };
+      const now = Date.now();
+      if (now - lastFailurePostAt > 15000) {
+        lastFailurePostAt = now;
+        try { await postToNexusTok(payload); } catch (_) {}
+      }
+      captureStarted = false;
+      if (manual) showStatus(message, 'error', tr('retry'));
+      scheduleRetry();
+    }
   }
 
   async function boot() {
@@ -604,14 +1318,18 @@ func RenderCaptureHelperUserscript(nexusBaseURL string) (string, error) {
     if (payload.origin && pageWindow.location.origin !== payload.origin) return;
     if (handoffExpired(payload)) {
       removeStoredHandoff();
-      showStatus('NexusTok capture session expired. Create a new session.', 'error');
+      runtimeConfig = payload;
+      showStatus(tr('expired'), 'error', tr('retry'));
       return;
     }
-    try {
-      await loadSessionScript(payload);
-    } catch (error) {
-      showStatus(error && error.message ? error.message : String(error), 'error');
+    if (!payload.captureSecret || !payload.completeURL || !payload.captureID) {
+      runtimeConfig = payload;
+      showStatus(tr('invalidHandoff'), 'error', tr('retry'));
+      return;
     }
+    runtimeConfig = payload;
+    showStatus(tr('ready'), 'info', tr('send'));
+    window.setTimeout(() => runCapture(false), 800);
   }
 
   if (document.readyState === 'loading') {
@@ -620,7 +1338,7 @@ func RenderCaptureHelperUserscript(nexusBaseURL string) (string, error) {
   } else {
     boot();
   }
-})();`, captureHelperVersion, connectHost, string(configBytes)), nil
+})();`, captureHelperDisplayName(nexusBaseURL), captureHelperVersion, connectHost, string(configBytes)), nil
 }
 
 func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (string, error) {
@@ -1639,7 +2357,7 @@ func sanitizeCaptureRecord(record CaptureSessionRecord, nexusBaseURL string) *Ca
 	}
 	userscriptURL, loginURL := captureSessionLinks(record, nexusBaseURL)
 	helperInstallURL := captureHelperInstallURL(nexusBaseURL)
-	handoffURL := captureHandoffURL(record, userscriptURL)
+	handoffURL := captureHandoffURL(record, nexusBaseURL, userscriptURL)
 	managementBaseURL := firstNonEmpty(record.ManagementBaseURL, record.BaseURL)
 	relayBaseURL := firstNonEmpty(record.RelayBaseURL, record.APIBaseURL)
 	if record.Summary != nil {
@@ -1648,24 +2366,27 @@ func sanitizeCaptureRecord(record CaptureSessionRecord, nexusBaseURL string) *Ca
 	}
 	baseURL := managementBaseURL
 	return &CaptureSessionStatusResult{
-		CaptureID:         record.ID,
-		Status:            record.Status,
-		Message:           message,
-		ExpiresAt:         record.ExpiresAt,
-		Platform:          record.Platform,
-		BaseURL:           baseURL,
-		ManagementBaseURL: managementBaseURL,
-		RelayBaseURL:      relayBaseURL,
-		APIBaseURL:        relayBaseURL,
-		Origin:            record.Origin,
-		UserscriptURL:     userscriptURL,
-		HelperInstallURL:  helperInstallURL,
-		HandoffURL:        handoffURL,
-		HelperVersion:     captureHelperVersion,
-		LoginURL:          loginURL,
-		ReturnURL:         record.ReturnURL,
-		Summary:           record.Summary,
-		Diagnostics:       sanitizeCaptureDiagnostics(record.Diagnostics),
+		CaptureID:             record.ID,
+		Status:                record.Status,
+		Message:               message,
+		ExpiresAt:             record.ExpiresAt,
+		Platform:              record.Platform,
+		BaseURL:               baseURL,
+		ManagementBaseURL:     managementBaseURL,
+		RelayBaseURL:          relayBaseURL,
+		APIBaseURL:            relayBaseURL,
+		Origin:                record.Origin,
+		UserscriptURL:         userscriptURL,
+		HelperInstallURL:      helperInstallURL,
+		HandoffURL:            handoffURL,
+		HelperVersion:         captureHelperVersion,
+		HelperRequiredVersion: captureHelperVersion,
+		HelperStatusMessage:   captureHelperStatusMessage(captureHelperVersion),
+		LoginURL:              loginURL,
+		ReturnURL:             record.ReturnURL,
+		Locale:                normalizeCaptureLocale(record.Locale),
+		Summary:               record.Summary,
+		Diagnostics:           sanitizeCaptureDiagnostics(record.Diagnostics),
 	}
 }
 
@@ -1745,19 +2466,67 @@ func captureHelperInstallURL(nexusBaseURL string) string {
 	return nexusBaseURL + "/api/channel/upstream-account/capture-helper.user.js"
 }
 
-func captureHandoffURL(record CaptureSessionRecord, userscriptURL string) string {
+func captureHelperStatusMessage(version string) string {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		version = captureHelperVersion
+	}
+	return "Install or update NexusTok capture helper " + version + " before opening the upstream site."
+}
+
+func captureHelperDisplayName(nexusBaseURL string) string {
+	host := "NexusTok"
+	if parsed, err := url.Parse(nexusBaseURL); err == nil && parsed.Host != "" {
+		host = parsed.Host
+	}
+	return "NexusTok Capture Helper - " + host
+}
+
+func normalizeCaptureLocale(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "en"
+	}
+	lower := strings.ToLower(strings.ReplaceAll(trimmed, "_", "-"))
+	switch {
+	case lower == "zh-tw" || lower == "zh-hant" || strings.HasPrefix(lower, "zh-hant-"):
+		return "zh-TW"
+	case lower == "zh" || strings.HasPrefix(lower, "zh-"):
+		return "zh"
+	case lower == "fr" || strings.HasPrefix(lower, "fr-"):
+		return "fr"
+	case lower == "ja" || strings.HasPrefix(lower, "ja-"):
+		return "ja"
+	case lower == "ru" || strings.HasPrefix(lower, "ru-"):
+		return "ru"
+	case lower == "vi" || strings.HasPrefix(lower, "vi-"):
+		return "vi"
+	default:
+		return "en"
+	}
+}
+
+func captureHandoffURL(record CaptureSessionRecord, nexusBaseURL string, userscriptURL string) string {
 	baseURL := strings.TrimSpace(record.BaseURL)
-	if baseURL == "" || strings.TrimSpace(userscriptURL) == "" {
+	if baseURL == "" {
 		return baseURL
+	}
+	nexusBaseURL = strings.TrimRight(strings.TrimSpace(nexusBaseURL), "/")
+	completeURL := ""
+	if nexusBaseURL != "" && strings.TrimSpace(record.ID) != "" {
+		completeURL = nexusBaseURL + "/api/channel/upstream-account/capture-session/" + url.PathEscape(record.ID) + "/complete"
 	}
 	payloadBytes, err := common.Marshal(map[string]any{
 		"captureID":     record.ID,
+		"captureSecret": record.Secret,
+		"completeURL":   completeURL,
 		"userscriptURL": userscriptURL,
 		"returnURL":     record.ReturnURL,
 		"expiresAt":     record.ExpiresAt,
 		"origin":        record.Origin,
 		"platform":      record.Platform,
 		"baseURL":       record.BaseURL,
+		"locale":        normalizeCaptureLocale(record.Locale),
 		"helperVersion": captureHelperVersion,
 	})
 	if err != nil {
