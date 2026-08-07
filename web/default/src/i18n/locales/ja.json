@@ -5952,6 +5952,9 @@
     "Zero retention": "データ保持なし",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V 4",
-    "Zoom": "ズーム"
+    "Zoom": "ズーム",
+    "Routable Models": "ルーティング可能なモデル",
+    "This key will not route any model.": "このキーはどのモデルもルーティングしません。",
+    "Use Upstream Models": "上流のモデルを使用"
   }
 }

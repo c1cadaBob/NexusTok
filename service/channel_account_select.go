@@ -148,6 +148,9 @@ func SelectSpecificChannelAccount(
 	if account.IsCoolingDown(common.GetTimestamp()) {
 		return nil, fmt.Errorf("指定的上游密钥当前处于冷却或临时禁用状态")
 	}
+	if channel.HasUpstreamAccountSyncMetadata() && strings.TrimSpace(account.Models) == "" {
+		return nil, fmt.Errorf("指定的上游密钥未配置可路由模型")
+	}
 	if !channelAccountSupportsModel(&account, channel, modelName) {
 		return nil, fmt.Errorf("指定的上游密钥不支持模型 %s", strings.TrimSpace(modelName))
 	}
@@ -363,11 +366,17 @@ func resolveChannelAccountUsingGroup(c *gin.Context, usingGroup string) string {
 }
 
 // channelAccountSupportsModel 检查渠道账号是否支持指定的模型。
-// 优先使用账号级别的模型列表，其次使用渠道级别的模型列表。
-// 空列表表示支持所有模型。支持通配符 "*" 和前缀匹配（如 "gpt-*"）。
+//
+// 普通账号池继续兼容旧语义：账号模型为空时回退渠道模型，最终仍为空表示不限模型。
+// 上游同步账号的模型列表是管理员确认后的显式白名单，空值表示该同步密钥暂不参与
+// 任何模型路由，不能再回退到渠道聚合模型，否则“清空模型”会被错误解释成“支持全部”。
 func channelAccountSupportsModel(account *model.ChannelAccount, channel *model.Channel, modelName string) bool {
 	models := account.Models
-	if strings.TrimSpace(models) == "" && channel != nil {
+	if channel != nil && channel.HasUpstreamAccountSyncMetadata() {
+		if strings.TrimSpace(models) == "" {
+			return false
+		}
+	} else if strings.TrimSpace(models) == "" && channel != nil {
 		models = channel.Models
 	}
 	modelList := splitCommaValues(models)

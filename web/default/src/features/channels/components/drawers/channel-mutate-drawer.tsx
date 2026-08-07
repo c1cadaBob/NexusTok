@@ -196,6 +196,7 @@ import {
   getUpstreamKeyRatioDisplayValue,
   getUpstreamKeyGroupLabel,
   getUpstreamRatioDisplayValue,
+  summarizeUpstreamAccountCapabilities,
 } from '../../lib/upstream-sync'
 import type {
   Channel,
@@ -1150,6 +1151,8 @@ export function ChannelMutateDrawer({
     defaultValues: CHANNEL_FORM_DEFAULT_VALUES,
   })
   const currentType = form.watch('type')
+  const forcedUpstreamPlatform = upstreamPlatformFromChannelType(currentType)
+  const currentTypeRequiresUpstreamSync = Boolean(forcedUpstreamPlatform)
   const [fetchModelsDialogOpen, setFetchModelsDialogOpen] = useState(false)
   const [channelKey, setChannelKey] = useState<string | null>(null)
   const [isChannelKeyLoading, setIsChannelKeyLoading] = useState(false)
@@ -1243,6 +1246,10 @@ export function ChannelMutateDrawer({
   const [paramOverrideEditorOpen, setParamOverrideEditorOpen] = useState(false)
   const [advancedCustomEditorOpen, setAdvancedCustomEditorOpen] =
     useState(false)
+  const [upstreamKeyModelSearch, setUpstreamKeyModelSearch] = useState({
+    configId: '',
+    value: '',
+  })
   const [modelSearchValue, setModelSearchValue] = useState('')
   const [modelSearchOpen, setModelSearchOpen] = useState(false)
   const [activeEditorSectionId, setActiveEditorSectionId] = useState<string>(
@@ -1275,6 +1282,14 @@ export function ChannelMutateDrawer({
   const debouncedModelSearchValue = useDebounce(modelSearchValue, 300)
   const trimmedModelSearchValue = modelSearchValue.trim()
   const trimmedDebouncedModelSearchValue = debouncedModelSearchValue.trim()
+  const debouncedUpstreamKeyModelSearchValue = useDebounce(
+    upstreamKeyModelSearch.value,
+    300
+  )
+  const trimmedUpstreamKeyModelSearchValue =
+    upstreamKeyModelSearch.value.trim()
+  const trimmedDebouncedUpstreamKeyModelSearchValue =
+    debouncedUpstreamKeyModelSearchValue.trim()
 
   // 编辑渠道时拉取完整渠道详情，用于回填表单和保留历史配置。
   const { data: channelData, isLoading: isChannelLoading } = useQuery({
@@ -1296,11 +1311,16 @@ export function ChannelMutateDrawer({
   })
 
   const modelSearchVendor = useMemo(
-    () => getModelSearchVendorForChannelType(currentType),
-    [currentType]
+    () =>
+      currentTypeRequiresUpstreamSync
+        ? ''
+        : getModelSearchVendorForChannelType(currentType),
+    [currentType, currentTypeRequiresUpstreamSync]
   )
 
   const shouldSearchModels = trimmedDebouncedModelSearchValue.length >= 2
+  const shouldSearchUpstreamKeyModels =
+    trimmedDebouncedUpstreamKeyModelSearchValue.length >= 2
 
   // 在渠道编辑页搜索模型元信息库，把已同步但尚未绑定到渠道的模型纳入可选候选。
   // 例如 OpenAI 的 gpt-5.6 系列有 Terra/Luna/Sol 三个真实模型，不能只依赖
@@ -1323,6 +1343,28 @@ export function ChannelMutateDrawer({
         page_size: 50,
       }),
     enabled: open && shouldSearchModels,
+    placeholderData: (previousData) => previousData,
+  })
+
+  // 同步密钥的模型白名单从全局同步源模型库搜索，不按 OpenAI vendor 收窄。
+  // new-api/sub2api 是聚合平台，同一个上游可能同时承载 Alibaba、Meta、DeepSeek 等模型。
+  const {
+    data: upstreamKeyModelSearchData,
+    isFetching: isUpstreamKeyModelSearchFetching,
+    isError: isUpstreamKeyModelSearchError,
+  } = useQuery({
+    queryKey: [
+      'upstream-sync-key-model-search',
+      trimmedDebouncedUpstreamKeyModelSearchValue,
+    ],
+    queryFn: () =>
+      searchModels({
+        keyword: trimmedDebouncedUpstreamKeyModelSearchValue,
+        p: 1,
+        page_size: 50,
+      }),
+    enabled:
+      open && currentTypeRequiresUpstreamSync && shouldSearchUpstreamKeyModels,
     placeholderData: (previousData) => previousData,
   })
 
@@ -1606,7 +1648,6 @@ export function ChannelMutateDrawer({
   )
   const isUpstreamAccountSyncedChannel =
     isEditing && hasUpstreamAccountSyncMetadata
-  const forcedUpstreamPlatform = upstreamPlatformFromChannelType(currentType)
   const upstreamCaptureReturnUrl = useMemo(
     () =>
       buildUpstreamCaptureReturnUrl({
@@ -1624,7 +1665,6 @@ export function ChannelMutateDrawer({
       forcedUpstreamPlatform,
     ]
   )
-  const currentTypeRequiresUpstreamSync = Boolean(forcedUpstreamPlatform)
   const isCreateUpstreamSyncMode = !isEditing && currentTypeRequiresUpstreamSync
   const isEditingUnsupportedUnsyncedUpstreamType =
     isEditing &&
@@ -1632,9 +1672,9 @@ export function ChannelMutateDrawer({
     !isUpstreamAccountSyncedChannel
   const usesUpstreamAccountCredentialSource =
     currentTypeRequiresUpstreamSync || isUpstreamAccountSyncedChannel
-  // 同步模式下渠道模型由逐 key 配置主导，但渠道分组仍然决定 NexusTok 用户可见性，
-  // 因此保留该区块，仅隐藏共享模型编辑能力。
-  const showSharedModelsSection = true
+  // 上游同步渠道的真实路由能力完全由每个同步密钥的 models 与 access_groups 决定。
+  // 渠道级 models/group 只是后端聚合缓存和旧接口兼容字段，不能再展示为可编辑入口。
+  const showSharedModelsSection = !usesUpstreamAccountCredentialSource
   const showManualCredentialSection = !usesUpstreamAccountCredentialSource
   const supportsMultiKeyAddMode =
     currentType !== 57 && !(currentType === 41 && vertexKeyType === 'api_key')
@@ -1843,6 +1883,10 @@ export function ChannelMutateDrawer({
       } = {}
     ) => {
       const showSuggestedToggle = options.showSuggestedToggle !== false
+      const capabilitySummary = summarizeUpstreamAccountCapabilities(
+        snapshot.keys,
+        upstreamAccountConfigs
+      )
       return (
         <div className='flex flex-col gap-3'>
           {options.showBalance !== false && (
@@ -1875,12 +1919,34 @@ export function ChannelMutateDrawer({
           )}
 
           {options.showBalance === false && (
-            <div className='rounded-md border p-3'>
-              <div className='text-muted-foreground text-xs'>
-                {t('Synced Keys')}
+            <div className='grid gap-3 sm:grid-cols-3'>
+              <div className='rounded-md border p-3'>
+                <div className='text-muted-foreground text-xs'>
+                  {t('Synced Keys')}
+                </div>
+                <div className='text-lg font-semibold'>
+                  {capabilitySummary.enabledKeyCount}/
+                  {capabilitySummary.totalKeyCount}
+                </div>
               </div>
-              <div className='text-lg font-semibold'>
-                {snapshot.keys.length}
+              <div className='rounded-md border p-3'>
+                <div className='text-muted-foreground text-xs'>
+                  {t('Routable Models')}
+                </div>
+                <div className='text-lg font-semibold'>
+                  {capabilitySummary.modelCount}
+                </div>
+              </div>
+              <div className='rounded-md border p-3'>
+                <div className='text-muted-foreground text-xs'>
+                  {t('NexusTok Access Groups')}
+                </div>
+                <div
+                  className='truncate text-lg font-semibold'
+                  title={capabilitySummary.accessGroupText}
+                >
+                  {capabilitySummary.accessGroupText}
+                </div>
               </div>
             </div>
           )}
@@ -1970,11 +2036,6 @@ export function ChannelMutateDrawer({
                   )
                   const currentModelsArrayValue =
                     upstreamAccountModelsArrayValue(key, config)
-                  const upstreamKeyModelOptions =
-                    buildUpstreamAccountModelOptions(key, config, [
-                      ...allModelsList,
-                      ...currentModelsArray,
-                    ])
                   const updateConfig = (
                     updater: (
                       previous: UpstreamAccountConfigDraft | undefined
@@ -2008,6 +2069,54 @@ export function ChannelMutateDrawer({
                     setConfigValue({
                       models: formatModelsArray(dedupeModelNames(values)),
                     })
+                  const isCurrentKeyModelSearch =
+                    upstreamKeyModelSearch.configId === configId
+                  const currentKeyModelSearchValue = isCurrentKeyModelSearch
+                    ? upstreamKeyModelSearch.value
+                    : ''
+                  const currentKeySearchSummary =
+                    summarizeModelSearchCandidates(
+                      isCurrentKeyModelSearch
+                        ? upstreamKeyModelSearchNameResult.names
+                        : [],
+                      currentModelsArrayValue
+                    )
+                  const upstreamKeyModelOptions =
+                    buildUpstreamAccountModelOptions(key, config, [
+                      ...currentKeySearchSummary.matched,
+                      ...currentModelsArray,
+                    ])
+                  const showKeyModelSearchPanel =
+                    currentKeyModelSearchValue.trim().length >= 2 &&
+                    (upstreamKeyModelSearchIsLoading ||
+                      isUpstreamKeyModelSearchError ||
+                      currentKeySearchSummary.matched.length > 0)
+                  const handleAppendKeyModelSearchResults = () => {
+                    if (currentKeySearchSummary.addable.length === 0) {
+                      toast.info(t('No new search results to add'))
+                      return
+                    }
+                    handleKeyModelsChange(
+                      mergeModelNames(
+                        currentModelsArrayValue,
+                        currentKeySearchSummary.addable
+                      )
+                    )
+                    setUpstreamKeyModelSearch({ configId, value: '' })
+                  }
+                  const handleUseUpstreamKeyModels = () => {
+                    handleKeyModelsChange(key.models ?? [])
+                    setUpstreamKeyModelSearch({ configId, value: '' })
+                  }
+                  const handleClearKeyModels = () => {
+                    setConfigValue({ models: '' })
+                    setUpstreamKeyModelSearch({ configId, value: '' })
+                  }
+                  const preventModelActionBlur = (event: {
+                    preventDefault: () => void
+                  }) => {
+                    event.preventDefault()
+                  }
                   const currentGroupValue = upstreamAccountConfigTextValue(
                     config?.group,
                     key.group_name || key.group_id || ''
@@ -2051,19 +2160,114 @@ export function ChannelMutateDrawer({
                           {key.masked_key}
                         </div>
                       </div>
-                      <MultiSelect
-                        options={upstreamKeyModelOptions}
-                        selected={currentModelsArrayValue}
-                        onChange={handleKeyModelsChange}
-                        placeholder={t('Select models or add custom ones')}
-                        allowCreate
-                        allowCreateWithMatches={false}
-                        createLabel='Add custom model "{{value}}"'
-                        maxVisibleChips={2}
-                        copyChipOnClick
-                        emptyText={t('No matching models')}
-                        className='min-h-8'
-                      />
+                      <div className='flex min-w-0 flex-col gap-1'>
+                        <MultiSelect
+                          options={upstreamKeyModelOptions}
+                          selected={currentModelsArrayValue}
+                          onChange={handleKeyModelsChange}
+                          placeholder={t('Select models or add custom ones')}
+                          allowCreate
+                          allowCreateWithMatches={false}
+                          createLabel='Add custom model "{{value}}"'
+                          maxVisibleChips={2}
+                          copyChipOnClick
+                          emptyText={t('No matching models')}
+                          loadingText={t('Searching...')}
+                          isLoading={
+                            isCurrentKeyModelSearch &&
+                            upstreamKeyModelSearchIsLoading
+                          }
+                          searchValue={currentKeyModelSearchValue}
+                          onSearchChange={(value) =>
+                            setUpstreamKeyModelSearch({ configId, value })
+                          }
+                          onSearchSubmit={handleAppendKeyModelSearchResults}
+                          contentHeader={
+                            showKeyModelSearchPanel ? (
+                              <div className='bg-background flex flex-col gap-2 rounded-md'>
+                                <div className='flex items-center justify-between gap-3'>
+                                  <div className='min-w-0'>
+                                    <p className='text-sm font-medium'>
+                                      {t('Search results')}
+                                    </p>
+                                    <p className='text-muted-foreground text-xs'>
+                                      {upstreamKeyModelSearchIsLoading
+                                        ? t('Searching...')
+                                        : isUpstreamKeyModelSearchError
+                                          ? t('No matching models')
+                                          : t(
+                                              '{{matched}} matched · {{addable}} new · {{existing}} already selected',
+                                              {
+                                                matched:
+                                                  currentKeySearchSummary
+                                                    .matched.length,
+                                                addable:
+                                                  currentKeySearchSummary
+                                                    .addable.length,
+                                                existing:
+                                                  currentKeySearchSummary.existingCount,
+                                              }
+                                            )}
+                                    </p>
+                                  </div>
+                                  <Button
+                                    type='button'
+                                    variant='outline'
+                                    size='sm'
+                                    onMouseDown={preventModelActionBlur}
+                                    onClick={handleAppendKeyModelSearchResults}
+                                    disabled={
+                                      upstreamKeyModelSearchIsLoading ||
+                                      currentKeySearchSummary.addable.length ===
+                                        0
+                                    }
+                                  >
+                                    <Plus data-icon='inline-start' />
+                                    {t('Add {{count}} search result(s)', {
+                                      count:
+                                        currentKeySearchSummary.addable.length,
+                                    })}
+                                  </Button>
+                                </div>
+                              </div>
+                            ) : undefined
+                          }
+                          contentFooter={
+                            <div className='bg-background flex flex-wrap gap-2 border-t pt-2'>
+                              <Button
+                                type='button'
+                                variant='ghost'
+                                size='sm'
+                                onMouseDown={preventModelActionBlur}
+                                onClick={handleUseUpstreamKeyModels}
+                                disabled={(key.models ?? []).length === 0}
+                              >
+                                {t('Use Upstream Models')}
+                              </Button>
+                              <Button
+                                type='button'
+                                variant='ghost'
+                                size='sm'
+                                onMouseDown={preventModelActionBlur}
+                                onClick={handleClearKeyModels}
+                                disabled={currentModelsArrayValue.length === 0}
+                              >
+                                {t('Clear All')}
+                              </Button>
+                            </div>
+                          }
+                          hideSelectedOptionsWhenSearching
+                          submitSearchOnEnterWithMatches
+                          submitSearchOnEnterWhenHighlighted
+                          clearSearchOnSelect={false}
+                          className='min-h-8'
+                        />
+                        {currentModelsArrayValue.length === 0 ? (
+                          <span className='text-destructive truncate text-[11px]'>
+                            {t('This key will not route any model.')}
+                          </span>
+                        ) : null}
+                      </div>
                       <div className='flex min-w-0 flex-col gap-1'>
                         <Input
                           value={currentGroupValue}
@@ -2160,7 +2364,6 @@ export function ChannelMutateDrawer({
       )
     },
     [
-      allModelsList,
       currentModelsArray,
       t,
       upstreamAccountConfigs,
@@ -2439,6 +2642,17 @@ export function ChannelMutateDrawer({
       ),
     [modelSearchData, trimmedDebouncedModelSearchValue]
   )
+  const upstreamKeyModelSearchNameResult = useMemo(
+    () =>
+      getModelSearchModelNameResult(
+        upstreamKeyModelSearchData?.data?.items ?? [],
+        trimmedDebouncedUpstreamKeyModelSearchValue
+      ),
+    [
+      upstreamKeyModelSearchData,
+      trimmedDebouncedUpstreamKeyModelSearchValue,
+    ]
+  )
 
   const modelSearchSummary = useMemo(
     () =>
@@ -2486,6 +2700,13 @@ export function ChannelMutateDrawer({
     trimmedModelSearchValue !== trimmedDebouncedModelSearchValue
   const modelSearchIsLoading =
     modelSearchIsWaitingForDebounce || isModelSearchFetching
+  const upstreamKeyModelSearchIsWaitingForDebounce =
+    trimmedUpstreamKeyModelSearchValue.length >= 2 &&
+    trimmedUpstreamKeyModelSearchValue !==
+      trimmedDebouncedUpstreamKeyModelSearchValue
+  const upstreamKeyModelSearchIsLoading =
+    upstreamKeyModelSearchIsWaitingForDebounce ||
+    isUpstreamKeyModelSearchFetching
   const showModelSearchPanel =
     trimmedModelSearchValue.length >= 2 &&
     (modelSearchIsLoading ||
@@ -4302,6 +4523,7 @@ export function ChannelMutateDrawer({
         resetUpstreamImportedLogin()
         setUpstreamPaidCny(DEFAULT_UPSTREAM_PAID_AMOUNT)
         setUpstreamPlatformUsdCredit(DEFAULT_UPSTREAM_PLATFORM_CREDIT)
+        setUpstreamKeyModelSearch({ configId: '', value: '' })
         upstreamRatioConfigLoadedRef.current = false
         clearAllUpstreamPreviews()
         upstreamCredentialFingerprintRef.current = ''

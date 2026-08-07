@@ -307,6 +307,75 @@ func TestSyncChannelAccountPoolCapabilitiesUsesAccessGroupsForUpstreamSync(t *te
 	require.Equal(t, "default,vip", refreshed.Group)
 }
 
+func TestSyncChannelAccountPoolCapabilitiesSkipsEmptyModelsForUpstreamSync(t *testing.T) {
+	oldDB := DB
+	oldLogDB := LOG_DB
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&Channel{}, &Ability{}, &ChannelAccount{}))
+	DB = db
+	LOG_DB = db
+
+	t.Cleanup(func() {
+		DB = oldDB
+		LOG_DB = oldLogDB
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+
+	priority := int64(0)
+	channel := Channel{
+		Type:          constant.ChannelTypeNewAPI,
+		Status:        common.ChannelStatusEnabled,
+		Name:          "upstream-sync-empty-model-channel",
+		Models:        "gpt-channel",
+		Group:         "default",
+		Priority:      &priority,
+		OtherSettings: `{"upstream_account_sync":{"platform":"new-api","base_url":"https://upstream.example","synced_at":1}}`,
+		ChannelInfo: ChannelInfo{
+			CredentialMode:     constant.ChannelCredentialModeAccountPool,
+			AccountPoolEnabled: true,
+			AccountPoolMode:    constant.ChannelAccountPoolModePolling,
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+	require.NoError(t, db.Create(&[]ChannelAccount{
+		{
+			ChannelId:    channel.Id,
+			Name:         "empty-model-key",
+			Key:          "sk-empty-model",
+			Status:       common.ChannelStatusEnabled,
+			Models:       "",
+			Group:        "upstream-empty",
+			AccessGroups: "default",
+		},
+		{
+			ChannelId:    channel.Id,
+			Name:         "active-key",
+			Key:          "sk-active",
+			Status:       common.ChannelStatusEnabled,
+			Models:       "gpt-active",
+			Group:        "upstream-active",
+			AccessGroups: "vip",
+		},
+	}).Error)
+
+	require.NoError(t, SyncChannelAccountPoolCapabilities(channel.Id, nil))
+
+	var abilities []Ability
+	require.NoError(t, db.Find(&abilities).Error)
+	require.Len(t, abilities, 1)
+	require.Equal(t, "vip", abilities[0].Group)
+	require.Equal(t, "gpt-active", abilities[0].Model)
+
+	var refreshed Channel
+	require.NoError(t, db.First(&refreshed, channel.Id).Error)
+	require.Equal(t, "gpt-active", refreshed.Models)
+	require.Equal(t, "default,vip", refreshed.Group)
+}
+
 func TestGetChannelWithExclusionsFiltersChannelStatusInDBFallback(t *testing.T) {
 	oldDB := DB
 	oldLogDB := LOG_DB

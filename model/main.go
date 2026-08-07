@@ -602,6 +602,9 @@ func migrateDBFast() error {
 	if err := migrateSyncedAccountAccessGroups(); err != nil {
 		return err
 	}
+	if err := migrateSyncedAccountModels(); err != nil {
+		return err
+	}
 	common.SysLog("database migrated")
 	return nil
 }
@@ -653,6 +656,9 @@ func migrateSyncedAccountAccessGroups() error {
 		if !channel.HasUpstreamAccountSyncMetadata() {
 			continue
 		}
+		if syncedAccountMigrationDone(channel.OtherSettings, "access_groups_backfilled") {
+			continue
+		}
 		groups := strings.TrimSpace(channel.Group)
 		if groups == "" {
 			groups = "default"
@@ -664,11 +670,111 @@ func migrateSyncedAccountAccessGroups() error {
 			return result.Error
 		}
 		updated += result.RowsAffected
+		nextSettings, err := markSyncedAccountMigrationDone(channel.Id, channel.OtherSettings, "access_groups_backfilled")
+		if err != nil {
+			return err
+		}
+		channel.OtherSettings = nextSettings
 	}
 	if updated > 0 {
 		common.SysLog(fmt.Sprintf("migrated %d upstream synced account access group(s)", updated))
 	}
 	return nil
+}
+
+// migrateSyncedAccountModels 为历史上游同步账号回填模型白名单。
+//
+// 现在同步账号的空 models 表示“该密钥不参与模型路由”。升级旧数据时，如果不把已有
+// 渠道聚合模型回填到账号级 models，历史同步渠道会在下一次能力重建后失去可用模型。
+// 该迁移同样只执行一次，管理员后续显式清空某个密钥模型时不会被重启再次回填。
+func migrateSyncedAccountModels() error {
+	if DB == nil {
+		return nil
+	}
+	var channels []Channel
+	if err := DB.Select("id", "models", "settings").
+		Where("settings LIKE ?", "%upstream_account_sync%").
+		Find(&channels).Error; err != nil {
+		return err
+	}
+	updated := int64(0)
+	for _, channel := range channels {
+		if !channel.HasUpstreamAccountSyncMetadata() {
+			continue
+		}
+		if syncedAccountMigrationDone(channel.OtherSettings, "models_backfilled") {
+			continue
+		}
+		models := strings.TrimSpace(channel.Models)
+		if models != "" {
+			result := DB.Model(&ChannelAccount{}).
+				Where("channel_id = ? AND (models IS NULL OR models = '')", channel.Id).
+				Update("models", models)
+			if result.Error != nil {
+				return result.Error
+			}
+			updated += result.RowsAffected
+		}
+		nextSettings, err := markSyncedAccountMigrationDone(channel.Id, channel.OtherSettings, "models_backfilled")
+		if err != nil {
+			return err
+		}
+		channel.OtherSettings = nextSettings
+	}
+	if updated > 0 {
+		common.SysLog(fmt.Sprintf("migrated %d upstream synced account model list(s)", updated))
+	}
+	return nil
+}
+
+func syncedAccountMigrationDone(settings string, key string) bool {
+	var data map[string]any
+	if strings.TrimSpace(settings) == "" {
+		return false
+	}
+	if err := common.UnmarshalJsonStr(settings, &data); err != nil {
+		return false
+	}
+	metadata, ok := data["upstream_account_sync"].(map[string]any)
+	if !ok {
+		return false
+	}
+	migrations, ok := metadata["migrations"].(map[string]any)
+	if !ok {
+		return false
+	}
+	done, _ := migrations[key].(bool)
+	return done
+}
+
+func markSyncedAccountMigrationDone(channelID int, settings string, key string) (string, error) {
+	var data map[string]any
+	if strings.TrimSpace(settings) != "" {
+		_ = common.UnmarshalJsonStr(settings, &data)
+	}
+	if data == nil {
+		data = map[string]any{}
+	}
+	metadata, _ := data["upstream_account_sync"].(map[string]any)
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	migrations, _ := metadata["migrations"].(map[string]any)
+	if migrations == nil {
+		migrations = map[string]any{}
+	}
+	migrations[key] = true
+	metadata["migrations"] = migrations
+	data["upstream_account_sync"] = metadata
+	bytes, err := common.Marshal(data)
+	if err != nil {
+		return settings, err
+	}
+	nextSettings := string(bytes)
+	if err := DB.Model(&Channel{}).Where("id = ?", channelID).Update("settings", nextSettings).Error; err != nil {
+		return settings, err
+	}
+	return nextSettings, nil
 }
 
 // ensureAccountPoolAuthFileLinks 回填旧版认证文件与池账号之间的反向来源 ID。

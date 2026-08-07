@@ -49,7 +49,7 @@ type AccountCreateConfig struct {
 	ExternalID         string  `json:"external_id"`
 	Name               string  `json:"name"`
 	Enabled            *bool   `json:"enabled"`
-	Models             string  `json:"models"`
+	Models             *string `json:"models,omitempty"`
 	Group              string  `json:"group"`
 	AccessGroups       *string `json:"access_groups,omitempty"`
 	Priority           *int64  `json:"priority"`
@@ -269,13 +269,7 @@ func buildAccounts(snapshot *Snapshot, req CreateRequest, defaultModels string, 
 		if name == "" {
 			name = key.MaskedKey
 		}
-		models, hasModels := explicitSyncValue(config.Models)
-		if !hasModels {
-			models = strings.Join(key.Models, ",")
-		}
-		if models == "" {
-			models = defaultModels
-		}
+		models := syncedAccountModelsValue(config.Models, key.Models, defaultModels)
 		group, hasGroup := explicitSyncValue(config.Group)
 		if !hasGroup {
 			group = firstNonEmpty(key.GroupName, key.GroupID, defaultGroup)
@@ -351,12 +345,26 @@ func normalizeSyncedAccessGroups(value *string, fallback string) string {
 	return strings.Join(groups, ",")
 }
 
+// syncedAccountModelsValue 解析同步密钥的模型白名单。
+//
+// 上游同步渠道的路由能力完全由 ChannelAccount.models 和 access_groups 决定。
+// models 使用指针是为了区分两种业务语义：
+//   - nil：本次没有覆盖，继续使用上游快照模型；快照缺失时才回退渠道级兼容模型。
+//   - 非 nil：管理员明确提交模型白名单，空字符串也要保留为空，表示该密钥不参与模型路由。
+func syncedAccountModelsValue(configModels *string, keyModels []string, fallbackModels string) string {
+	if configModels != nil {
+		return strings.TrimSpace(*configModels)
+	}
+	if models := strings.TrimSpace(strings.Join(keyModels, ",")); models != "" {
+		return models
+	}
+	return strings.TrimSpace(fallbackModels)
+}
+
 // explicitSyncValue 解析同步表单里可覆盖快照的非空字符串值。
 //
-// 上游账号同步的创建/刷新请求目前使用 string 字段，Go 反序列化后无法区分
-// “字段缺失”和“字段显式传入空串”。因此创建和刷新语义保持保守：空串代表
-// 未覆盖，继续回退到上游快照或渠道级默认值；已同步账号的本地编辑保存则走
-// ChannelAccount 更新接口，该接口可根据原始 JSON 字段集合支持显式清空。
+// group 仍然是 string，因为它只表示上游密钥分组，空值继续回退到上游快照或渠道级默认值。
+// NexusTok 下游用户组由 access_groups 指针字段控制，支持显式清空。
 func explicitSyncValue(value string) (string, bool) {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {

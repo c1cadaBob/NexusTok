@@ -345,7 +345,7 @@ func TestCreateFromPreviewAllowsDeferredTypeAndModels(t *testing.T) {
 	require.Equal(t, int64(0), abilityCount)
 }
 
-func TestCreateFromPreviewFallsBackWhenSyncedAccountModelsAndGroupAreEmpty(t *testing.T) {
+func TestCreateFromPreviewKeepsExplicitEmptySyncedAccountModels(t *testing.T) {
 	oldDB := model.DB
 	oldLogDB := model.LOG_DB
 	oldMemoryCacheEnabled := common.MemoryCacheEnabled
@@ -397,7 +397,7 @@ func TestCreateFromPreviewFallsBackWhenSyncedAccountModelsAndGroupAreEmpty(t *te
 		Accounts: []AccountCreateConfig{
 			{
 				ExternalID: "empty",
-				Models:     "",
+				Models:     strPtr(""),
 				Group:      "",
 			},
 		},
@@ -408,8 +408,12 @@ func TestCreateFromPreviewFallsBackWhenSyncedAccountModelsAndGroupAreEmpty(t *te
 
 	var account model.ChannelAccount
 	require.NoError(t, db.First(&account).Error)
-	require.Equal(t, "gpt-4o", account.Models)
+	require.Equal(t, "", account.Models)
 	require.Equal(t, "vip", account.Group)
+}
+
+func strPtr(value string) *string {
+	return &value
 }
 
 func int64Ptr(value int64) *int64 {

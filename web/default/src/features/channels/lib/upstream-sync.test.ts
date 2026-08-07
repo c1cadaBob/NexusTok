@@ -22,6 +22,7 @@ import type { UpstreamAccountKey } from '../types'
 import {
   buildUpstreamAccountPreviewRequest,
   buildUpstreamAccountRefreshPayload,
+  summarizeUpstreamAccountCapabilities,
 } from './upstream-sync'
 
 function makeSnapshotKey(
@@ -124,5 +125,62 @@ describe('上游账号刷新共享 payload', () => {
         },
       ],
     })
+  })
+
+  test('同步密钥摘要只统计启用密钥的模型白名单和访问用户组', () => {
+    const summary = summarizeUpstreamAccountCapabilities(
+      [
+        makeSnapshotKey({
+          sync_id: 'sync-enabled',
+          external_id: 'sync-enabled',
+          models: ['gpt-upstream', 'gpt-shared'],
+          access_groups: 'default',
+        }),
+        makeSnapshotKey({
+          sync_id: 'sync-disabled',
+          external_id: 'sync-disabled',
+          models: ['gpt-disabled'],
+          access_groups: 'internal',
+        }),
+        makeSnapshotKey({
+          sync_id: 'sync-empty',
+          external_id: 'sync-empty',
+          models: ['gpt-empty-fallback'],
+          access_groups: 'vip',
+        }),
+      ],
+      {
+        'sync-enabled': {
+          enabled: true,
+          priority: 1,
+          weight: 100,
+          models: 'gpt-local,gpt-shared',
+          group: 'upstream-group',
+          access_groups: 'default,vip',
+        },
+        'sync-disabled': {
+          enabled: false,
+          priority: 1,
+          weight: 100,
+          models: 'gpt-disabled',
+          group: 'upstream-group',
+          access_groups: 'internal',
+        },
+        'sync-empty': {
+          enabled: true,
+          priority: 1,
+          weight: 100,
+          models: '',
+          group: 'upstream-group',
+          access_groups: '',
+        },
+      }
+    )
+
+    assert.equal(summary.enabledKeyCount, 2)
+    assert.equal(summary.totalKeyCount, 3)
+    assert.deepEqual(summary.modelNames, ['gpt-local', 'gpt-shared'])
+    assert.deepEqual(summary.accessGroups, ['default', 'vip'])
+    assert.equal(summary.accessGroupText, 'default,vip')
   })
 })

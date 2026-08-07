@@ -5952,6 +5952,9 @@
     "Zero retention": "Không lưu dữ liệu",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Routable Models": "Mô hình có thể định tuyến",
+    "This key will not route any model.": "Khóa này sẽ không định tuyến bất kỳ mô hình nào.",
+    "Use Upstream Models": "Dùng mô hình upstream"
   }
 }

@@ -28,7 +28,7 @@ import type {
   UpstreamAccountAuthMode,
   UpstreamAccountTwoFactorChallenge,
 } from '../types'
-import { formatGroups } from './channel-form'
+import { formatGroups, parseGroups } from './channel-form'
 import { dedupeModelNames } from './model-search'
 import { parseModelsString } from './model-mapping-validation'
 
@@ -52,6 +52,15 @@ export type UpstreamAccountConfigDraft = {
   models?: string
   group?: string
   access_groups?: string
+}
+
+export type UpstreamAccountCapabilitySummary = {
+  enabledKeyCount: number
+  totalKeyCount: number
+  modelNames: string[]
+  accessGroups: string[]
+  modelCount: number
+  accessGroupText: string
 }
 
 export type BuildUpstreamAccountPreviewRequestOptions = {
@@ -545,6 +554,41 @@ export function upstreamAccountValuesToString(
       })
   })
   return values.join(',')
+}
+
+// summarizeUpstreamAccountCapabilities 只按启用的同步密钥计算前端摘要。
+// 上游同步渠道的真实能力由每个密钥的 models 与 access_groups 决定；
+// 渠道级 models/group 只是后端聚合缓存和旧接口兼容字段，不能再作为兜底配置展示。
+export function summarizeUpstreamAccountCapabilities(
+  keys: UpstreamAccountKey[],
+  configs: Record<string, UpstreamAccountConfigDraft> = {}
+): UpstreamAccountCapabilitySummary {
+  const modelNames: string[] = []
+  const accessGroups: string[] = []
+  let enabledKeyCount = 0
+
+  keys.forEach((key, index) => {
+    const config = getUpstreamAccountConfig(configs, key, index)
+    if (config?.enabled === false) return
+
+    enabledKeyCount += 1
+    modelNames.push(...upstreamAccountModelsArrayValue(key, config))
+    accessGroups.push(
+      ...parseGroups(config?.access_groups ?? key.access_groups ?? 'default')
+    )
+  })
+
+  const dedupedModels = dedupeModelNames(modelNames)
+  const dedupedGroups = dedupeModelNames(accessGroups)
+
+  return {
+    enabledKeyCount,
+    totalKeyCount: keys.length,
+    modelNames: dedupedModels,
+    accessGroups: dedupedGroups,
+    modelCount: dedupedModels.length,
+    accessGroupText: formatGroups(dedupedGroups) || '-',
+  }
 }
 
 export function buildUpstreamAccountPayloads(

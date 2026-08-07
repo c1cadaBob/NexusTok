@@ -5952,6 +5952,9 @@
     "Zero retention": "零数据保留",
     "Zhipu": "智谱",
     "Zhipu V4": "智谱 V4",
-    "Zoom": "缩放"
+    "Zoom": "缩放",
+    "Routable Models": "可路由模型",
+    "This key will not route any model.": "该密钥不会路由任何模型。",
+    "Use Upstream Models": "使用上游返回模型"
   }
 }

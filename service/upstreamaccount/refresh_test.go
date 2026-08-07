@@ -695,7 +695,7 @@ func TestRefreshChannelFromSnapshotAppliesExplicitLocalModelsAndGroup(t *testing
 		ApplySuggested: false,
 		Accounts: []AccountCreateConfig{{
 			ExternalID: "explicit",
-			Models:     "gpt-local",
+			Models:     strPtr("gpt-local"),
 			Group:      "local-vip",
 		}},
 	})
@@ -862,7 +862,7 @@ func TestRefreshChannelFromSnapshotAppliesConfigBySyncIDWhenExternalIDMissing(t 
 	require.Equal(t, 34, account.Weight)
 }
 
-func TestRefreshChannelFromSnapshotKeepsExistingModelsAndGroupWhenConfigEmpty(t *testing.T) {
+func TestRefreshChannelFromSnapshotKeepsExistingGroupAndClearsExplicitEmptyModels(t *testing.T) {
 	oldDB := model.DB
 	oldLogDB := model.LOG_DB
 	oldMemoryCacheEnabled := common.MemoryCacheEnabled
@@ -934,7 +934,7 @@ func TestRefreshChannelFromSnapshotKeepsExistingModelsAndGroupWhenConfigEmpty(t 
 		Accounts: []AccountCreateConfig{
 			{
 				ExternalID: "empty",
-				Models:     "",
+				Models:     strPtr(""),
 				Group:      "",
 				Priority:   int64Ptr(9),
 				Weight:     intPtr(8),
@@ -948,7 +948,7 @@ func TestRefreshChannelFromSnapshotKeepsExistingModelsAndGroupWhenConfigEmpty(t 
 
 	var refreshed model.ChannelAccount
 	require.NoError(t, db.First(&refreshed, existing.Id).Error)
-	require.Equal(t, "gpt-old", refreshed.Models)
+	require.Equal(t, "", refreshed.Models)
 	require.Equal(t, "default", refreshed.Group)
 	require.Equal(t, int64(9), refreshed.Priority)
 	require.Equal(t, 8, refreshed.Weight)

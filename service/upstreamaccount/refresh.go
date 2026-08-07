@@ -329,13 +329,7 @@ func buildAccountFromSyncedKey(snapshot *Snapshot, key SyncedKey, config Account
 	if name == "" {
 		name = key.MaskedKey
 	}
-	models, hasModels := explicitSyncValue(config.Models)
-	if !hasModels {
-		models = strings.Join(key.Models, ",")
-	}
-	if models == "" {
-		models = defaultModels
-	}
+	models := syncedAccountModelsValue(config.Models, key.Models, defaultModels)
 	group, hasGroup := explicitSyncValue(config.Group)
 	if !hasGroup {
 		group = firstNonEmpty(key.GroupName, key.GroupID, defaultGroup)
@@ -377,7 +371,7 @@ func buildAccountRefreshUpdates(existing *model.ChannelAccount, snapshot *Snapsh
 		if config.Enabled == nil {
 			account.Status = existing.Status
 		}
-		if strings.TrimSpace(config.Models) == "" && strings.TrimSpace(existing.Models) != "" {
+		if config.Models == nil && strings.TrimSpace(existing.Models) != "" {
 			account.Models = existing.Models
 		}
 		if strings.TrimSpace(config.Group) == "" && strings.TrimSpace(existing.Group) != "" {

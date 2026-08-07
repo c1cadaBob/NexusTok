@@ -676,6 +676,9 @@ func (channel *Channel) buildAccountPoolAbilities(tx *gorm.DB) ([]Ability, strin
 		if channel.HasUpstreamAccountSyncMetadata() {
 			// 同步账号的 Group 只表示上游密钥分组；真实下游权限必须使用
 			// access_groups。显式清空时该账号保留在列表中，但不生成任何能力。
+			// 同步账号的 Models 同样是显式白名单；空模型表示该密钥不参与模型路由，
+			// 不能回退渠道聚合模型，否则管理员清空某个密钥模型后仍会被重新选中。
+			accountModels = splitAbilityValues(account.Models)
 			accountGroups = splitAbilityValues(account.AccessGroups)
 		} else {
 			accountGroups = splitAbilityValues(firstNonEmptyString(account.Group, channel.Group))
@@ -689,6 +692,9 @@ func (channel *Channel) buildAccountPoolAbilities(tx *gorm.DB) ([]Ability, strin
 			}
 			groupSet[groupName] = struct{}{}
 			groups = append(groups, groupName)
+		}
+		if len(accountModels) == 0 {
+			continue
 		}
 		for _, modelName := range accountModels {
 			if _, ok := modelSet[modelName]; !ok {
