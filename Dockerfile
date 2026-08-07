@@ -9,6 +9,7 @@
 # 构建参数：
 #   TARGETOS - 目标操作系统（默认: linux）
 #   TARGETARCH - 目标架构（默认: amd64）
+#   GOPROXY - Go 模块代理（默认: https://proxy.golang.org,direct）
 #
 # 暴露端口：3030
 
@@ -40,7 +41,9 @@ ENV GO111MODULE=on CGO_ENABLED=0
 
 ARG TARGETOS
 ARG TARGETARCH
+ARG GOPROXY=https://proxy.golang.org,direct
 ENV GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64}
+ENV GOPROXY=${GOPROXY}
 ENV GOEXPERIMENT=greenteagc
 
 WORKDIR /build

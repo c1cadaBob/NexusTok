@@ -97,7 +97,7 @@ docker logs -f nexustok
 curl -sS http://127.0.0.1:3030/api/status
 ```
 
-> **💡 提示：** 访问地址为 `http://服务器IP:3030`。云服务器还需要在安全组和系统防火墙中放行 TCP `3030` 端口。`/opt/nexustok/data` 保存 SQLite、会话密钥文件和运行时数据，更新容器时不要删除。Docker 镜像只包含 NexusTok 应用本身，不内置 PostgreSQL；需要数据库容器时请使用 Docker Compose，单容器模式则通过 `SQL_DSN` 连接外部 MySQL 或 PostgreSQL。`/var/run/docker.sock` 用于系统维护页内自动拉取镜像并重建容器，等同宿主机 Docker 管理权限，只应在可信管理员环境中挂载；不挂载时仍可检查更新，但不能在页面内应用 Docker 更新。旧部署如果必须继续使用容器内 `3000`，请显式加 `-e PORT=3000 -p 宿主端口:3000`。
+> **💡 提示：** 访问地址为 `http://服务器IP:3030`。云服务器还需要在安全组和系统防火墙中放行 TCP `3030` 端口。`/opt/nexustok/data` 保存 SQLite、会话密钥文件和运行时数据，更新容器时不要删除。Docker 镜像只包含 NexusTok 应用本身和内置模型仓库，不应该打包用户、渠道、Token、账号池、日志、session secret 或任何 SQLite / MySQL / PostgreSQL 运行时数据；如果生产环境里看到了“开发服数据”，优先检查是否复用了旧的 `/opt/nexustok/data` 挂载卷、数据库 volume，或者 `SQL_DSN` 仍然指向旧库。需要数据库容器时请使用 Docker Compose，单容器模式则通过 `SQL_DSN` 连接外部 MySQL 或 PostgreSQL。`/var/run/docker.sock` 用于系统维护页内自动拉取镜像并重建容器，等同宿主机 Docker 管理权限，只应在可信管理员环境中挂载；不挂载时仍可检查更新，但不能在页面内应用 Docker 更新。旧部署如果必须继续使用容器内 `3000`，请显式加 `-e PORT=3000 -p 宿主端口:3000`。
 
 </details>
 
@@ -233,7 +233,7 @@ docker run --name nexustok -d --restart always \
 > - `/opt/nexustok/logs:/app/logs` - 主服务日志
 > - `/var/run/docker.sock:/var/run/docker.sock` - 系统维护页 Docker 自动更新入口；等同宿主机 Docker 管理权限，只给可信管理员环境使用
 > - 访问 `http://服务器IP:3030` 前，请确认云服务器安全组已放行 TCP `3030` 端口。
-> - Docker 镜像不内置 PostgreSQL。需要随应用一起启动 PostgreSQL/Redis 时使用 Docker Compose；单容器模式通过 `SQL_DSN` 连接外部 MySQL/PostgreSQL。
+> - Docker 镜像不内置 PostgreSQL / MySQL / Redis，也不包含用户、渠道、Token、账号池或日志等运行时业务数据。生产看到历史数据时，先检查是否复用了旧卷，或者 `SQL_DSN` 仍然指向旧数据库；单容器模式通过 `SQL_DSN` 连接外部 MySQL/PostgreSQL。
 > - 旧部署如果必须继续使用容器内 `3000`，请显式加 `-e PORT=3000 -p 宿主端口:3000`；新部署推荐 `PORT=3030` 和 `3030:3030`。
 
 </details>

@@ -39,6 +39,8 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
+      - name: Check runtime data is not packaged
+        run: bash scripts/check-runtime-data-clean.sh
       - name: Check embedded model catalog size
         run: |
           node - <<'NODE'
@@ -109,6 +111,8 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
+      - name: Check runtime data is not packaged
+        run: bash scripts/check-runtime-data-clean.sh
       - name: Check embedded model catalog size
         run: |
           node - <<'NODE'
@@ -178,6 +182,8 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
+      - name: Check runtime data is not packaged
+        run: bash scripts/check-runtime-data-clean.sh
       - name: Check embedded model catalog size
         run: |
           node - <<'NODE'

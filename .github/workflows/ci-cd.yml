@@ -40,6 +40,9 @@ jobs:
       - name: Check out
         uses: actions/checkout@v4
 
+      - name: Check runtime data is not packaged
+        run: bash scripts/check-runtime-data-clean.sh
+
       - name: Check embedded model catalog size
         run: |
           node - <<'NODE'

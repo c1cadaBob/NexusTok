@@ -408,6 +408,8 @@ curl -sS http://127.0.0.1:3030/api/status
 
 浏览器访问 `http://服务器IP:3030`。如果部署在云服务器上，请确认安全组和系统防火墙已经放行 TCP `3030` 端口。`/opt/nexustok/data` 保存 SQLite、会话密钥文件和运行时数据，更新容器时不要删除。旧部署如果必须继续使用容器内 `3000`，请显式加 `-e PORT=3000 -p 宿主端口:3000`；新部署推荐 `PORT=3030` 和 `3030:3030`。
 
+Docker 镜像本身只应包含 NexusTok 应用二进制、前端静态资源和内置模型仓库，不应该携带用户、渠道、Token、账号池、日志、session secret，或者 SQLite / MySQL / PostgreSQL 的运行时数据。如果生产环境里出现了开发服的数据，通常说明复用了旧的 `/data` 挂载卷、数据库 volume，或者 `SQL_DSN` 仍然指向旧库，而不是镜像层自动把开发数据打进去了。
+
 外部 PostgreSQL 示例：
 
 ```bash
