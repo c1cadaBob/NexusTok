@@ -174,6 +174,7 @@ type CaptureSessionStatusResult struct {
 type CaptureSessionCompleteRequest struct {
 	CaptureSecret     string              `json:"capture_secret"`
 	CaptureSource     string              `json:"capture_source,omitempty"`
+	HelperVersion     string              `json:"helper_version,omitempty"`
 	Platform          string              `json:"platform,omitempty"`
 	BaseURL           string              `json:"base_url,omitempty"`
 	ManagementBaseURL string              `json:"management_base_url,omitempty"`
@@ -319,6 +320,10 @@ func CompleteCaptureSession(captureID string, req CaptureSessionCompleteRequest)
 	}
 	if record.Status == captureStatusCompleted {
 		return nil, fmt.Errorf("采集会话已完成，请重新创建会话后再提交")
+	}
+	if strings.EqualFold(strings.TrimSpace(req.CaptureSource), "capture_helper") &&
+		strings.TrimSpace(req.HelperVersion) != captureHelperVersion {
+		return nil, fmt.Errorf("采集助手版本不匹配，请先安装或更新 NexusTok Capture Helper %s", captureHelperVersion)
 	}
 	payloadOrigin := strings.TrimRight(strings.TrimSpace(req.Origin), "/")
 	if payloadOrigin == "" {
@@ -479,6 +484,7 @@ func RenderCaptureHelperUserscript(nexusBaseURL string) (string, error) {
       expired: 'NexusTok capture session expired. Create a new session in NexusTok.',
       captured: 'Captured. Returning to NexusTok...',
       invalidHandoff: 'NexusTok capture handoff is invalid. Create a new session.',
+      outdated: 'This capture helper is outdated. Install the required NexusTok helper before continuing.',
       wrongOrigin: 'This capture session belongs to another upstream site.',
       noToken: 'Login token was not found on this page.',
       newAPIUserIDPrompt: 'Enter the numeric user ID from the upstream new-api site. Username/email cannot be used.',
@@ -492,6 +498,7 @@ func RenderCaptureHelperUserscript(nexusBaseURL string) (string, error) {
       expired: 'NexusTok 采集会话已过期，请回到 NexusTok 重新创建会话。',
       captured: '采集完成，正在返回 NexusTok...',
       invalidHandoff: 'NexusTok 采集参数无效，请重新创建会话。',
+      outdated: '当前采集助手版本过旧，请先安装要求版本的 NexusTok 采集助手。',
       wrongOrigin: '这个采集会话不属于当前上游站点。',
       noToken: '当前页面没有找到可用登录态。',
       newAPIUserIDPrompt: '请输入上游 new-api 站点中的数字用户 ID，用户名或邮箱不能用于 New-Api-User。',
@@ -505,6 +512,7 @@ func RenderCaptureHelperUserscript(nexusBaseURL string) (string, error) {
       expired: 'NexusTok 採集工作階段已過期，請回到 NexusTok 重新建立工作階段。',
       captured: '採集完成，正在返回 NexusTok...',
       invalidHandoff: 'NexusTok 採集參數無效，請重新建立工作階段。',
+      outdated: '目前採集助手版本過舊，請先安裝要求版本的 NexusTok 採集助手。',
       wrongOrigin: '這個採集工作階段不屬於目前上游站點。',
       noToken: '目前頁面沒有找到可用登入態。',
       newAPIUserIDPrompt: '請輸入上游 new-api 站點中的數字使用者 ID，使用者名稱或信箱不能用於 New-Api-User。',
@@ -518,6 +526,7 @@ func RenderCaptureHelperUserscript(nexusBaseURL string) (string, error) {
       expired: 'La session de capture NexusTok a expiré. Créez une nouvelle session dans NexusTok.',
       captured: 'Capture terminée. Retour vers NexusTok...',
       invalidHandoff: 'Les paramètres de capture NexusTok sont invalides. Créez une nouvelle session.',
+      outdated: 'Cet assistant de capture est obsolète. Installez d’abord la version requise de NexusTok.',
       wrongOrigin: 'Cette session de capture appartient à un autre site amont.',
       noToken: 'Aucun jeton de connexion utilisable trouvé sur cette page.',
       newAPIUserIDPrompt: 'Saisissez l’ID utilisateur numérique du site new-api amont. Le nom ou l’e-mail ne convient pas.',
@@ -531,6 +540,7 @@ func RenderCaptureHelperUserscript(nexusBaseURL string) (string, error) {
       expired: 'NexusTok の取得セッションが期限切れです。NexusTok で新しいセッションを作成してください。',
       captured: '取得完了。NexusTok に戻ります...',
       invalidHandoff: 'NexusTok の取得パラメータが無効です。新しいセッションを作成してください。',
+      outdated: 'この取得ヘルパーは古いバージョンです。必要な NexusTok ヘルパーを先にインストールしてください。',
       wrongOrigin: 'この取得セッションは別の上流サイト用です。',
       noToken: 'このページで利用可能なログイン状態が見つかりません。',
       newAPIUserIDPrompt: '上流 new-api サイトの数値ユーザー ID を入力してください。ユーザー名やメールは使えません。',
@@ -544,6 +554,7 @@ func RenderCaptureHelperUserscript(nexusBaseURL string) (string, error) {
       expired: 'Сессия захвата NexusTok истекла. Создайте новую сессию в NexusTok.',
       captured: 'Захват завершён. Возврат в NexusTok...',
       invalidHandoff: 'Параметры захвата NexusTok недействительны. Создайте новую сессию.',
+      outdated: 'Этот помощник захвата устарел. Сначала установите требуемый помощник NexusTok.',
       wrongOrigin: 'Эта сессия захвата относится к другому вышестоящему сайту.',
       noToken: 'На этой странице не найден пригодный токен входа.',
       newAPIUserIDPrompt: 'Введите числовой ID пользователя на сайте new-api. Имя пользователя или e-mail не подходят.',
@@ -557,6 +568,7 @@ func RenderCaptureHelperUserscript(nexusBaseURL string) (string, error) {
       expired: 'Phiên thu thập NexusTok đã hết hạn. Hãy tạo phiên mới trong NexusTok.',
       captured: 'Đã thu thập. Đang quay lại NexusTok...',
       invalidHandoff: 'Tham số thu thập NexusTok không hợp lệ. Hãy tạo phiên mới.',
+      outdated: 'Trợ lý thu thập này đã cũ. Hãy cài trợ lý NexusTok bắt buộc trước khi tiếp tục.',
       wrongOrigin: 'Phiên thu thập này thuộc về một trang upstream khác.',
       noToken: 'Không tìm thấy trạng thái đăng nhập khả dụng trên trang này.',
       newAPIUserIDPrompt: 'Nhập ID người dùng dạng số từ trang new-api upstream. Không dùng tên hoặc email.',
@@ -1296,7 +1308,8 @@ func RenderCaptureHelperUserscript(nexusBaseURL string) (string, error) {
       const payload = {
         ...captured,
         capture_secret: runtimeConfig.captureSecret,
-        capture_source: captured.capture_source || 'userscript',
+        capture_source: 'capture_helper',
+        helper_version: config.version,
         origin: pageWindow.location.origin,
         base_url: managementBaseURL,
         management_base_url: managementBaseURL,
@@ -1314,7 +1327,8 @@ func RenderCaptureHelperUserscript(nexusBaseURL string) (string, error) {
       const relayBaseURL = runtimeConfig.platform === 'sub2api' ? appConfigAPIBaseURL() : '';
       const payload = {
         capture_secret: runtimeConfig.captureSecret,
-        capture_source: 'userscript',
+        capture_source: 'capture_helper',
+        helper_version: config.version,
         origin: pageWindow.location.origin,
         base_url: runtimeConfig.baseURL,
         management_base_url: runtimeConfig.baseURL,
@@ -1340,19 +1354,21 @@ func RenderCaptureHelperUserscript(nexusBaseURL string) (string, error) {
     const payload = readHandoff();
     if (!payload) return;
     markReady(payload);
+    runtimeConfig = payload;
+    if (payload.helperVersion && text(payload.helperVersion) !== config.version) {
+      showStatus(tr('outdated'), 'error', tr('retry'));
+      return;
+    }
     if (payload.origin && pageWindow.location.origin !== payload.origin) return;
     if (handoffExpired(payload)) {
       removeStoredHandoff();
-      runtimeConfig = payload;
       showStatus(tr('expired'), 'error', tr('retry'));
       return;
     }
     if (!payload.captureSecret || !payload.completeURL || !payload.captureID) {
-      runtimeConfig = payload;
       showStatus(tr('invalidHandoff'), 'error', tr('retry'));
       return;
     }
-    runtimeConfig = payload;
     showStatus(tr('ready'), 'info', tr('send'));
     window.setTimeout(() => runCapture(false), 800);
   }

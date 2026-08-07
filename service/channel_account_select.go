@@ -391,6 +391,12 @@ func channelAccountSupportsGroup(account *model.ChannelAccount, channel *model.C
 	if channel != nil && channel.HasUpstreamAccountSyncMetadata() {
 		// 上游同步账号的 Group 是平台内部的密钥分组，不能当作 NexusTok
 		// 下游用户组；空 access_groups 代表该密钥不允许任何用户组。
+		if account == nil {
+			return false
+		}
+		if strings.TrimSpace(account.AccessGroups) == "" {
+			return false
+		}
 		group = account.AccessGroups
 	} else {
 		group = account.Group

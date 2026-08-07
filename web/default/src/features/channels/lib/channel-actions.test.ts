@@ -20,7 +20,11 @@ import { QueryClient } from '@tanstack/react-query'
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import type { Channel, GetChannelResponse, GetChannelsResponse } from '../types'
-import { channelsQueryKeys, patchChannelBalanceCache } from './channel-actions'
+import {
+  buildChannelTestParams,
+  channelsQueryKeys,
+  patchChannelBalanceCache,
+} from './channel-actions'
 
 function makeChannel(overrides: Partial<Channel>): Channel {
   return {
@@ -214,5 +218,17 @@ describe('渠道余额缓存补丁', () => {
 
     const detailData = queryClient.getQueryData<GetChannelResponse>(detailKey)
     assert.equal(detailData?.data?.used_quota, largeUsedQuota)
+  })
+})
+
+describe('渠道测试请求参数', () => {
+  test('只指定同步账号密钥时也会携带 account_id', () => {
+    assert.deepEqual(buildChannelTestParams({ accountId: 42 }), {
+      account_id: 42,
+    })
+  })
+
+  test('没有测试选项时不产生查询参数', () => {
+    assert.equal(buildChannelTestParams(), undefined)
   })
 })

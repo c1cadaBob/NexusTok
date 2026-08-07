@@ -116,6 +116,7 @@ describe('上游同步渠道本地配置索引', () => {
       enabled: true,
       models: 'gpt-local',
       group: 'local-group',
+      access_groups: 'default',
     })
   })
 

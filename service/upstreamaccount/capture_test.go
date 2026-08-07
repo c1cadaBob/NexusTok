@@ -165,6 +165,41 @@ func TestCaptureSessionCompletesSub2APIBrowserSessionRestorePayload(t *testing.T
 	require.Empty(t, credential.Session.Sub2API.RefreshToken)
 }
 
+func TestCaptureHelperVersionCanRetryAfterMismatch(t *testing.T) {
+	start, err := StartCaptureSession(19, CaptureSessionStartRequest{
+		Platform: PlatformNewAPI,
+		BaseURL:  "https://new.example.com",
+	}, "https://nexus.example.com")
+	require.NoError(t, err)
+	record, found, err := captureSessionCache.Get(start.CaptureID)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	_, err = CompleteCaptureSession(start.CaptureID, CaptureSessionCompleteRequest{
+		CaptureSecret: record.Secret,
+		CaptureSource: "capture_helper",
+		HelperVersion: "1.3.0",
+		Origin:        "https://new.example.com",
+		AccessToken:   "new-api-access-token",
+		UserID:        "19",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "版本不匹配")
+
+	result, err := CompleteCaptureSession(start.CaptureID, CaptureSessionCompleteRequest{
+		CaptureSecret: record.Secret,
+		CaptureSource: "capture_helper",
+		HelperVersion: CaptureHelperVersion(),
+		Origin:        "https://new.example.com",
+		AccessToken:   "new-api-access-token",
+		UserID:        "19",
+	})
+	require.NoError(t, err)
+	require.Equal(t, captureStatusCompleted, result.Status)
+	require.NotNil(t, result.Summary)
+	require.Equal(t, "capture_helper", result.Summary.CaptureSource)
+}
+
 func TestCaptureSessionRejectsCrossSiteSub2APIEndpoint(t *testing.T) {
 	start, err := StartCaptureSession(18, CaptureSessionStartRequest{
 		Platform: PlatformSub2API,
@@ -227,6 +262,8 @@ func TestCaptureSessionCompletesNewAPIAccessTokenPayloadAndRendersScript(t *test
 	require.Contains(t, helperScript, "target_origin")
 	require.Contains(t, helperScript, "window.opener.postMessage")
 	require.Contains(t, helperScript, "captureSecret")
+	require.Contains(t, helperScript, "capture_source: 'capture_helper'")
+	require.Contains(t, helperScript, "helper_version: config.version")
 	require.Contains(t, helperScript, "/api/user/self")
 	require.Contains(t, helperScript, "/api/user/token")
 	require.Contains(t, helperScript, "auth/session/restore")

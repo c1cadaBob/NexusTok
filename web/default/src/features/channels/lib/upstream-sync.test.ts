@@ -118,6 +118,7 @@ describe('上游账号刷新共享 payload', () => {
           enabled: false,
           models: 'gpt-local',
           group: 'vip',
+          access_groups: 'default',
           priority: 9,
           weight: 40,
         },

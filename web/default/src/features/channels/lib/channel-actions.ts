@@ -64,6 +64,41 @@ export const channelsQueryKeys = {
 type ChannelListCache = GetChannelsResponse | SearchChannelsResponse
 type ChannelWithChildren = Channel & { children?: Channel[] }
 
+type ChannelTestOptions = {
+  testModel?: string
+  endpointType?: string
+  stream?: boolean
+  accountId?: number
+}
+
+type ChannelTestParams = {
+  model?: string
+  endpoint_type?: string
+  stream?: boolean
+  account_id?: number
+}
+
+export function buildChannelTestParams(
+  options?: ChannelTestOptions
+): ChannelTestParams | undefined {
+  if (
+    !options ||
+    (!options.testModel &&
+      !options.endpointType &&
+      !options.stream &&
+      !options.accountId)
+  ) {
+    return undefined
+  }
+
+  return {
+    ...(options.testModel ? { model: options.testModel } : {}),
+    ...(options.endpointType ? { endpoint_type: options.endpointType } : {}),
+    ...(options.stream ? { stream: true } : {}),
+    ...(options.accountId ? { account_id: options.accountId } : {}),
+  }
+}
+
 function patchChannelBalanceInChannel<T extends Channel>(
   channel: T,
   response: ChannelBalanceResponse
@@ -322,12 +357,7 @@ export async function handleUpdateTagField(
  */
 export async function handleTestChannel(
   id: number,
-  options?: {
-    testModel?: string
-    endpointType?: string
-    stream?: boolean
-    accountId?: number
-  },
+  options?: ChannelTestOptions,
   onTestComplete?: (
     success: boolean,
     responseTime?: number,
@@ -335,17 +365,7 @@ export async function handleTestChannel(
     errorCode?: string
   ) => void
 ): Promise<void> {
-  const payload =
-    options && (options.testModel || options.endpointType || options.stream)
-      ? {
-          ...(options.testModel ? { model: options.testModel } : {}),
-          ...(options.endpointType
-            ? { endpoint_type: options.endpointType }
-            : {}),
-          ...(options.stream ? { stream: true } : {}),
-          ...(options.accountId ? { account_id: options.accountId } : {}),
-        }
-      : undefined
+  const payload = buildChannelTestParams(options)
 
   try {
     const response = await testChannel(id, payload)
