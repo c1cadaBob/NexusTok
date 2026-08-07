@@ -620,6 +620,7 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	if channel == nil {
 		return types.NewError(errors.New("channel is nil"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 	}
+	requestedChannelAccountID := common.GetContextKeyInt(c, constant.ContextKeyRequestedChannelAccountId)
 	service.ReleaseSelectedChannelAccount(c)
 	service.ReleaseSelectedPoolAccount(c)
 	common.SetContextKey(c, constant.ContextKeyChannelId, channel.Id)
@@ -640,7 +641,20 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	credentialMode := channel.GetCredentialMode()
 	if credentialMode == constant.ChannelCredentialModeAccountPool {
 		usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
-		account, err := service.SelectChannelAccount(c, channel, modelName, usingGroup, c.GetInt("relay_mode"))
+		var account *model.ChannelAccount
+		var err error
+		if requestedChannelAccountID > 0 {
+			account, err = service.SelectSpecificChannelAccount(
+				c,
+				channel,
+				modelName,
+				usingGroup,
+				requestedChannelAccountID,
+				c.GetInt("relay_mode"),
+			)
+		} else {
+			account, err = service.SelectChannelAccount(c, channel, modelName, usingGroup, c.GetInt("relay_mode"))
+		}
 		if err != nil {
 			if !channel.ChannelInfo.AccountPoolFallback {
 				return types.NewErrorWithStatusCode(err, types.ErrorCodeChannelNoAvailableKey, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())

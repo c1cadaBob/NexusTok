@@ -99,6 +99,10 @@ const (
 	ContextKeyChannelAccountPool ContextKey = "channel_account_pool"
 	// ContextKeyChannelAccountId 渠道账号 ID
 	ContextKeyChannelAccountId ContextKey = "channel_account_id"
+	// ContextKeyRequestedChannelAccountId 测试接口请求固定使用的渠道账号 ID。
+	// 与输出用的 ContextKeyChannelAccountId 分离，避免 Relay 失败重试时误把上一次
+	// 已选中的账号再次当成管理员的固定选择。
+	ContextKeyRequestedChannelAccountId ContextKey = "requested_channel_account_id"
 	// ContextKeyChannelAccountName 渠道账号名称
 	ContextKeyChannelAccountName ContextKey = "channel_account_name"
 	// ContextKeyChannelAccountExcludedIds 渠道账号排除 ID 列表

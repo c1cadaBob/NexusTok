@@ -51,6 +51,7 @@ export type UpstreamAccountConfigDraft = {
   enabled: boolean
   models?: string
   group?: string
+  access_groups?: string
 }
 
 export type BuildUpstreamAccountPreviewRequestOptions = {
@@ -482,6 +483,7 @@ export function buildUpstreamAccountConfigsFromSnapshotKeys(
       enabled: previousConfig?.enabled ?? true,
       models: previousConfig?.models ?? key.models?.join(',') ?? '',
       group: previousConfig?.group ?? key.group_name ?? key.group_id ?? '',
+      access_groups: previousConfig?.access_groups ?? key.access_groups ?? 'default',
     }
   })
   return configs
@@ -499,6 +501,7 @@ export function buildUpstreamAccountConfigsFromChannelAccounts(
       enabled: account.status === CHANNEL_STATUS.ENABLED,
       models: account.models || '',
       group: account.group || '',
+      access_groups: account.access_groups ?? 'default',
     }
   })
   return configs
@@ -558,6 +561,7 @@ export function buildUpstreamAccountPayloads(
       enabled: config?.enabled ?? true,
       models: upstreamAccountModelsValue(key, config),
       group: upstreamAccountGroupValue(key, config),
+      access_groups: config?.access_groups ?? key.access_groups ?? 'default',
       priority: upstreamAccountPriorityValue(config, applySuggested),
       weight: upstreamAccountWeightValue(config, applySuggested),
     }
@@ -610,6 +614,7 @@ export function upstreamAccountFromChannelAccount(
     status: account.status,
     group_name: account.key_group_name || account.group,
     group_id: account.key_group_id || account.group,
+    access_groups: account.access_groups,
     models: parseModelsString(account.models || ''),
     model_ratios: account.model_ratios,
     group_ratio: account.group_ratio ?? undefined,

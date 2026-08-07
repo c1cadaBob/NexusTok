@@ -51,6 +51,7 @@ type AccountCreateConfig struct {
 	Enabled            *bool   `json:"enabled"`
 	Models             string  `json:"models"`
 	Group              string  `json:"group"`
+	AccessGroups       *string `json:"access_groups,omitempty"`
 	Priority           *int64  `json:"priority"`
 	Weight             *int    `json:"weight"`
 	BaseURL            *string `json:"base_url"`
@@ -184,7 +185,7 @@ func buildChannelAndAccounts(snapshot *Snapshot, req CreateRequest) (*model.Chan
 	// 渠道顶层 models/group 是路由能力表的来源，只能由最终启用的同步账号贡献。
 	// 如果把已跳过或已禁用的 key 也汇总进去，能力表会暴露实际没有可用账号的模型，
 	// 请求进入 Relay 后才因账号不可用而失败，造成“保存成功但调度异常”的误判。
-	models, group = summarizeEnabledAccountCapabilities(accounts, models, group, false)
+	models, group = summarizeEnabledAccountCapabilities(accounts, models, group, true)
 	channel.Models = models
 	channel.Group = group
 	return channel, accounts, nil
@@ -299,6 +300,7 @@ func buildAccounts(snapshot *Snapshot, req CreateRequest, defaultModels string, 
 			Status:             status,
 			Models:             models,
 			Group:              group,
+			AccessGroups:       normalizeSyncedAccessGroups(config.AccessGroups, "default"),
 			Priority:           priority,
 			Weight:             weight,
 			UsedQuota:          usdToQuotaInt64(key.QuotaUsedUSD),
@@ -318,6 +320,35 @@ func buildAccounts(snapshot *Snapshot, req CreateRequest, defaultModels string, 
 		return nil, fmt.Errorf("没有可创建的同步密钥")
 	}
 	return accounts, nil
+}
+
+// normalizeSyncedAccessGroups 规范化同步密钥可访问的 NexusTok 用户组。
+//
+// 新同步密钥默认只允许 default；管理员显式提交空字符串时保留空值，表示该密钥
+// 暂不参与下游路由。指针参数用于区分“刷新时未提交，继续保留旧配置”和“明确清空”。
+func normalizeSyncedAccessGroups(value *string, fallback string) string {
+	raw := fallback
+	if value != nil {
+		raw = *value
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	seen := map[string]struct{}{}
+	groups := make([]string, 0, 3)
+	for _, item := range strings.Split(raw, ",") {
+		group := strings.TrimSpace(item)
+		if group == "" {
+			continue
+		}
+		if _, exists := seen[group]; exists {
+			continue
+		}
+		seen[group] = struct{}{}
+		groups = append(groups, group)
+	}
+	return strings.Join(groups, ",")
 }
 
 // explicitSyncValue 解析同步表单里可覆盖快照的非空字符串值。
@@ -393,6 +424,9 @@ func summarizeEnabledAccountCapabilities(accounts []model.ChannelAccount, fallba
 		}
 		if account.Status != common.ChannelStatusEnabled {
 			return ""
+		}
+		if strings.TrimSpace(account.AccessGroups) != "" {
+			return account.AccessGroups
 		}
 		return account.Group
 	})

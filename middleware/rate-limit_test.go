@@ -116,6 +116,44 @@ func TestGlobalWebRateLimitKeepsDynamicPageLimited(t *testing.T) {
 	}
 }
 
+func TestGlobalAPIRateLimitExemptsCaptureHelperDownloads(t *testing.T) {
+	restore := setTestGlobalAPIRateLimit(t, 1, 180)
+	defer restore()
+
+	router := newAPIRateLimitTestRouter()
+	paths := []string{
+		"/api/channel/upstream-account/capture-helper.user.js",
+		"/api/channel/upstream-account/capture-session/session-id/userscript.user.js",
+	}
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			first := performRateLimitRequest(router, path)
+			if first.Code != http.StatusOK {
+				t.Fatalf("首次 helper 下载状态码 = %d, want %d", first.Code, http.StatusOK)
+			}
+			second := performRateLimitRequest(router, path)
+			if second.Code != http.StatusOK {
+				t.Fatalf("第二次 helper 下载状态码 = %d, want %d", second.Code, http.StatusOK)
+			}
+		})
+	}
+
+	limited := performRateLimitRequest(router, "/api/channel/1")
+	if limited.Code != http.StatusOK {
+		t.Fatalf("首次普通 API 状态码 = %d, want %d", limited.Code, http.StatusOK)
+	}
+	limited = performRateLimitRequest(router, "/api/channel/1")
+	if limited.Code != http.StatusTooManyRequests {
+		t.Fatalf("第二次普通 API 状态码 = %d, want %d", limited.Code, http.StatusTooManyRequests)
+	}
+	if limited.Body.Len() == 0 {
+		t.Fatal("限流响应正文为空")
+	}
+	if got := limited.Header().Get("Retry-After"); got == "" {
+		t.Fatal("限流响应缺少 Retry-After")
+	}
+}
+
 func TestBuildRedisRateLimitKeyUsesFixedWindow(t *testing.T) {
 	now := time.Unix(370, 0)
 
@@ -165,10 +203,47 @@ func setTestGlobalWebRateLimit(t *testing.T, limit int, duration int64) func() {
 	}
 }
 
+func setTestGlobalAPIRateLimit(t *testing.T, limit int, duration int64) func() {
+	t.Helper()
+
+	previousRedisEnabled := common.RedisEnabled
+	previousGlobalAPIRateLimitEnable := common.GlobalApiRateLimitEnable
+	previousGlobalAPIRateLimitNum := common.GlobalApiRateLimitNum
+	previousGlobalAPIRateLimitDuration := common.GlobalApiRateLimitDuration
+	previousRateLimitKeyExpirationDuration := common.RateLimitKeyExpirationDuration
+	previousInMemoryRateLimiter := inMemoryRateLimiter
+
+	common.RedisEnabled = false
+	common.GlobalApiRateLimitEnable = true
+	common.GlobalApiRateLimitNum = limit
+	common.GlobalApiRateLimitDuration = duration
+	common.RateLimitKeyExpirationDuration = 0
+	inMemoryRateLimiter = common.InMemoryRateLimiter{}
+
+	return func() {
+		common.RedisEnabled = previousRedisEnabled
+		common.GlobalApiRateLimitEnable = previousGlobalAPIRateLimitEnable
+		common.GlobalApiRateLimitNum = previousGlobalAPIRateLimitNum
+		common.GlobalApiRateLimitDuration = previousGlobalAPIRateLimitDuration
+		common.RateLimitKeyExpirationDuration = previousRateLimitKeyExpirationDuration
+		inMemoryRateLimiter = previousInMemoryRateLimiter
+	}
+}
+
 func newRateLimitTestRouter() *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(GlobalWebRateLimit())
+	router.GET("/*path", func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+	return router
+}
+
+func newAPIRateLimitTestRouter() *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(GlobalAPIRateLimit())
 	router.GET("/*path", func(c *gin.Context) {
 		c.Status(http.StatusOK)
 	})

@@ -88,6 +88,63 @@ var staticAssetWebRateLimitExemptExts = []string{
 	".txt",
 }
 
+var apiRateLimitExemptPaths = map[string]struct{}{
+	"/api/channel/upstream-account/capture-helper.user.js": {},
+}
+
+var apiRateLimitExemptPrefixes = []string{
+	"/api/channel/upstream-account/capture-session/",
+}
+
+var apiRateLimitExemptSuffixes = []string{
+	"/userscript.user.js",
+}
+
+// writeRateLimitResponse 返回带正文和 Retry-After 的 429。
+//
+// 旧限流实现只写状态码，浏览器打开 userscript 下载链接时会被 Tampermonkey/Chrome
+// 表现成 ERR_INVALID_RESPONSE，管理员看不到真实原因。这里统一给出可读响应，同时
+// 仍避免暴露内部限流 key 或 Redis 状态。
+func writeRateLimitResponse(c *gin.Context, retryAfterSeconds int64) {
+	if retryAfterSeconds <= 0 {
+		retryAfterSeconds = 60
+	}
+	c.Header("Retry-After", fmt.Sprintf("%d", retryAfterSeconds))
+	c.Header("Cache-Control", "no-store")
+	c.Header("Content-Type", "application/json; charset=utf-8")
+	c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+		"success": false,
+		"message": "Too many requests. Please retry later.",
+	})
+}
+
+// isGlobalAPIRateLimitExemptPath 判断全局 API 限流是否应放行。
+//
+// 采集助手脚本下载是 Tampermonkey 安装入口，已经在路由层使用独立下载限流保护；
+// 如果继续计入 GlobalAPIRateLimit，生产环境里后台页面请求峰值会把 `.user.js`
+// 安装请求误伤成 429，导致脚本根本无法安装。动态一次性脚本仍要靠 capture_id、
+// install_token 和 TTL 校验，不因这里豁免全局限流而公开敏感会话。
+func isGlobalAPIRateLimitExemptPath(path string) bool {
+	normalizedPath := strings.TrimSpace(path)
+	if normalizedPath == "" {
+		return false
+	}
+	if _, ok := apiRateLimitExemptPaths[normalizedPath]; ok {
+		return true
+	}
+	for _, prefix := range apiRateLimitExemptPrefixes {
+		if !strings.HasPrefix(normalizedPath, prefix) {
+			continue
+		}
+		for _, suffix := range apiRateLimitExemptSuffixes {
+			if strings.HasSuffix(normalizedPath, suffix) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // redisRateLimiter Redis 限流实现。
 // 使用 Redis Lua 固定窗口计数器，在一次 Redis 调用中完成计数和判断。
 //
@@ -111,8 +168,7 @@ func redisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, mark st
 		return
 	}
 	if !allowed {
-		c.Status(http.StatusTooManyRequests)
-		c.Abort()
+		writeRateLimitResponse(c, redisRateLimitExpireSeconds(duration))
 		return
 	}
 }
@@ -172,8 +228,7 @@ func redisFixedWindowAllow(ctx context.Context, key string, maxRequestNum int, d
 func memoryRateLimiter(c *gin.Context, maxRequestNum int, duration int64, mark string) {
 	key := mark + c.ClientIP()
 	if !inMemoryRateLimiter.Request(key, maxRequestNum, duration) {
-		c.Status(http.StatusTooManyRequests)
-		c.Abort()
+		writeRateLimitResponse(c, redisRateLimitExpireSeconds(duration))
 		return
 	}
 }
@@ -269,6 +324,10 @@ func GlobalAPIRateLimit() func(c *gin.Context) {
 	if common.GlobalApiRateLimitEnable {
 		limiter := rateLimitFactory(common.GlobalApiRateLimitNum, common.GlobalApiRateLimitDuration, "GA")
 		return func(c *gin.Context) {
+			if isGlobalAPIRateLimitExemptPath(c.Request.URL.Path) {
+				c.Next()
+				return
+			}
 			limiter(c)
 		}
 	}
@@ -290,6 +349,15 @@ func CriticalRateLimit() func(c *gin.Context) {
 // 配置项：DOWNLOAD_RATE_LIMIT_NUM、DOWNLOAD_RATE_LIMIT_DURATION
 func DownloadRateLimit() func(c *gin.Context) {
 	return rateLimitFactory(common.DownloadRateLimitNum, common.DownloadRateLimitDuration, "DW")
+}
+
+// HelperDownloadRateLimit 专门保护采集助手下载接口。
+//
+// 采集助手是公开安装入口，但它会被浏览器在短时间内重复请求，且应该比普通下载
+// 更宽松地对待 API 峰值。这里使用独立限流标记，避免全局 API 限流把 helper 下载
+// 误伤成空响应，同时仍保留明确的 Retry-After 语义。
+func HelperDownloadRateLimit() func(c *gin.Context) {
+	return rateLimitFactory(common.DownloadRateLimitNum, common.DownloadRateLimitDuration, "HDW")
 }
 
 // UploadRateLimit 上传请求限流中间件
@@ -329,8 +397,7 @@ func userRateLimitFactory(maxRequestNum int, duration int64, mark string) func(c
 		}
 		key := fmt.Sprintf("%s:user:%d", mark, userId)
 		if !inMemoryRateLimiter.Request(key, maxRequestNum, duration) {
-			c.Status(http.StatusTooManyRequests)
-			c.Abort()
+			writeRateLimitResponse(c, redisRateLimitExpireSeconds(duration))
 			return
 		}
 	}
@@ -350,8 +417,7 @@ func userRedisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, key
 		return
 	}
 	if !allowed {
-		c.Status(http.StatusTooManyRequests)
-		c.Abort()
+		writeRateLimitResponse(c, redisRateLimitExpireSeconds(duration))
 		return
 	}
 }

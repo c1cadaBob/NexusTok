@@ -346,6 +346,7 @@ func buildAccountFromSyncedKey(snapshot *Snapshot, key SyncedKey, config Account
 		Status:             status,
 		Models:             models,
 		Group:              group,
+		AccessGroups:       normalizeSyncedAccessGroups(config.AccessGroups, "default"),
 		Priority:           priority,
 		Weight:             weight,
 		UsedQuota:          usdToQuotaInt64(key.QuotaUsedUSD),
@@ -382,6 +383,9 @@ func buildAccountRefreshUpdates(existing *model.ChannelAccount, snapshot *Snapsh
 		if strings.TrimSpace(config.Group) == "" && strings.TrimSpace(existing.Group) != "" {
 			account.Group = existing.Group
 		}
+		if config.AccessGroups == nil {
+			account.AccessGroups = existing.AccessGroups
+		}
 	}
 	updates := map[string]any{
 		"name":                account.Name,
@@ -389,6 +393,7 @@ func buildAccountRefreshUpdates(existing *model.ChannelAccount, snapshot *Snapsh
 		"status":              account.Status,
 		"models":              account.Models,
 		"group":               account.Group,
+		"access_groups":       account.AccessGroups,
 		"priority":            account.Priority,
 		"weight":              account.Weight,
 		"used_quota":          account.UsedQuota,

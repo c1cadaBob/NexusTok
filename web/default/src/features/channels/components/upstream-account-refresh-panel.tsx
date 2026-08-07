@@ -851,7 +851,7 @@ export function UpstreamAccountRefreshPanel({
                 </Alert>
               )}
               <div className='overflow-x-auto rounded-md border'>
-                <div className='grid min-w-[74rem] grid-cols-[minmax(8rem,0.95fr)_minmax(16rem,1.35fr)_minmax(8rem,0.75fr)_5.5rem_6.75rem_4.5rem_4.5rem_4rem] gap-2 border-b px-2 py-2 text-[11px] font-medium'>
+                <div className='grid min-w-[84rem] grid-cols-[minmax(8rem,0.95fr)_minmax(16rem,1.35fr)_minmax(8rem,0.75fr)_minmax(9rem,0.8fr)_5.5rem_6.75rem_4.5rem_4.5rem_4rem] gap-2 border-b px-2 py-2 text-[11px] font-medium'>
                   <span className='min-w-0 truncate' title={t('Key')}>
                     {t('Key')}
                   </span>
@@ -860,6 +860,12 @@ export function UpstreamAccountRefreshPanel({
                   </span>
                   <span className='min-w-0 truncate' title={t('Key Group')}>
                     {t('Key Group')}
+                  </span>
+                  <span
+                    className='min-w-0 truncate'
+                    title={t('NexusTok Access Groups')}
+                  >
+                    {t('NexusTok Access Groups')}
                   </span>
                   <span className='min-w-0 truncate' title={t('Key Ratio')}>
                     {t('Key Ratio')}
@@ -910,6 +916,8 @@ export function UpstreamAccountRefreshPanel({
                     models: previous?.models ?? key.models?.join(',') ?? '',
                     group:
                       previous?.group ?? key.group_name ?? key.group_id ?? '',
+                    access_groups:
+                      previous?.access_groups ?? key.access_groups ?? 'default',
                     ...overrides,
                   })
                   const setConfigValue = (
@@ -925,6 +933,8 @@ export function UpstreamAccountRefreshPanel({
                   const upstreamGroupValue =
                     key.group_name || key.group_id || ''
                   const currentGroupValue = config?.group ?? upstreamGroupValue
+                  const currentAccessGroupsValue =
+                    config?.access_groups ?? key.access_groups ?? 'default'
                   const currentPriorityValue =
                     config?.priority ?? key.suggested_priority ?? 0
                   const currentWeightValue =
@@ -952,7 +962,7 @@ export function UpstreamAccountRefreshPanel({
                   return (
                     <div
                       key={configId}
-                      className='grid min-w-[74rem] grid-cols-[minmax(8rem,0.95fr)_minmax(16rem,1.35fr)_minmax(8rem,0.75fr)_5.5rem_6.75rem_4.5rem_4.5rem_4rem] items-center gap-2 border-b px-2 py-2 last:border-b-0'
+                      className='grid min-w-[84rem] grid-cols-[minmax(8rem,0.95fr)_minmax(16rem,1.35fr)_minmax(8rem,0.75fr)_minmax(9rem,0.8fr)_5.5rem_6.75rem_4.5rem_4.5rem_4rem] items-center gap-2 border-b px-2 py-2 last:border-b-0'
                     >
                       <div className='min-w-0'>
                         <div className='truncate text-sm font-medium'>
@@ -992,6 +1002,23 @@ export function UpstreamAccountRefreshPanel({
                         >
                           {currentKeyGroupLabel || t('Inherited')}
                         </span>
+                      </div>
+                      <div className='flex min-w-0 flex-col gap-1'>
+                        <Input
+                          value={currentAccessGroupsValue}
+                          placeholder='default,vip'
+                          onChange={(event) =>
+                            setConfigValue({
+                              access_groups: event.target.value,
+                            })
+                          }
+                          className='h-8 px-2 text-xs'
+                        />
+                        {!currentAccessGroupsValue.trim() ? (
+                          <span className='text-destructive truncate text-[11px]'>
+                            {t('This key will not be available to any user group.')}
+                          </span>
+                        ) : null}
                       </div>
                       <span className='font-mono text-xs' title={keyRatioTitle}>
                         {keyRatioValue != null

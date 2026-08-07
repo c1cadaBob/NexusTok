@@ -103,19 +103,18 @@ function compactKeys(
 }
 
 const CAPTURE_HELPER_READY_EVENT = 'nexustok-upstream-capture-helper-ready'
-const CAPTURE_HELPER_VERSION_KEY =
-  '__NEXUSTOK_UPSTREAM_CAPTURE_HELPER_VERSION__'
+const CAPTURE_HELPER_PROBE_TIMEOUT_MS = 4500
 
-type CaptureHelperWindow = Window & {
-  [CAPTURE_HELPER_VERSION_KEY]?: string
-}
+type CaptureHelperDetection = 'idle' | 'probing' | 'ready' | 'missing' | 'outdated'
 
-function getInstalledCaptureHelperVersion() {
-  if (typeof window === 'undefined') return ''
-  return (
-    String((window as CaptureHelperWindow)[CAPTURE_HELPER_VERSION_KEY] || '')
-      .trim()
-  )
+type CaptureHelperMessage = {
+  type?: string
+  captureID?: string
+  capture_id?: string
+  helperVersion?: string
+  helper_version?: string
+  target_origin?: string
+  platform?: string
 }
 
 function openCaptureURL(
@@ -170,13 +169,15 @@ export const UpstreamAccountCapturePanel = forwardRef<
   const { t, i18n } = useTranslation()
   const [localSession, setLocalSession] =
     useState<UpstreamAccountCaptureStartData | null>(null)
-  const [helperVersion, setHelperVersion] = useState(
-    getInstalledCaptureHelperVersion
-  )
+  const [helperVersion, setHelperVersion] = useState('')
+  const [helperDetection, setHelperDetection] =
+    useState<CaptureHelperDetection>('idle')
   const completedToastRef = useRef('')
   const pendingCaptureWindowRef = useRef<Window | null>(null)
+  const activeCaptureWindowRef = useRef<Window | null>(null)
+  const helperProbeTimerRef = useRef<number | null>(null)
 
-  const helperInstalled = Boolean(helperVersion)
+  const helperInstalled = helperDetection === 'ready'
 
   const statusQuery = useQuery({
     queryKey: ['upstream-account-capture-session', captureId],
@@ -260,6 +261,59 @@ export const UpstreamAccountCapturePanel = forwardRef<
     [baseUrl, t]
   )
 
+  const clearHelperProbeTimer = useCallback(() => {
+    if (helperProbeTimerRef.current) {
+      window.clearTimeout(helperProbeTimerRef.current)
+      helperProbeTimerRef.current = null
+    }
+  }, [])
+
+  const openInstallerInCaptureWindow = useCallback(
+    (
+      sessionData:
+        | UpstreamAccountCaptureStartData
+        | UpstreamAccountCaptureStatusData
+        | null,
+      targetWindow?: Window | null
+    ) => {
+      const installURL =
+        sessionData?.helper_install_url || sessionData?.userscript_url || ''
+      if (!installURL.trim()) return false
+      return openCaptureURL(
+        installURL,
+        targetWindow || activeCaptureWindowRef.current
+      )
+    },
+    []
+  )
+
+  const beginHelperProbe = useCallback(
+    (
+      sessionData:
+        | UpstreamAccountCaptureStartData
+        | UpstreamAccountCaptureStatusData
+        | null,
+      targetWindow?: Window | null
+    ) => {
+      clearHelperProbeTimer()
+      setHelperDetection('probing')
+      setHelperVersion('')
+      if (targetWindow && !targetWindow.closed) {
+        activeCaptureWindowRef.current = targetWindow
+      }
+      const opened = navigateToHandoff(sessionData, targetWindow)
+      helperProbeTimerRef.current = window.setTimeout(() => {
+        setHelperDetection('missing')
+        toast.info(
+          t('Capture helper was not detected. Install it before continuing.')
+        )
+        openInstallerInCaptureWindow(sessionData, targetWindow)
+      }, CAPTURE_HELPER_PROBE_TIMEOUT_MS)
+      return opened
+    },
+    [clearHelperProbeTimer, navigateToHandoff, openInstallerInCaptureWindow, t]
+  )
+
   const startMutation = useMutation({
     mutationFn: startUpstreamAccountCaptureSession,
     onSuccess: (res) => {
@@ -272,15 +326,7 @@ export const UpstreamAccountCapturePanel = forwardRef<
       completedToastRef.current = ''
       const targetWindow = pendingCaptureWindowRef.current
       pendingCaptureWindowRef.current = null
-      if (getInstalledCaptureHelperVersion()) {
-        navigateToHandoff(res.data, targetWindow)
-      } else {
-        const installURL = res.data.helper_install_url || res.data.userscript_url || ''
-        if (installURL && targetWindow && !targetWindow.closed) {
-          openCaptureURL(installURL, targetWindow)
-        }
-        toast.info(t('Install the automatic capture helper, then continue capture.'))
-      }
+      beginHelperProbe(res.data, targetWindow)
       toast.success(t('Capture session created'))
     },
     onError: (error: unknown) => {
@@ -301,27 +347,57 @@ export const UpstreamAccountCapturePanel = forwardRef<
 
   useEffect(() => {
     const handleCaptureMessage = (event: MessageEvent) => {
-      if (event.origin !== window.location.origin) return
-      const data = event.data as
-        | { type?: string; captureID?: string; capture_id?: string }
-        | undefined
-      if (data?.type !== 'nexustok-upstream-capture-completed') return
+      const activeWindow = activeCaptureWindowRef.current
+      if (activeWindow && event.source && event.source !== activeWindow) {
+        return
+      }
+      const data = event.data as CaptureHelperMessage | undefined
+      if (!data || typeof data !== 'object') return
       const nextCaptureId = data.captureID || data.capture_id || ''
       if (!nextCaptureId) return
       const currentCaptureId = captureId || localSession?.capture_id || ''
       if (currentCaptureId && currentCaptureId !== nextCaptureId) return
+
+      if (data.type === CAPTURE_HELPER_READY_EVENT) {
+        clearHelperProbeTimer()
+        const detectedVersion = String(
+          data.helper_version || data.helperVersion || ''
+        ).trim()
+        const requiredVersion = String(
+          session?.helper_required_version || session?.helper_version || ''
+        ).trim()
+        setHelperVersion(detectedVersion)
+        if (detectedVersion && (!requiredVersion || detectedVersion === requiredVersion)) {
+          setHelperDetection('ready')
+          toast.success(t('Helper installed'))
+          return
+        }
+        setHelperDetection('outdated')
+        toast.info(t('Detected an outdated capture helper. Please update it.'))
+        openInstallerInCaptureWindow(session, activeWindow)
+        return
+      }
+
+      if (data.type !== 'nexustok-upstream-capture-completed') return
+      clearHelperProbeTimer()
+      setHelperDetection('ready')
       onCaptureIdChange(nextCaptureId)
       void statusQuery.refetch()
     }
     window.addEventListener('message', handleCaptureMessage)
     return () => {
       window.removeEventListener('message', handleCaptureMessage)
+      clearHelperProbeTimer()
     }
   }, [
     captureId,
+    clearHelperProbeTimer,
     localSession?.capture_id,
     onCaptureIdChange,
+    openInstallerInCaptureWindow,
+    session,
     statusQuery,
+    t,
   ])
 
   useEffect(() => {
@@ -334,19 +410,6 @@ export const UpstreamAccountCapturePanel = forwardRef<
     onCompleted?.(status.capture_id)
   }, [onCompleted, status, t])
 
-  useEffect(() => {
-    const updateHelperState = () => {
-      setHelperVersion(getInstalledCaptureHelperVersion())
-    }
-    updateHelperState()
-    window.addEventListener(CAPTURE_HELPER_READY_EVENT, updateHelperState)
-    const timer = window.setTimeout(updateHelperState, 800)
-    return () => {
-      window.removeEventListener(CAPTURE_HELPER_READY_EVENT, updateHelperState)
-      window.clearTimeout(timer)
-    }
-  }, [])
-
   const handleStart = useCallback(() => {
     if (disabled || startMutation.isPending) return
     const trimmedBaseUrl = baseUrl.trim()
@@ -356,8 +419,10 @@ export const UpstreamAccountCapturePanel = forwardRef<
     }
     try {
       pendingCaptureWindowRef.current = window.open('about:blank', '_blank')
+      activeCaptureWindowRef.current = pendingCaptureWindowRef.current
     } catch {
       pendingCaptureWindowRef.current = null
+      activeCaptureWindowRef.current = null
     }
     if (!pendingCaptureWindowRef.current) {
       toast.info(t('Browser blocked the upstream capture tab. Use the buttons below to continue.'))
@@ -387,7 +452,7 @@ export const UpstreamAccountCapturePanel = forwardRef<
       toast.error(t('Signed userscript install link is not ready yet'))
       return
     }
-    const opened = openCaptureURL(installURL)
+    const opened = openCaptureURL(installURL, activeCaptureWindowRef.current)
     if (!opened) {
       toast.error(
         t(
@@ -403,8 +468,8 @@ export const UpstreamAccountCapturePanel = forwardRef<
       handleStart()
       return
     }
-    navigateToHandoff(session)
-  }, [handleStart, navigateToHandoff, session, t])
+    beginHelperProbe(session, activeCaptureWindowRef.current)
+  }, [beginHelperProbe, handleStart, session, t])
 
   useImperativeHandle(
     ref,
@@ -456,10 +521,11 @@ export const UpstreamAccountCapturePanel = forwardRef<
                 {isCompleted ? t('Completed') : isFailed ? t('Failed') : t('Pending')}
               </Badge>
               <Badge variant={helperInstalled ? 'default' : 'outline'}>
-                {helperInstalled
-                  ? t('Helper installed')
-                  : t('Helper not installed')}
+                {helperInstalled ? t('Helper installed') : t('Helper not installed')}
               </Badge>
+              {helperVersion ? (
+                <Badge variant='outline'>{helperVersion}</Badge>
+              ) : null}
             </div>
             {!summary?.refresh_token_present && summary ? (
               <div className='text-muted-foreground mt-1 text-xs'>
@@ -533,7 +599,11 @@ export const UpstreamAccountCapturePanel = forwardRef<
             <span>
               {isFailed
                 ? status?.message || t('Capture failed. Refresh status or create a new session.')
-                : helperInstalled
+                : helperDetection === 'outdated'
+                  ? t('Detected an outdated capture helper. Please update it.')
+                  : helperDetection === 'probing'
+                    ? t('Checking capture helper version...')
+                    : helperInstalled
                   ? t('Open the upstream platform in a new tab to continue capture.')
                   : t('Install the capture helper, then open the upstream platform to capture.')}
             </span>

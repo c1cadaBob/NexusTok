@@ -33,6 +33,7 @@ type ChannelAccount struct {
 	Status            int     `json:"status" gorm:"default:1;index"`
 	Models            string  `json:"models" gorm:"type:text"`
 	Group             string  `json:"group" gorm:"column:group;type:varchar(255);index"`
+	AccessGroups      string  `json:"access_groups" gorm:"column:access_groups;type:text"`
 	Priority          int64   `json:"priority" gorm:"bigint;default:0;index"`
 	Weight            int     `json:"weight" gorm:"default:0;index"`
 	LastUsedTime      int64   `json:"last_used_time" gorm:"bigint;default:0;index"`

@@ -35,12 +35,12 @@ func registerChannelRoutes(apiRouter *gin.RouterGroup) {
 	)
 	apiRouter.GET(
 		"/channel/upstream-account/capture-session/:id/userscript.user.js",
-		middleware.CriticalRateLimit(),
+		middleware.HelperDownloadRateLimit(),
 		controller.GetUpstreamAccountCaptureUserscript,
 	)
 	apiRouter.GET(
 		"/channel/upstream-account/capture-helper.user.js",
-		middleware.CriticalRateLimit(),
+		middleware.HelperDownloadRateLimit(),
 		controller.GetUpstreamAccountCaptureHelperUserscript,
 	)
 

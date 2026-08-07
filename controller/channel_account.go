@@ -36,6 +36,7 @@ type channelAccountUpsertRequest struct {
 	Status             *int    `json:"status"`              // 状态
 	Models             string  `json:"models"`              // 支持的模型
 	Group              string  `json:"group"`               // 用户组
+	AccessGroups       *string `json:"access_groups"`       // 上游同步账号允许的 NexusTok 用户组
 	Priority           *int64  `json:"priority"`            // 优先级
 	Weight             *int    `json:"weight"`              // 权重
 	BaseURL            *string `json:"base_url"`            // 基础 URL
@@ -487,6 +488,7 @@ var channelAccountKnownFields = map[string]struct{}{
 	"status":              {},
 	"models":              {},
 	"group":               {},
+	"access_groups":       {},
 	"priority":            {},
 	"weight":              {},
 	"base_url":            {},
@@ -522,7 +524,7 @@ func syncChannelAccountCapabilitiesIfNeeded(channelID int) error {
 func channelAccountUpdatesAffectCapabilities(updates map[string]interface{}) bool {
 	for field := range updates {
 		switch field {
-		case "models", "group", "priority", "weight", "status":
+		case "models", "group", "access_groups", "priority", "weight", "status":
 			return true
 		}
 	}
@@ -560,6 +562,7 @@ func buildChannelAccountFromRequest(channelID int, req channelAccountUpsertReque
 		Status:             status,
 		Models:             strings.TrimSpace(req.Models),
 		Group:              strings.TrimSpace(req.Group),
+		AccessGroups:       normalizeChannelAccountAccessGroups(req.AccessGroups, ""),
 		Priority:           priority,
 		Weight:             weight,
 		BaseURL:            req.BaseURL,
@@ -597,6 +600,9 @@ func channelAccountUpdateMap(account *model.ChannelAccount, req channelAccountUp
 	}
 	if _, ok := requestData["group"]; ok {
 		updates["group"] = strings.TrimSpace(req.Group)
+	}
+	if _, ok := requestData["access_groups"]; ok {
+		updates["access_groups"] = normalizeChannelAccountAccessGroups(req.AccessGroups, "")
 	}
 	if _, ok := requestData["other"]; ok {
 		updates["other"] = req.Other
@@ -675,6 +681,7 @@ func createChannelAccountsFromKeys(channelID int, req channelAccountBatchRequest
 			Status:         status,
 			Models:         strings.TrimSpace(req.Models),
 			Group:          strings.TrimSpace(req.Group),
+			AccessGroups:   "",
 			Priority:       req.Priority,
 			Weight:         req.Weight,
 			MaxConcurrency: req.MaxConcurrency,
@@ -719,6 +726,38 @@ func splitImportKeys(keys string) []string {
 	return result
 }
 
+// normalizeChannelAccountAccessGroups 规范化渠道账号允许访问的 NexusTok 用户组。
+//
+// access_groups 使用逗号分隔，控制器需要同时处理三种输入语义：
+// - 字段缺失（指针为 nil）：沿用调用方提供的 fallback；
+// - 显式传入空字符串：清空访问组，让该账号不参与任何用户组路由；
+// - 传入多个组：去除空值、首尾空格和重复项，保持管理员填写的顺序。
+func normalizeChannelAccountAccessGroups(value *string, fallback string) string {
+	raw := fallback
+	if value != nil {
+		raw = *value
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+
+	seen := make(map[string]struct{})
+	groups := make([]string, 0, 3)
+	for _, item := range strings.Split(raw, ",") {
+		group := strings.TrimSpace(item)
+		if group == "" {
+			continue
+		}
+		if _, exists := seen[group]; exists {
+			continue
+		}
+		seen[group] = struct{}{}
+		groups = append(groups, group)
+	}
+	return strings.Join(groups, ",")
+}
+
 // channelAccountResponseForContext 根据当前管理员权限返回渠道账号响应。
 //
 // `channel_account.read` 只应支持列表查看和运行态运维，因此基础响应保留脱敏 key、
@@ -743,6 +782,7 @@ func channelAccountResponse(account *model.ChannelAccount, includeSensitive bool
 		"status":              account.Status,
 		"models":              account.Models,
 		"group":               account.Group,
+		"access_groups":       account.AccessGroups,
 		"priority":            account.Priority,
 		"weight":              account.Weight,
 		"last_used_time":      account.LastUsedTime,

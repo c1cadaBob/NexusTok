@@ -599,6 +599,9 @@ func migrateDBFast() error {
 	if err := migrateSyncedAccountChannelTypes(); err != nil {
 		return err
 	}
+	if err := migrateSyncedAccountAccessGroups(); err != nil {
+		return err
+	}
 	common.SysLog("database migrated")
 	return nil
 }
@@ -625,6 +628,45 @@ func migrateSyncedAccountChannelTypes() error {
 	}
 	if updated > 0 {
 		common.SysLog(fmt.Sprintf("migrated %d upstream account synced channel type(s)", updated))
+	}
+	return nil
+}
+
+// migrateSyncedAccountAccessGroups 为历史上游同步账号回填 NexusTok 可访问用户组。
+//
+// 新字段 `access_groups` 承担实际路由权限含义，而同步账号原有 `group` 字段已经被
+// 用作“上游密钥分组”。旧数据升级时如果不回填，能力重建会认为这些 key 不允许任何
+// 下游用户组，导致同步渠道不可路由。这里只处理带 upstream_account_sync 元数据的渠道，
+// 并用渠道当前 group 作为兼容默认值；普通多 Key 渠道仍继续使用原有 group 字段。
+func migrateSyncedAccountAccessGroups() error {
+	if DB == nil || !DB.Migrator().HasColumn(&ChannelAccount{}, "access_groups") {
+		return nil
+	}
+	var channels []Channel
+	if err := DB.Select("id", "group", "settings").
+		Where("settings LIKE ?", "%upstream_account_sync%").
+		Find(&channels).Error; err != nil {
+		return err
+	}
+	updated := int64(0)
+	for _, channel := range channels {
+		if !channel.HasUpstreamAccountSyncMetadata() {
+			continue
+		}
+		groups := strings.TrimSpace(channel.Group)
+		if groups == "" {
+			groups = "default"
+		}
+		result := DB.Model(&ChannelAccount{}).
+			Where("channel_id = ? AND (access_groups IS NULL OR access_groups = '')", channel.Id).
+			Update("access_groups", groups)
+		if result.Error != nil {
+			return result.Error
+		}
+		updated += result.RowsAffected
+	}
+	if updated > 0 {
+		common.SysLog(fmt.Sprintf("migrated %d upstream synced account access group(s)", updated))
 	}
 	return nil
 }

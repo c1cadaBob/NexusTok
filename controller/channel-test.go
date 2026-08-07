@@ -110,7 +110,7 @@ func resolveChannelTestUserID(c *gin.Context) (int, error) {
 	return rootUser.Id, nil
 }
 
-func testChannel(ctx context.Context, channel *model.Channel, testUserID int, testModel string, endpointType string, isStream bool) testResult {
+func testChannel(ctx context.Context, channel *model.Channel, testUserID int, testModel string, endpointType string, isStream bool, selectedAccountID int) testResult {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -211,6 +211,9 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	c.Set("base_url", channel.GetBaseURL())
 	group, _ := model.GetUserGroup(testUserID, false)
 	c.Set("group", group)
+	if selectedAccountID > 0 {
+		common.SetContextKey(c, constant.ContextKeyRequestedChannelAccountId, selectedAccountID)
+	}
 
 	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, testModel)
 	if newAPIError != nil {
@@ -961,13 +964,26 @@ func TestChannel(c *gin.Context) {
 	testModel := c.Query("model")
 	endpointType := c.Query("endpoint_type")
 	isStream, _ := strconv.ParseBool(c.Query("stream"))
+	selectedAccountID := 0
+	if rawAccountID := strings.TrimSpace(c.Query("account_id")); rawAccountID != "" {
+		selectedAccountID, err = strconv.Atoi(rawAccountID)
+		if err != nil || selectedAccountID <= 0 {
+			common.ApiErrorMsg(c, "无效的上游密钥账号 ID")
+			return
+		}
+		if channel.GetCredentialMode() != constant.ChannelCredentialModeAccountPool ||
+			!channel.HasUpstreamAccountSyncMetadata() {
+			common.ApiErrorMsg(c, "指定上游密钥仅支持上游同步账号池渠道")
+			return
+		}
+	}
 	testUserID, err := resolveChannelTestUserID(c)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	tik := time.Now()
-	result := testChannel(c.Request.Context(), channel, testUserID, testModel, endpointType, isStream)
+	result := testChannel(c.Request.Context(), channel, testUserID, testModel, endpointType, isStream, selectedAccountID)
 	if result.localErr != nil {
 		resp := gin.H{
 			"success": false,
@@ -1033,7 +1049,7 @@ func performChannelTests(ctx context.Context, channels []*model.Channel, testUse
 		}
 		isChannelEnabled := channel.Status == common.ChannelStatusEnabled
 		tik := time.Now()
-		result := testChannel(ctx, channel, testUserID, "", "", shouldUseStreamForAutomaticChannelTest(channel))
+		result := testChannel(ctx, channel, testUserID, "", "", shouldUseStreamForAutomaticChannelTest(channel), 0)
 		tok := time.Now()
 		milliseconds := tok.Sub(tik).Milliseconds()
 		if ctx != nil && ctx.Err() != nil {

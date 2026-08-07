@@ -18,13 +18,21 @@ import (
 const (
 	captureCacheNamespace = "upstream-account-capture"
 	captureTTL            = 10 * time.Minute
-	captureHelperVersion  = "1.3.0"
+	captureHelperVersion  = "1.4.0"
 	captureHandoffParam   = "nexustok_capture"
 
 	captureStatusPending   = "pending"
 	captureStatusCompleted = "completed"
 	captureStatusFailed    = "failed"
 )
+
+// CaptureHelperVersion 返回当前稳定采集助手版本。
+//
+// 前端状态、下载响应头和测试用例都通过该函数读取版本，避免模板常量升级后
+// 某个出口仍返回旧版本，导致管理员被错误引导重复安装。
+func CaptureHelperVersion() string {
+	return captureHelperVersion
+}
 
 var captureSessionCache = cachex.NewHybridCache[CaptureSessionRecord](cachex.HybridCacheConfig[CaptureSessionRecord]{
 	Namespace:    cachex.Namespace(captureCacheNamespace),
@@ -565,12 +573,29 @@ func RenderCaptureHelperUserscript(nexusBaseURL string) (string, error) {
     return value == null ? '' : String(value);
   }
 
-  function markReady() {
+  function markReady(payload) {
+    const detail = {
+      capture_id: payload && payload.captureID ? text(payload.captureID) : '',
+      captureID: payload && payload.captureID ? text(payload.captureID) : '',
+      helper_version: config.version,
+      helperVersion: config.version,
+      target_origin: pageWindow.location && pageWindow.location.origin ? pageWindow.location.origin : '',
+      platform: payload && payload.platform ? text(payload.platform) : '',
+    };
     try {
       pageWindow.__NEXUSTOK_UPSTREAM_CAPTURE_HELPER_VERSION__ = config.version;
       pageWindow.dispatchEvent(new CustomEvent(readyEvent, {
-        detail: { version: config.version },
+        detail,
       }));
+    } catch (_) {}
+    try {
+      const returnURL = payload && payload.returnURL ? new URL(payload.returnURL) : null;
+      if (returnURL && window.opener && !window.opener.closed) {
+        window.opener.postMessage({
+          type: readyEvent,
+          ...detail,
+        }, returnURL.origin);
+      }
     } catch (_) {}
   }
 
@@ -1312,9 +1337,9 @@ func RenderCaptureHelperUserscript(nexusBaseURL string) (string, error) {
   }
 
   async function boot() {
-    markReady();
     const payload = readHandoff();
     if (!payload) return;
+    markReady(payload);
     if (payload.origin && pageWindow.location.origin !== payload.origin) return;
     if (handoffExpired(payload)) {
       removeStoredHandoff();

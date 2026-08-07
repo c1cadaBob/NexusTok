@@ -275,6 +275,7 @@ type UpstreamAccountConfigDraft = {
   enabled: boolean
   models?: string
   group?: string
+  access_groups?: string
 }
 
 export type UpstreamEditableAccount = UpstreamAccountKey & {
@@ -443,6 +444,8 @@ export function buildUpstreamAccountConfigsFromSnapshotKeys(
       enabled: previousConfig?.enabled ?? true,
       models: previousConfig?.models ?? key.models?.join(',') ?? '',
       group: previousConfig?.group ?? key.group_name ?? key.group_id ?? '',
+      access_groups:
+        previousConfig?.access_groups ?? key.access_groups ?? 'default',
     }
   })
   return configs
@@ -653,6 +656,7 @@ function buildUpstreamAccountPayloads(
       enabled: config?.enabled ?? true,
       models: upstreamAccountModelsValue(key, config, fallbackModels),
       group: upstreamAccountGroupValue(key, config, fallbackGroup),
+      access_groups: config?.access_groups ?? key.access_groups ?? 'default',
       priority: upstreamAccountPriorityValue(config, applySuggested),
       weight: upstreamAccountWeightValue(config, applySuggested),
     }
@@ -684,6 +688,7 @@ export function upstreamAccountFromChannelAccount(
     account_status: account.status,
     group_name: account.key_group_name || account.group,
     group_id: account.key_group_id || account.group,
+    access_groups: account.access_groups,
     models: parseModelsString(account.models || ''),
     model_ratios: account.model_ratios,
     group_ratio: account.group_ratio ?? undefined,
@@ -706,6 +711,7 @@ export function buildUpstreamAccountConfigsFromChannelAccounts(
       enabled: account.status === CHANNEL_STATUS.ENABLED,
       models: account.models || '',
       group: account.group || '',
+      access_groups: account.access_groups ?? 'default',
     }
   })
   return configs
@@ -1920,7 +1926,7 @@ export function ChannelMutateDrawer({
                 </Alert>
               )}
               <div className='overflow-x-auto rounded-md border'>
-                <div className='grid min-w-[74rem] grid-cols-[minmax(8rem,0.95fr)_minmax(16rem,1.35fr)_minmax(8rem,0.75fr)_5.5rem_6.75rem_4.5rem_4.5rem_4rem] gap-2 border-b px-2 py-2 text-[11px] font-medium'>
+                <div className='grid min-w-[84rem] grid-cols-[minmax(8rem,0.95fr)_minmax(16rem,1.35fr)_minmax(8rem,0.75fr)_minmax(9rem,0.8fr)_5.5rem_6.75rem_4.5rem_4.5rem_4rem] gap-2 border-b px-2 py-2 text-[11px] font-medium'>
                   <span className='min-w-0 truncate' title={t('Key')}>
                     {t('Key')}
                   </span>
@@ -1929,6 +1935,12 @@ export function ChannelMutateDrawer({
                   </span>
                   <span className='min-w-0 truncate' title={t('Key Group')}>
                     {t('Key Group')}
+                  </span>
+                  <span
+                    className='min-w-0 truncate'
+                    title={t('NexusTok Access Groups')}
+                  >
+                    {t('NexusTok Access Groups')}
                   </span>
                   <span className='min-w-0 truncate' title={t('Key Ratio')}>
                     {t('Key Ratio')}
@@ -1982,6 +1994,8 @@ export function ChannelMutateDrawer({
                     models: previous?.models ?? key.models?.join(',') ?? '',
                     group:
                       previous?.group ?? key.group_name ?? key.group_id ?? '',
+                    access_groups:
+                      previous?.access_groups ?? key.access_groups ?? 'default',
                     ...overrides,
                   })
                   const setConfigValue = (
@@ -1998,6 +2012,8 @@ export function ChannelMutateDrawer({
                     config?.group,
                     key.group_name || key.group_id || ''
                   )
+                  const currentAccessGroupsValue =
+                    config?.access_groups ?? key.access_groups ?? 'default'
                   const currentPriorityValue =
                     config?.priority ?? key.suggested_priority ?? 0
                   const currentWeightValue =
@@ -2025,7 +2041,7 @@ export function ChannelMutateDrawer({
                   return (
                     <div
                       key={configId}
-                      className='grid min-w-[74rem] grid-cols-[minmax(8rem,0.95fr)_minmax(16rem,1.35fr)_minmax(8rem,0.75fr)_5.5rem_6.75rem_4.5rem_4.5rem_4rem] items-center gap-2 border-b px-2 py-2 last:border-b-0'
+                      className='grid min-w-[84rem] grid-cols-[minmax(8rem,0.95fr)_minmax(16rem,1.35fr)_minmax(8rem,0.75fr)_minmax(9rem,0.8fr)_5.5rem_6.75rem_4.5rem_4.5rem_4rem] items-center gap-2 border-b px-2 py-2 last:border-b-0'
                     >
                       <div className='min-w-0'>
                         <div className='truncate text-sm font-medium'>
@@ -2065,6 +2081,23 @@ export function ChannelMutateDrawer({
                         >
                           {currentKeyGroupLabel || t('Inherited')}
                         </span>
+                      </div>
+                      <div className='flex min-w-0 flex-col gap-1'>
+                        <Input
+                          value={currentAccessGroupsValue}
+                          placeholder='default,vip'
+                          onChange={(event) =>
+                            setConfigValue({
+                              access_groups: event.target.value,
+                            })
+                          }
+                          className='h-8 px-2 text-xs'
+                        />
+                        {!currentAccessGroupsValue.trim() ? (
+                          <span className='text-destructive truncate text-[11px]'>
+                            {t('This key will not be available to any user group.')}
+                          </span>
+                        ) : null}
                       </div>
                       <span className='font-mono text-xs' title={keyRatioTitle}>
                         {keyRatioValue != null
@@ -3556,6 +3589,7 @@ export function ChannelMutateDrawer({
             {
               models: upstreamAccountModelsValue(editableAccount, config),
               group: upstreamAccountGroupValue(editableAccount, config),
+              access_groups: config.access_groups ?? 'default',
               priority: config.priority,
               weight: config.weight,
             }

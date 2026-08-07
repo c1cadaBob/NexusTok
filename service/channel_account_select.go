@@ -120,6 +120,47 @@ func SelectChannelAccount(c *gin.Context, channel *model.Channel, modelName stri
 	return nil, ErrNoAvailableChannelAccount
 }
 
+// SelectSpecificChannelAccount 校验并选择管理员指定的渠道账号。
+//
+// 模型测试需要能够固定命中某个上游同步密钥，但仍必须经过和普通账号池相同的
+// 模型、用户组、启停、冷却和并发校验，避免测试接口绕过真实路由约束。
+func SelectSpecificChannelAccount(
+	c *gin.Context,
+	channel *model.Channel,
+	modelName string,
+	usingGroup string,
+	accountID int,
+	relayMode int,
+) (*model.ChannelAccount, error) {
+	_ = relayMode
+	if channel == nil || accountID <= 0 {
+		return nil, ErrNoAvailableChannelAccount
+	}
+	usingGroup = resolveChannelAccountUsingGroup(c, usingGroup)
+
+	var account model.ChannelAccount
+	if err := model.DB.Where("channel_id = ? AND id = ?", channel.Id, accountID).First(&account).Error; err != nil {
+		return nil, fmt.Errorf("指定的上游密钥不属于当前渠道")
+	}
+	if account.Status != common.ChannelStatusEnabled {
+		return nil, fmt.Errorf("指定的上游密钥未启用")
+	}
+	if account.IsCoolingDown(common.GetTimestamp()) {
+		return nil, fmt.Errorf("指定的上游密钥当前处于冷却或临时禁用状态")
+	}
+	if !channelAccountSupportsModel(&account, channel, modelName) {
+		return nil, fmt.Errorf("指定的上游密钥不支持模型 %s", strings.TrimSpace(modelName))
+	}
+	if !channelAccountSupportsGroup(&account, channel, usingGroup) {
+		return nil, fmt.Errorf("指定的上游密钥不允许当前用户组 %s", usingGroup)
+	}
+	if !ReserveChannelAccount(c, &account) {
+		return nil, fmt.Errorf("指定的上游密钥已达到并发上限")
+	}
+	model.TouchChannelAccount(account.Id)
+	return &account, nil
+}
+
 // ExcludeChannelAccountForRequest 将渠道账号添加到当前请求的排除列表中。
 // 被排除的账号在后续重试时不会被选中。
 func ExcludeChannelAccountForRequest(c *gin.Context, accountID int) {
@@ -346,11 +387,16 @@ func channelAccountSupportsGroup(account *model.ChannelAccount, channel *model.C
 	if strings.TrimSpace(usingGroup) == "" {
 		return true
 	}
-	group := account.Group
+	group := ""
 	if channel != nil && channel.HasUpstreamAccountSyncMetadata() {
-		group = channel.Group
-	} else if strings.TrimSpace(group) == "" && channel != nil {
-		group = channel.Group
+		// 上游同步账号的 Group 是平台内部的密钥分组，不能当作 NexusTok
+		// 下游用户组；空 access_groups 代表该密钥不允许任何用户组。
+		group = account.AccessGroups
+	} else {
+		group = account.Group
+		if strings.TrimSpace(group) == "" && channel != nil {
+			group = channel.Group
+		}
 	}
 	groups := splitCommaValues(group)
 	if len(groups) == 0 {

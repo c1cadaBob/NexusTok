@@ -182,11 +182,24 @@ func GetUpstreamAccountCaptureSession(c *gin.Context) {
 func GetUpstreamAccountCaptureUserscript(c *gin.Context) {
 	script, err := upstreamaccount.RenderCaptureUserscriptWithInstallToken(c.Param("id"), c.Query("install_token"), externalRequestBaseURL(c))
 	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "install token") {
+			c.Header("Cache-Control", "no-store")
+			c.Header("Content-Type", "text/plain; charset=utf-8")
+			c.String(http.StatusForbidden, "capture helper install token is invalid")
+			return
+		}
+		if strings.Contains(strings.ToLower(err.Error()), "expired") {
+			c.Header("Cache-Control", "no-store")
+			c.Header("Content-Type", "text/plain; charset=utf-8")
+			c.String(http.StatusGone, "capture helper session expired")
+			return
+		}
 		common.ApiError(c, err)
 		return
 	}
 	c.Header("Content-Type", "application/javascript; charset=utf-8")
 	c.Header("Cache-Control", "no-store")
+	c.Header("X-Nexustok-Helper-Version", upstreamaccount.CaptureHelperVersion())
 	c.String(http.StatusOK, script)
 }
 
@@ -202,6 +215,7 @@ func GetUpstreamAccountCaptureHelperUserscript(c *gin.Context) {
 	}
 	c.Header("Content-Type", "application/javascript; charset=utf-8")
 	c.Header("Cache-Control", "no-store")
+	c.Header("X-Nexustok-Helper-Version", upstreamaccount.CaptureHelperVersion())
 	c.String(http.StatusOK, script)
 }
 

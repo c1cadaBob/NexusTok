@@ -27,6 +27,7 @@ import {
   useReactTable,
 } from '@tanstack/react-table'
 import { Check, Copy, Info, Loader2, Settings } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -86,7 +87,9 @@ import {
   formatResponseTime,
   getChannelTestFailureDisplay,
   handleTestChannel,
+  isUpstreamAccountSyncChannel,
 } from '../../lib'
+import { getChannelAccounts } from '../../api'
 import { useChannelPermissions } from '../../hooks/use-channel-permissions'
 import { useChannels } from '../channels-provider'
 
@@ -149,6 +152,7 @@ export function ChannelTestDialog({
   const { t } = useTranslation()
   const { currentRow } = useChannels()
   const [endpointType, setEndpointType] = useState('auto')
+  const [selectedAccountId, setSelectedAccountId] = useState('auto')
   const [isStreamTest, setIsStreamTest] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({})
@@ -168,6 +172,7 @@ export function ChannelTestDialog({
 
   const resetState = useCallback(() => {
     setEndpointType('auto')
+    setSelectedAccountId('auto')
     setIsStreamTest(false)
     setSearchTerm('')
     setTestResults({})
@@ -186,6 +191,24 @@ export function ChannelTestDialog({
   }, [open, currentRow?.id, resetState])
 
   const streamDisabled = STREAM_INCOMPATIBLE_ENDPOINTS.has(endpointType)
+
+  const isSyncedAccountPool =
+    Boolean(currentRow?.channel_info?.credential_mode === 'account_pool') &&
+    isUpstreamAccountSyncChannel(currentRow)
+
+  const channelAccountsQuery = useQuery({
+    queryKey: ['channel-test-accounts', currentRow?.id],
+    queryFn: () =>
+      getChannelAccounts(currentRow!.id, {
+        p: 1,
+        page_size: 100,
+      }),
+    enabled: open && isSyncedAccountPool && Boolean(currentRow?.id),
+    staleTime: 30_000,
+  })
+
+  const testAccounts =
+    channelAccountsQuery.data?.data?.accounts.items ?? []
 
   useEffect(() => {
     if (streamDisabled) {
@@ -259,6 +282,10 @@ export function ChannelTestDialog({
             testModel: model,
             endpointType: endpointType === 'auto' ? undefined : endpointType,
             stream: isStreamTest || undefined,
+            accountId:
+              selectedAccountId === 'auto'
+                ? undefined
+                : Number(selectedAccountId),
           },
           (success, responseTime, error, errorCode) => {
             updateTestResult(model, {
@@ -285,6 +312,7 @@ export function ChannelTestDialog({
       markModelTesting,
       noPermissionMessage,
       permissions.canOperate,
+      selectedAccountId,
       updateTestResult,
     ]
   )
@@ -461,6 +489,72 @@ export function ChannelTestDialog({
 
         <div className='max-h-[78vh] space-y-4 overflow-y-auto py-4 pr-1'>
           <div className='grid gap-4 md:grid-cols-2'>
+            {isSyncedAccountPool ? (
+              <div className='grid gap-2 md:col-span-2'>
+                <Label htmlFor='upstream-account'>
+                  {t('Upstream key for this test')}
+                </Label>
+                <Select
+                  items={[
+                    { value: 'auto', label: t('Automatic selection') },
+                    ...testAccounts.map((account) => ({
+                      value: String(account.id),
+                      label: `${account.name || `#${account.id}`} (${account.key})`,
+                    })),
+                  ]}
+                  value={selectedAccountId}
+                  onValueChange={(value) =>
+                    value !== null && setSelectedAccountId(value)
+                  }
+                >
+                  <SelectTrigger id='upstream-account' className='w-full'>
+                    <SelectValue placeholder={t('Automatic selection')} />
+                  </SelectTrigger>
+                  <SelectContent alignItemWithTrigger={false}>
+                    <SelectGroup>
+                      <SelectItem value='auto'>
+                        {t('Automatic selection')}
+                      </SelectItem>
+                      {testAccounts.map((account) => {
+                        const now = Math.floor(Date.now() / 1000)
+                        const unavailable =
+                          account.status !== 1 ||
+                          account.rate_limited_until > now ||
+                          account.overload_until > now ||
+                          account.temp_disabled_until > now
+                        const statusLabel =
+                          account.status !== 1
+                            ? t('Disabled')
+                            : unavailable
+                              ? t('Cooling down')
+                              : t('Available')
+                        return (
+                          <SelectItem
+                            key={account.id}
+                            value={String(account.id)}
+                            disabled={unavailable}
+                          >
+                            <span className='flex min-w-0 items-center justify-between gap-3'>
+                              <span className='truncate'>
+                                {account.name || `#${account.id}`} ({account.key})
+                              </span>
+                              <span className='text-muted-foreground text-xs'>
+                                {statusLabel}
+                              </span>
+                            </span>
+                          </SelectItem>
+                        )
+                      })}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <p className='text-muted-foreground text-xs'>
+                  {t(
+                    'Choose a specific upstream key for single-model and batch tests. Automatic selection keeps the normal account pool routing.'
+                  )}
+                </p>
+              </div>
+            ) : null}
             <div className='grid gap-2'>
               <Label htmlFor='endpoint-type'>{t('Endpoint Type')}</Label>
               <Select

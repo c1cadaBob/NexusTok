@@ -322,7 +322,12 @@ export async function handleUpdateTagField(
  */
 export async function handleTestChannel(
   id: number,
-  options?: { testModel?: string; endpointType?: string; stream?: boolean },
+  options?: {
+    testModel?: string
+    endpointType?: string
+    stream?: boolean
+    accountId?: number
+  },
   onTestComplete?: (
     success: boolean,
     responseTime?: number,
@@ -338,6 +343,7 @@ export async function handleTestChannel(
             ? { endpoint_type: options.endpointType }
             : {}),
           ...(options.stream ? { stream: true } : {}),
+          ...(options.accountId ? { account_id: options.accountId } : {}),
         }
       : undefined
 

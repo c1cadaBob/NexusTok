@@ -642,23 +642,10 @@ func (channel *Channel) syncAccountPoolCapabilities(tx *gorm.DB) error {
 	if err != nil {
 		return err
 	}
-	if channel.HasUpstreamAccountSyncMetadata() {
-		// 上游账号同步渠道中 ChannelAccount.group 表示“密钥分组”，只用于展示和成本
-		// 区分；NexusTok 下游用户的可用分组必须始终来自 Channel.group。刷新账号池
-		// 能力时只更新模型集合，避免把上游密钥分组回写为渠道分组。
-		groups = firstNonEmptyString(strings.TrimSpace(channel.Group), "default")
-		if err := tx.Model(channel).Select("models", "group").Updates(map[string]any{
-			"models": models,
-			"group":  groups,
-		}).Error; err != nil {
-			return err
-		}
-		channel.Models = models
-		channel.Group = groups
-		return replaceChannelAbilities(tx, channel.Id, abilities)
-	}
 	if strings.TrimSpace(groups) == "" {
-		groups = firstNonEmptyString(strings.TrimSpace(channel.Group), "default")
+		if !channel.HasUpstreamAccountSyncMetadata() {
+			groups = firstNonEmptyString(strings.TrimSpace(channel.Group), "default")
+		}
 	}
 	if err := tx.Model(channel).Select("models", "group").Updates(map[string]any{
 		"models": models,
@@ -682,15 +669,26 @@ func (channel *Channel) buildAccountPoolAbilities(tx *gorm.DB) ([]Ability, strin
 	groupSet := map[string]struct{}{}
 	models := make([]string, 0)
 	groups := make([]string, 0)
-	useChannelGroups := channel.HasUpstreamAccountSyncMetadata()
 	channelGroups := splitAbilityValues(firstNonEmptyString(channel.Group, "default"))
 	for _, account := range accounts {
 		accountModels := splitAbilityValues(firstNonEmptyString(account.Models, channel.Models))
-		accountGroups := splitAbilityValues(firstNonEmptyString(account.Group, channel.Group))
-		if useChannelGroups {
-			// 同步渠道的账号分组是上游密钥分组，不能参与 NexusTok 用户分组路由；
-			// 但账号模型仍表示该 key 的真实支持范围，需要继续逐账号生成能力。
-			accountGroups = channelGroups
+		accountGroups := channelGroups
+		if channel.HasUpstreamAccountSyncMetadata() {
+			// 同步账号的 Group 只表示上游密钥分组；真实下游权限必须使用
+			// access_groups。显式清空时该账号保留在列表中，但不生成任何能力。
+			accountGroups = splitAbilityValues(account.AccessGroups)
+		} else {
+			accountGroups = splitAbilityValues(firstNonEmptyString(account.Group, channel.Group))
+		}
+		if len(accountGroups) == 0 {
+			continue
+		}
+		for _, groupName := range accountGroups {
+			if _, ok := groupSet[groupName]; ok {
+				continue
+			}
+			groupSet[groupName] = struct{}{}
+			groups = append(groups, groupName)
 		}
 		for _, modelName := range accountModels {
 			if _, ok := modelSet[modelName]; !ok {
@@ -698,10 +696,6 @@ func (channel *Channel) buildAccountPoolAbilities(tx *gorm.DB) ([]Ability, strin
 				models = append(models, modelName)
 			}
 			for _, groupName := range accountGroups {
-				if _, ok := groupSet[groupName]; !ok {
-					groupSet[groupName] = struct{}{}
-					groups = append(groups, groupName)
-				}
 				abilityKey := groupName + "|" + modelName
 				if _, exists := abilitySet[abilityKey]; exists {
 					continue

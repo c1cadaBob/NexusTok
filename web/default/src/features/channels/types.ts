@@ -257,6 +257,7 @@ export interface UpstreamAccountKey {
   status?: number
   group_id?: string
   group_name?: string
+  access_groups?: string
   models?: string[]
   model_ratios?: Record<string, number>
   group_ratio?: number
@@ -353,6 +354,7 @@ export interface UpstreamAccountCreateAccountConfig {
   enabled?: boolean
   models?: string
   group?: string
+  access_groups?: string
   priority?: number
   weight?: number
 }
@@ -566,6 +568,7 @@ export interface ChannelAccount {
   status: number
   models: string
   group: string
+  access_groups?: string
   priority: number
   weight: number
   last_used_time: number
@@ -630,6 +633,7 @@ export interface ChannelAccountPayload {
   status?: number
   models?: string
   group?: string
+  access_groups?: string
   priority?: number
   weight?: number
   base_url?: string | null
