@@ -69,6 +69,9 @@ type FetchModelsDialogProps = {
   customFetcher?: () => Promise<string[]>
   existingModelsOverride?: string[]
   channelName?: string | null
+  // 本地上游快照只用于弹窗选择和表单回填，不应被远程渠道权限拦截。
+  requireOperatePermission?: boolean
+  requireWritePermission?: boolean
 }
 
 export function FetchModelsDialog({
@@ -80,6 +83,8 @@ export function FetchModelsDialog({
   customFetcher,
   existingModelsOverride,
   channelName,
+  requireOperatePermission = true,
+  requireWritePermission = true,
 }: FetchModelsDialogProps) {
   const { t } = useTranslation()
   const { currentRow } = useChannels()
@@ -92,6 +97,12 @@ export function FetchModelsDialog({
   const [searchKeyword, setSearchKeyword] = useState('')
   const permissions = useChannelPermissions()
   const noPermissionMessage = t("You don't have necessary permission")
+  const canFetchModels =
+    !requireOperatePermission || permissions.canOperate
+  const canSaveModels =
+    !requireWritePermission ||
+    permissions.canWrite ||
+    permissions.canSensitiveWrite
 
   // 弹窗可能服务于新建渠道，此时还没有 currentRow，需要用表单当前值初始化选择。
   const existingModels = useMemo(
@@ -139,7 +150,7 @@ export function FetchModelsDialog({
 
   const handleFetchModels = async () => {
     if (!activeChannel && !customFetcher) return
-    if (!permissions.canOperate) {
+    if (!canFetchModels) {
       toast.error(noPermissionMessage)
       return
     }
@@ -174,7 +185,7 @@ export function FetchModelsDialog({
   }
 
   const handleSave = async () => {
-    if (!permissions.canWrite && !permissions.canSensitiveWrite) {
+    if (!canSaveModels) {
       toast.error(noPermissionMessage)
       return
     }
@@ -402,8 +413,8 @@ export function FetchModelsDialog({
             <Button
               className='mt-4'
               onClick={handleFetchModels}
-              disabled={isFetching || !permissions.canOperate}
-              title={permissions.canOperate ? undefined : noPermissionMessage}
+              disabled={isFetching || !canFetchModels}
+              title={canFetchModels ? undefined : noPermissionMessage}
             >
               {t('Fetch Models')}
             </Button>
@@ -411,6 +422,28 @@ export function FetchModelsDialog({
         ) : (
           <>
             <div className='space-y-4'>
+              <div className='flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3'>
+                <div className='min-w-0'>
+                  <p className='text-sm font-medium'>
+                    {t('Upstream Available Models')}
+                  </p>
+                  <p className='text-muted-foreground text-xs'>
+                    {t('{{n}} model(s) selected', {
+                      n: selectedModels.length,
+                    })}
+                  </p>
+                </div>
+                <Button
+                  type='button'
+                  variant='ghost'
+                  size='sm'
+                  onClick={() => setSelectedModels([])}
+                  disabled={selectedModels.length === 0}
+                >
+                  {t('Clear All Selected Models')}
+                </Button>
+              </div>
+
               {/* Search Bar */}
               <div className='relative'>
                 <Search className='text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2' />
@@ -507,15 +540,8 @@ export function FetchModelsDialog({
               </Button>
               <Button
                 onClick={handleSave}
-                disabled={
-                  isSaving ||
-                  (!permissions.canWrite && !permissions.canSensitiveWrite)
-                }
-                title={
-                  permissions.canWrite || permissions.canSensitiveWrite
-                    ? undefined
-                    : noPermissionMessage
-                }
+                disabled={isSaving || !canSaveModels}
+                title={canSaveModels ? undefined : noPermissionMessage}
               >
                 {isSaving && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
                 {isSaving ? t('Saving...') : t('Save Models')}

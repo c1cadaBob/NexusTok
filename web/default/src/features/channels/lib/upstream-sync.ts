@@ -419,6 +419,22 @@ export function upstreamAccountModelsArrayValue(
   )
 }
 
+export function buildUpstreamAccountConfigDraft(
+  key: UpstreamAccountKey,
+  previous: UpstreamAccountConfigDraft | undefined,
+  overrides: Partial<UpstreamAccountConfigDraft> = {}
+): UpstreamAccountConfigDraft {
+  return {
+    enabled: previous?.enabled ?? true,
+    priority: previous?.priority ?? key.suggested_priority ?? 0,
+    weight: previous?.weight ?? key.suggested_weight ?? 0,
+    models: previous?.models ?? key.models?.join(',') ?? '',
+    group: previous?.group ?? key.group_name ?? key.group_id ?? '',
+    access_groups: previous?.access_groups ?? key.access_groups ?? 'default',
+    ...overrides,
+  }
+}
+
 export function upstreamAccountAccessGroupsValue(
   key: UpstreamAccountKey,
   config: UpstreamAccountConfigDraft | undefined,

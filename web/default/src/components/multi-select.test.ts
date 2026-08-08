@@ -93,6 +93,41 @@ describe('MultiSelect 搜索过滤', () => {
       items
     )
   })
+
+  test('模型仓库模式空搜索时排除已选项', () => {
+    const items = ['gpt-5.5', 'gpt-5.6-terra', 'claude-sonnet']
+
+    assert.deepEqual(
+      getVisibleMultiSelectItems({
+        items,
+        inputValue: '',
+        hideSelectedOptionsWhenSearching: false,
+        excludeSelectedOptions: true,
+        selected: ['GPT-5.5'],
+      }),
+      ['gpt-5.6-terra', 'claude-sonnet']
+    )
+  })
+
+  test('模型仓库模式可使用自定义过滤器并继续排除已选项', () => {
+    const items = ['gpt-5.5', 'gpt-5.6-terra', 'GPT-4.1', 'claude-sonnet']
+    const textFilter = (values: string[], inputValue: string) =>
+      values.filter((value) =>
+        value.toLowerCase().includes(inputValue.trim().toLowerCase())
+      )
+
+    assert.deepEqual(
+      getVisibleMultiSelectItems({
+        items,
+        inputValue: 'GPT',
+        hideSelectedOptionsWhenSearching: false,
+        excludeSelectedOptions: true,
+        selected: ['gpt-5.5'],
+        filterItems: textFilter,
+      }),
+      ['gpt-5.6-terra', 'GPT-4.1']
+    )
+  })
 })
 
 describe('MultiSelect 值去重', () => {

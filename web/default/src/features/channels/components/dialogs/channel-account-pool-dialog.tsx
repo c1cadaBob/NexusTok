@@ -58,7 +58,7 @@ import {
 } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import { ConfirmDialog } from '@/components/confirm-dialog'
-import { MultiSelect } from '@/components/multi-select'
+import { ModelCatalogMultiSelect } from '@/features/models/components/model-catalog-multi-select'
 import { StatusBadge } from '@/components/status-badge'
 import {
   batchCreateChannelAccounts,
@@ -76,15 +76,10 @@ import {
   canManuallyMutateChannelAccounts,
   dedupeModelNames,
   formatModelsArray,
-  getModelSearchModelNameResult,
-  getModelSearchVendorForChannelType,
   formatTimestamp,
   isUpstreamAccountSyncChannel,
   parseModelsString,
-  summarizeModelSearchCandidates,
 } from '../../lib'
-import { useDebounce } from '@/hooks/use-debounce'
-import { searchModels } from '@/features/models/api'
 import {
   formatUpstreamModelRatioDetails,
   formatUpstreamRatioCompact,
@@ -178,7 +173,6 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [upstreamRefreshOpen, setUpstreamRefreshOpen] = useState(false)
   const [upstreamRefreshBusy, setUpstreamRefreshBusy] = useState(false)
-  const [modelSearchValue, setModelSearchValue] = useState('')
   const permissions = useChannelPermissions()
   const noPermissionMessage = t("You don't have necessary permission")
   const canReadChannelAccounts = permissions.canReadChannelAccount
@@ -220,65 +214,14 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
   const stats = accountsQuery.data?.data?.stats
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const nowSeconds = useMemo(() => Math.floor(Date.now() / 1000), [accounts])
-  const debouncedModelSearchValue = useDebounce(modelSearchValue, 300)
-  const trimmedModelSearchValue = modelSearchValue.trim()
-  const trimmedDebouncedModelSearchValue = debouncedModelSearchValue.trim()
-  const shouldSearchModels = trimmedDebouncedModelSearchValue.length >= 2
-  const modelSearchVendor = useMemo(
-    () =>
-      isUpstreamAccountSyncChannel(currentRow)
-        ? ''
-        : getModelSearchVendorForChannelType(currentRow?.type ?? 0),
-    [currentRow]
-  )
-  const { data: modelSearchData, isFetching: isModelSearchFetching } =
-    useQuery({
-      queryKey: [
-        'account-pool-model-search',
-        channelId,
-        modelSearchVendor,
-        trimmedDebouncedModelSearchValue,
-      ],
-      queryFn: () =>
-        searchModels({
-          keyword: trimmedDebouncedModelSearchValue,
-          vendor: modelSearchVendor || undefined,
-          p: 1,
-          page_size: 50,
-        }),
-      enabled: props.open && canReadChannelAccounts && shouldSearchModels,
-      placeholderData: (previousData) => previousData,
-    })
-  const modelSearchNameResult = useMemo(
-    () =>
-      getModelSearchModelNameResult(
-        modelSearchData?.data?.items ?? [],
-        trimmedDebouncedModelSearchValue
-      ),
-    [modelSearchData, trimmedDebouncedModelSearchValue]
-  )
-  const modelSearchSummary = useMemo(
-    () =>
-      // 其它账号的模型只用于扩展候选，不能算作当前正在编辑密钥的已选值；
-      // 否则精确命中时回车追加会被误判为“已存在”，导致无法添加到当前表单。
-      summarizeModelSearchCandidates(
-        modelSearchNameResult.names,
-        parseModelsString(formState.models)
-      ),
-    [formState.models, modelSearchNameResult.names]
-  )
-  const accountModelOptions = useMemo(
+  const accountExtraModels = useMemo(
     () =>
       dedupeModelNames([
-        ...modelSearchSummary.matched,
         ...parseModelsString(formState.models),
         ...parseModelsString(currentRow?.models ?? ''),
         ...accounts.flatMap((account) => parseModelsString(account.models)),
-      ]).map((model) => ({
-        value: model,
-        label: model,
-      })),
-    [accounts, currentRow?.models, formState.models, modelSearchSummary.matched]
+      ]),
+    [accounts, currentRow?.models, formState.models]
   )
 
   useEffect(() => {
@@ -297,12 +240,6 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
     setUpstreamRefreshOpen(false)
     setUpstreamRefreshBusy(false)
   }, [isUpstreamAccountSyncedChannel, props.open])
-
-  useEffect(() => {
-    if (!props.open) {
-      setModelSearchValue('')
-    }
-  }, [props.open])
 
   useEffect(() => {
     if (upstreamRefreshOpen) return
@@ -841,8 +778,7 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                     }
                   />
                 )}
-                <MultiSelect
-                  options={accountModelOptions}
+                <ModelCatalogMultiSelect
                   selected={parseModelsString(formState.models)}
                   onChange={(models) =>
                     setFormState({
@@ -850,55 +786,11 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                       models: formatModelsArray(dedupeModelNames(models)),
                     })
                   }
+                  extraModels={accountExtraModels}
                   placeholder={t('Select models or add custom ones')}
-                  allowCreate
-                  allowCreateDuringSearchLoading
                   createLabel='Add custom model "{{value}}"'
                   maxVisibleChips={4}
                   copyChipOnClick
-                  emptyText={t('No matching models')}
-                  loadingText={t('Searching...')}
-                  isLoading={isModelSearchFetching}
-                  searchValue={modelSearchValue}
-                  onSearchChange={setModelSearchValue}
-                  onSearchSubmit={() => {
-                    if (modelSearchSummary.addable.length === 0) return
-                    setFormState({
-                      ...formState,
-                      models: formatModelsArray(
-                        dedupeModelNames([
-                          ...parseModelsString(formState.models),
-                          ...modelSearchSummary.addable,
-                        ])
-                      ),
-                    })
-                    setModelSearchValue('')
-                  }}
-                  contentHeader={
-                    trimmedModelSearchValue.length >= 2 ? (
-                      <div className='bg-background flex flex-col gap-2 rounded-md'>
-                        <div className='flex items-center justify-between gap-3'>
-                          <div className='min-w-0'>
-                            <p className='text-sm font-medium'>
-                              {t('Search results')}
-                            </p>
-                            <p className='text-muted-foreground text-xs'>
-                              {isModelSearchFetching
-                                ? t('Searching...')
-                                : t(
-                                    '{{matched}} matched · {{addable}} new · {{existing}} already selected',
-                                    {
-                                      matched: modelSearchSummary.matched.length,
-                                      addable: modelSearchSummary.addable.length,
-                                      existing: modelSearchSummary.existingCount,
-                                    }
-                                  )}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                    ) : undefined
-                  }
                   compactInput={isUpstreamAccountSyncChannel(currentRow)}
                   className='min-h-9'
                 />

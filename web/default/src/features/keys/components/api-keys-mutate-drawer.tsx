@@ -29,7 +29,7 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { getUserModels, getUserGroups } from '@/lib/api'
+import { getUserGroups } from '@/lib/api'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import { cn } from '@/lib/utils'
 import { useStatus } from '@/hooks/use-status'
@@ -61,7 +61,7 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { DateTimePicker } from '@/components/datetime-picker'
-import { MultiSelect } from '@/components/multi-select'
+import { ModelCatalogMultiSelect } from '@/features/models/components/model-catalog-multi-select'
 import { createApiKey, updateApiKey, getApiKey } from '../api'
 import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import {
@@ -127,13 +127,6 @@ export function ApiKeysMutateDrawer({
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const defaultUseAutoGroup = status?.default_use_auto_group === true
 
-  // Fetch models
-  const { data: modelsData } = useQuery({
-    queryKey: ['user-models'],
-    queryFn: getUserModels,
-    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
-  })
-
   // Fetch groups
   const { data: groupsData } = useQuery({
     queryKey: ['user-groups'],
@@ -141,7 +134,6 @@ export function ApiKeysMutateDrawer({
     staleTime: 5 * 60 * 1000,
   })
 
-  const models = modelsData?.data || []
   const groupsRaw = groupsData?.data || {}
   const groups: ApiKeyGroupOption[] = Object.entries(groupsRaw).map(
     ([key, info]) => ({
@@ -545,16 +537,16 @@ export function ApiKeysMutateDrawer({
                         <FormItem>
                           <FormLabel>{t('Model Limits')}</FormLabel>
                           <FormControl>
-                            <MultiSelect
-                              options={models.map((m) => ({
-                                label: m,
-                                value: m,
-                              }))}
+                            <ModelCatalogMultiSelect
                               selected={field.value}
                               onChange={field.onChange}
+                              extraModels={field.value}
                               placeholder={t(
                                 'Select models (empty for allow all)'
                               )}
+                              createLabel='Add custom model "{{value}}"'
+                              maxVisibleChips={8}
+                              copyChipOnClick
                             />
                           </FormControl>
                           <FormDescription>

@@ -20,6 +20,7 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import type { UpstreamAccountKey } from '../types'
 import {
+  buildUpstreamAccountConfigDraft,
   buildUpstreamAccountPreviewRequest,
   buildUpstreamAccountRefreshPayload,
   collectUpstreamAccountCapabilityValidationErrors,
@@ -246,5 +247,34 @@ describe('上游账号刷新共享 payload', () => {
       payload.accounts?.[0]?.models,
       'vendor-missing-model,gpt-upstream'
     )
+  })
+
+  test('回填上游返回模型时保留密钥原有优先级和访问配置', () => {
+    const draft = buildUpstreamAccountConfigDraft(
+      makeSnapshotKey({
+        suggested_priority: 7,
+        suggested_weight: 88,
+        models: ['gpt-upstream'],
+        access_groups: 'default,vip',
+      }),
+      {
+        enabled: true,
+        priority: 3,
+        weight: 40,
+        models: 'gpt-local',
+        group: 'vip',
+        access_groups: 'default,vip',
+      },
+      {
+        models: 'gpt-upstream,gpt-shared',
+      }
+    )
+
+    assert.equal(draft.enabled, true)
+    assert.equal(draft.priority, 3)
+    assert.equal(draft.weight, 40)
+    assert.equal(draft.models, 'gpt-upstream,gpt-shared')
+    assert.equal(draft.group, 'vip')
+    assert.equal(draft.access_groups, 'default,vip')
   })
 })

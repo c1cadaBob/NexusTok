@@ -23,13 +23,11 @@ import {
   CheckCircle2,
   ExternalLink,
   Loader2,
-  Plus,
   RefreshCw,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import { useDebounce } from '@/hooks/use-debounce'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -44,7 +42,7 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { MultiSelect } from '@/components/multi-select'
-import { searchModels } from '@/features/models/api'
+import { ModelCatalogMultiSelect } from '@/features/models/components/model-catalog-multi-select'
 import {
   completeUpstreamAccountPreview2FA,
   getChannelAccounts,
@@ -57,16 +55,12 @@ import {
   dedupeModelNames,
   formatGroups,
   formatModelsArray,
-  getModelSearchModelNameResult,
-  mergeModelNames,
   parseGroups,
-  parseModelsString,
-  summarizeModelSearchCandidates,
 } from '../lib'
 import {
   buildUpstreamAccountConfigsFromChannelAccounts,
   buildUpstreamAccountConfigsFromSnapshotKeys,
-  buildUpstreamAccountModelOptions,
+  buildUpstreamAccountConfigDraft,
   buildUpstreamAccountPreviewRequest,
   buildUpstreamAccountRefreshPayload,
   buildUpstreamRatioConversionPayload,
@@ -145,7 +139,6 @@ export function UpstreamAccountRefreshPanel({
   channelId,
   channelType,
   channelBaseUrl,
-  channelModels,
   channelSettings,
   canReadChannelAccount,
   canSensitiveWrite,
@@ -225,41 +218,9 @@ export function UpstreamAccountRefreshPanel({
   const [upstreamAccountConfigs, setUpstreamAccountConfigs] = useState<
     Record<string, UpstreamAccountConfigDraft>
   >({})
-  const [upstreamKeyModelSearch, setUpstreamKeyModelSearch] = useState({
-    configId: '',
-    value: '',
-  })
   const autoPreviewTriggeredRef = useRef(false)
   const capturePanelRef = useRef<UpstreamAccountCapturePanelHandle>(null)
   const ratioConfigLoadedRef = useRef(false)
-  const debouncedUpstreamKeyModelSearchValue = useDebounce(
-    upstreamKeyModelSearch.value,
-    300
-  )
-  const trimmedUpstreamKeyModelSearchValue = upstreamKeyModelSearch.value.trim()
-  const trimmedDebouncedUpstreamKeyModelSearchValue =
-    debouncedUpstreamKeyModelSearchValue.trim()
-
-  const shouldSearchUpstreamKeyModels =
-    trimmedDebouncedUpstreamKeyModelSearchValue.length >= 2
-  const {
-    data: upstreamKeyModelSearchData,
-    isFetching: isUpstreamKeyModelSearchFetching,
-    isError: isUpstreamKeyModelSearchError,
-  } = useQuery({
-    queryKey: [
-      'upstream-refresh-key-model-search',
-      trimmedDebouncedUpstreamKeyModelSearchValue,
-    ],
-    queryFn: () =>
-      searchModels({
-        keyword: trimmedDebouncedUpstreamKeyModelSearchValue,
-        p: 1,
-        page_size: 50,
-      }),
-    enabled: open && Boolean(channelId) && shouldSearchUpstreamKeyModels,
-    placeholderData: (previousData) => previousData,
-  })
 
   const { data: groupsData } = useQuery({
     queryKey: ['groups'],
@@ -287,10 +248,6 @@ export function UpstreamAccountRefreshPanel({
   const refreshAccountsTotal =
     refreshAccountsQuery.data?.data?.accounts.total ?? 0
   const refreshAccountsLoadedCount = refreshAccounts.length
-  const currentModelsArray = useMemo(
-    () => parseModelsString(channelModels || ''),
-    [channelModels]
-  )
   const groupOptions = useMemo(
     () =>
       (groupsData?.data ?? []).map((group) => ({
@@ -321,21 +278,6 @@ export function UpstreamAccountRefreshPanel({
     },
     [t]
   )
-  const upstreamKeyModelSearchNameResult = useMemo(
-    () =>
-      getModelSearchModelNameResult(
-        upstreamKeyModelSearchData?.data?.items ?? [],
-        trimmedDebouncedUpstreamKeyModelSearchValue
-      ),
-    [upstreamKeyModelSearchData, trimmedDebouncedUpstreamKeyModelSearchValue]
-  )
-  const upstreamKeyModelSearchIsWaitingForDebounce =
-    trimmedUpstreamKeyModelSearchValue.length >= 2 &&
-    trimmedUpstreamKeyModelSearchValue !==
-      trimmedDebouncedUpstreamKeyModelSearchValue
-  const upstreamKeyModelSearchIsLoading =
-    upstreamKeyModelSearchIsWaitingForDebounce ||
-    isUpstreamKeyModelSearchFetching
   const upstreamRefreshPreviewRemaining = upstreamPreviewRemainingSeconds(
     upstreamRefreshPreviewExpiresAt,
     upstreamPreviewNowMs
@@ -385,7 +327,6 @@ export function UpstreamAccountRefreshPanel({
     // 上游建议值；这样普通刷新不会覆盖账号池中的手工调度配置。
     setUpstreamApplySuggested(false)
     setUpstreamAccountConfigs({})
-    setUpstreamKeyModelSearch({ configId: '', value: '' })
     autoPreviewTriggeredRef.current = false
     ratioConfigLoadedRef.current = false
   }, [
@@ -1005,72 +946,28 @@ export function UpstreamAccountRefreshPanel({
                       ...prev,
                       [configId]: updater(prev[configId]),
                     }))
-                  const buildConfigWithDefaults = (
-                    previous: UpstreamAccountConfigDraft | undefined,
-                    overrides: Partial<UpstreamAccountConfigDraft>
-                  ): UpstreamAccountConfigDraft => ({
-                    enabled: previous?.enabled ?? true,
-                    priority: previous?.priority ?? key.suggested_priority ?? 0,
-                    weight: previous?.weight ?? key.suggested_weight ?? 0,
-                    models: previous?.models ?? key.models?.join(',') ?? '',
-                    group:
-                      previous?.group ?? key.group_name ?? key.group_id ?? '',
-                    access_groups:
-                      previous?.access_groups ?? key.access_groups ?? 'default',
-                    ...overrides,
-                  })
                   const setConfigValue = (
                     overrides: Partial<UpstreamAccountConfigDraft>
                   ) =>
                     updateConfig((previous) =>
-                      buildConfigWithDefaults(previous, overrides)
+                      buildUpstreamAccountConfigDraft(key, previous, overrides)
                     )
                   const handleKeyModelsChange = (values: string[]) =>
                     setConfigValue({
                       models: formatModelsArray(dedupeModelNames(values)),
                     })
-                  const isCurrentKeyModelSearch =
-                    upstreamKeyModelSearch.configId === configId
-                  const currentKeyModelSearchValue = isCurrentKeyModelSearch
-                    ? upstreamKeyModelSearch.value
-                    : ''
-                  const currentKeySearchSummary =
-                    summarizeModelSearchCandidates(
-                      isCurrentKeyModelSearch
-                        ? upstreamKeyModelSearchNameResult.names
-                        : [],
-                      currentModelsArrayValue
-                    )
-                  const upstreamKeyModelOptions =
-                    buildUpstreamAccountModelOptions(key, config, [
-                      ...currentKeySearchSummary.matched,
-                      ...currentModelsArray,
-                    ])
-                  const showKeyModelSearchPanel =
-                    currentKeyModelSearchValue.trim().length >= 2 &&
-                    (upstreamKeyModelSearchIsLoading ||
-                      isUpstreamKeyModelSearchError ||
-                      currentKeySearchSummary.matched.length > 0)
-                  const handleAppendKeyModelSearchResults = () => {
-                    if (currentKeySearchSummary.addable.length === 0) {
-                      toast.info(t('No new search results to add'))
+                  const upstreamModelNames = dedupeModelNames(key.models ?? [])
+                  const handleUseUpstreamKeyModels = () => {
+                    if (upstreamModelNames.length === 0) {
+                      toast.info(t('No upstream models returned for this key'))
                       return
                     }
-                    handleKeyModelsChange(
-                      mergeModelNames(
-                        currentModelsArrayValue,
-                        currentKeySearchSummary.addable
-                      )
+                    handleKeyModelsChange(upstreamModelNames)
+                    toast.success(
+                      t('Applied {{count}} upstream model(s)', {
+                        count: upstreamModelNames.length,
+                      })
                     )
-                    setUpstreamKeyModelSearch({ configId, value: '' })
-                  }
-                  const handleUseUpstreamKeyModels = () => {
-                    handleKeyModelsChange(key.models ?? [])
-                    setUpstreamKeyModelSearch({ configId, value: '' })
-                  }
-                  const handleClearKeyModels = () => {
-                    setConfigValue({ models: '' })
-                    setUpstreamKeyModelSearch({ configId, value: '' })
                   }
                   const preventModelActionBlur = (event: {
                     preventDefault: () => void
@@ -1128,77 +1025,14 @@ export function UpstreamAccountRefreshPanel({
                         </div>
                       </div>
                       <div className='flex min-w-0 flex-col gap-1'>
-                        <MultiSelect
-                          options={upstreamKeyModelOptions}
+                        <ModelCatalogMultiSelect
                           selected={currentModelsArrayValue}
                           onChange={handleKeyModelsChange}
+                          extraModels={key.models ?? []}
                           placeholder={t('Select models or add custom ones')}
-                          allowCreate
                           createLabel='Add custom model "{{value}}"'
                           maxVisibleChips={2}
                           copyChipOnClick
-                          emptyText={t('No matching models')}
-                          loadingText={t('Searching...')}
-                          isLoading={
-                            isCurrentKeyModelSearch &&
-                            upstreamKeyModelSearchIsLoading
-                          }
-                          allowCreateDuringSearchLoading
-                          searchValue={currentKeyModelSearchValue}
-                          onSearchChange={(value) =>
-                            setUpstreamKeyModelSearch({ configId, value })
-                          }
-                          onSearchSubmit={handleAppendKeyModelSearchResults}
-                          contentHeader={
-                            showKeyModelSearchPanel ? (
-                              <div className='bg-background flex flex-col gap-2 rounded-md'>
-                                <div className='flex items-center justify-between gap-3'>
-                                  <div className='min-w-0'>
-                                    <p className='text-sm font-medium'>
-                                      {t('Search results')}
-                                    </p>
-                                    <p className='text-muted-foreground text-xs'>
-                                      {upstreamKeyModelSearchIsLoading
-                                        ? t('Searching...')
-                                        : isUpstreamKeyModelSearchError
-                                          ? t('No matching models')
-                                          : t(
-                                              '{{matched}} matched · {{addable}} new · {{existing}} already selected',
-                                              {
-                                                matched:
-                                                  currentKeySearchSummary
-                                                    .matched.length,
-                                                addable:
-                                                  currentKeySearchSummary
-                                                    .addable.length,
-                                                existing:
-                                                  currentKeySearchSummary.existingCount,
-                                              }
-                                            )}
-                                    </p>
-                                  </div>
-                                  <Button
-                                    type='button'
-                                    variant='outline'
-                                    size='sm'
-                                    onMouseDown={preventModelActionBlur}
-                                    onClick={handleAppendKeyModelSearchResults}
-                                    disabled={
-                                      upstreamKeyModelSearchIsLoading ||
-                                      currentKeySearchSummary.addable.length ===
-                                        0
-                                    }
-                                  >
-                                    <Plus data-icon='inline-start' />
-                                    {t('Add {{count}} search result(s)', {
-                                      count:
-                                        currentKeySearchSummary.addable.length,
-                                    })}
-                                  </Button>
-                                </div>
-                              </div>
-                            ) : undefined
-                          }
                           contentFooter={
                             <div className='bg-background flex flex-wrap gap-2 border-t pt-2'>
                               <Button
@@ -1207,25 +1041,12 @@ export function UpstreamAccountRefreshPanel({
                                 size='sm'
                                 onMouseDown={preventModelActionBlur}
                                 onClick={handleUseUpstreamKeyModels}
-                                disabled={(key.models ?? []).length === 0}
                               >
-                                {t('Use Upstream Models')}
-                              </Button>
-                              <Button
-                                type='button'
-                                variant='ghost'
-                                size='sm'
-                                onMouseDown={preventModelActionBlur}
-                                onClick={handleClearKeyModels}
-                                disabled={currentModelsArrayValue.length === 0}
-                              >
-                                {t('Clear All')}
+                                {t('Use Upstream Models')} (
+                                {upstreamModelNames.length})
                               </Button>
                             </div>
                           }
-                          hideSelectedOptionsWhenSearching
-                          submitSearchOnEnterWithMatches
-                          submitSearchOnEnterWhenHighlighted
                           clearSearchOnSelect={false}
                           className='min-h-8'
                           compactInput
@@ -1357,14 +1178,9 @@ export function UpstreamAccountRefreshPanel({
       )
     },
     [
-      isUpstreamKeyModelSearchError,
       t,
       upstreamAccountConfigs,
       upstreamApplySuggested,
-      upstreamKeyModelSearch.configId,
-      upstreamKeyModelSearch.value,
-      upstreamKeyModelSearchIsLoading,
-      upstreamKeyModelSearchNameResult.names,
     ]
   )
 
@@ -1715,6 +1531,7 @@ export function UpstreamAccountRefreshPanel({
           </AlertDescription>
         </Alert>
       ) : null}
+
     </div>
   )
 }

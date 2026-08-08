@@ -43,7 +43,7 @@ export type Option = {
   value: string
 }
 
-interface MultiSelectProps {
+export interface MultiSelectProps {
   options: Option[]
   selected: string[]
   onChange: (values: string[]) => void
@@ -67,6 +67,11 @@ interface MultiSelectProps {
   onSearchSubmit?: () => void
   contentHeader?: React.ReactNode
   contentFooter?: React.ReactNode
+  filterItems?: (
+    items: string[],
+    inputValue: string,
+    labelMap: ReadonlyMap<string, string>
+  ) => string[]
   allowCreateWithMatches?: boolean
   allowCreateDuringSearchLoading?: boolean
   compactInput?: boolean
@@ -75,6 +80,8 @@ interface MultiSelectProps {
   submitSearchOnEnterWithMatches?: boolean
   submitSearchOnEnterWhenHighlighted?: boolean
   clearSearchOnSelect?: boolean
+  openOnFocus?: boolean
+  excludeSelectedOptions?: boolean
   'aria-labelledby'?: string
   'aria-describedby'?: string
   'aria-invalid'?: boolean
@@ -146,17 +153,28 @@ export function getVisibleMultiSelectItems({
   inputValue,
   labelMap = new Map(),
   hideSelectedOptionsWhenSearching,
+  excludeSelectedOptions = false,
   selected,
+  filterItems = filterMultiSelectItems,
 }: {
   items: string[]
   inputValue: string
   labelMap?: ReadonlyMap<string, string>
   hideSelectedOptionsWhenSearching: boolean
+  excludeSelectedOptions?: boolean
   selected: readonly string[]
+  filterItems?: (
+    items: string[],
+    inputValue: string,
+    labelMap: ReadonlyMap<string, string>
+  ) => string[]
 }): string[] {
-  const filteredItems = filterMultiSelectItems(items, inputValue, labelMap)
+  const filteredItems = filterItems(items, inputValue, labelMap)
   const trimmedInput = inputValue.trim()
-  if (!hideSelectedOptionsWhenSearching || trimmedInput.length === 0) {
+  if (
+    !excludeSelectedOptions &&
+    (!hideSelectedOptionsWhenSearching || trimmedInput.length === 0)
+  ) {
     return filteredItems
   }
 
@@ -350,6 +368,7 @@ export function MultiSelect({
   onSearchSubmit,
   contentHeader,
   contentFooter,
+  filterItems,
   allowCreateWithMatches = true,
   allowCreateDuringSearchLoading = false,
   compactInput = false,
@@ -358,6 +377,8 @@ export function MultiSelect({
   submitSearchOnEnterWithMatches = false,
   submitSearchOnEnterWhenHighlighted = false,
   clearSearchOnSelect = true,
+  openOnFocus = false,
+  excludeSelectedOptions = false,
   'aria-labelledby': ariaLabelledBy,
   'aria-describedby': ariaDescribedBy,
   'aria-invalid': ariaInvalid,
@@ -437,9 +458,19 @@ export function MultiSelect({
       inputValue,
       labelMap,
       hideSelectedOptionsWhenSearching,
+      excludeSelectedOptions,
       selected,
+      filterItems,
     })
-  }, [hideSelectedOptionsWhenSearching, inputValue, items, labelMap, selected])
+  }, [
+    excludeSelectedOptions,
+    filterItems,
+    hideSelectedOptionsWhenSearching,
+    inputValue,
+    items,
+    labelMap,
+    selected,
+  ])
 
   const updateInputValue = React.useCallback(
     (value: string) => {
@@ -707,6 +738,9 @@ export function MultiSelect({
           placeholder={selected.length === 0 ? resolvedPlaceholder : undefined}
           onKeyDownCapture={handleRemovalKeyDownCapture}
           onKeyDown={handleKeyDown}
+          onFocus={() => {
+            if (openOnFocus) updateOpen(true)
+          }}
           aria-label={resolvedPlaceholder}
           aria-labelledby={ariaLabelledBy}
           aria-describedby={ariaDescribedBy}
