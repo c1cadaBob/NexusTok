@@ -214,6 +214,10 @@ func UpdateChannelAccount(c *gin.Context) {
 		common.ApiSuccess(c, channelAccountResponseForContext(c, account))
 		return
 	}
+	if err := validateSyncedChannelAccountCapabilityForUpdate(account, updates); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	if err := model.DB.Model(account).Updates(updates).Error; err != nil {
 		common.ApiError(c, err)
 		return
@@ -287,6 +291,17 @@ func UpdateChannelAccountStatus(c *gin.Context) {
 	if req.Status <= 0 {
 		common.ApiErrorMsg(c, "status is required")
 		return
+	}
+	if req.Status == common.ChannelStatusEnabled {
+		account, err := model.GetChannelAccountById(channelID, accountID)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		if err := validateSyncedChannelAccountCapabilityForUpdate(account, map[string]interface{}{"status": req.Status}); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 	}
 	if err := model.UpdateChannelAccountStatus(channelID, accountID, req.Status, req.Reason); err != nil {
 		common.ApiError(c, err)
@@ -647,6 +662,43 @@ func channelAccountUpdateMap(account *model.ChannelAccount, req channelAccountUp
 		updates["max_concurrency"] = *req.MaxConcurrency
 	}
 	return updates
+}
+
+// validateSyncedChannelAccountCapabilityForUpdate 校验同步账号更新后的最终路由能力。
+//
+// 上游同步账号允许管理员本地调整模型白名单和 NexusTok 可访问用户组，但启用状态下
+// 两者都必须非空，否则能力重建后不会产生任何可命中的路由。普通账号池仍保留历史
+// 兼容语义，不使用 access_groups 作为必填字段。
+func validateSyncedChannelAccountCapabilityForUpdate(account *model.ChannelAccount, updates map[string]interface{}) error {
+	if account == nil || !upstreamaccount.HasAccountSyncMetadata(account.OtherSettings) {
+		return nil
+	}
+	status := account.Status
+	if value, ok := updates["status"].(int); ok {
+		status = value
+	}
+	if status != common.ChannelStatusEnabled {
+		return nil
+	}
+	models := account.Models
+	if value, ok := updates["models"].(string); ok {
+		models = value
+	}
+	accessGroups := account.AccessGroups
+	if value, ok := updates["access_groups"].(string); ok {
+		accessGroups = value
+	}
+	name := strings.TrimSpace(account.Name)
+	if name == "" {
+		name = "未命名同步密钥"
+	}
+	if strings.TrimSpace(models) == "" {
+		return fmt.Errorf("同步密钥 %s 必须配置至少一个模型", name)
+	}
+	if strings.TrimSpace(accessGroups) == "" {
+		return fmt.Errorf("同步密钥 %s 必须配置至少一个 NexusTok 可访问用户组", name)
+	}
+	return nil
 }
 
 func createChannelAccountsFromKeys(channelID int, req channelAccountBatchRequest) (int, int, error) {

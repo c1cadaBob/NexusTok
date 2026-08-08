@@ -792,7 +792,6 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                   }
                   placeholder={t('Select models or add custom ones')}
                   allowCreate
-                  allowCreateWithMatches={false}
                   createLabel='Add custom model "{{value}}"'
                   maxVisibleChips={4}
                   copyChipOnClick
@@ -870,10 +869,7 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                     <TableHead className='w-52 truncate' title={t('Models')}>
                       {t('Models')}
                     </TableHead>
-                    <TableHead
-                      className='w-32 truncate'
-                      title={t('Key Group')}
-                    >
+                    <TableHead className='w-32 truncate' title={t('Key Group')}>
                       {t('Key Group')}
                     </TableHead>
                     <TableHead
@@ -900,10 +896,7 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                     >
                       {t('Weight')}
                     </TableHead>
-                    <TableHead
-                      className='w-28 truncate'
-                      title={t('Cooldown')}
-                    >
+                    <TableHead className='w-28 truncate' title={t('Cooldown')}>
                       {t('Cooldown')}
                     </TableHead>
                     <TableHead
@@ -982,16 +975,10 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                               copyable={false}
                             />
                           </TableCell>
-                          <TableCell
-                            className='truncate'
-                            title={accountModels}
-                          >
+                          <TableCell className='truncate' title={accountModels}>
                             {accountModels}
                           </TableCell>
-                          <TableCell
-                            className='truncate'
-                            title={keyGroupLabel}
-                          >
+                          <TableCell className='truncate' title={keyGroupLabel}>
                             {keyGroupLabel}
                           </TableCell>
                           <TableCell
@@ -1017,7 +1004,7 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                             {account.weight || 1}
                           </TableCell>
                           <TableCell
-                            className='truncate whitespace-nowrap text-xs'
+                            className='truncate text-xs whitespace-nowrap'
                             title={cooldownLabel}
                           >
                             {cooldownLabel}

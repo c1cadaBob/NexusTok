@@ -221,3 +221,45 @@ func TestChannelAccountUpdatesAffectCapabilities(t *testing.T) {
 		"name": "renamed",
 	}))
 }
+
+func TestValidateSyncedChannelAccountCapabilityForUpdate(t *testing.T) {
+	syncSettings := upstreamaccount.PreserveAccountSyncMetadata(
+		`{"upstream_account_sync":{"platform":"new-api","base_url":"https://newapi.example","external_id":"key-1","key_digest":"digest","synced_at":1}}`,
+		`{"local_flag":true}`,
+	)
+	account := &model.ChannelAccount{
+		Name:          "Synced Key",
+		Status:        common.ChannelStatusEnabled,
+		Models:        "gpt-4o",
+		AccessGroups:  "default",
+		OtherSettings: syncSettings,
+	}
+
+	assert.ErrorContains(
+		t,
+		validateSyncedChannelAccountCapabilityForUpdate(account, map[string]interface{}{"models": ""}),
+		"必须配置至少一个模型",
+	)
+	assert.ErrorContains(
+		t,
+		validateSyncedChannelAccountCapabilityForUpdate(account, map[string]interface{}{"access_groups": ""}),
+		"必须配置至少一个 NexusTok 可访问用户组",
+	)
+	assert.NoError(
+		t,
+		validateSyncedChannelAccountCapabilityForUpdate(account, map[string]interface{}{
+			"status":        common.ChannelStatusManuallyDisabled,
+			"models":        "",
+			"access_groups": "",
+		}),
+	)
+	assert.NoError(
+		t,
+		validateSyncedChannelAccountCapabilityForUpdate(&model.ChannelAccount{
+			Name:         "普通账号",
+			Status:       common.ChannelStatusEnabled,
+			Models:       "",
+			AccessGroups: "",
+		}, map[string]interface{}{"models": "", "access_groups": ""}),
+	)
+}

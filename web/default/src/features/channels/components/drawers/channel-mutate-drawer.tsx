@@ -169,6 +169,7 @@ import {
   parseModelsString,
   formatModelsArray,
   formatGroups,
+  parseGroups,
   extractRedirectModels,
   extractMappingSourceModels,
   hasModelConfigChanged,
@@ -196,6 +197,7 @@ import {
   getUpstreamKeyRatioDisplayValue,
   getUpstreamKeyGroupLabel,
   getUpstreamRatioDisplayValue,
+  collectUpstreamAccountCapabilityValidationErrors,
   summarizeUpstreamAccountCapabilities,
 } from '../../lib/upstream-sync'
 import type {
@@ -728,6 +730,26 @@ const createEmptyModelMappingGuardrail = (): ModelMappingGuardrail => ({
 
 const formatModelNames = (models: string[]): string =>
   models.map((model) => `"${model}"`).join(', ')
+
+function mergeGroupOptionsWithSelected(
+  options: Array<{ value: string; label: string }>,
+  selected: string[]
+) {
+  const seen = new Set<string>()
+  const merged: Array<{ value: string; label: string }> = []
+  for (const option of options) {
+    if (!option.value || seen.has(option.value)) continue
+    seen.add(option.value)
+    merged.push(option)
+  }
+  for (const group of ['default', ...selected]) {
+    const value = group.trim()
+    if (!value || seen.has(value)) continue
+    seen.add(value)
+    merged.push({ value, label: value })
+  }
+  return merged
+}
 
 const MODEL_MAPPING_PREVIEW_FALLBACK: Array<{
   source: string
@@ -1286,8 +1308,7 @@ export function ChannelMutateDrawer({
     upstreamKeyModelSearch.value,
     300
   )
-  const trimmedUpstreamKeyModelSearchValue =
-    upstreamKeyModelSearch.value.trim()
+  const trimmedUpstreamKeyModelSearchValue = upstreamKeyModelSearch.value.trim()
   const trimmedDebouncedUpstreamKeyModelSearchValue =
     debouncedUpstreamKeyModelSearchValue.trim()
 
@@ -1675,6 +1696,8 @@ export function ChannelMutateDrawer({
   // 上游同步渠道的真实路由能力完全由每个同步密钥的 models 与 access_groups 决定。
   // 渠道级 models/group 只是后端聚合缓存和旧接口兼容字段，不能再展示为可编辑入口。
   const showSharedModelsSection = !usesUpstreamAccountCredentialSource
+  const showModelsNavigationSection =
+    showSharedModelsSection || usesUpstreamAccountCredentialSource
   const showManualCredentialSection = !usesUpstreamAccountCredentialSource
   const supportsMultiKeyAddMode =
     currentType !== 57 && !(currentType === 41 && vertexKeyType === 'api_key')
@@ -1821,6 +1844,29 @@ export function ChannelMutateDrawer({
   const currentModelsArray = useMemo(
     () => parseModelsString(currentModels),
     [currentModels]
+  )
+
+  const showUpstreamCapabilityValidationError = useCallback(
+    (
+      errors: ReturnType<
+        typeof collectUpstreamAccountCapabilityValidationErrors
+      >
+    ) => {
+      const firstError = errors[0]
+      if (!firstError) return false
+      toast.error(
+        t(
+          firstError.field === 'models'
+            ? 'Enabled synced key "{{name}}" must select at least one model.'
+            : 'Enabled synced key "{{name}}" must select at least one NexusTok access group.',
+          {
+            name: firstError.keyName,
+          }
+        )
+      )
+      return true
+    },
+    [t]
   )
 
   // 按渠道类型推导基础模型集合。
@@ -2123,6 +2169,14 @@ export function ChannelMutateDrawer({
                   )
                   const currentAccessGroupsValue =
                     config?.access_groups ?? key.access_groups ?? 'default'
+                  const currentAccessGroupsArrayValue = parseGroups(
+                    currentAccessGroupsValue
+                  )
+                  const currentEnabledValue = config?.enabled ?? true
+                  const accessGroupOptions = mergeGroupOptionsWithSelected(
+                    groupOptions,
+                    currentAccessGroupsArrayValue
+                  )
                   const currentPriorityValue =
                     config?.priority ?? key.suggested_priority ?? 0
                   const currentWeightValue =
@@ -2167,7 +2221,6 @@ export function ChannelMutateDrawer({
                           onChange={handleKeyModelsChange}
                           placeholder={t('Select models or add custom ones')}
                           allowCreate
-                          allowCreateWithMatches={false}
                           createLabel='Add custom model "{{value}}"'
                           maxVisibleChips={2}
                           copyChipOnClick
@@ -2263,8 +2316,17 @@ export function ChannelMutateDrawer({
                           className='min-h-8'
                         />
                         {currentModelsArrayValue.length === 0 ? (
-                          <span className='text-destructive truncate text-[11px]'>
-                            {t('This key will not route any model.')}
+                          <span
+                            className={cn(
+                              'truncate text-[11px]',
+                              currentEnabledValue
+                                ? 'text-destructive'
+                                : 'text-muted-foreground'
+                            )}
+                          >
+                            {currentEnabledValue
+                              ? t('Models are required')
+                              : t('This key will not route any model.')}
                           </span>
                         ) : null}
                       </div>
@@ -2287,19 +2349,32 @@ export function ChannelMutateDrawer({
                         </span>
                       </div>
                       <div className='flex min-w-0 flex-col gap-1'>
-                        <Input
-                          value={currentAccessGroupsValue}
-                          placeholder='default,vip'
-                          onChange={(event) =>
+                        <MultiSelect
+                          options={accessGroupOptions}
+                          selected={currentAccessGroupsArrayValue}
+                          onChange={(values) =>
                             setConfigValue({
-                              access_groups: event.target.value,
+                              access_groups: formatGroups(values),
                             })
                           }
-                          className='h-8 px-2 text-xs'
+                          placeholder={t(FIELD_PLACEHOLDERS.GROUP)}
+                          maxVisibleChips={2}
+                          className='min-h-8'
                         />
-                        {!currentAccessGroupsValue.trim() ? (
-                          <span className='text-destructive truncate text-[11px]'>
-                            {t('This key will not be available to any user group.')}
+                        {currentAccessGroupsArrayValue.length === 0 ? (
+                          <span
+                            className={cn(
+                              'truncate text-[11px]',
+                              currentEnabledValue
+                                ? 'text-destructive'
+                                : 'text-muted-foreground'
+                            )}
+                          >
+                            {currentEnabledValue
+                              ? t('Group is required')
+                              : t(
+                                  'This key will not be available to any user group.'
+                                )}
                           </span>
                         ) : null}
                       </div>
@@ -2363,12 +2438,7 @@ export function ChannelMutateDrawer({
         </div>
       )
     },
-    [
-      currentModelsArray,
-      t,
-      upstreamAccountConfigs,
-      upstreamApplySuggested,
-    ]
+    [currentModelsArray, t, upstreamAccountConfigs, upstreamApplySuggested]
   )
 
   const currentTypeLabel = useMemo(
@@ -2582,11 +2652,13 @@ export function ChannelMutateDrawer({
       status: credentialsStatus,
       icon: <KeyRound className='h-4 w-4' aria-hidden='true' />,
     },
-    ...(showSharedModelsSection
+    ...(showModelsNavigationSection
       ? [
           {
             id: CHANNEL_EDITOR_SECTION_IDS.models,
-            title: t('Models & Groups'),
+            title: showSharedModelsSection
+              ? t('Models & Groups')
+              : t('Model Mapping'),
             description: getSectionStatusLabel(modelsStatus, t),
             statusLabel: getSectionStatusLabel(modelsStatus, t),
             status: modelsStatus,
@@ -2648,10 +2720,7 @@ export function ChannelMutateDrawer({
         upstreamKeyModelSearchData?.data?.items ?? [],
         trimmedDebouncedUpstreamKeyModelSearchValue
       ),
-    [
-      upstreamKeyModelSearchData,
-      trimmedDebouncedUpstreamKeyModelSearchValue,
-    ]
+    [upstreamKeyModelSearchData, trimmedDebouncedUpstreamKeyModelSearchValue]
   )
 
   const modelSearchSummary = useMemo(
@@ -2687,6 +2756,38 @@ export function ChannelMutateDrawer({
         label: model,
       })),
     [baseModelOptions, modelSearchSummary.addable, modelSearchSummary.matched]
+  )
+
+  const modelMappingSourceModels = useMemo(() => {
+    if (!usesUpstreamAccountCredentialSource) return currentModelsArray
+    const keys = upstreamRefreshSnapshot?.keys?.length
+      ? upstreamRefreshSnapshot.keys
+      : upstreamSnapshot?.keys?.length
+        ? upstreamSnapshot.keys
+        : syncedEditableAccounts
+    const summary = summarizeUpstreamAccountCapabilities(
+      keys,
+      upstreamAccountConfigs
+    )
+    return summary.modelNames.length > 0
+      ? summary.modelNames
+      : currentModelsArray
+  }, [
+    currentModelsArray,
+    syncedEditableAccounts,
+    upstreamAccountConfigs,
+    upstreamRefreshSnapshot?.keys,
+    upstreamSnapshot?.keys,
+    usesUpstreamAccountCredentialSource,
+  ])
+
+  const modelMappingTargetModels = useMemo(
+    () =>
+      dedupeModelNames([
+        ...baseModelOptions.map((option) => option.value),
+        ...modelMappingSourceModels,
+      ]),
+    [baseModelOptions, modelMappingSourceModels]
   )
 
   const modelSearchPreviewNames = modelSearchSummary.addable.slice(
@@ -2744,7 +2845,7 @@ export function ChannelMutateDrawer({
             .filter(
               (entry) =>
                 Boolean(entry.source) &&
-                !currentModelsArray.includes(entry.source)
+                !modelMappingSourceModels.includes(entry.source)
             )
             .map((entry) => entry.source)
         )
@@ -2756,7 +2857,7 @@ export function ChannelMutateDrawer({
             .filter(
               (entry) =>
                 Boolean(entry.target) &&
-                currentModelsArray.includes(entry.target)
+                modelMappingSourceModels.includes(entry.target)
             )
             .map((entry) => entry.target)
         )
@@ -2771,7 +2872,7 @@ export function ChannelMutateDrawer({
     } catch {
       return { ...createEmptyModelMappingGuardrail(), invalidJson: true }
     }
-  }, [currentModelMapping, currentModelsArray])
+  }, [currentModelMapping, modelMappingSourceModels])
 
   const mappingPreviewPairs =
     modelMappingGuardrail.entries.length > 0
@@ -3754,6 +3855,13 @@ export function ChannelMutateDrawer({
         )
         return
       }
+      const capabilityErrors = collectUpstreamAccountCapabilityValidationErrors(
+        syncedEditableAccounts,
+        upstreamAccountConfigs
+      )
+      if (showUpstreamCapabilityValidationError(capabilityErrors)) {
+        return
+      }
 
       setIsSavingSyncedAccountConfigs(true)
       try {
@@ -3880,6 +3988,7 @@ export function ChannelMutateDrawer({
       permissions.canOperateChannelAccount,
       permissions.canWriteChannelAccount,
       renderCurrentRow,
+      showUpstreamCapabilityValidationError,
       syncedChannelAccounts,
       syncedChannelAccountsLoadedCount,
       syncedChannelAccountsQuery.isLoading,
@@ -3904,6 +4013,13 @@ export function ChannelMutateDrawer({
       clearUpstreamRefreshPreview()
       setUpstreamAccountConfigs({})
       showUpstreamPreviewExpiredToast()
+      return
+    }
+    const capabilityErrors = collectUpstreamAccountCapabilityValidationErrors(
+      upstreamRefreshSnapshot.keys,
+      upstreamAccountConfigs
+    )
+    if (showUpstreamCapabilityValidationError(capabilityErrors)) {
       return
     }
     await upstreamRefreshMutation.mutateAsync({
@@ -3934,6 +4050,7 @@ export function ChannelMutateDrawer({
     clearUpstreamRefreshPreview,
     isUpstreamRefreshPreviewExpired,
     showUpstreamPreviewExpiredToast,
+    showUpstreamCapabilityValidationError,
   ])
 
   const handlePreviewUpstreamRefresh = useCallback(async () => {
@@ -4338,6 +4455,14 @@ export function ChannelMutateDrawer({
           toast.error(t('No upstream keys were found for this account.'))
           return
         }
+        const capabilityErrors =
+          collectUpstreamAccountCapabilityValidationErrors(
+            upstreamSnapshot.keys,
+            upstreamAccountConfigs
+          )
+        if (showUpstreamCapabilityValidationError(capabilityErrors)) {
+          return
+        }
         const upstreamChannelModels =
           upstreamAccountValuesToString(
             upstreamSnapshot.keys,
@@ -4498,6 +4623,7 @@ export function ChannelMutateDrawer({
       isUpstreamAccountSyncedChannel,
       isUpstreamPreviewExpired,
       showUpstreamPreviewExpiredToast,
+      showUpstreamCapabilityValidationError,
       upstreamBaseUrl,
       upstreamPreviewId,
       upstreamSnapshot,
@@ -7046,369 +7172,374 @@ export function ChannelMutateDrawer({
                     </ChannelApiAccessSection>
                   </div>
 
-                  {showSharedModelsSection && (
+                  {showModelsNavigationSection && (
                     <div
                       id={CHANNEL_EDITOR_SECTION_IDS.models}
                       className='scroll-mt-4'
                     >
                       <ChannelModelsSection>
                         <div className='flex flex-col gap-5'>
-                          <div className='border-border/60 bg-muted/10 flex flex-col gap-4 rounded-lg border p-4'>
-                            <FormField
-                              control={form.control}
-                              name='models'
-                              render={() => (
-                                <FormItem className='flex flex-col gap-3'>
-                                  <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
-                                    <div className='flex flex-col gap-1'>
-                                      <FormLabel htmlFor='channel-models'>
-                                        {usesUpstreamAccountCredentialSource
-                                          ? t('Aggregated Models')
-                                          : t('Models *')}
-                                      </FormLabel>
-                                      <FormDescription>
-                                        {usesUpstreamAccountCredentialSource
-                                          ? t(
-                                              'Derived from enabled synced keys. Edit per-key models in synced key configuration.'
-                                            )
-                                          : t(FIELD_DESCRIPTIONS.MODELS)}
-                                      </FormDescription>
-                                    </div>
-                                    <div className='flex flex-wrap gap-2'>
-                                      <Badge
-                                        variant='outline'
-                                        className='w-fit'
-                                      >
-                                        {t('Selected {{count}}', {
-                                          count: currentModelsArray.length,
-                                        })}
-                                      </Badge>
-                                    </div>
-                                  </div>
-                                  <FormControl>
-                                    <MultiSelect
-                                      id='channel-models'
-                                      options={modelOptions}
-                                      selected={currentModelsArray}
-                                      onChange={handleModelsChange}
-                                      placeholder={t(
-                                        'Select models or add custom ones'
-                                      )}
-                                      allowCreate
-                                      allowCreateWithMatches={false}
-                                      createLabel='Add custom model "{{value}}"'
-                                      maxVisibleChips={8}
-                                      copyChipOnClick
-                                      disabled={
-                                        !canEditBasicFields ||
-                                        usesUpstreamAccountCredentialSource
-                                      }
-                                      isLoading={modelSearchIsLoading}
-                                      emptyText={t('No matching models')}
-                                      loadingText={t('Searching...')}
-                                      searchValue={modelSearchValue}
-                                      onSearchChange={setModelSearchValue}
-                                      open={modelSearchOpen}
-                                      onOpenChange={setModelSearchOpen}
-                                      onSearchSubmit={
-                                        handleAddModelSearchResults
-                                      }
-                                      contentHeader={
-                                        showModelSearchPanel ? (
-                                          <div className='bg-background flex flex-col gap-3 rounded-md'>
-                                            <div className='flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between'>
-                                              <div className='flex min-w-0 flex-col gap-1'>
-                                                <p className='text-sm font-medium'>
-                                                  {t('Search results')}
-                                                </p>
-                                                <p className='text-muted-foreground text-xs'>
-                                                  {modelSearchIsLoading
-                                                    ? t('Searching...')
-                                                    : isModelSearchError
-                                                      ? t('No matching models')
-                                                      : t(
-                                                          '{{matched}} matched · {{addable}} new · {{existing}} already selected',
-                                                          {
-                                                            matched:
-                                                              modelSearchSummary
-                                                                .matched.length,
-                                                            addable:
-                                                              modelSearchSummary
-                                                                .addable.length,
-                                                            existing:
-                                                              modelSearchSummary.existingCount,
-                                                          }
-                                                        )}
-                                                </p>
-                                              </div>
-                                              <Button
-                                                type='button'
-                                                variant='outline'
-                                                size='sm'
-                                                onPointerDown={
-                                                  handleAddModelSearchResultsPress
-                                                }
-                                                onMouseDown={
-                                                  handleAddModelSearchResultsPress
-                                                }
-                                                onClick={(event) => {
-                                                  if (
-                                                    modelSearchPointerHandledRef.current
-                                                  ) {
-                                                    modelSearchPointerHandledRef.current = false
-                                                    return
-                                                  }
-                                                  event.preventDefault()
-                                                  handleAddModelSearchResults()
-                                                }}
-                                                disabled={
-                                                  !canEditBasicFields ||
-                                                  modelSearchIsLoading ||
-                                                  modelSearchSummary.addable
-                                                    .length === 0
-                                                }
-                                                title={
-                                                  canEditBasicFields
-                                                    ? undefined
-                                                    : noPermissionMessage
-                                                }
-                                              >
-                                                <Plus data-icon='inline-start' />
-                                                {t(
-                                                  'Add {{count}} search result(s)',
-                                                  {
-                                                    count:
-                                                      modelSearchSummary.addable
-                                                        .length,
-                                                  }
-                                                )}
-                                              </Button>
-                                            </div>
-                                            {modelSearchPreviewNames.length >
-                                              0 && (
-                                              <div className='flex flex-wrap gap-1.5'>
-                                                {modelSearchPreviewNames.map(
-                                                  (model) => (
-                                                    <Badge
-                                                      key={model}
-                                                      variant='secondary'
-                                                      className='max-w-full truncate font-mono'
-                                                    >
-                                                      {model}
-                                                    </Badge>
-                                                  )
-                                                )}
-                                                {modelSearchPreviewOmittedCount >
-                                                  0 && (
-                                                  <Badge variant='outline'>
-                                                    {t('+{{count}} more', {
-                                                      count:
-                                                        modelSearchPreviewOmittedCount,
-                                                    })}
-                                                  </Badge>
-                                                )}
-                                              </div>
-                                            )}
-                                            {modelSearchNameResult.unresolvedMatchedCount >
-                                              0 && (
-                                              <p className='text-muted-foreground text-xs'>
-                                                {t(
-                                                  '{{count}} more result(s) will be checked when adding',
-                                                  {
-                                                    count:
-                                                      modelSearchNameResult.unresolvedMatchedCount,
-                                                  }
-                                                )}
-                                              </p>
-                                            )}
-                                          </div>
-                                        ) : undefined
-                                      }
-                                      preserveSelectedOnEmptyRemovalKey
-                                      hideSelectedOptionsWhenSearching
-                                      submitSearchOnEnterWithMatches
-                                      submitSearchOnEnterWhenHighlighted
-                                      clearSearchOnSelect={false}
-                                    />
-                                  </FormControl>
-                                  {modelMappingGuardrail.exposedTargetModels
-                                    .length > 0 && (
-                                    <Alert className='mt-3 border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-50'>
-                                      <AlertDescription className='flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
-                                        <span>
-                                          {t('The mapped upstream model(s)')}{' '}
-                                          {formatModelNames(
-                                            modelMappingGuardrail.exposedTargetModels
-                                          )}{' '}
-                                          {t(
-                                            'are also listed here. Remove them from Models to keep the `/v1/models` response user-friendly and hide vendor-specific names.'
-                                          )}
-                                        </span>
-                                        <Button
-                                          type='button'
-                                          variant='outline'
-                                          size='sm'
-                                          onClick={() => {
-                                            const hiddenTargets = new Set(
-                                              modelMappingGuardrail.exposedTargetModels
-                                            )
-                                            updateModels(
-                                              currentModelsArray.filter(
-                                                (model) =>
-                                                  !hiddenTargets.has(model)
+                          {showSharedModelsSection && (
+                            <div className='border-border/60 bg-muted/10 flex flex-col gap-4 rounded-lg border p-4'>
+                              <FormField
+                                control={form.control}
+                                name='models'
+                                render={() => (
+                                  <FormItem className='flex flex-col gap-3'>
+                                    <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
+                                      <div className='flex flex-col gap-1'>
+                                        <FormLabel htmlFor='channel-models'>
+                                          {usesUpstreamAccountCredentialSource
+                                            ? t('Aggregated Models')
+                                            : t('Models *')}
+                                        </FormLabel>
+                                        <FormDescription>
+                                          {usesUpstreamAccountCredentialSource
+                                            ? t(
+                                                'Derived from enabled synced keys. Edit per-key models in synced key configuration.'
                                               )
-                                            )
-                                          }}
-                                          disabled={!canEditBasicFields}
-                                          title={
-                                            canEditBasicFields
-                                              ? undefined
-                                              : noPermissionMessage
-                                          }
+                                            : t(FIELD_DESCRIPTIONS.MODELS)}
+                                        </FormDescription>
+                                      </div>
+                                      <div className='flex flex-wrap gap-2'>
+                                        <Badge
+                                          variant='outline'
+                                          className='w-fit'
                                         >
-                                          {t('Remove mapped targets')}
-                                        </Button>
-                                      </AlertDescription>
-                                    </Alert>
-                                  )}
-                                  <FormMessage />
-                                </FormItem>
-                              )}
-                            />
+                                          {t('Selected {{count}}', {
+                                            count: currentModelsArray.length,
+                                          })}
+                                        </Badge>
+                                      </div>
+                                    </div>
+                                    <FormControl>
+                                      <MultiSelect
+                                        id='channel-models'
+                                        options={modelOptions}
+                                        selected={currentModelsArray}
+                                        onChange={handleModelsChange}
+                                        placeholder={t(
+                                          'Select models or add custom ones'
+                                        )}
+                                        allowCreate
+                                        createLabel='Add custom model "{{value}}"'
+                                        maxVisibleChips={8}
+                                        copyChipOnClick
+                                        disabled={
+                                          !canEditBasicFields ||
+                                          usesUpstreamAccountCredentialSource
+                                        }
+                                        isLoading={modelSearchIsLoading}
+                                        emptyText={t('No matching models')}
+                                        loadingText={t('Searching...')}
+                                        searchValue={modelSearchValue}
+                                        onSearchChange={setModelSearchValue}
+                                        open={modelSearchOpen}
+                                        onOpenChange={setModelSearchOpen}
+                                        onSearchSubmit={
+                                          handleAddModelSearchResults
+                                        }
+                                        contentHeader={
+                                          showModelSearchPanel ? (
+                                            <div className='bg-background flex flex-col gap-3 rounded-md'>
+                                              <div className='flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between'>
+                                                <div className='flex min-w-0 flex-col gap-1'>
+                                                  <p className='text-sm font-medium'>
+                                                    {t('Search results')}
+                                                  </p>
+                                                  <p className='text-muted-foreground text-xs'>
+                                                    {modelSearchIsLoading
+                                                      ? t('Searching...')
+                                                      : isModelSearchError
+                                                        ? t(
+                                                            'No matching models'
+                                                          )
+                                                        : t(
+                                                            '{{matched}} matched · {{addable}} new · {{existing}} already selected',
+                                                            {
+                                                              matched:
+                                                                modelSearchSummary
+                                                                  .matched
+                                                                  .length,
+                                                              addable:
+                                                                modelSearchSummary
+                                                                  .addable
+                                                                  .length,
+                                                              existing:
+                                                                modelSearchSummary.existingCount,
+                                                            }
+                                                          )}
+                                                  </p>
+                                                </div>
+                                                <Button
+                                                  type='button'
+                                                  variant='outline'
+                                                  size='sm'
+                                                  onPointerDown={
+                                                    handleAddModelSearchResultsPress
+                                                  }
+                                                  onMouseDown={
+                                                    handleAddModelSearchResultsPress
+                                                  }
+                                                  onClick={(event) => {
+                                                    if (
+                                                      modelSearchPointerHandledRef.current
+                                                    ) {
+                                                      modelSearchPointerHandledRef.current = false
+                                                      return
+                                                    }
+                                                    event.preventDefault()
+                                                    handleAddModelSearchResults()
+                                                  }}
+                                                  disabled={
+                                                    !canEditBasicFields ||
+                                                    modelSearchIsLoading ||
+                                                    modelSearchSummary.addable
+                                                      .length === 0
+                                                  }
+                                                  title={
+                                                    canEditBasicFields
+                                                      ? undefined
+                                                      : noPermissionMessage
+                                                  }
+                                                >
+                                                  <Plus data-icon='inline-start' />
+                                                  {t(
+                                                    'Add {{count}} search result(s)',
+                                                    {
+                                                      count:
+                                                        modelSearchSummary
+                                                          .addable.length,
+                                                    }
+                                                  )}
+                                                </Button>
+                                              </div>
+                                              {modelSearchPreviewNames.length >
+                                                0 && (
+                                                <div className='flex flex-wrap gap-1.5'>
+                                                  {modelSearchPreviewNames.map(
+                                                    (model) => (
+                                                      <Badge
+                                                        key={model}
+                                                        variant='secondary'
+                                                        className='max-w-full truncate font-mono'
+                                                      >
+                                                        {model}
+                                                      </Badge>
+                                                    )
+                                                  )}
+                                                  {modelSearchPreviewOmittedCount >
+                                                    0 && (
+                                                    <Badge variant='outline'>
+                                                      {t('+{{count}} more', {
+                                                        count:
+                                                          modelSearchPreviewOmittedCount,
+                                                      })}
+                                                    </Badge>
+                                                  )}
+                                                </div>
+                                              )}
+                                              {modelSearchNameResult.unresolvedMatchedCount >
+                                                0 && (
+                                                <p className='text-muted-foreground text-xs'>
+                                                  {t(
+                                                    '{{count}} more result(s) will be checked when adding',
+                                                    {
+                                                      count:
+                                                        modelSearchNameResult.unresolvedMatchedCount,
+                                                    }
+                                                  )}
+                                                </p>
+                                              )}
+                                            </div>
+                                          ) : undefined
+                                        }
+                                        preserveSelectedOnEmptyRemovalKey
+                                        hideSelectedOptionsWhenSearching
+                                        submitSearchOnEnterWithMatches
+                                        submitSearchOnEnterWhenHighlighted
+                                        clearSearchOnSelect={false}
+                                      />
+                                    </FormControl>
+                                    {modelMappingGuardrail.exposedTargetModels
+                                      .length > 0 && (
+                                      <Alert className='mt-3 border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-50'>
+                                        <AlertDescription className='flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
+                                          <span>
+                                            {t('The mapped upstream model(s)')}{' '}
+                                            {formatModelNames(
+                                              modelMappingGuardrail.exposedTargetModels
+                                            )}{' '}
+                                            {t(
+                                              'are also listed here. Remove them from Models to keep the `/v1/models` response user-friendly and hide vendor-specific names.'
+                                            )}
+                                          </span>
+                                          <Button
+                                            type='button'
+                                            variant='outline'
+                                            size='sm'
+                                            onClick={() => {
+                                              const hiddenTargets = new Set(
+                                                modelMappingGuardrail.exposedTargetModels
+                                              )
+                                              updateModels(
+                                                currentModelsArray.filter(
+                                                  (model) =>
+                                                    !hiddenTargets.has(model)
+                                                )
+                                              )
+                                            }}
+                                            disabled={!canEditBasicFields}
+                                            title={
+                                              canEditBasicFields
+                                                ? undefined
+                                                : noPermissionMessage
+                                            }
+                                          >
+                                            {t('Remove mapped targets')}
+                                          </Button>
+                                        </AlertDescription>
+                                      </Alert>
+                                    )}
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
 
-                            <Separator />
+                              <Separator />
 
-                            <div className='flex flex-col gap-3'>
-                              <div>
-                                <p className='text-sm font-medium'>
-                                  {t('Quick actions')}
-                                </p>
-                                <p className='text-muted-foreground text-xs'>
-                                  {t(
-                                    'Use presets or upstream discovery to populate the model list faster.'
-                                  )}
-                                </p>
-                              </div>
-                              <div className='flex flex-wrap gap-2'>
-                                <Button
-                                  type='button'
-                                  variant='outline'
-                                  size='sm'
-                                  onClick={handleFillRelatedModels}
-                                  disabled={
-                                    !canEditBasicFields ||
-                                    usesUpstreamAccountCredentialSource ||
-                                    !basicModels.length
-                                  }
-                                  title={
-                                    canEditBasicFields
-                                      ? undefined
-                                      : noPermissionMessage
-                                  }
-                                >
-                                  <FileText data-icon='inline-start' />
-                                  {t('Fill Related Models')}
-                                </Button>
-                                <Button
-                                  type='button'
-                                  variant='outline'
-                                  size='sm'
-                                  onClick={handleFillAllModels}
-                                  disabled={
-                                    !canEditBasicFields ||
-                                    usesUpstreamAccountCredentialSource ||
-                                    !allModelsList.length
-                                  }
-                                  title={
-                                    canEditBasicFields
-                                      ? undefined
-                                      : noPermissionMessage
-                                  }
-                                >
-                                  <Plus data-icon='inline-start' />
-                                  {t('Fill All Models')}
-                                </Button>
-                                {MODEL_FETCHABLE_TYPES.has(currentType) &&
-                                  !isGlobalAccountPoolMode && (
-                                    <Button
-                                      type='button'
-                                      variant='outline'
-                                      size='sm'
-                                      onClick={handleFetchModels}
-                                      disabled={
-                                        !permissions.canOperate ||
-                                        !canEditBasicFields ||
-                                        usesUpstreamAccountCredentialSource
-                                      }
-                                      title={
-                                        permissions.canOperate &&
-                                        canEditBasicFields
-                                          ? undefined
-                                          : noPermissionMessage
-                                      }
-                                    >
-                                      <Sparkles data-icon='inline-start' />
-                                      {t('Fetch from Upstream')}
-                                    </Button>
-                                  )}
-                                <Button
-                                  type='button'
-                                  variant='outline'
-                                  size='sm'
-                                  onClick={handleCopyModels}
-                                  disabled={currentModelsArray.length === 0}
-                                >
-                                  <Copy data-icon='inline-start' />
-                                  {t('Copy All')}
-                                </Button>
-                                <Button
-                                  type='button'
-                                  variant='ghost'
-                                  size='sm'
-                                  onClick={handleClearModels}
-                                  disabled={
-                                    !canEditBasicFields ||
-                                    usesUpstreamAccountCredentialSource ||
-                                    currentModelsArray.length === 0
-                                  }
-                                  title={
-                                    canEditBasicFields
-                                      ? undefined
-                                      : noPermissionMessage
-                                  }
-                                >
-                                  <Eraser data-icon='inline-start' />
-                                  {t('Clear All')}
-                                </Button>
-                              </div>
-                              {prefillGroups.length > 0 && (
-                                <div className='flex flex-wrap items-center gap-2'>
-                                  <span className='text-muted-foreground text-xs'>
-                                    {t('Preset groups')}:
-                                  </span>
-                                  {prefillGroups.map((group) => (
-                                    <Button
-                                      key={group.id}
-                                      type='button'
-                                      variant='secondary'
-                                      size='sm'
-                                      onClick={() =>
-                                        handleAddPrefillGroup(group)
-                                      }
-                                      disabled={!canEditBasicFields}
-                                      title={
-                                        canEditBasicFields
-                                          ? undefined
-                                          : noPermissionMessage
-                                      }
-                                    >
-                                      {group.name}
-                                    </Button>
-                                  ))}
+                              <div className='flex flex-col gap-3'>
+                                <div>
+                                  <p className='text-sm font-medium'>
+                                    {t('Quick actions')}
+                                  </p>
+                                  <p className='text-muted-foreground text-xs'>
+                                    {t(
+                                      'Use presets or upstream discovery to populate the model list faster.'
+                                    )}
+                                  </p>
                                 </div>
-                              )}
+                                <div className='flex flex-wrap gap-2'>
+                                  <Button
+                                    type='button'
+                                    variant='outline'
+                                    size='sm'
+                                    onClick={handleFillRelatedModels}
+                                    disabled={
+                                      !canEditBasicFields ||
+                                      usesUpstreamAccountCredentialSource ||
+                                      !basicModels.length
+                                    }
+                                    title={
+                                      canEditBasicFields
+                                        ? undefined
+                                        : noPermissionMessage
+                                    }
+                                  >
+                                    <FileText data-icon='inline-start' />
+                                    {t('Fill Related Models')}
+                                  </Button>
+                                  <Button
+                                    type='button'
+                                    variant='outline'
+                                    size='sm'
+                                    onClick={handleFillAllModels}
+                                    disabled={
+                                      !canEditBasicFields ||
+                                      usesUpstreamAccountCredentialSource ||
+                                      !allModelsList.length
+                                    }
+                                    title={
+                                      canEditBasicFields
+                                        ? undefined
+                                        : noPermissionMessage
+                                    }
+                                  >
+                                    <Plus data-icon='inline-start' />
+                                    {t('Fill All Models')}
+                                  </Button>
+                                  {MODEL_FETCHABLE_TYPES.has(currentType) &&
+                                    !isGlobalAccountPoolMode && (
+                                      <Button
+                                        type='button'
+                                        variant='outline'
+                                        size='sm'
+                                        onClick={handleFetchModels}
+                                        disabled={
+                                          !permissions.canOperate ||
+                                          !canEditBasicFields ||
+                                          usesUpstreamAccountCredentialSource
+                                        }
+                                        title={
+                                          permissions.canOperate &&
+                                          canEditBasicFields
+                                            ? undefined
+                                            : noPermissionMessage
+                                        }
+                                      >
+                                        <Sparkles data-icon='inline-start' />
+                                        {t('Fetch from Upstream')}
+                                      </Button>
+                                    )}
+                                  <Button
+                                    type='button'
+                                    variant='outline'
+                                    size='sm'
+                                    onClick={handleCopyModels}
+                                    disabled={currentModelsArray.length === 0}
+                                  >
+                                    <Copy data-icon='inline-start' />
+                                    {t('Copy All')}
+                                  </Button>
+                                  <Button
+                                    type='button'
+                                    variant='ghost'
+                                    size='sm'
+                                    onClick={handleClearModels}
+                                    disabled={
+                                      !canEditBasicFields ||
+                                      usesUpstreamAccountCredentialSource ||
+                                      currentModelsArray.length === 0
+                                    }
+                                    title={
+                                      canEditBasicFields
+                                        ? undefined
+                                        : noPermissionMessage
+                                    }
+                                  >
+                                    <Eraser data-icon='inline-start' />
+                                    {t('Clear All')}
+                                  </Button>
+                                </div>
+                                {prefillGroups.length > 0 && (
+                                  <div className='flex flex-wrap items-center gap-2'>
+                                    <span className='text-muted-foreground text-xs'>
+                                      {t('Preset groups')}:
+                                    </span>
+                                    {prefillGroups.map((group) => (
+                                      <Button
+                                        key={group.id}
+                                        type='button'
+                                        variant='secondary'
+                                        size='sm'
+                                        onClick={() =>
+                                          handleAddPrefillGroup(group)
+                                        }
+                                        disabled={!canEditBasicFields}
+                                        title={
+                                          canEditBasicFields
+                                            ? undefined
+                                            : noPermissionMessage
+                                        }
+                                      >
+                                        {group.name}
+                                      </Button>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                          </div>
+                          )}
 
                           <div className='border-border/60 rounded-lg border p-4'>
                             <FormField
@@ -7493,10 +7624,12 @@ export function ChannelMutateDrawer({
                                       disabled={
                                         isSubmitting || !canEditBasicFields
                                       }
-                                      sourceModelOptions={currentModelsArray}
-                                      targetModelOptions={baseModelOptions.map(
-                                        (option) => option.value
-                                      )}
+                                      sourceModelOptions={
+                                        modelMappingSourceModels
+                                      }
+                                      targetModelOptions={
+                                        modelMappingTargetModels
+                                      }
                                     />
                                   </FormControl>
                                   {modelMappingGuardrail.invalidJson && (
@@ -7526,29 +7659,35 @@ export function ChannelMutateDrawer({
                                           {formatModelNames(
                                             modelMappingGuardrail.missingSourceModels
                                           )}{' '}
-                                          {t(
-                                            'to the Models list so users can use them before the mapping sends traffic upstream.'
-                                          )}
+                                          {showSharedModelsSection
+                                            ? t(
+                                                'to the Models list so users can use them before the mapping sends traffic upstream.'
+                                              )
+                                            : t(
+                                                'to a synced key model list so users can use them before the mapping sends traffic upstream.'
+                                              )}
                                         </span>
-                                        <Button
-                                          type='button'
-                                          variant='outline'
-                                          size='sm'
-                                          onClick={() => {
-                                            updateModels(
-                                              modelMappingGuardrail.missingSourceModels,
-                                              true
-                                            )
-                                          }}
-                                          disabled={!canEditBasicFields}
-                                          title={
-                                            canEditBasicFields
-                                              ? undefined
-                                              : noPermissionMessage
-                                          }
-                                        >
-                                          {t('Add missing models')}
-                                        </Button>
+                                        {showSharedModelsSection && (
+                                          <Button
+                                            type='button'
+                                            variant='outline'
+                                            size='sm'
+                                            onClick={() => {
+                                              updateModels(
+                                                modelMappingGuardrail.missingSourceModels,
+                                                true
+                                              )
+                                            }}
+                                            disabled={!canEditBasicFields}
+                                            title={
+                                              canEditBasicFields
+                                                ? undefined
+                                                : noPermissionMessage
+                                            }
+                                          >
+                                            {t('Add missing models')}
+                                          </Button>
+                                        )}
                                       </AlertDescription>
                                     </Alert>
                                   )}
@@ -7558,44 +7697,46 @@ export function ChannelMutateDrawer({
                             />
                           </div>
 
-                          <div className='border-border/60 rounded-lg border p-4'>
-                            <FormField
-                              control={form.control}
-                              name='group'
-                              render={({ field }) => (
-                                <FormItem className='flex flex-col gap-3'>
-                                  <div className='flex flex-col gap-1'>
-                                    <FormLabel>{t('Groups *')}</FormLabel>
-                                    <FormDescription>
-                                      {t(FIELD_DESCRIPTIONS.GROUP)}
-                                    </FormDescription>
-                                  </div>
-                                  <FormControl>
-                                    {isLoadingGroups ? (
-                                      <Skeleton className='h-10 w-full' />
-                                    ) : (
-                                      <MultiSelect
-                                        options={groupOptions}
-                                        selected={field.value || []}
-                                        onChange={(values) => {
-                                          if (!canEditBasicFields) {
-                                            toast.error(noPermissionMessage)
-                                            return
-                                          }
-                                          field.onChange(values)
-                                        }}
-                                        placeholder={t(
-                                          FIELD_PLACEHOLDERS.GROUP
-                                        )}
-                                        disabled={!canEditBasicFields}
-                                      />
-                                    )}
-                                  </FormControl>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
-                            />
-                          </div>
+                          {showSharedModelsSection && (
+                            <div className='border-border/60 rounded-lg border p-4'>
+                              <FormField
+                                control={form.control}
+                                name='group'
+                                render={({ field }) => (
+                                  <FormItem className='flex flex-col gap-3'>
+                                    <div className='flex flex-col gap-1'>
+                                      <FormLabel>{t('Groups *')}</FormLabel>
+                                      <FormDescription>
+                                        {t(FIELD_DESCRIPTIONS.GROUP)}
+                                      </FormDescription>
+                                    </div>
+                                    <FormControl>
+                                      {isLoadingGroups ? (
+                                        <Skeleton className='h-10 w-full' />
+                                      ) : (
+                                        <MultiSelect
+                                          options={groupOptions}
+                                          selected={field.value || []}
+                                          onChange={(values) => {
+                                            if (!canEditBasicFields) {
+                                              toast.error(noPermissionMessage)
+                                              return
+                                            }
+                                            field.onChange(values)
+                                          }}
+                                          placeholder={t(
+                                            FIELD_PLACEHOLDERS.GROUP
+                                          )}
+                                          disabled={!canEditBasicFields}
+                                        />
+                                      )}
+                                    </FormControl>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                            </div>
+                          )}
                         </div>
                       </ChannelModelsSection>
                     </div>

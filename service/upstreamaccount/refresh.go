@@ -164,6 +164,9 @@ func RefreshChannelFromSnapshot(channelID int, snapshot *Snapshot, req RefreshRe
 				}
 				accountToCreate := buildAccountFromSyncedKey(snapshot, key, config, req.ApplySuggested, defaultModels, defaultGroup)
 				accountToCreate.ChannelId = channelID
+				if err := validateEnabledSyncedAccountCapability(accountToCreate); err != nil {
+					return err
+				}
 				if err := tx.Create(&accountToCreate).Error; err != nil {
 					return err
 				}
@@ -171,7 +174,10 @@ func RefreshChannelFromSnapshot(channelID int, snapshot *Snapshot, req RefreshRe
 				continue
 			}
 			seenExistingIDs[account.Id] = struct{}{}
-			updates := buildAccountRefreshUpdates(account, snapshot, key, config, req.ApplySuggested, defaultModels, defaultGroup)
+			updates, err := buildAccountRefreshUpdates(account, snapshot, key, config, req.ApplySuggested, defaultModels, defaultGroup)
+			if err != nil {
+				return err
+			}
 			if !enabled {
 				updates["status"] = common.ChannelStatusManuallyDisabled
 				updates["disabled_reason"] = "upstream account sync disabled"
@@ -357,7 +363,7 @@ func buildAccountFromSyncedKey(snapshot *Snapshot, key SyncedKey, config Account
 	}
 }
 
-func buildAccountRefreshUpdates(existing *model.ChannelAccount, snapshot *Snapshot, key SyncedKey, config AccountCreateConfig, applySuggested bool, defaultModels string, defaultGroup string) map[string]any {
+func buildAccountRefreshUpdates(existing *model.ChannelAccount, snapshot *Snapshot, key SyncedKey, config AccountCreateConfig, applySuggested bool, defaultModels string, defaultGroup string) (map[string]any, error) {
 	account := buildAccountFromSyncedKey(snapshot, key, config, applySuggested, defaultModels, defaultGroup)
 	settings := account.OtherSettings
 	if existing != nil {
@@ -380,6 +386,14 @@ func buildAccountRefreshUpdates(existing *model.ChannelAccount, snapshot *Snapsh
 		if config.AccessGroups == nil {
 			account.AccessGroups = existing.AccessGroups
 		}
+	}
+	// 显式关闭的同步 key 可以保留空模型或空访问组作为草稿；这里先写入最终状态，
+	// 再执行启用态校验，避免刷新禁用 key 时被误判为能力缺失。
+	if config.Enabled != nil && !*config.Enabled {
+		account.Status = common.ChannelStatusManuallyDisabled
+	}
+	if err := validateEnabledSyncedAccountCapability(account); err != nil {
+		return nil, err
 	}
 	updates := map[string]any{
 		"name":                account.Name,
@@ -433,7 +447,7 @@ func buildAccountRefreshUpdates(existing *model.ChannelAccount, snapshot *Snapsh
 	if config.StatusCodeMapping != nil {
 		updates["status_code_mapping"] = account.StatusCodeMapping
 	}
-	return updates
+	return updates, nil
 }
 
 func sameSyncSource(metadata syncMetadata, snapshot *Snapshot) bool {

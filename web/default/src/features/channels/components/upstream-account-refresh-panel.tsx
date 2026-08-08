@@ -28,6 +28,7 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { cn } from '@/lib/utils'
 import { useDebounce } from '@/hooks/use-debounce'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -47,15 +48,18 @@ import { searchModels } from '@/features/models/api'
 import {
   completeUpstreamAccountPreview2FA,
   getChannelAccounts,
+  getGroups,
   previewUpstreamAccount,
   refreshUpstreamAccountChannel,
 } from '../api'
 import {
   channelsQueryKeys,
   dedupeModelNames,
+  formatGroups,
   formatModelsArray,
   getModelSearchModelNameResult,
   mergeModelNames,
+  parseGroups,
   parseModelsString,
   summarizeModelSearchCandidates,
 } from '../lib'
@@ -66,6 +70,7 @@ import {
   buildUpstreamAccountPreviewRequest,
   buildUpstreamAccountRefreshPayload,
   buildUpstreamRatioConversionPayload,
+  collectUpstreamAccountCapabilityValidationErrors,
   DEFAULT_UPSTREAM_PAID_AMOUNT,
   DEFAULT_UPSTREAM_PLATFORM_CREDIT,
   formatUpstreamModelRatioDetails,
@@ -113,6 +118,26 @@ type UpstreamAccountRefreshPanelProps = {
   noPermissionMessage: string
   onSuccess: () => Promise<void> | void
   onBusyChange?: (busy: boolean) => void
+}
+
+function mergeGroupOptionsWithSelected(
+  options: Array<{ value: string; label: string }>,
+  selected: string[]
+) {
+  const seen = new Set<string>()
+  const merged: Array<{ value: string; label: string }> = []
+  for (const option of options) {
+    if (!option.value || seen.has(option.value)) continue
+    seen.add(option.value)
+    merged.push(option)
+  }
+  for (const group of ['default', ...selected]) {
+    const value = group.trim()
+    if (!value || seen.has(value)) continue
+    seen.add(value)
+    merged.push({ value, label: value })
+  }
+  return merged
 }
 
 export function UpstreamAccountRefreshPanel({
@@ -211,8 +236,7 @@ export function UpstreamAccountRefreshPanel({
     upstreamKeyModelSearch.value,
     300
   )
-  const trimmedUpstreamKeyModelSearchValue =
-    upstreamKeyModelSearch.value.trim()
+  const trimmedUpstreamKeyModelSearchValue = upstreamKeyModelSearch.value.trim()
   const trimmedDebouncedUpstreamKeyModelSearchValue =
     debouncedUpstreamKeyModelSearchValue.trim()
 
@@ -235,6 +259,12 @@ export function UpstreamAccountRefreshPanel({
       }),
     enabled: open && Boolean(channelId) && shouldSearchUpstreamKeyModels,
     placeholderData: (previousData) => previousData,
+  })
+
+  const { data: groupsData } = useQuery({
+    queryKey: ['groups'],
+    queryFn: getGroups,
+    enabled: open,
   })
 
   const refreshAccountsQuery = useQuery({
@@ -261,16 +291,43 @@ export function UpstreamAccountRefreshPanel({
     () => parseModelsString(channelModels || ''),
     [channelModels]
   )
+  const groupOptions = useMemo(
+    () =>
+      (groupsData?.data ?? []).map((group) => ({
+        value: group,
+        label: group,
+      })),
+    [groupsData?.data]
+  )
+  const showUpstreamCapabilityValidationError = useCallback(
+    (
+      errors: ReturnType<
+        typeof collectUpstreamAccountCapabilityValidationErrors
+      >
+    ) => {
+      const firstError = errors[0]
+      if (!firstError) return false
+      toast.error(
+        t(
+          firstError.field === 'models'
+            ? 'Enabled synced key "{{name}}" must select at least one model.'
+            : 'Enabled synced key "{{name}}" must select at least one NexusTok access group.',
+          {
+            name: firstError.keyName,
+          }
+        )
+      )
+      return true
+    },
+    [t]
+  )
   const upstreamKeyModelSearchNameResult = useMemo(
     () =>
       getModelSearchModelNameResult(
         upstreamKeyModelSearchData?.data?.items ?? [],
         trimmedDebouncedUpstreamKeyModelSearchValue
       ),
-    [
-      upstreamKeyModelSearchData,
-      trimmedDebouncedUpstreamKeyModelSearchValue,
-    ]
+    [upstreamKeyModelSearchData, trimmedDebouncedUpstreamKeyModelSearchValue]
   )
   const upstreamKeyModelSearchIsWaitingForDebounce =
     trimmedUpstreamKeyModelSearchValue.length >= 2 &&
@@ -1021,6 +1078,14 @@ export function UpstreamAccountRefreshPanel({
                   const currentGroupValue = config?.group ?? upstreamGroupValue
                   const currentAccessGroupsValue =
                     config?.access_groups ?? key.access_groups ?? 'default'
+                  const currentAccessGroupsArrayValue = parseGroups(
+                    currentAccessGroupsValue
+                  )
+                  const currentEnabledValue = config?.enabled ?? true
+                  const accessGroupOptions = mergeGroupOptionsWithSelected(
+                    groupOptions,
+                    currentAccessGroupsArrayValue
+                  )
                   const currentPriorityValue =
                     config?.priority ?? key.suggested_priority ?? 0
                   const currentWeightValue =
@@ -1065,7 +1130,6 @@ export function UpstreamAccountRefreshPanel({
                           onChange={handleKeyModelsChange}
                           placeholder={t('Select models or add custom ones')}
                           allowCreate
-                          allowCreateWithMatches={false}
                           createLabel='Add custom model "{{value}}"'
                           maxVisibleChips={2}
                           copyChipOnClick
@@ -1161,8 +1225,17 @@ export function UpstreamAccountRefreshPanel({
                           className='min-h-8'
                         />
                         {currentModelsArrayValue.length === 0 ? (
-                          <span className='text-destructive truncate text-[11px]'>
-                            {t('This key will not route any model.')}
+                          <span
+                            className={cn(
+                              'truncate text-[11px]',
+                              currentEnabledValue
+                                ? 'text-destructive'
+                                : 'text-muted-foreground'
+                            )}
+                          >
+                            {currentEnabledValue
+                              ? t('Models are required')
+                              : t('This key will not route any model.')}
                           </span>
                         ) : null}
                       </div>
@@ -1185,19 +1258,34 @@ export function UpstreamAccountRefreshPanel({
                         </span>
                       </div>
                       <div className='flex min-w-0 flex-col gap-1'>
-                        <Input
-                          value={currentAccessGroupsValue}
-                          placeholder='default,vip'
-                          onChange={(event) =>
+                        <MultiSelect
+                          options={accessGroupOptions}
+                          selected={currentAccessGroupsArrayValue}
+                          onChange={(values) =>
                             setConfigValue({
-                              access_groups: event.target.value,
+                              access_groups: formatGroups(values),
                             })
                           }
-                          className='h-8 px-2 text-xs'
+                          placeholder={t(
+                            'Please Select user groups that can access this channel.'
+                          )}
+                          maxVisibleChips={2}
+                          className='min-h-8'
                         />
-                        {!currentAccessGroupsValue.trim() ? (
-                          <span className='text-destructive truncate text-[11px]'>
-                            {t('This key will not be available to any user group.')}
+                        {currentAccessGroupsArrayValue.length === 0 ? (
+                          <span
+                            className={cn(
+                              'truncate text-[11px]',
+                              currentEnabledValue
+                                ? 'text-destructive'
+                                : 'text-muted-foreground'
+                            )}
+                          >
+                            {currentEnabledValue
+                              ? t('Group is required')
+                              : t(
+                                  'This key will not be available to any user group.'
+                                )}
                           </span>
                         ) : null}
                       </div>
@@ -1335,7 +1423,10 @@ export function UpstreamAccountRefreshPanel({
               setUpstreamAuthMode(value as UpstreamAccountAuthMode)
             }
           >
-            <SelectTrigger id='upstream-refresh-auth-mode' className='w-full min-w-0'>
+            <SelectTrigger
+              id='upstream-refresh-auth-mode'
+              className='w-full min-w-0'
+            >
               <SelectValue>
                 {effectiveAuthMode === 'password'
                   ? t('Account password')
@@ -1510,6 +1601,14 @@ export function UpstreamAccountRefreshPanel({
                   'The upstream account preview expired or was already used. Sync the upstream account again.'
                 )
               )
+              return
+            }
+            const capabilityErrors =
+              collectUpstreamAccountCapabilityValidationErrors(
+                upstreamRefreshSnapshot.keys,
+                upstreamAccountConfigs
+              )
+            if (showUpstreamCapabilityValidationError(capabilityErrors)) {
               return
             }
             void refreshMutation.mutateAsync({

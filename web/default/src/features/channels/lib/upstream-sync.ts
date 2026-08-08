@@ -29,8 +29,8 @@ import type {
   UpstreamAccountTwoFactorChallenge,
 } from '../types'
 import { formatGroups, parseGroups } from './channel-form'
-import { dedupeModelNames } from './model-search'
 import { parseModelsString } from './model-mapping-validation'
+import { dedupeModelNames } from './model-search'
 
 const PREVIEW_EXPIRED_ERROR_TEXT = '预览快照不存在或已过期'
 const UPSTREAM_ACCOUNT_SYNC_SETTINGS_KEY = 'upstream_account_sync'
@@ -61,6 +61,12 @@ export type UpstreamAccountCapabilitySummary = {
   accessGroups: string[]
   modelCount: number
   accessGroupText: string
+}
+
+export type UpstreamAccountCapabilityValidationError = {
+  configId: string
+  keyName: string
+  field: 'models' | 'access_groups'
 }
 
 export type BuildUpstreamAccountPreviewRequestOptions = {
@@ -112,7 +118,9 @@ export function upstreamPlatformFromChannelType(
   return null
 }
 
-export function channelTypeFromUpstreamPlatform(platform: string | undefined | null) {
+export function channelTypeFromUpstreamPlatform(
+  platform: string | undefined | null
+) {
   const normalized = String(platform || '')
     .trim()
     .toLowerCase()
@@ -280,10 +288,9 @@ export function formatUpstreamModelRatioDetails(
 }
 
 export function getUpstreamKeyGroupLabel(
-  value: Pick<
-    ChannelAccount,
-    'key_group_name' | 'key_group_id' | 'group'
-  > | Pick<UpstreamAccountKey, 'group_name' | 'group_id'>
+  value:
+    | Pick<ChannelAccount, 'key_group_name' | 'key_group_id' | 'group'>
+    | Pick<UpstreamAccountKey, 'group_name' | 'group_id'>
 ): string {
   if ('group' in value) {
     return value.key_group_name || value.key_group_id || value.group || ''
@@ -333,9 +340,7 @@ export function getUpstreamSyncCredentialAuthModeFromSettings(
     parseSettingsRecord(settings)[UPSTREAM_ACCOUNT_SYNC_SETTINGS_KEY]
   if (!metadata || typeof metadata !== 'object') return ''
   const record = metadata as Record<string, unknown>
-  const mode = String(
-    record.credential_auth_mode || record.auth_mode || ''
-  )
+  const mode = String(record.credential_auth_mode || record.auth_mode || '')
     .trim()
     .toLowerCase()
     .replaceAll('_', '-')
@@ -414,6 +419,30 @@ export function upstreamAccountModelsArrayValue(
   )
 }
 
+export function upstreamAccountAccessGroupsValue(
+  key: UpstreamAccountKey,
+  config: UpstreamAccountConfigDraft | undefined,
+  fallbackGroups = 'default'
+) {
+  if (config && Object.prototype.hasOwnProperty.call(config, 'access_groups')) {
+    return formatGroups(parseGroups(config.access_groups || ''))
+  }
+  return (
+    formatGroups(parseGroups(key.access_groups ?? fallbackGroups)) ||
+    fallbackGroups
+  )
+}
+
+export function upstreamAccountAccessGroupsArrayValue(
+  key: UpstreamAccountKey,
+  config: UpstreamAccountConfigDraft | undefined,
+  fallbackGroups = 'default'
+) {
+  return parseGroups(
+    upstreamAccountAccessGroupsValue(key, config, fallbackGroups)
+  )
+}
+
 export function buildUpstreamAccountModelOptions(
   key: UpstreamAccountKey,
   config: UpstreamAccountConfigDraft | undefined,
@@ -455,7 +484,10 @@ function upstreamAccountWeightValue(
   return applySuggested ? undefined : config?.weight
 }
 
-export function upstreamAccountKeyConfigId(key: UpstreamAccountKey, index: number) {
+export function upstreamAccountKeyConfigId(
+  key: UpstreamAccountKey,
+  index: number
+) {
   return key.sync_id || key.external_id || key.masked_key || `${index}`
 }
 
@@ -492,7 +524,8 @@ export function buildUpstreamAccountConfigsFromSnapshotKeys(
       enabled: previousConfig?.enabled ?? true,
       models: previousConfig?.models ?? key.models?.join(',') ?? '',
       group: previousConfig?.group ?? key.group_name ?? key.group_id ?? '',
-      access_groups: previousConfig?.access_groups ?? key.access_groups ?? 'default',
+      access_groups:
+        previousConfig?.access_groups ?? key.access_groups ?? 'default',
     }
   })
   return configs
@@ -573,9 +606,7 @@ export function summarizeUpstreamAccountCapabilities(
 
     enabledKeyCount += 1
     modelNames.push(...upstreamAccountModelsArrayValue(key, config))
-    accessGroups.push(
-      ...parseGroups(config?.access_groups ?? key.access_groups ?? 'default')
-    )
+    accessGroups.push(...upstreamAccountAccessGroupsArrayValue(key, config))
   })
 
   const dedupedModels = dedupeModelNames(modelNames)
@@ -589,6 +620,47 @@ export function summarizeUpstreamAccountCapabilities(
     modelCount: dedupedModels.length,
     accessGroupText: formatGroups(dedupedGroups) || '-',
   }
+}
+
+export function collectUpstreamAccountCapabilityValidationErrors(
+  keys: UpstreamAccountKey[],
+  configs: Record<string, UpstreamAccountConfigDraft> = {},
+  fallbackModels = ''
+): UpstreamAccountCapabilityValidationError[] {
+  const errors: UpstreamAccountCapabilityValidationError[] = []
+
+  keys.forEach((key, index) => {
+    const configId = upstreamAccountKeyConfigId(key, index)
+    const config = getUpstreamAccountConfig(configs, key, index)
+    if (config?.enabled === false) return
+
+    const keyName =
+      key.name ||
+      key.masked_key ||
+      key.sync_id ||
+      key.external_id ||
+      `#${index + 1}`
+
+    if (
+      upstreamAccountModelsArrayValue(key, config, fallbackModels).length === 0
+    ) {
+      errors.push({
+        configId,
+        keyName,
+        field: 'models',
+      })
+    }
+
+    if (upstreamAccountAccessGroupsArrayValue(key, config).length === 0) {
+      errors.push({
+        configId,
+        keyName,
+        field: 'access_groups',
+      })
+    }
+  })
+
+  return errors
 }
 
 export function buildUpstreamAccountPayloads(
@@ -605,7 +677,7 @@ export function buildUpstreamAccountPayloads(
       enabled: config?.enabled ?? true,
       models: upstreamAccountModelsValue(key, config),
       group: upstreamAccountGroupValue(key, config),
-      access_groups: config?.access_groups ?? key.access_groups ?? 'default',
+      access_groups: upstreamAccountAccessGroupsValue(key, config),
       priority: upstreamAccountPriorityValue(config, applySuggested),
       weight: upstreamAccountWeightValue(config, applySuggested),
     }

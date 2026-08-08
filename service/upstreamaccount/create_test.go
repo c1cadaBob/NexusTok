@@ -312,6 +312,7 @@ func TestCreateFromPreviewAllowsDeferredTypeAndModels(t *testing.T) {
 				Key:               "sk-deferred",
 				MaskedKey:         "sk-deferred",
 				GroupName:         "default",
+				Models:            []string{"gpt-deferred"},
 				SuggestedPriority: 1,
 				SuggestedWeight:   100,
 			},
@@ -337,15 +338,15 @@ func TestCreateFromPreviewAllowsDeferredTypeAndModels(t *testing.T) {
 	var channel model.Channel
 	require.NoError(t, db.First(&channel, result.ChannelID).Error)
 	require.Equal(t, constant.ChannelTypeSub2API, channel.Type)
-	require.Equal(t, "", channel.Models)
+	require.Equal(t, "gpt-deferred", channel.Models)
 	require.Equal(t, "default", channel.Group)
 
 	var abilityCount int64
 	require.NoError(t, db.Model(&model.Ability{}).Count(&abilityCount).Error)
-	require.Equal(t, int64(0), abilityCount)
+	require.Equal(t, int64(1), abilityCount)
 }
 
-func TestCreateFromPreviewKeepsExplicitEmptySyncedAccountModels(t *testing.T) {
+func TestCreateFromPreviewRejectsEnabledSyncedAccountWithoutModels(t *testing.T) {
 	oldDB := model.DB
 	oldLogDB := model.LOG_DB
 	oldMemoryCacheEnabled := common.MemoryCacheEnabled
@@ -403,13 +404,136 @@ func TestCreateFromPreviewKeepsExplicitEmptySyncedAccountModels(t *testing.T) {
 		},
 	})
 
-	require.NoError(t, err)
-	require.Equal(t, 1, result.Created)
+	require.ErrorContains(t, err, "必须配置至少一个模型")
+	require.Nil(t, result)
 
-	var account model.ChannelAccount
-	require.NoError(t, db.First(&account).Error)
-	require.Equal(t, "", account.Models)
-	require.Equal(t, "vip", account.Group)
+	var accountCount int64
+	require.NoError(t, db.Model(&model.ChannelAccount{}).Count(&accountCount).Error)
+	require.Equal(t, int64(0), accountCount)
+}
+
+func TestCreateFromPreviewRejectsEnabledSyncedAccountWithoutAccessGroups(t *testing.T) {
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ChannelAccount{}))
+	model.DB = db
+	model.LOG_DB = db
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+
+	previewID := "create-preview-empty-access-groups"
+	snapshot := &Snapshot{
+		Platform: PlatformNewAPI,
+		BaseURL:  "https://newapi.example",
+		Keys: []SyncedKey{
+			{
+				ExternalID:        "empty-access-groups",
+				Name:              "Empty Access Groups",
+				Key:               "sk-empty-access-groups",
+				MaskedKey:         "sk-empty-access-groups",
+				GroupName:         "vip",
+				Models:            []string{"gpt-4o"},
+				SuggestedPriority: 1,
+				SuggestedWeight:   100,
+			},
+		},
+	}
+	require.NoError(t, previewCache.SetWithTTL(previewID, PreviewRecord{
+		ID:        previewID,
+		ExpiresAt: time.Now().Add(time.Minute).Unix(),
+		Snapshot:  snapshot,
+	}, time.Minute))
+
+	result, err := CreateFromPreview(CreateRequest{
+		PreviewID:      previewID,
+		ApplySuggested: true,
+		Channel: ChannelCreateConfig{
+			Name: "empty-access-groups-channel",
+			Type: constant.ChannelTypeOpenAI,
+		},
+		Accounts: []AccountCreateConfig{
+			{
+				ExternalID:   "empty-access-groups",
+				AccessGroups: strPtr(""),
+			},
+		},
+	})
+
+	require.ErrorContains(t, err, "必须配置至少一个 NexusTok 可访问用户组")
+	require.Nil(t, result)
+
+	var accountCount int64
+	require.NoError(t, db.Model(&model.ChannelAccount{}).Count(&accountCount).Error)
+	require.Equal(t, int64(0), accountCount)
+}
+
+func TestCreateFromPreviewSkipsDisabledSyncedAccountWithoutCapabilities(t *testing.T) {
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ChannelAccount{}))
+	model.DB = db
+	model.LOG_DB = db
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+
+	previewID := "create-preview-disabled-empty-capabilities"
+	snapshot := &Snapshot{
+		Platform: PlatformNewAPI,
+		BaseURL:  "https://newapi.example",
+		Keys: []SyncedKey{
+			{
+				ExternalID:        "disabled-empty",
+				Name:              "Disabled Empty",
+				Key:               "sk-disabled-empty",
+				MaskedKey:         "sk-disabled-empty",
+				GroupName:         "vip",
+				Models:            []string{"gpt-4o"},
+				SuggestedPriority: 1,
+				SuggestedWeight:   100,
+			},
+		},
+	}
+	require.NoError(t, previewCache.SetWithTTL(previewID, PreviewRecord{
+		ID:        previewID,
+		ExpiresAt: time.Now().Add(time.Minute).Unix(),
+		Snapshot:  snapshot,
+	}, time.Minute))
+
+	result, err := CreateFromPreview(CreateRequest{
+		PreviewID:      previewID,
+		ApplySuggested: true,
+		Channel: ChannelCreateConfig{
+			Name: "disabled-empty-capabilities-channel",
+			Type: constant.ChannelTypeOpenAI,
+		},
+		Accounts: []AccountCreateConfig{
+			{
+				ExternalID:   "disabled-empty",
+				Enabled:      boolPtr(false),
+				Models:       strPtr(""),
+				AccessGroups: strPtr(""),
+			},
+		},
+	})
+
+	require.ErrorContains(t, err, "没有可创建的同步密钥")
+	require.Nil(t, result)
 }
 
 func strPtr(value string) *string {

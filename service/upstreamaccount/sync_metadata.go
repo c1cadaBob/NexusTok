@@ -168,6 +168,22 @@ func ReadAccountSyncDisplayMetadata(settings string) AccountSyncDisplayMetadata 
 	}
 }
 
+// HasAccountSyncMetadata 判断账号 settings 是否包含上游同步身份。
+//
+// 控制器在允许管理员本地编辑同步账号的模型、访问组和调度权重时，需要先识别该账号
+// 是否由上游账号同步流程维护。这里统一复用内部解析逻辑，避免控制器自行处理 settings
+// JSON，也避免把 key_digest、external_id 等只供匹配使用的字段暴露到响应结构中。
+func HasAccountSyncMetadata(settings string) bool {
+	metadata := readAccountSyncMetadata(settings)
+	return metadata.Platform != "" ||
+		metadata.BaseURL != "" ||
+		metadata.ManagementBaseURL != "" ||
+		metadata.RelayBaseURL != "" ||
+		metadata.ExternalID != "" ||
+		metadata.KeyDigest != "" ||
+		metadata.SyncedAt > 0
+}
+
 // SanitizeChannelSyncSettings 移除渠道 settings 中只供后端使用的上游登录凭据。
 //
 // 渠道列表和详情接口会把 settings 返回给前端用于回填普通配置。即使 Password 和

@@ -22,6 +22,7 @@ import type { UpstreamAccountKey } from '../types'
 import {
   buildUpstreamAccountPreviewRequest,
   buildUpstreamAccountRefreshPayload,
+  collectUpstreamAccountCapabilityValidationErrors,
   summarizeUpstreamAccountCapabilities,
 } from './upstream-sync'
 
@@ -182,5 +183,68 @@ describe('上游账号刷新共享 payload', () => {
     assert.deepEqual(summary.modelNames, ['gpt-local', 'gpt-shared'])
     assert.deepEqual(summary.accessGroups, ['default', 'vip'])
     assert.equal(summary.accessGroupText, 'default,vip')
+  })
+
+  test('启用同步密钥必须同时配置模型和 NexusTok 可访问用户组', () => {
+    const errors = collectUpstreamAccountCapabilityValidationErrors(
+      [makeSnapshotKey({ models: [], access_groups: '' })],
+      {
+        'sync-1': {
+          enabled: true,
+          priority: 1,
+          weight: 100,
+          models: '',
+          group: 'upstream-group',
+          access_groups: '',
+        },
+      }
+    )
+
+    assert.deepEqual(
+      errors.map((error) => error.field),
+      ['models', 'access_groups']
+    )
+    assert.equal(errors[0].keyName, 'upstream key')
+  })
+
+  test('禁用同步密钥允许暂存空模型和空访问组', () => {
+    const errors = collectUpstreamAccountCapabilityValidationErrors(
+      [makeSnapshotKey({ models: [], access_groups: '' })],
+      {
+        'sync-1': {
+          enabled: false,
+          priority: 1,
+          weight: 100,
+          models: '',
+          group: 'upstream-group',
+          access_groups: '',
+        },
+      }
+    )
+
+    assert.deepEqual(errors, [])
+  })
+
+  test('自定义模型会原样进入同步密钥 payload', () => {
+    const payload = buildUpstreamAccountRefreshPayload({
+      previewId: 'preview-custom',
+      keys: [makeSnapshotKey({ models: ['gpt-upstream'] })],
+      configs: {
+        'sync-1': {
+          enabled: true,
+          priority: 1,
+          weight: 100,
+          models: 'vendor-missing-model,gpt-upstream',
+          group: 'upstream-group',
+          access_groups: 'default',
+        },
+      },
+      applySuggested: false,
+    })
+
+    assert.equal(
+      payload.accounts?.[0]?.models,
+      'vendor-missing-model,gpt-upstream'
+    )
   })
 })

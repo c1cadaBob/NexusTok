@@ -549,6 +549,7 @@ func TestRefreshChannelFromSnapshotPreservesLocalAccountOverrides(t *testing.T) 
 		Status:             common.ChannelStatusEnabled,
 		Models:             "gpt-old",
 		Group:              "default",
+		AccessGroups:       "default",
 		Priority:           11,
 		Weight:             22,
 		UsedQuota:          3,
@@ -673,6 +674,7 @@ func TestRefreshChannelFromSnapshotAppliesExplicitLocalModelsAndGroup(t *testing
 		Status:        common.ChannelStatusEnabled,
 		Models:        "gpt-old",
 		Group:         "default",
+		AccessGroups:  "default",
 		OtherSettings: mergeAccountSyncMetadata("", &Snapshot{Platform: PlatformNewAPI, BaseURL: "https://newapi.example"}, oldKey),
 	}
 	require.NoError(t, db.Create(&existing).Error)
@@ -757,6 +759,7 @@ func TestRefreshChannelFromSnapshotKeepsManualSchedulingWhenSuggestionsDisabled(
 		Status:        common.ChannelStatusManuallyDisabled,
 		Models:        "gpt-old",
 		Group:         "default",
+		AccessGroups:  "default",
 		Priority:      33,
 		Weight:        44,
 		OtherSettings: mergeAccountSyncMetadata("", &Snapshot{Platform: PlatformSub2API, BaseURL: "https://sub2api.example"}, oldKey),
@@ -862,7 +865,7 @@ func TestRefreshChannelFromSnapshotAppliesConfigBySyncIDWhenExternalIDMissing(t 
 	require.Equal(t, 34, account.Weight)
 }
 
-func TestRefreshChannelFromSnapshotKeepsExistingGroupAndClearsExplicitEmptyModels(t *testing.T) {
+func TestRefreshChannelFromSnapshotRejectsEnabledSyncedAccountWithoutModels(t *testing.T) {
 	oldDB := model.DB
 	oldLogDB := model.LOG_DB
 	oldMemoryCacheEnabled := common.MemoryCacheEnabled
@@ -909,6 +912,7 @@ func TestRefreshChannelFromSnapshotKeepsExistingGroupAndClearsExplicitEmptyModel
 		Status:        common.ChannelStatusEnabled,
 		Models:        "gpt-old",
 		Group:         "default",
+		AccessGroups:  "default",
 		OtherSettings: mergeAccountSyncMetadata("", &Snapshot{Platform: PlatformNewAPI, BaseURL: "https://newapi.example"}, key),
 	}
 	require.NoError(t, db.Create(&existing).Error)
@@ -942,16 +946,193 @@ func TestRefreshChannelFromSnapshotKeepsExistingGroupAndClearsExplicitEmptyModel
 		},
 	})
 
+	require.ErrorContains(t, err, "必须配置至少一个模型")
+	require.Nil(t, result)
+
+	var refreshed model.ChannelAccount
+	require.NoError(t, db.First(&refreshed, existing.Id).Error)
+	require.Equal(t, "gpt-old", refreshed.Models)
+	require.Equal(t, "default", refreshed.Group)
+	require.Equal(t, int64(0), refreshed.Priority)
+	require.Equal(t, 0, refreshed.Weight)
+}
+
+func TestRefreshChannelFromSnapshotRejectsEnabledSyncedAccountWithoutAccessGroups(t *testing.T) {
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ChannelAccount{}))
+	model.DB = db
+	model.LOG_DB = db
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+
+	channel := model.Channel{
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    constant.ChannelCredentialModeAccountPool,
+		Name:   "explicit-empty-access-groups-channel",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-old",
+		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			CredentialMode:     constant.ChannelCredentialModeAccountPool,
+			AccountPoolEnabled: true,
+			AccountPoolMode:    constant.ChannelAccountPoolModePolling,
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	key := SyncedKey{
+		ExternalID: "empty-access-groups",
+		Name:       "Empty Access Groups",
+		Key:        "sk-empty-access-groups",
+		MaskedKey:  "sk-empty-access-groups",
+		GroupName:  "vip",
+		Models:     []string{"gpt-4o"},
+	}
+	existing := model.ChannelAccount{
+		ChannelId:     channel.Id,
+		Name:          "Empty Access Groups",
+		Key:           "sk-empty-access-groups",
+		Status:        common.ChannelStatusEnabled,
+		Models:        "gpt-old",
+		Group:         "default",
+		AccessGroups:  "default",
+		OtherSettings: mergeAccountSyncMetadata("", &Snapshot{Platform: PlatformNewAPI, BaseURL: "https://newapi.example"}, key),
+	}
+	require.NoError(t, db.Create(&existing).Error)
+
+	result, err := RefreshChannelFromSnapshot(channel.Id, &Snapshot{
+		Platform: PlatformNewAPI,
+		BaseURL:  "https://newapi.example",
+		Keys: []SyncedKey{
+			{
+				ExternalID:        "empty-access-groups",
+				Name:              "Empty Access Groups",
+				Key:               "sk-empty-access-groups-new",
+				MaskedKey:         "sk-empty-access-groups-new",
+				GroupName:         "vip",
+				Models:            []string{"gpt-4o"},
+				SuggestedPriority: 5,
+				SuggestedWeight:   70,
+			},
+		},
+	}, RefreshRequest{
+		ChannelID:      channel.Id,
+		ApplySuggested: false,
+		Accounts: []AccountCreateConfig{
+			{
+				ExternalID:   "empty-access-groups",
+				AccessGroups: strPtr(""),
+			},
+		},
+	})
+
+	require.ErrorContains(t, err, "必须配置至少一个 NexusTok 可访问用户组")
+	require.Nil(t, result)
+
+	var refreshed model.ChannelAccount
+	require.NoError(t, db.First(&refreshed, existing.Id).Error)
+	require.Equal(t, "gpt-old", refreshed.Models)
+	require.Equal(t, "default", refreshed.AccessGroups)
+}
+
+func TestRefreshChannelFromSnapshotAllowsDisabledSyncedAccountWithoutCapabilities(t *testing.T) {
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ChannelAccount{}))
+	model.DB = db
+	model.LOG_DB = db
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+
+	channel := model.Channel{
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    constant.ChannelCredentialModeAccountPool,
+		Name:   "disabled-empty-channel",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-old",
+		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			CredentialMode:     constant.ChannelCredentialModeAccountPool,
+			AccountPoolEnabled: true,
+			AccountPoolMode:    constant.ChannelAccountPoolModePolling,
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	key := SyncedKey{
+		ExternalID: "disabled-empty",
+		Name:       "Disabled Empty",
+		Key:        "sk-disabled-empty",
+		MaskedKey:  "sk-disabled-empty",
+		GroupName:  "vip",
+		Models:     []string{"gpt-4o"},
+	}
+	existing := model.ChannelAccount{
+		ChannelId:     channel.Id,
+		Name:          "Disabled Empty",
+		Key:           "sk-disabled-empty",
+		Status:        common.ChannelStatusEnabled,
+		Models:        "gpt-old",
+		Group:         "default",
+		AccessGroups:  "default",
+		OtherSettings: mergeAccountSyncMetadata("", &Snapshot{Platform: PlatformNewAPI, BaseURL: "https://newapi.example"}, key),
+	}
+	require.NoError(t, db.Create(&existing).Error)
+
+	result, err := RefreshChannelFromSnapshot(channel.Id, &Snapshot{
+		Platform: PlatformNewAPI,
+		BaseURL:  "https://newapi.example",
+		Keys: []SyncedKey{
+			{
+				ExternalID:        "disabled-empty",
+				Name:              "Disabled Empty",
+				Key:               "sk-disabled-empty-new",
+				MaskedKey:         "sk-disabled-empty-new",
+				GroupName:         "vip",
+				Models:            []string{"gpt-4o"},
+				SuggestedPriority: 5,
+				SuggestedWeight:   70,
+			},
+		},
+	}, RefreshRequest{
+		ChannelID:      channel.Id,
+		ApplySuggested: false,
+		Accounts: []AccountCreateConfig{
+			{
+				ExternalID:   "disabled-empty",
+				Enabled:      boolPtr(false),
+				Models:       strPtr(""),
+				AccessGroups: strPtr(""),
+			},
+		},
+	})
+
 	require.NoError(t, err)
 	require.Equal(t, 0, result.Created)
 	require.Equal(t, 1, result.Updated)
 
 	var refreshed model.ChannelAccount
 	require.NoError(t, db.First(&refreshed, existing.Id).Error)
+	require.Equal(t, common.ChannelStatusManuallyDisabled, refreshed.Status)
 	require.Equal(t, "", refreshed.Models)
-	require.Equal(t, "default", refreshed.Group)
-	require.Equal(t, int64(9), refreshed.Priority)
-	require.Equal(t, 8, refreshed.Weight)
+	require.Equal(t, "", refreshed.AccessGroups)
 }
 
 func TestRefreshChannelFromSnapshotDisablesMissingSub2APIKeyWithLoginMetadataURL(t *testing.T) {
@@ -994,12 +1175,13 @@ func TestRefreshChannelFromSnapshotDisablesMissingSub2APIKeyWithLoginMetadataURL
 		GroupName:  "default",
 	}
 	account := model.ChannelAccount{
-		ChannelId: channel.Id,
-		Name:      "Missing",
-		Key:       "sk-missing",
-		Status:    common.ChannelStatusEnabled,
-		Models:    "gpt-4o",
-		Group:     "default",
+		ChannelId:    channel.Id,
+		Name:         "Missing",
+		Key:          "sk-missing",
+		Status:       common.ChannelStatusEnabled,
+		Models:       "gpt-4o",
+		Group:        "default",
+		AccessGroups: "default",
 		OtherSettings: mergeAccountSyncMetadata("", &Snapshot{
 			Platform: PlatformSub2API,
 			BaseURL:  "https://sub2api.example/login",

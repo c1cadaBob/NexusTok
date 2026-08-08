@@ -288,7 +288,7 @@ func buildAccounts(snapshot *Snapshot, req CreateRequest, defaultModels string, 
 		if config.Weight != nil {
 			weight = *config.Weight
 		}
-		accounts = append(accounts, model.ChannelAccount{
+		account := model.ChannelAccount{
 			Name:               name,
 			Key:                key.Key,
 			Status:             status,
@@ -308,7 +308,11 @@ func buildAccounts(snapshot *Snapshot, req CreateRequest, defaultModels string, 
 			HeaderOverride:     config.HeaderOverride,
 			StatusCodeMapping:  config.StatusCodeMapping,
 			MaxConcurrency:     config.MaxConcurrency,
-		})
+		}
+		if err := validateEnabledSyncedAccountCapability(account); err != nil {
+			return nil, err
+		}
+		accounts = append(accounts, account)
 	}
 	if len(accounts) == 0 {
 		return nil, fmt.Errorf("没有可创建的同步密钥")
@@ -316,10 +320,34 @@ func buildAccounts(snapshot *Snapshot, req CreateRequest, defaultModels string, 
 	return accounts, nil
 }
 
+// validateEnabledSyncedAccountCapability 校验启用中的同步密钥是否具备可路由能力。
+//
+// 上游同步渠道的真实调度能力由每个 ChannelAccount 的 models 与 access_groups
+// 共同决定。启用状态下如果任一字段为空，渠道看似保存成功但能力表不会生成可命中
+// 的模型/用户组组合，因此在服务层兜底拒绝；禁用密钥可以保留空值，供管理员先保存
+// 草稿配置，后续补齐能力后再启用。
+func validateEnabledSyncedAccountCapability(account model.ChannelAccount) error {
+	if account.Status != common.ChannelStatusEnabled {
+		return nil
+	}
+	name := strings.TrimSpace(account.Name)
+	if name == "" {
+		name = "未命名同步密钥"
+	}
+	if strings.TrimSpace(account.Models) == "" {
+		return fmt.Errorf("同步密钥 %s 必须配置至少一个模型", name)
+	}
+	if strings.TrimSpace(account.AccessGroups) == "" {
+		return fmt.Errorf("同步密钥 %s 必须配置至少一个 NexusTok 可访问用户组", name)
+	}
+	return nil
+}
+
 // normalizeSyncedAccessGroups 规范化同步密钥可访问的 NexusTok 用户组。
 //
-// 新同步密钥默认只允许 default；管理员显式提交空字符串时保留空值，表示该密钥
-// 暂不参与下游路由。指针参数用于区分“刷新时未提交，继续保留旧配置”和“明确清空”。
+// 新同步密钥默认只允许 default；管理员显式提交空字符串时仍保留空值，但启用密钥会在
+// validateEnabledSyncedAccountCapability 中被拒绝。指针参数用于区分“刷新时未提交，继续
+// 保留旧配置”和“明确清空”，禁用密钥可先保存空值作为草稿。
 func normalizeSyncedAccessGroups(value *string, fallback string) string {
 	raw := fallback
 	if value != nil {
@@ -350,7 +378,8 @@ func normalizeSyncedAccessGroups(value *string, fallback string) string {
 // 上游同步渠道的路由能力完全由 ChannelAccount.models 和 access_groups 决定。
 // models 使用指针是为了区分两种业务语义：
 //   - nil：本次没有覆盖，继续使用上游快照模型；快照缺失时才回退渠道级兼容模型。
-//   - 非 nil：管理员明确提交模型白名单，空字符串也要保留为空，表示该密钥不参与模型路由。
+//   - 非 nil：管理员明确提交模型白名单，空字符串也要保留为空；启用密钥随后会被校验
+//     拒绝，禁用密钥则允许作为未完成配置保存。
 func syncedAccountModelsValue(configModels *string, keyModels []string, fallbackModels string) string {
 	if configModels != nil {
 		return strings.TrimSpace(*configModels)
