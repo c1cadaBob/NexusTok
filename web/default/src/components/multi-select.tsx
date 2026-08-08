@@ -68,6 +68,8 @@ interface MultiSelectProps {
   contentHeader?: React.ReactNode
   contentFooter?: React.ReactNode
   allowCreateWithMatches?: boolean
+  allowCreateDuringSearchLoading?: boolean
+  compactInput?: boolean
   preserveSelectedOnEmptyRemovalKey?: boolean
   hideSelectedOptionsWhenSearching?: boolean
   submitSearchOnEnterWithMatches?: boolean
@@ -248,27 +250,30 @@ export function shouldSubmitMultiSelectSearchOnEnter({
   key,
   inputValue,
   isLoading,
-  hasMatchingOption,
   hasHighlightedOption = false,
   submitSearchOnEnterWhenHighlighted = false,
+  canCreateValue = false,
 }: {
   submitSearchOnEnterWithMatches: boolean
   hasSearchSubmit: boolean
   key: string
   inputValue: string
   isLoading: boolean
-  hasMatchingOption: boolean
   hasHighlightedOption?: boolean
   submitSearchOnEnterWhenHighlighted?: boolean
+  canCreateValue?: boolean
 }): boolean {
   if (!submitSearchOnEnterWithMatches || !hasSearchSubmit) return false
   if (key !== 'Enter') return false
   if (inputValue.trim().length === 0) return false
+  // 只要当前输入仍然可以创建自定义值，就让后续 keydown 处理器完成创建。
+  // 这样搜索结果存在但没有高亮候选时，Enter 不会被误解为“批量追加搜索结果”。
+  if (canCreateValue) return false
   if (hasHighlightedOption && !submitSearchOnEnterWhenHighlighted) return false
 
-  // 受控搜索场景里，存在候选或远程搜索仍在进行时，Enter 应优先交给调用方的
-  // 搜索提交处理；没有候选且未搜索时继续保留自定义值创建路径。
-  return isLoading || hasMatchingOption
+  // 没有可创建值时，只有远程搜索仍在进行才交给调用方处理。
+  // 已返回候选时由 Base UI 的高亮选择负责消费 Enter，批量追加通过独立按钮完成。
+  return isLoading
 }
 
 export function shouldPreventMultiSelectEnterFormSubmit({
@@ -346,6 +351,8 @@ export function MultiSelect({
   contentHeader,
   contentFooter,
   allowCreateWithMatches = true,
+  allowCreateDuringSearchLoading = false,
+  compactInput = false,
   preserveSelectedOnEmptyRemovalKey = false,
   hideSelectedOptionsWhenSearching = false,
   submitSearchOnEnterWithMatches = false,
@@ -409,7 +416,7 @@ export function MultiSelect({
     inputValue,
     selected,
     options,
-    isLoading,
+    isLoading: isLoading && !allowCreateDuringSearchLoading,
     allowCreateWithMatches,
     hasMatchingOption,
   })
@@ -553,10 +560,10 @@ export function MultiSelect({
         hasSearchSubmit: Boolean(onSearchSubmit),
         key: event.key,
         inputValue,
-        isLoading,
-        hasMatchingOption,
+        isLoading: isLoading && !allowCreateDuringSearchLoading,
         hasHighlightedOption: hasHighlightedComboboxOption(),
         submitSearchOnEnterWhenHighlighted,
+        canCreateValue: allowCreate && canCreate,
       })
     ) {
       event.preventDefault()
@@ -705,6 +712,7 @@ export function MultiSelect({
           aria-describedby={ariaDescribedBy}
           aria-invalid={ariaInvalid}
           autoComplete='off'
+          className={compactInput ? 'flex-[1_1_2rem]' : undefined}
         />
       </ComboboxChips>
 

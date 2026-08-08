@@ -33,7 +33,7 @@ export const sideDrawerHeaderClassName = (className?: string) =>
 
 export const sideDrawerFormClassName = (className?: string) =>
   cn(
-    'flex min-h-0 flex-1 flex-col gap-6 overflow-x-hidden overflow-y-auto overscroll-contain px-4 py-4 sm:px-6 sm:py-5',
+    'flex min-h-0 flex-1 flex-col gap-6 overflow-x-hidden overflow-y-auto overscroll-contain scroll-pt-44 px-4 py-4 sm:px-6 sm:py-5 lg:scroll-pt-4',
     className
   )
 

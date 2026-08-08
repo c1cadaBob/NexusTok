@@ -1057,9 +1057,12 @@ export function useChannelsColumns({
     // 优先级列
     {
       accessorKey: 'priority',
-      meta: { label: t('Priority'), mobileHidden: true },
+      meta: { label: t('Channel Priority'), mobileHidden: true },
       header: ({ column }) => (
-        <DataTableColumnHeader column={column} title={t('Priority')} />
+        <DataTableColumnHeader
+          column={column}
+          title={t('Channel Priority')}
+        />
       ),
       cell: ({ row }) => <PriorityCell channel={row.original} />,
       size: 100,
@@ -1068,8 +1071,8 @@ export function useChannelsColumns({
     // 权重列
     {
       accessorKey: 'weight',
-      meta: { label: t('Weight'), mobileHidden: true },
-      header: t('Weight'),
+      meta: { label: t('Channel Weight'), mobileHidden: true },
+      header: t('Channel Weight'),
       cell: ({ row }) => <WeightCell channel={row.original} />,
       size: 90,
       enableSorting: false,

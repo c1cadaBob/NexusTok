@@ -5958,6 +5958,12 @@
     "Zoom": "ズーム",
     "Routable Models": "ルーティング可能なモデル",
     "This key will not route any model.": "このキーはどのモデルもルーティングしません。",
-    "Use Upstream Models": "上流のモデルを使用"
+    "Use Upstream Models": "上流のモデルを使用",
+    "Channel Priority": "チャンネル優先度",
+    "Channel Weight": "チャンネルウェイト",
+    "Key Priority": "キー優先度",
+    "Key Weight": "キーウェイト",
+    "Lower ratio conversion gets higher key priority and weight by default.": "デフォルトでは、倍率換算が低いほどキー優先度とウェイトが高くなります。",
+    "Use upstream suggestions to overwrite key priority and weight": "上流の提案でキー優先度とウェイトを上書きする"
   }
 }

@@ -194,8 +194,8 @@ export function ChannelAccountInlinePanel({
               <TableHead>{t('Key Group')}</TableHead>
               <TableHead>{t('Key Ratio')}</TableHead>
               <TableHead>{t('Ratio Conversion')}</TableHead>
-              <TableHead>{t('Priority')}</TableHead>
-              <TableHead>{t('Weight')}</TableHead>
+              <TableHead>{t('Key Priority')}</TableHead>
+              <TableHead>{t('Key Weight')}</TableHead>
               <TableHead>{t('Used')}</TableHead>
               <TableHead>{t('Last Used')}</TableHead>
             </TableRow>

@@ -198,6 +198,22 @@ describe('渠道模型搜索候选提取', () => {
 })
 
 describe('渠道模型搜索候选汇总', () => {
+  test('模型仓库返回 gpt-5.5 时保留为真实候选', () => {
+    assert.deepEqual(
+      getModelSearchModelNames(
+        [
+          {
+            model_name: 'gpt-5.5',
+            description: 'GPT-5.5',
+            name_rule: 0,
+          },
+        ],
+        'gpt-5.5'
+      ),
+      ['gpt-5.5']
+    )
+  })
+
   test('区分全部命中、可新增命中和已存在命中', () => {
     assert.deepEqual(
       summarizeModelSearchCandidates(
@@ -210,6 +226,14 @@ describe('渠道模型搜索候选汇总', () => {
         existingCount: 1,
       }
     )
+  })
+
+  test('其它账号已使用的模型不影响当前密钥追加候选', () => {
+    assert.deepEqual(summarizeModelSearchCandidates(['gpt-5.5'], []), {
+      matched: ['gpt-5.5'],
+      addable: ['gpt-5.5'],
+      existingCount: 0,
+    })
   })
 
   test('候选自身先按大小写不敏感去重', () => {

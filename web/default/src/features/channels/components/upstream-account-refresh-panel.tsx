@@ -381,7 +381,9 @@ export function UpstreamAccountRefreshPanel({
     setUpstreamRefreshSnapshot(null)
     setUpstreamRefreshTwoFactorChallenge(null)
     setUpstreamRefreshTwoFactorCode('')
-    setUpstreamApplySuggested(true)
+    // 刷新已有渠道时默认保留本地密钥优先级/权重，管理员可通过开关主动应用
+    // 上游建议值；这样普通刷新不会覆盖账号池中的手工调度配置。
+    setUpstreamApplySuggested(false)
     setUpstreamAccountConfigs({})
     setUpstreamKeyModelSearch({ configId: '', value: '' })
     autoPreviewTriggeredRef.current = false
@@ -919,11 +921,13 @@ export function UpstreamAccountRefreshPanel({
           <div className='flex items-center justify-between gap-3'>
             <div className='flex flex-col gap-1'>
               <span className='text-sm font-medium'>
-                {t('Apply suggested priority and weight')}
+                {t(
+                  'Use upstream suggestions to overwrite key priority and weight'
+                )}
               </span>
               <span className='text-muted-foreground text-xs'>
                 {t(
-                  'Lower ratio conversion gets higher priority and weight by default.'
+                  'Lower ratio conversion gets higher key priority and weight by default.'
                 )}
               </span>
             </div>
@@ -977,11 +981,11 @@ export function UpstreamAccountRefreshPanel({
                   >
                     {t('Ratio Conversion')}
                   </span>
-                  <span className='min-w-0 truncate' title={t('Priority')}>
-                    {t('Priority')}
+                  <span className='min-w-0 truncate' title={t('Key Priority')}>
+                    {t('Key Priority')}
                   </span>
-                  <span className='min-w-0 truncate' title={t('Weight')}>
-                    {t('Weight')}
+                  <span className='min-w-0 truncate' title={t('Key Weight')}>
+                    {t('Key Weight')}
                   </span>
                   <span className='min-w-0 truncate' title={t('Enabled')}>
                     {t('Enabled')}
@@ -1139,6 +1143,7 @@ export function UpstreamAccountRefreshPanel({
                             isCurrentKeyModelSearch &&
                             upstreamKeyModelSearchIsLoading
                           }
+                          allowCreateDuringSearchLoading
                           searchValue={currentKeyModelSearchValue}
                           onSearchChange={(value) =>
                             setUpstreamKeyModelSearch({ configId, value })
@@ -1223,6 +1228,7 @@ export function UpstreamAccountRefreshPanel({
                           submitSearchOnEnterWhenHighlighted
                           clearSearchOnSelect={false}
                           className='min-h-8'
+                          compactInput
                         />
                         {currentModelsArrayValue.length === 0 ? (
                           <span
@@ -1271,6 +1277,7 @@ export function UpstreamAccountRefreshPanel({
                           )}
                           maxVisibleChips={2}
                           className='min-h-8'
+                          compactInput
                         />
                         {currentAccessGroupsArrayValue.length === 0 ? (
                           <span

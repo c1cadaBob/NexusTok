@@ -238,7 +238,7 @@ describe('MultiSelect 空搜索删除键保护', () => {
 })
 
 describe('MultiSelect 搜索提交键盘行为', () => {
-  test('启用后存在候选时 Enter 优先交给调用方搜索提交', () => {
+  test('已有候选但没有高亮时 Enter 不批量提交搜索结果', () => {
     assert.equal(
       shouldSubmitMultiSelectSearchOnEnter({
         submitSearchOnEnterWithMatches: true,
@@ -246,9 +246,8 @@ describe('MultiSelect 搜索提交键盘行为', () => {
         key: 'Enter',
         inputValue: 'gpt-5.6',
         isLoading: false,
-        hasMatchingOption: true,
       }),
-      true
+      false
     )
   })
 
@@ -260,30 +259,13 @@ describe('MultiSelect 搜索提交键盘行为', () => {
         key: 'Enter',
         inputValue: 'gpt-5.6',
         isLoading: false,
-        hasMatchingOption: true,
         hasHighlightedOption: true,
       }),
       false
     )
   })
 
-  test('显式开启后高亮候选时 Enter 也交给调用方搜索提交', () => {
-    assert.equal(
-      shouldSubmitMultiSelectSearchOnEnter({
-        submitSearchOnEnterWithMatches: true,
-        submitSearchOnEnterWhenHighlighted: true,
-        hasSearchSubmit: true,
-        key: 'Enter',
-        inputValue: 'gpt-5.6',
-        isLoading: false,
-        hasMatchingOption: true,
-        hasHighlightedOption: true,
-      }),
-      true
-    )
-  })
-
-  test('搜索请求仍在进行时 Enter 也交给搜索提交处理', () => {
+  test('搜索仍在加载且没有可创建值时 Enter 交给搜索提交', () => {
     assert.equal(
       shouldSubmitMultiSelectSearchOnEnter({
         submitSearchOnEnterWithMatches: true,
@@ -291,21 +273,20 @@ describe('MultiSelect 搜索提交键盘行为', () => {
         key: 'Enter',
         inputValue: 'gpt-5.6',
         isLoading: true,
-        hasMatchingOption: false,
       }),
       true
     )
   })
 
-  test('没有候选且未搜索时保留自定义模型创建路径', () => {
+  test('搜索候选存在但输入可创建时，Enter 保留给自定义创建', () => {
     assert.equal(
       shouldSubmitMultiSelectSearchOnEnter({
         submitSearchOnEnterWithMatches: true,
         hasSearchSubmit: true,
         key: 'Enter',
-        inputValue: 'custom-model',
+        inputValue: 'gpt-5.6',
         isLoading: false,
-        hasMatchingOption: false,
+        canCreateValue: true,
       }),
       false
     )
@@ -319,7 +300,6 @@ describe('MultiSelect 搜索提交键盘行为', () => {
         key: 'Enter',
         inputValue: 'gpt-5.6',
         isLoading: false,
-        hasMatchingOption: true,
       }),
       false
     )
@@ -333,7 +313,6 @@ describe('MultiSelect 搜索提交键盘行为', () => {
         key: 'Enter',
         inputValue: 'gpt-5.6',
         isLoading: false,
-        hasMatchingOption: true,
       }),
       false
     )
@@ -344,7 +323,6 @@ describe('MultiSelect 搜索提交键盘行为', () => {
         key: 'Enter',
         inputValue: '   ',
         isLoading: true,
-        hasMatchingOption: true,
       }),
       false
     )
@@ -355,7 +333,6 @@ describe('MultiSelect 搜索提交键盘行为', () => {
         key: 'Tab',
         inputValue: 'gpt-5.6',
         isLoading: true,
-        hasMatchingOption: true,
       }),
       false
     )
@@ -435,6 +412,29 @@ describe('MultiSelect 自定义添加判定', () => {
         hasMatchingOption: false,
       }),
       true
+    )
+  })
+
+  test('允许在搜索加载中继续自定义创建时，不会被 loading 强制吞掉', () => {
+    assert.equal(
+      canCreateMultiSelectValue({
+        allowCreate: true,
+        inputValue: 'custom-model',
+        selected: [],
+        options,
+        isLoading: false,
+      }),
+      true
+    )
+    assert.equal(
+      canCreateMultiSelectValue({
+        allowCreate: true,
+        inputValue: 'custom-model',
+        selected: [],
+        options,
+        isLoading: true,
+      }),
+      false
     )
   })
 

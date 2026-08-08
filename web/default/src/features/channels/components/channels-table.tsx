@@ -78,6 +78,7 @@ const CHANNEL_SORTABLE_COLUMNS = new Set<ChannelSortBy>([
 const EMPTY_FILTER_VALUES: string[] = []
 const CHANNELS_COLUMN_VISIBILITY_STORAGE_KEY = 'channels-column-visibility'
 const CHANNELS_VIEW_MODE_STORAGE_KEY = 'channels-table-view-mode'
+const CHANNELS_SORTING_STORAGE_KEY = 'channels-table-sorting'
 const CHANNELS_INITIAL_COLUMN_VISIBILITY = {
   models: false,
   tag: false,
@@ -99,6 +100,36 @@ function isAccountPoolChannel(channel: Channel) {
   )
 }
 
+function normalizeChannelSorting(value: SortingState): SortingState {
+  const active = value[0]
+  if (!active || !CHANNEL_SORTABLE_COLUMNS.has(active.id as ChannelSortBy)) {
+    return []
+  }
+  return [
+    {
+      id: active.id,
+      desc: Boolean(active.desc),
+    },
+  ]
+}
+
+function loadSavedChannelSorting(): SortingState {
+  if (typeof window === 'undefined') return []
+  try {
+    const raw = window.localStorage.getItem(CHANNELS_SORTING_STORAGE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed) || parsed.length === 0) return []
+    const active = parsed[0] as { id?: unknown; desc?: unknown }
+    if (!active || typeof active.id !== 'string') return []
+    if (!CHANNEL_SORTABLE_COLUMNS.has(active.id as ChannelSortBy)) return []
+    if (typeof active.desc !== 'boolean') return []
+    return [{ id: active.id, desc: active.desc }]
+  } catch {
+    return []
+  }
+}
+
 export function ChannelsTable() {
   const { t } = useTranslation()
   const {
@@ -114,7 +145,9 @@ export function ChannelsTable() {
   const isMobile = useMediaQuery('(max-width: 640px)')
 
   // 表格排序状态由后端排序参数消费。
-  const [sorting, setSorting] = useState<SortingState>([])
+  const [sorting, setSorting] = useState<SortingState>(() =>
+    loadSavedChannelSorting()
+  )
 
   // URL 状态负责让筛选、搜索和分页可分享、可刷新恢复。
   const {
@@ -171,11 +204,8 @@ export function ChannelsTable() {
   const shouldSearch = Boolean(globalFilter?.trim() || modelFilter.trim())
 
   const sortParams = useMemo(() => {
-    const activeSort = sorting[0]
-    if (
-      !activeSort ||
-      !CHANNEL_SORTABLE_COLUMNS.has(activeSort.id as ChannelSortBy)
-    ) {
+    const activeSort = normalizeChannelSorting(sorting)[0]
+    if (!activeSort) {
       return {}
     }
 
@@ -187,9 +217,23 @@ export function ChannelsTable() {
 
   const handleSortingChange: OnChangeFn<SortingState> = (updater) => {
     setSorting((previous) => {
-      const next = typeof updater === 'function' ? updater(previous) : updater
+      const next = normalizeChannelSorting(
+        typeof updater === 'function' ? updater(previous) : updater
+      )
       if (pagination.pageIndex > 0) {
         onPaginationChange({ ...pagination, pageIndex: 0 })
+      }
+      try {
+        if (next.length === 0) {
+          window.localStorage.removeItem(CHANNELS_SORTING_STORAGE_KEY)
+        } else {
+          window.localStorage.setItem(
+            CHANNELS_SORTING_STORAGE_KEY,
+            JSON.stringify(next)
+          )
+        }
+      } catch {
+        // 忽略本地存储失败，排序仍然可用，只是刷新后不会记忆。
       }
       return next
     })

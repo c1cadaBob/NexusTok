@@ -2001,11 +2001,13 @@ export function ChannelMutateDrawer({
             <div className='flex items-center justify-between gap-3'>
               <div className='flex flex-col gap-1'>
                 <span className='text-sm font-medium'>
-                  {t('Apply suggested priority and weight')}
+                  {t(
+                    'Use upstream suggestions to overwrite key priority and weight'
+                  )}
                 </span>
                 <span className='text-muted-foreground text-xs'>
                   {t(
-                    'Lower ratio conversion gets higher priority and weight by default.'
+                    'Lower ratio conversion gets higher key priority and weight by default.'
                   )}
                 </span>
               </div>
@@ -2063,11 +2065,11 @@ export function ChannelMutateDrawer({
                   >
                     {t('Ratio Conversion')}
                   </span>
-                  <span className='min-w-0 truncate' title={t('Priority')}>
-                    {t('Priority')}
+                  <span className='min-w-0 truncate' title={t('Key Priority')}>
+                    {t('Key Priority')}
                   </span>
-                  <span className='min-w-0 truncate' title={t('Weight')}>
-                    {t('Weight')}
+                  <span className='min-w-0 truncate' title={t('Key Weight')}>
+                    {t('Key Weight')}
                   </span>
                   <span className='min-w-0 truncate' title={t('Enabled')}>
                     {t('Enabled')}
@@ -2230,6 +2232,7 @@ export function ChannelMutateDrawer({
                             isCurrentKeyModelSearch &&
                             upstreamKeyModelSearchIsLoading
                           }
+                          allowCreateDuringSearchLoading
                           searchValue={currentKeyModelSearchValue}
                           onSearchChange={(value) =>
                             setUpstreamKeyModelSearch({ configId, value })
@@ -2314,6 +2317,7 @@ export function ChannelMutateDrawer({
                           submitSearchOnEnterWhenHighlighted
                           clearSearchOnSelect={false}
                           className='min-h-8'
+                          compactInput
                         />
                         {currentModelsArrayValue.length === 0 ? (
                           <span
@@ -2360,6 +2364,7 @@ export function ChannelMutateDrawer({
                           placeholder={t(FIELD_PLACEHOLDERS.GROUP)}
                           maxVisibleChips={2}
                           className='min-h-8'
+                          compactInput
                         />
                         {currentAccessGroupsArrayValue.length === 0 ? (
                           <span
@@ -2955,6 +2960,9 @@ export function ChannelMutateDrawer({
       setUpstreamUseSavedCredential(
         captureRefreshContext ? false : savedUpstreamCredentialAvailable
       )
+      // 已有同步渠道的密钥优先级/权重属于管理员本地配置；进入编辑或刷新预览时
+      // 默认关闭上游建议覆盖，只有管理员主动开启开关才允许覆盖这些值。
+      setUpstreamApplySuggested(!isSyncedChannel)
       setUpstreamUsername('')
       setUpstreamPassword('')
       resetUpstreamImportedLogin()
@@ -2985,6 +2993,7 @@ export function ChannelMutateDrawer({
       setUpstreamPlatform('new-api')
       setUpstreamBaseUrl('')
       setUpstreamUseSavedCredential(false)
+      setUpstreamApplySuggested(true)
       setUpstreamUsername('')
       setUpstreamPassword('')
       resetUpstreamImportedLogin()
@@ -3865,36 +3874,37 @@ export function ChannelMutateDrawer({
 
       setIsSavingSyncedAccountConfigs(true)
       try {
-        const aggregatedChannelModels = upstreamAccountValuesToString(
-          syncedEditableAccounts,
-          upstreamAccountConfigs,
-          upstreamAccountModelsValue
+        const dirtyFields = form.formState.dirtyFields as Record<
+          string,
+          unknown
+        >
+        const hasChannelFormChanges = Object.keys(dirtyFields).some(
+          (field) => field !== 'models' && field !== 'group'
         )
-        const normalizedData: ChannelFormValues = {
-          ..._data,
-          type:
-            channelTypeFromUpstreamPlatform(
-              getUpstreamSyncPlatformFromSettings(renderCurrentRow.settings)
-            ) ?? _data.type,
-          models: aggregatedChannelModels,
-          group: _data.group?.length ? _data.group : ['default'],
-        }
-        const channelPayload = transformFormDataToUpdatePayload(
-          normalizedData,
-          channelId
-        )
-        const allowedChannelPayload = buildAllowedChannelUpdatePayload({
-          payload: channelPayload,
-          canEditSensitiveFields,
-          isMultiKeyChannel,
-          keyMode: normalizedData.key_mode,
-        })
-        const channelResponse = await updateChannel(
-          channelId,
-          allowedChannelPayload
-        )
-        if (!channelResponse.success) {
-          throw new Error(channelResponse.message || t('Operation failed'))
+        if (hasChannelFormChanges) {
+          const channelPayload = transformFormDataToUpdatePayload(
+            _data,
+            channelId
+          )
+          const allowedChannelPayload = buildAllowedChannelUpdatePayload({
+            payload: channelPayload,
+            canEditSensitiveFields,
+            isMultiKeyChannel,
+            keyMode: _data.key_mode,
+          })
+          // 同步密钥配置单独保存。models/group 是账号能力重建后的聚合字段，
+          // 不应在保存密钥时用表单旧值覆盖；账号接口完成更新后后端会自动汇总。
+          delete (allowedChannelPayload as Record<string, unknown>).models
+          delete (allowedChannelPayload as Record<string, unknown>).group
+          if (Object.keys(allowedChannelPayload).some((key) => key !== 'id')) {
+            const channelResponse = await updateChannel(
+              channelId,
+              allowedChannelPayload
+            )
+            if (!channelResponse.success) {
+              throw new Error(channelResponse.message || t('Operation failed'))
+            }
+          }
         }
 
         let updated = 0
@@ -3994,6 +4004,7 @@ export function ChannelMutateDrawer({
       syncedChannelAccountsQuery.isLoading,
       syncedChannelAccountsTotal,
       syncedEditableAccounts,
+      form,
       t,
       upstreamAccountConfigs,
     ]
@@ -4849,7 +4860,7 @@ export function ChannelMutateDrawer({
                   {/* ── Basic Information ── */}
                   <div
                     id={CHANNEL_EDITOR_SECTION_IDS.identity}
-                    className='scroll-mt-4'
+                    className='scroll-mt-44 lg:scroll-mt-4'
                   >
                     <ChannelBasicSection>
                       <div className='grid gap-4 sm:grid-cols-2'>
@@ -4985,7 +4996,7 @@ export function ChannelMutateDrawer({
                   {/* ── Credentials ── */}
                   <div
                     id={CHANNEL_EDITOR_SECTION_IDS.credentials}
-                    className='scroll-mt-4'
+                    className='scroll-mt-44 lg:scroll-mt-4'
                   >
                     <ChannelApiAccessSection>
                       {CHANNEL_TYPE_WARNINGS[currentType] && (
@@ -7175,7 +7186,7 @@ export function ChannelMutateDrawer({
                   {showModelsNavigationSection && (
                     <div
                       id={CHANNEL_EDITOR_SECTION_IDS.models}
-                      className='scroll-mt-4'
+                      className='scroll-mt-44 lg:scroll-mt-4'
                     >
                       <ChannelModelsSection>
                         <div className='flex flex-col gap-5'>
@@ -7222,6 +7233,7 @@ export function ChannelMutateDrawer({
                                           'Select models or add custom ones'
                                         )}
                                         allowCreate
+                                        allowCreateDuringSearchLoading
                                         createLabel='Add custom model "{{value}}"'
                                         maxVisibleChips={8}
                                         copyChipOnClick
@@ -7744,7 +7756,7 @@ export function ChannelMutateDrawer({
 
                   <div
                     id={CHANNEL_EDITOR_SECTION_IDS.advanced}
-                    className='scroll-mt-4'
+                    className='scroll-mt-44 lg:scroll-mt-4'
                   >
                     <ChannelAdvancedSection
                       open={advancedSettingsOpen}
@@ -7760,7 +7772,7 @@ export function ChannelMutateDrawer({
                         <div
                           id={ADVANCED_SETTINGS_SECTION_IDS.routingStrategy}
                           className={configuredAdvancedSectionClassName(
-                            'flex scroll-mt-4 flex-col gap-4',
+                            'flex scroll-mt-44 lg:scroll-mt-4 flex-col gap-4',
                             routingStrategyConfigured
                           )}
                         >
@@ -7774,7 +7786,7 @@ export function ChannelMutateDrawer({
                               name='priority'
                               render={({ field }) => (
                                 <FormItem>
-                                  <FormLabel>{t('Priority')}</FormLabel>
+                                  <FormLabel>{t('Channel Priority')}</FormLabel>
                                   <FormControl>
                                     <Input
                                       type='number'
@@ -7799,7 +7811,7 @@ export function ChannelMutateDrawer({
                               name='weight'
                               render={({ field }) => (
                                 <FormItem>
-                                  <FormLabel>{t('Weight')}</FormLabel>
+                                  <FormLabel>{t('Channel Weight')}</FormLabel>
                                   <FormControl>
                                     <Input
                                       type='number'
@@ -7871,7 +7883,7 @@ export function ChannelMutateDrawer({
                         <div
                           id={ADVANCED_SETTINGS_SECTION_IDS.internalNotes}
                           className={configuredAdvancedSectionClassName(
-                            'flex scroll-mt-4 flex-col gap-4 border-t pt-4',
+                            'flex scroll-mt-44 lg:scroll-mt-4 flex-col gap-4 border-t pt-4',
                             internalNotesConfigured
                           )}
                         >
@@ -7928,7 +7940,7 @@ export function ChannelMutateDrawer({
                         <div
                           id={ADVANCED_SETTINGS_SECTION_IDS.overrideRules}
                           className={configuredAdvancedSectionClassName(
-                            'flex scroll-mt-4 flex-col gap-4 border-t pt-4',
+                            'flex scroll-mt-44 lg:scroll-mt-4 flex-col gap-4 border-t pt-4',
                             overrideRulesConfigured
                           )}
                         >
@@ -8261,7 +8273,7 @@ export function ChannelMutateDrawer({
                         id={ADVANCED_SETTINGS_SECTION_IDS.extraSettings}
                         className={sideDrawerSectionClassName(
                           configuredAdvancedSectionClassName(
-                            'scroll-mt-4',
+                            'scroll-mt-44 lg:scroll-mt-4',
                             extraSettingsConfigured
                           )
                         )}
@@ -8276,7 +8288,7 @@ export function ChannelMutateDrawer({
                           <div
                             id={ADVANCED_SETTINGS_SECTION_IDS.fieldPassthrough}
                             className={configuredAdvancedSectionClassName(
-                              'flex scroll-mt-4 flex-col gap-3',
+                              'flex scroll-mt-44 lg:scroll-mt-4 flex-col gap-3',
                               fieldPassthroughConfigured
                             )}
                           >
@@ -8704,7 +8716,7 @@ export function ChannelMutateDrawer({
                               ADVANCED_SETTINGS_SECTION_IDS.upstreamModelDetection
                             }
                             className={configuredAdvancedSectionClassName(
-                              'flex scroll-mt-4 flex-col gap-3',
+                              'flex scroll-mt-44 lg:scroll-mt-4 flex-col gap-3',
                               upstreamModelDetectionConfigured
                             )}
                           >

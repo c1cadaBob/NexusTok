@@ -5958,6 +5958,12 @@
     "Zoom": "Zoom",
     "Routable Models": "Modèles routables",
     "This key will not route any model.": "Cette clé ne routa aucun modèle.",
-    "Use Upstream Models": "Utiliser les modèles amont"
+    "Use Upstream Models": "Utiliser les modèles amont",
+    "Channel Priority": "Priorité du canal",
+    "Channel Weight": "Poids du canal",
+    "Key Priority": "Priorité de la clé",
+    "Key Weight": "Poids de la clé",
+    "Lower ratio conversion gets higher key priority and weight by default.": "Une conversion de ratio plus faible reçoit par défaut une priorité et un poids de clé plus élevés.",
+    "Use upstream suggestions to overwrite key priority and weight": "Utiliser les suggestions amont pour écraser la priorité et le poids de la clé"
   }
 }

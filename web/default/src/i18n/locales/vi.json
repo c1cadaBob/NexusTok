@@ -5958,6 +5958,12 @@
     "Zoom": "Zoom",
     "Routable Models": "Mô hình có thể định tuyến",
     "This key will not route any model.": "Khóa này sẽ không định tuyến bất kỳ mô hình nào.",
-    "Use Upstream Models": "Dùng mô hình upstream"
+    "Use Upstream Models": "Dùng mô hình upstream",
+    "Channel Priority": "Độ ưu tiên kênh",
+    "Channel Weight": "Trọng số kênh",
+    "Key Priority": "Độ ưu tiên của khóa",
+    "Key Weight": "Trọng số của khóa",
+    "Lower ratio conversion gets higher key priority and weight by default.": "Mặc định, hệ số quy đổi càng thấp thì độ ưu tiên và trọng số của khóa càng cao.",
+    "Use upstream suggestions to overwrite key priority and weight": "Sử dụng đề xuất từ upstream để ghi đè độ ưu tiên và trọng số của khóa"
   }
 }

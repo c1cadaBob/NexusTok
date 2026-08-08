@@ -5958,6 +5958,12 @@
     "Zoom": "Zoom",
     "Routable Models": "Routable Models",
     "This key will not route any model.": "This key will not route any model.",
-    "Use Upstream Models": "Use Upstream Models"
+    "Use Upstream Models": "Use Upstream Models",
+    "Channel Priority": "Channel Priority",
+    "Channel Weight": "Channel Weight",
+    "Key Priority": "Key Priority",
+    "Key Weight": "Key Weight",
+    "Lower ratio conversion gets higher key priority and weight by default.": "Lower ratio conversion gets higher key priority and weight by default.",
+    "Use upstream suggestions to overwrite key priority and weight": "Use upstream suggestions to overwrite key priority and weight"
   }
 }

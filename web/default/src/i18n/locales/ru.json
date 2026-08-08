@@ -5958,6 +5958,12 @@
     "Zoom": "Zoom",
     "Routable Models": "Маршрутизируемые модели",
     "This key will not route any model.": "Этот ключ не будет маршрутизировать ни одну модель.",
-    "Use Upstream Models": "Использовать модели upstream"
+    "Use Upstream Models": "Использовать модели upstream",
+    "Channel Priority": "Приоритет канала",
+    "Channel Weight": "Вес канала",
+    "Key Priority": "Приоритет ключа",
+    "Key Weight": "Вес ключа",
+    "Lower ratio conversion gets higher key priority and weight by default.": "По умолчанию более низкое значение пересчёта коэффициента получает более высокий приоритет и вес ключа.",
+    "Use upstream suggestions to overwrite key priority and weight": "Использовать предложения вышестоящего источника для перезаписи приоритета и веса ключа"
   }
 }

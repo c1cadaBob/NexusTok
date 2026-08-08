@@ -5958,6 +5958,12 @@
     "Zoom": "缩放",
     "Routable Models": "可路由模型",
     "This key will not route any model.": "该密钥不会路由任何模型。",
-    "Use Upstream Models": "使用上游返回模型"
+    "Use Upstream Models": "使用上游返回模型",
+    "Channel Priority": "渠道优先级",
+    "Channel Weight": "渠道权重",
+    "Key Priority": "密钥优先级",
+    "Key Weight": "密钥权重",
+    "Lower ratio conversion gets higher key priority and weight by default.": "默认情况下，倍率换算越低，密钥优先级和权重越高。",
+    "Use upstream suggestions to overwrite key priority and weight": "使用上游建议覆盖密钥优先级和权重"
   }
 }
