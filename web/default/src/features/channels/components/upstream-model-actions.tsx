@@ -57,6 +57,7 @@ type FetchActionProps = CommonActionProps & {
   mode: 'fetch'
   onBeforeOpen?: () => boolean
   customFetcher: () => Promise<string[]>
+  fetchSourceKey: string
   existingModelsOverride: string[]
   channelName?: string | null
   redirectModels?: string[]
@@ -123,6 +124,7 @@ export function UpstreamModelActions(props: UpstreamModelActionsProps) {
       open={fetchOpen}
       onOpenChange={setFetchOpen}
       customFetcher={props.customFetcher}
+      fetchSourceKey={props.fetchSourceKey}
       existingModelsOverride={props.existingModelsOverride}
       channelName={props.channelName}
       redirectModels={props.redirectModels}

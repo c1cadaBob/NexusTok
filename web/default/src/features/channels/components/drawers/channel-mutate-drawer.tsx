@@ -2016,6 +2016,11 @@ export function ChannelMutateDrawer({
                     'account_id' in key && typeof key.account_id === 'number'
                       ? key.account_id
                       : undefined
+                  const fetchSyncedKeySourceKey = keyAccountId
+                    ? `channel-account:${channelId}:${keyAccountId}`
+                    : options.previewId
+                      ? `upstream-preview-key:${options.previewId}:${configId}`
+                      : `upstream-snapshot-key:${configId}`
                   const fetchSyncedKeyUpstreamModels =
                     async (): Promise<string[]> => {
                       if (channelId && keyAccountId) {
@@ -2110,6 +2115,7 @@ export function ChannelMutateDrawer({
                         <UpstreamModelActions
                           mode='fetch'
                           customFetcher={fetchSyncedKeyUpstreamModels}
+                          fetchSourceKey={fetchSyncedKeySourceKey}
                           existingModelsOverride={currentModelsArrayValue}
                           channelName={key.name || key.masked_key}
                           requireOperatePermission={false}

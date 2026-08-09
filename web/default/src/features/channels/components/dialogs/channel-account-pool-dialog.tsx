@@ -170,6 +170,7 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
   const [search, setSearch] = useState('')
   const [formOpen, setFormOpen] = useState(false)
   const [formState, setFormState] = useState<AccountFormState>(emptyForm)
+  const [formCredentialRevision, setFormCredentialRevision] = useState(0)
   const [batchOpen, setBatchOpen] = useState(false)
   const [batchKeys, setBatchKeys] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<ChannelAccount | null>(null)
@@ -251,6 +252,7 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
 
   const resetForm = () => {
     setFormState(emptyForm)
+    setFormCredentialRevision(0)
     setFormOpen(false)
   }
 
@@ -305,6 +307,7 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
       models: currentRow?.models ?? '',
       group: currentRow?.group ?? '',
     })
+    setFormCredentialRevision(0)
     setFormOpen(true)
   }
 
@@ -323,6 +326,7 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
       weight: String(account.weight || 1),
       maxConcurrency: String(account.max_concurrency || 0),
     })
+    setFormCredentialRevision(0)
     setFormOpen(true)
   }
 
@@ -819,6 +823,7 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                       mode='fetch'
                       onBeforeOpen={canOpenFetchModelsDialog}
                       customFetcher={fetchModelsForCurrentAccountForm}
+                      fetchSourceKey={`channel-account-form:${currentRow.id}:${formState.id || 'new'}:${formCredentialRevision}`}
                       existingModelsOverride={parseModelsString(
                         formState.models
                       )}
@@ -876,9 +881,13 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                   {allowManualAccountMutation && (
                     <Input
                       value={formState.key}
-                      onChange={(event) =>
-                        setFormState({ ...formState, key: event.target.value })
-                      }
+                      onChange={(event) => {
+                        setFormCredentialRevision((previous) => previous + 1)
+                        setFormState({
+                          ...formState,
+                          key: event.target.value,
+                        })
+                      }}
                       disabled={
                         Boolean(formState.id) &&
                         !canSensitiveWriteChannelAccounts

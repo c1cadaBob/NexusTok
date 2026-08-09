@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Loader2, Search, Info, ChevronDown } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -61,6 +61,17 @@ function normalizeModelNameList(models: readonly string[]): string[] {
   )
 }
 
+const FETCH_MODELS_RETRY_INTERVAL_MS = 30_000
+
+type FetchModelsReason = 'auto' | 'manual'
+
+type FetchModelsCacheEntry = {
+  sourceKey: string
+  fetchedAt: number
+  models: string[]
+  status: 'fetched' | 'empty' | 'error'
+}
+
 type FetchModelsDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -68,6 +79,7 @@ type FetchModelsDialogProps = {
   redirectModels?: string[]
   redirectSourceModels?: string[]
   customFetcher?: () => Promise<string[]>
+  fetchSourceKey?: string
   existingModelsOverride?: string[]
   channelName?: string | null
   // 本地上游快照只用于弹窗选择和表单回填，不应被远程渠道权限拦截。
@@ -82,6 +94,7 @@ export function FetchModelsDialog({
   redirectModels = [],
   redirectSourceModels = [],
   customFetcher,
+  fetchSourceKey,
   existingModelsOverride,
   channelName,
   requireOperatePermission = true,
@@ -96,6 +109,11 @@ export function FetchModelsDialog({
   const [fetchedModels, setFetchedModels] = useState<string[]>([])
   const [selectedModels, setSelectedModels] = useState<string[]>([])
   const [searchKeyword, setSearchKeyword] = useState('')
+  const [retryAvailableAt, setRetryAvailableAt] = useState(0)
+  const [retryClock, setRetryClock] = useState(() => Date.now())
+  const lastFetchRef = useRef<FetchModelsCacheEntry | null>(null)
+  const autoFetchedOpenKeyRef = useRef<string | null>(null)
+  const inFlightRef = useRef(false)
   const permissions = useChannelPermissions()
   const noPermissionMessage = t("You don't have necessary permission")
   const canFetchModels =
@@ -104,6 +122,12 @@ export function FetchModelsDialog({
     !requireWritePermission ||
     permissions.canWrite ||
     permissions.canSensitiveWrite
+
+  const resolvedFetchSourceKey = useMemo(() => {
+    if (fetchSourceKey) return fetchSourceKey
+    if (activeChannel) return `channel:${activeChannel.id}`
+    return `custom:${channelName || 'unknown'}`
+  }, [activeChannel, channelName, fetchSourceKey])
 
   // 弹窗可能服务于新建渠道，此时还没有 currentRow，需要用表单当前值初始化选择。
   const existingModels = useMemo(
@@ -142,20 +166,43 @@ export function FetchModelsDialog({
     })
   }, [fetchedModelSet, redirectSourceKeysSet, searchKeyword, selectedModels])
 
-  useEffect(() => {
-    if (open && (activeChannel || customFetcher)) {
-      handleFetchModels()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, activeChannel?.id, customFetcher])
-
-  const handleFetchModels = async () => {
+  const handleFetchModels = async (reason: FetchModelsReason = 'manual') => {
     if (!activeChannel && !customFetcher) return
     if (!canFetchModels) {
       toast.error(noPermissionMessage)
       return
     }
+    if (inFlightRef.current) return
 
+    const now = Date.now()
+    const cached = lastFetchRef.current
+    if (
+      cached?.sourceKey === resolvedFetchSourceKey &&
+      now - cached.fetchedAt < FETCH_MODELS_RETRY_INTERVAL_MS
+    ) {
+      setRetryAvailableAt(cached.fetchedAt + FETCH_MODELS_RETRY_INTERVAL_MS)
+      setRetryClock(now)
+      if (cached.status === 'fetched') {
+        setFetchedModels(cached.models)
+        setSelectedModels(existingModels)
+      }
+      if (reason === 'manual') {
+        toast.info(
+          t('Try again in {{seconds}}s', {
+            seconds: Math.max(
+              1,
+              Math.ceil(
+                (cached.fetchedAt + FETCH_MODELS_RETRY_INTERVAL_MS - now) /
+                  1000
+              )
+            ),
+          })
+        )
+      }
+      return
+    }
+
+    inFlightRef.current = true
     setIsFetching(true)
     try {
       if (customFetcher) {
@@ -163,6 +210,16 @@ export function FetchModelsDialog({
         const result = resolveUpstreamModelFetchResult(list)
         setFetchedModels(result.models)
         setSelectedModels(existingModels)
+        lastFetchRef.current = {
+          sourceKey: resolvedFetchSourceKey,
+          fetchedAt: Date.now(),
+          models: result.models,
+          status: result.status,
+        }
+        setRetryAvailableAt(
+          lastFetchRef.current.fetchedAt + FETCH_MODELS_RETRY_INTERVAL_MS
+        )
+        setRetryClock(Date.now())
         if (result.status === 'empty') {
           toast.info(t('No models fetched from upstream'))
         } else {
@@ -176,6 +233,16 @@ export function FetchModelsDialog({
           )
           setFetchedModels(result.models)
           setSelectedModels(existingModels)
+          lastFetchRef.current = {
+            sourceKey: resolvedFetchSourceKey,
+            fetchedAt: Date.now(),
+            models: result.models,
+            status: result.status,
+          }
+          setRetryAvailableAt(
+            lastFetchRef.current.fetchedAt + FETCH_MODELS_RETRY_INTERVAL_MS
+          )
+          setRetryClock(Date.now())
           if (result.status === 'empty') {
             toast.info(t('No models fetched from upstream'))
           } else {
@@ -186,6 +253,16 @@ export function FetchModelsDialog({
         } else {
           toast.error(response.message || t('Failed to fetch models'))
           setFetchedModels([])
+          lastFetchRef.current = {
+            sourceKey: resolvedFetchSourceKey,
+            fetchedAt: Date.now(),
+            models: [],
+            status: 'error',
+          }
+          setRetryAvailableAt(
+            lastFetchRef.current.fetchedAt + FETCH_MODELS_RETRY_INTERVAL_MS
+          )
+          setRetryClock(Date.now())
         }
       }
     } catch (error: unknown) {
@@ -193,10 +270,56 @@ export function FetchModelsDialog({
         error instanceof Error ? error.message : t('Failed to fetch models')
       )
       setFetchedModels([])
+      lastFetchRef.current = {
+        sourceKey: resolvedFetchSourceKey,
+        fetchedAt: Date.now(),
+        models: [],
+        status: 'error',
+      }
+      setRetryAvailableAt(
+        lastFetchRef.current.fetchedAt + FETCH_MODELS_RETRY_INTERVAL_MS
+      )
+      setRetryClock(Date.now())
     } finally {
+      inFlightRef.current = false
       setIsFetching(false)
     }
   }
+
+  useEffect(() => {
+    if (!open) {
+      autoFetchedOpenKeyRef.current = null
+      return
+    }
+    if (!activeChannel && !customFetcher) return
+
+    const cached = lastFetchRef.current
+    if (
+      cached?.sourceKey === resolvedFetchSourceKey &&
+      Date.now() - cached.fetchedAt < FETCH_MODELS_RETRY_INTERVAL_MS
+    ) {
+      if (cached.status === 'fetched') {
+        setFetchedModels(cached.models)
+        setSelectedModels(existingModels)
+      }
+      setRetryAvailableAt(cached.fetchedAt + FETCH_MODELS_RETRY_INTERVAL_MS)
+      setRetryClock(Date.now())
+      autoFetchedOpenKeyRef.current = resolvedFetchSourceKey
+      return
+    }
+
+    if (autoFetchedOpenKeyRef.current === resolvedFetchSourceKey) return
+    autoFetchedOpenKeyRef.current = resolvedFetchSourceKey
+    handleFetchModels('auto')
+    // customFetcher 常在父组件 map 渲染中重新创建；自动获取只应由 open/sourceKey 驱动。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, resolvedFetchSourceKey, activeChannel?.id])
+
+  useEffect(() => {
+    if (!open || retryAvailableAt <= Date.now()) return
+    const timer = window.setInterval(() => setRetryClock(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [open, retryAvailableAt])
 
   const handleSave = async () => {
     if (!canSaveModels) {
@@ -241,6 +364,7 @@ export function FetchModelsDialog({
     setFetchedModels([])
     setSelectedModels([])
     setSearchKeyword('')
+    setRetryClock(Date.now())
     onOpenChange(false)
   }
 
@@ -340,6 +464,11 @@ export function FetchModelsDialog({
     return categoryModels.every((m) => selectedModels.includes(m))
   }
 
+  const retryRemainingSeconds = Math.max(
+    0,
+    Math.ceil((retryAvailableAt - retryClock) / 1000)
+  )
+
   const renderModelCategory = (
     categoryName: string,
     categoryModels: string[]
@@ -426,11 +555,17 @@ export function FetchModelsDialog({
             <p>{t('No models fetched yet.')}</p>
             <Button
               className='mt-4'
-              onClick={handleFetchModels}
-              disabled={isFetching || !canFetchModels}
+              onClick={() => handleFetchModels('manual')}
+              disabled={
+                isFetching || !canFetchModels || retryRemainingSeconds > 0
+              }
               title={canFetchModels ? undefined : noPermissionMessage}
             >
-              {t('Fetch Models')}
+              {retryRemainingSeconds > 0
+                ? t('Try again in {{seconds}}s', {
+                    seconds: retryRemainingSeconds,
+                  })
+                : t('Fetch Models')}
             </Button>
           </div>
         ) : (

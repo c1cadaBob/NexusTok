@@ -959,6 +959,9 @@ export function UpstreamAccountRefreshPanel({
                       models: formatModelsArray(dedupeModelNames(values)),
                     })
                   const upstreamModelNames = dedupeModelNames(key.models ?? [])
+                  const fetchPreviewKeySourceKey = upstreamRefreshPreviewId
+                    ? `upstream-refresh-preview-key:${upstreamRefreshPreviewId}:${configId}`
+                    : `upstream-refresh-snapshot-key:${configId}`
                   const fetchPreviewKeyUpstreamModels =
                     async (): Promise<string[]> => {
                       if (upstreamRefreshPreviewId) {
@@ -1038,6 +1041,7 @@ export function UpstreamAccountRefreshPanel({
                         <UpstreamModelActions
                           mode='fetch'
                           customFetcher={fetchPreviewKeyUpstreamModels}
+                          fetchSourceKey={fetchPreviewKeySourceKey}
                           existingModelsOverride={currentModelsArrayValue}
                           channelName={key.name || key.masked_key}
                           requireOperatePermission={false}
