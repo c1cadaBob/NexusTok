@@ -18,36 +18,24 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import { dedupeModelNames } from './model-search'
 
-export type UpstreamModelApplyStatus = 'empty' | 'same' | 'applied'
+export type UpstreamModelFetchStatus = 'empty' | 'fetched'
 
-export type UpstreamModelApplyResult = {
-  status: UpstreamModelApplyStatus
+export type UpstreamModelFetchResult = {
+  status: UpstreamModelFetchStatus
   models: string[]
   count: number
 }
 
-function modelSetKey(models: readonly string[]) {
-  return models
-    .map((model) => model.trim().toLowerCase())
-    .filter(Boolean)
-    .sort()
-    .join('\n')
-}
-
-// resolveUpstreamModelApplyResult 统一处理“使用上游返回模型”的回填语义。
-// 同步预览、编辑抽屉和账号池都必须走这里，避免某个入口静默无效或错误禁用。
-export function resolveUpstreamModelApplyResult(
-  sourceModels: readonly string[],
-  selectedModels: readonly string[]
-): UpstreamModelApplyResult {
+// resolveUpstreamModelFetchResult 只整理“从上游获取”弹窗的数据结果。
+// 它不判断当前表单是否已经选中这些模型，也不直接回填；管理员始终通过
+// FetchModelsDialog 查看上游列表、调整勾选项，再显式保存到当前草稿。
+export function resolveUpstreamModelFetchResult(
+  sourceModels: readonly string[]
+): UpstreamModelFetchResult {
   const models = dedupeModelNames(sourceModels)
   if (models.length === 0) {
-    return { status: 'empty', models: [], count: 0 }
+    return { status: 'empty', models, count: 0 }
   }
 
-  if (modelSetKey(models) === modelSetKey(dedupeModelNames(selectedModels))) {
-    return { status: 'same', models, count: models.length }
-  }
-
-  return { status: 'applied', models, count: models.length }
+  return { status: 'fetched', models, count: models.length }
 }

@@ -123,6 +123,7 @@ import {
 } from '@/features/auth/secure-verification'
 import {
   fetchModels,
+  fetchChannelAccountUpstreamModels,
   getAllModels,
   getChannel,
   getChannelAccounts,
@@ -2009,6 +2010,28 @@ export function ChannelMutateDrawer({
                       models: formatModelsArray(dedupeModelNames(values)),
                     })
                   const upstreamModelNames = dedupeModelNames(key.models ?? [])
+                  const keyAccountId =
+                    'account_id' in key && typeof key.account_id === 'number'
+                      ? key.account_id
+                      : undefined
+                  const fetchSyncedKeyUpstreamModels =
+                    async (): Promise<string[]> => {
+                      if (channelId && keyAccountId) {
+                        const response =
+                          await fetchChannelAccountUpstreamModels(
+                            channelId,
+                            keyAccountId
+                          )
+                        if (response.success && Array.isArray(response.data)) {
+                          return response.data
+                        }
+                        throw new Error(
+                          response.message ||
+                            t('No models fetched from upstream')
+                        )
+                      }
+                      return upstreamModelNames
+                    }
                   const currentGroupValue = upstreamAccountConfigTextValue(
                     config?.group,
                     key.group_name || key.group_id || ''
@@ -2061,27 +2084,49 @@ export function ChannelMutateDrawer({
                         </div>
                       </div>
                       <div className='flex min-w-0 flex-col gap-1'>
-                        <ModelCatalogMultiSelect
-                          selected={currentModelsArrayValue}
-                          onChange={handleKeyModelsChange}
-                          extraModels={key.models ?? []}
-                          placeholder={t('Select models or add custom ones')}
-                          createLabel='Add custom model "{{value}}"'
-                          maxVisibleChips={2}
-                          copyChipOnClick
-                          clearSearchOnSelect={false}
-                          className='min-h-8'
-                          compactInput
-                        />
                         <UpstreamModelActions
-                          mode='applySnapshot'
-                          sourceModels={upstreamModelNames}
-                          selectedModels={currentModelsArrayValue}
-                          onApply={handleKeyModelsChange}
-                          variant='outline'
-                          size='sm'
-                          buttonClassName='h-7 px-2 text-xs'
-                        />
+                          mode='fetch'
+                          customFetcher={fetchSyncedKeyUpstreamModels}
+                          existingModelsOverride={currentModelsArrayValue}
+                          channelName={key.name || key.masked_key}
+                          requireOperatePermission={false}
+                          requireWritePermission={false}
+                          onModelsSelected={handleKeyModelsChange}
+                          disabled={
+                            !canEditBasicFields ||
+                            Boolean(keyAccountId) &&
+                              !permissions.canOperateChannelAccount
+                          }
+                          title={
+                            canEditBasicFields &&
+                            (!keyAccountId ||
+                              permissions.canOperateChannelAccount)
+                              ? undefined
+                              : noPermissionMessage
+                          }
+                        >
+                          {({ renderButton }) => (
+                            <ModelCatalogMultiSelect
+                              selected={currentModelsArrayValue}
+                              onChange={handleKeyModelsChange}
+                              extraModels={key.models ?? []}
+                              placeholder={t(
+                                'Select models or add custom ones'
+                              )}
+                              createLabel='Add custom model "{{value}}"'
+                              maxVisibleChips={2}
+                              copyChipOnClick
+                              clearSearchOnSelect={false}
+                              className='min-h-8'
+                              compactInput
+                              contentFooter={renderButton({
+                                variant: 'ghost',
+                                size: 'sm',
+                                className: 'h-7 px-2 text-xs',
+                              })}
+                            />
+                          )}
+                        </UpstreamModelActions>
                         {currentModelsArrayValue.length === 0 ? (
                           <span
                             className={cn(

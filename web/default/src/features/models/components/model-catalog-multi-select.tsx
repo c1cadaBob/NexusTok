@@ -91,8 +91,15 @@ export function ModelCatalogMultiSelect({
         variant='ghost'
         size='sm'
         disabled={selected.length === 0}
-        onPointerDown={(event) => event.preventDefault()}
-        onClick={() => onChange([])}
+        onPointerDown={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+        }}
+        onClick={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          onChange([])
+        }}
       >
         <HugeiconsIcon
           icon={Delete02Icon}

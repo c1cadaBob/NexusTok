@@ -958,6 +958,8 @@ export function UpstreamAccountRefreshPanel({
                       models: formatModelsArray(dedupeModelNames(values)),
                     })
                   const upstreamModelNames = dedupeModelNames(key.models ?? [])
+                  const fetchPreviewKeyUpstreamModels =
+                    async (): Promise<string[]> => upstreamModelNames
                   const upstreamGroupValue =
                     key.group_name || key.group_id || ''
                   const currentGroupValue = config?.group ?? upstreamGroupValue
@@ -1009,27 +1011,37 @@ export function UpstreamAccountRefreshPanel({
                         </div>
                       </div>
                       <div className='flex min-w-0 flex-col gap-1'>
-                        <ModelCatalogMultiSelect
-                          selected={currentModelsArrayValue}
-                          onChange={handleKeyModelsChange}
-                          extraModels={key.models ?? []}
-                          placeholder={t('Select models or add custom ones')}
-                          createLabel='Add custom model "{{value}}"'
-                          maxVisibleChips={2}
-                          copyChipOnClick
-                          clearSearchOnSelect={false}
-                          className='min-h-8'
-                          compactInput
-                        />
                         <UpstreamModelActions
-                          mode='applySnapshot'
-                          sourceModels={upstreamModelNames}
-                          selectedModels={currentModelsArrayValue}
-                          onApply={handleKeyModelsChange}
-                          variant='outline'
-                          size='sm'
-                          buttonClassName='h-7 px-2 text-xs'
-                        />
+                          mode='fetch'
+                          customFetcher={fetchPreviewKeyUpstreamModels}
+                          existingModelsOverride={currentModelsArrayValue}
+                          channelName={key.name || key.masked_key}
+                          requireOperatePermission={false}
+                          requireWritePermission={false}
+                          onModelsSelected={handleKeyModelsChange}
+                        >
+                          {({ renderButton }) => (
+                            <ModelCatalogMultiSelect
+                              selected={currentModelsArrayValue}
+                              onChange={handleKeyModelsChange}
+                              extraModels={key.models ?? []}
+                              placeholder={t(
+                                'Select models or add custom ones'
+                              )}
+                              createLabel='Add custom model "{{value}}"'
+                              maxVisibleChips={2}
+                              copyChipOnClick
+                              clearSearchOnSelect={false}
+                              className='min-h-8'
+                              compactInput
+                              contentFooter={renderButton({
+                                variant: 'ghost',
+                                size: 'sm',
+                                className: 'h-7 px-2 text-xs',
+                              })}
+                            />
+                          )}
+                        </UpstreamModelActions>
                         {currentModelsArrayValue.length === 0 ? (
                           <span
                             className={cn(

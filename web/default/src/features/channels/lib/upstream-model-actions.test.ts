@@ -18,38 +18,22 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { resolveUpstreamModelApplyResult } from './upstream-model-actions'
+import { resolveUpstreamModelFetchResult } from './upstream-model-actions'
 
 describe('上游模型动作解析', () => {
-  test('没有上游模型时返回 empty，按钮由组件保持可点击并提示原因', () => {
-    assert.deepEqual(resolveUpstreamModelApplyResult([], ['gpt-5.5']), {
+  test('没有上游模型时返回 empty，弹窗显示空结果而不是已应用', () => {
+    assert.deepEqual(resolveUpstreamModelFetchResult([]), {
       status: 'empty',
       models: [],
       count: 0,
     })
   })
 
-  test('上游模型与当前选择一致时返回 same，避免用户感觉点击无反馈', () => {
+  test('上游返回模型只做去重整理，不比较当前已选模型', () => {
     assert.deepEqual(
-      resolveUpstreamModelApplyResult(['GPT-5.5', 'claude-3.7'], [
-        'claude-3.7',
-        'gpt-5.5',
-      ]),
+      resolveUpstreamModelFetchResult(['gpt-5.5', 'gpt-5.5', ' qwen3 ']),
       {
-        status: 'same',
-        models: ['GPT-5.5', 'claude-3.7'],
-        count: 2,
-      }
-    )
-  })
-
-  test('上游模型与当前选择不一致时返回可回填模型列表', () => {
-    assert.deepEqual(
-      resolveUpstreamModelApplyResult(['gpt-5.5', 'gpt-5.5', ' qwen3 '], [
-        'gpt-4o',
-      ]),
-      {
-        status: 'applied',
+        status: 'fetched',
         models: ['gpt-5.5', 'qwen3'],
         count: 2,
       }

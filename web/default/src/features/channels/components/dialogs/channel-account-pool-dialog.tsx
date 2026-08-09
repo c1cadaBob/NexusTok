@@ -227,18 +227,6 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
       ]),
     [accounts, currentRow?.models, formState.models]
   )
-  const editingAccount = useMemo(
-    () =>
-      formState.id
-        ? accounts.find((account) => account.id === formState.id)
-        : undefined,
-    [accounts, formState.id]
-  )
-  const editingAccountModels = useMemo(
-    () => parseModelsString(editingAccount?.models ?? ''),
-    [editingAccount?.models]
-  )
-
   useEffect(() => {
     if (!props.open || allowManualAccountMutation) return
     setBatchOpen(false)
@@ -840,72 +828,62 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                       }
                     />
                   )}
-                  <div className='flex min-w-0 flex-col gap-2 sm:col-span-2 lg:flex-row lg:items-start'>
-                    <ModelCatalogMultiSelect
-                      selected={parseModelsString(formState.models)}
-                      onChange={(models) =>
-                        setFormState({
-                          ...formState,
+                  <div className='min-w-0 sm:col-span-2'>
+                    <UpstreamModelActions
+                      mode='fetch'
+                      onBeforeOpen={canOpenFetchModelsDialog}
+                      customFetcher={fetchModelsForCurrentAccountForm}
+                      existingModelsOverride={parseModelsString(
+                        formState.models
+                      )}
+                      channelName={formState.name.trim() || currentRow.name}
+                      requireOperatePermission={false}
+                      requireWritePermission={false}
+                      onModelsSelected={(models) => {
+                        setFormState((prev) => ({
+                          ...prev,
                           models: formatModelsArray(dedupeModelNames(models)),
-                        })
+                        }))
+                      }}
+                      disabled={
+                        actionLoading ||
+                        !canOperateChannelAccounts ||
+                        !canEditChannelAccounts
                       }
-                      extraModels={accountExtraModels}
-                      placeholder={t('Select models or add custom ones')}
-                      createLabel='Add custom model "{{value}}"'
-                      maxVisibleChips={4}
-                      copyChipOnClick
-                      compactInput={isUpstreamAccountSyncChannel(currentRow)}
-                      className='min-h-9 lg:flex-1'
-                    />
-                    {isUpstreamAccountSyncedChannel && formState.id ? (
-                      <UpstreamModelActions
-                        mode='applySnapshot'
-                        sourceModels={editingAccountModels}
-                        selectedModels={parseModelsString(formState.models)}
-                        onApply={(models) =>
-                          setFormState((previous) => ({
-                            ...previous,
-                            models: formatModelsArray(dedupeModelNames(models)),
-                          }))
-                        }
-                        disabled={actionLoading || !canEditChannelAccounts}
-                        title={
-                          canEditChannelAccounts
-                            ? undefined
-                            : noPermissionMessage
-                        }
-                        buttonClassName='w-full lg:w-auto'
-                      />
-                    ) : (
-                      <UpstreamModelActions
-                        mode='fetch'
-                        onBeforeOpen={canOpenFetchModelsDialog}
-                        customFetcher={fetchModelsForCurrentAccountForm}
-                        existingModelsOverride={parseModelsString(
-                          formState.models
-                        )}
-                        channelName={formState.name.trim() || currentRow.name}
-                        requireOperatePermission={false}
-                        requireWritePermission={false}
-                        onModelsSelected={(models) => {
-                          setFormState((prev) => ({
-                            ...prev,
-                            models: formatModelsArray(dedupeModelNames(models)),
-                          }))
-                        }}
-                        disabled={
-                          actionLoading ||
-                          !canOperateChannelAccounts ||
-                          !canEditChannelAccounts
-                        }
-                        title={
-                          canOperateChannelAccounts && canEditChannelAccounts
-                            ? undefined
-                            : noPermissionMessage
-                        }
-                        buttonClassName='w-full lg:w-auto'
-                      />
-                    )}
+                      title={
+                        canOperateChannelAccounts && canEditChannelAccounts
+                          ? undefined
+                          : noPermissionMessage
+                      }
+                    >
+                      {({ renderButton }) => (
+                        <ModelCatalogMultiSelect
+                          selected={parseModelsString(formState.models)}
+                          onChange={(models) =>
+                            setFormState({
+                              ...formState,
+                              models: formatModelsArray(
+                                dedupeModelNames(models)
+                              ),
+                            })
+                          }
+                          extraModels={accountExtraModels}
+                          placeholder={t('Select models or add custom ones')}
+                          createLabel='Add custom model "{{value}}"'
+                          maxVisibleChips={4}
+                          copyChipOnClick
+                          compactInput={isUpstreamAccountSyncChannel(
+                            currentRow
+                          )}
+                          className='min-h-9'
+                          contentFooter={renderButton({
+                            variant: 'ghost',
+                            size: 'sm',
+                            className: 'h-7 px-2 text-xs',
+                          })}
+                        />
+                      )}
+                    </UpstreamModelActions>
                   </div>
                   <Input
                     value={formState.group}

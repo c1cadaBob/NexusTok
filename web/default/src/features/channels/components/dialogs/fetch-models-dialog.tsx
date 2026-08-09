@@ -51,6 +51,7 @@ import {
   normalizeModelName,
   parseModelsString,
 } from '../../lib'
+import { resolveUpstreamModelFetchResult } from '../../lib/upstream-model-actions'
 import { useChannelPermissions } from '../../hooks/use-channel-permissions'
 import { useChannels } from '../channels-provider'
 
@@ -159,16 +160,29 @@ export function FetchModelsDialog({
     try {
       if (customFetcher) {
         const list = await customFetcher()
-        setFetchedModels(list)
+        const result = resolveUpstreamModelFetchResult(list)
+        setFetchedModels(result.models)
         setSelectedModels(existingModels)
-        toast.success(t('Fetched {{count}} models', { count: list.length }))
+        if (result.status === 'empty') {
+          toast.info(t('No models fetched from upstream'))
+        } else {
+          toast.success(t('Fetched {{count}} models', { count: result.count }))
+        }
       } else {
         const response = await fetchUpstreamModels(activeChannel!.id)
         if (response.success) {
-          const list = Array.isArray(response.data) ? response.data : []
-          setFetchedModels(list)
+          const result = resolveUpstreamModelFetchResult(
+            Array.isArray(response.data) ? response.data : []
+          )
+          setFetchedModels(result.models)
           setSelectedModels(existingModels)
-          toast.success(t('Fetched {{count}} models', { count: list.length }))
+          if (result.status === 'empty') {
+            toast.info(t('No models fetched from upstream'))
+          } else {
+            toast.success(
+              t('Fetched {{count}} models', { count: result.count })
+            )
+          }
         } else {
           toast.error(response.message || t('Failed to fetch models'))
           setFetchedModels([])

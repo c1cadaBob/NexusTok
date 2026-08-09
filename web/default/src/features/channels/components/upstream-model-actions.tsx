@@ -16,13 +16,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useState, type ComponentProps } from 'react'
+import {
+  useState,
+  type ComponentProps,
+  type MouseEvent,
+  type PointerEvent,
+  type ReactNode,
+} from 'react'
 import { Sparkles } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
-import { resolveUpstreamModelApplyResult } from '../lib/upstream-model-actions'
 import { FetchModelsDialog } from './dialogs/fetch-models-dialog'
 
 type ButtonVariant = ComponentProps<typeof Button>['variant']
@@ -37,11 +41,16 @@ type CommonActionProps = {
   size?: ButtonSize
 }
 
-type ApplySnapshotActionProps = CommonActionProps & {
-  mode: 'applySnapshot'
-  sourceModels: readonly string[]
-  selectedModels: readonly string[]
-  onApply: (models: string[]) => void
+type RenderFetchButtonOptions = {
+  className?: string
+  disabled?: boolean
+  title?: string
+  variant?: ButtonVariant
+  size?: ButtonSize
+}
+
+type FetchActionRenderProps = {
+  renderButton: (options?: RenderFetchButtonOptions) => ReactNode
 }
 
 type FetchActionProps = CommonActionProps & {
@@ -55,14 +64,14 @@ type FetchActionProps = CommonActionProps & {
   onModelsSelected: (models: string[]) => void
   requireOperatePermission?: boolean
   requireWritePermission?: boolean
+  children?: (props: FetchActionRenderProps) => ReactNode
 }
 
-export type UpstreamModelActionsProps =
-  | ApplySnapshotActionProps
-  | FetchActionProps
+export type UpstreamModelActionsProps = FetchActionProps
 
 // UpstreamModelActions 统一渲染模型来源动作。
-// mode=fetch 复用完整的 FetchModelsDialog；mode=applySnapshot 只应用同步快照里的模型。
+// 组件内部稳定挂载 FetchModelsDialog，按钮可以被渲染到 Combobox footer；
+// 即使下拉框随后因焦点变化关闭，弹窗状态也不会因为 footer 卸载而丢失。
 export function UpstreamModelActions(props: UpstreamModelActionsProps) {
   const { t } = useTranslation()
   const [fetchOpen, setFetchOpen] = useState(false)
@@ -75,79 +84,68 @@ export function UpstreamModelActions(props: UpstreamModelActionsProps) {
     size = 'sm',
   } = props
 
-  if (props.mode === 'fetch') {
-    const handleOpenFetchDialog = () => {
-      if (disabled) return
-      if (props.onBeforeOpen && !props.onBeforeOpen()) return
-      setFetchOpen(true)
-    }
+  const handleOpenFetchDialog = (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (disabled) return
+    if (props.onBeforeOpen && !props.onBeforeOpen()) return
+    setFetchOpen(true)
+  }
 
+  const handleFetchButtonPointerDown = (
+    event: PointerEvent<HTMLButtonElement>
+  ) => {
+    event.preventDefault()
+    event.stopPropagation()
+  }
+
+  const renderButton = (options: RenderFetchButtonOptions = {}) => {
+    const resolvedDisabled = options.disabled ?? disabled
     return (
-      <div className={cn('flex flex-wrap gap-2', className)}>
-        <Button
-          type='button'
-          variant={variant}
-          size={size}
-          onClick={handleOpenFetchDialog}
-          disabled={disabled}
-          title={title}
-          className={buttonClassName}
-        >
-          <Sparkles data-icon='inline-start' />
-          {t('Fetch from Upstream')}
-        </Button>
-        <FetchModelsDialog
-          open={fetchOpen}
-          onOpenChange={setFetchOpen}
-          customFetcher={props.customFetcher}
-          existingModelsOverride={props.existingModelsOverride}
-          channelName={props.channelName}
-          redirectModels={props.redirectModels}
-          redirectSourceModels={props.redirectSourceModels}
-          requireOperatePermission={props.requireOperatePermission}
-          requireWritePermission={props.requireWritePermission}
-          onModelsSelected={props.onModelsSelected}
-        />
-      </div>
+      <Button
+        type='button'
+        variant={options.variant ?? variant}
+        size={options.size ?? size}
+        onPointerDown={handleFetchButtonPointerDown}
+        onClick={handleOpenFetchDialog}
+        disabled={resolvedDisabled}
+        title={options.title ?? title}
+        className={cn(buttonClassName, options.className)}
+      >
+        <Sparkles data-icon='inline-start' />
+        {t('Fetch from Upstream')}
+      </Button>
     )
   }
 
-  const handleApplySnapshotModels = () => {
-    if (disabled) return
+  const dialog = (
+    <FetchModelsDialog
+      open={fetchOpen}
+      onOpenChange={setFetchOpen}
+      customFetcher={props.customFetcher}
+      existingModelsOverride={props.existingModelsOverride}
+      channelName={props.channelName}
+      redirectModels={props.redirectModels}
+      redirectSourceModels={props.redirectSourceModels}
+      requireOperatePermission={props.requireOperatePermission}
+      requireWritePermission={props.requireWritePermission}
+      onModelsSelected={props.onModelsSelected}
+    />
+  )
 
-    const result = resolveUpstreamModelApplyResult(
-      props.sourceModels,
-      props.selectedModels
-    )
-    if (result.status === 'empty') {
-      toast.info(t('No upstream models returned for this key'))
-      return
-    }
-    if (result.status === 'same') {
-      toast.info(t('Upstream models are already applied'))
-      return
-    }
-
-    props.onApply(result.models)
-    toast.success(
-      t('Applied {{count}} upstream model(s)', { count: result.count })
+  if (props.children) {
+    return (
+      <>
+        {props.children({ renderButton })}
+        {dialog}
+      </>
     )
   }
 
   return (
     <div className={cn('flex flex-wrap gap-2', className)}>
-      <Button
-        type='button'
-        variant={variant}
-        size={size}
-        onClick={handleApplySnapshotModels}
-        disabled={disabled}
-        title={title}
-        className={buttonClassName}
-      >
-        <Sparkles data-icon='inline-start' />
-        {t('Use Upstream Models')}
-      </Button>
+      {renderButton()}
+      {dialog}
     </div>
   )
 }
