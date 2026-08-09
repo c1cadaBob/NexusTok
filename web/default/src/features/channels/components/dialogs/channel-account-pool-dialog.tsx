@@ -801,34 +801,20 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
 
             {formOpen && (
               <div className='flex flex-col gap-3 rounded-lg border p-3'>
-                <div className='grid gap-3 sm:grid-cols-2'>
-                  <Input
-                    value={formState.name}
-                    onChange={(event) =>
-                      setFormState({ ...formState, name: event.target.value })
-                    }
-                    placeholder={t('Account name')}
-                  />
-                  {allowManualAccountMutation && (
+                <div className='grid gap-3 sm:grid-cols-10 sm:items-start'>
+                  <div className='min-w-0 sm:col-span-3'>
                     <Input
-                      value={formState.key}
+                      value={formState.name}
                       onChange={(event) =>
-                        setFormState({ ...formState, key: event.target.value })
+                        setFormState({
+                          ...formState,
+                          name: event.target.value,
+                        })
                       }
-                      disabled={
-                        Boolean(formState.id) &&
-                        !canSensitiveWriteChannelAccounts
-                      }
-                      placeholder={
-                        formState.id && canSensitiveWriteChannelAccounts
-                          ? t('Leave empty to keep existing key')
-                          : formState.id
-                            ? t('Sensitive channel settings are read-only')
-                            : t('Enter secret key')
-                      }
+                      placeholder={t('Account name')}
                     />
-                  )}
-                  <div className='min-w-0 sm:col-span-2'>
+                  </div>
+                  <div className='min-w-0 sm:col-span-7'>
                     <UpstreamModelActions
                       mode='fetch'
                       onBeforeOpen={canOpenFetchModelsDialog}
@@ -885,6 +871,27 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                       )}
                     </UpstreamModelActions>
                   </div>
+                </div>
+                <div className='grid gap-3 sm:grid-cols-2'>
+                  {allowManualAccountMutation && (
+                    <Input
+                      value={formState.key}
+                      onChange={(event) =>
+                        setFormState({ ...formState, key: event.target.value })
+                      }
+                      disabled={
+                        Boolean(formState.id) &&
+                        !canSensitiveWriteChannelAccounts
+                      }
+                      placeholder={
+                        formState.id && canSensitiveWriteChannelAccounts
+                          ? t('Leave empty to keep existing key')
+                          : formState.id
+                            ? t('Sensitive channel settings are read-only')
+                            : t('Enter secret key')
+                      }
+                    />
+                  )}
                   <Input
                     value={formState.group}
                     onChange={(event) =>
