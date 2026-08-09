@@ -212,6 +212,13 @@ export interface FetchModelsResponse {
   data?: string[]
 }
 
+export interface UpstreamPreviewKeyModelsRequest {
+  sync_id?: string
+  external_id?: string
+  masked_key?: string
+  index?: number
+}
+
 export interface CopyChannelResponse {
   success: boolean
   message?: string

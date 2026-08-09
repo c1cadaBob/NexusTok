@@ -48,6 +48,7 @@ import {
   getChannelAccounts,
   getGroups,
   previewUpstreamAccount,
+  fetchUpstreamPreviewKeyModels,
   refreshUpstreamAccountChannel,
 } from '../api'
 import {
@@ -959,7 +960,30 @@ export function UpstreamAccountRefreshPanel({
                     })
                   const upstreamModelNames = dedupeModelNames(key.models ?? [])
                   const fetchPreviewKeyUpstreamModels =
-                    async (): Promise<string[]> => upstreamModelNames
+                    async (): Promise<string[]> => {
+                      if (upstreamRefreshPreviewId) {
+                        const response = await fetchUpstreamPreviewKeyModels(
+                          upstreamRefreshPreviewId,
+                          {
+                            sync_id: key.sync_id,
+                            external_id: key.external_id,
+                            masked_key: key.masked_key,
+                            index,
+                          }
+                        )
+                        if (response.success && Array.isArray(response.data)) {
+                          return response.data
+                        }
+                        if (upstreamModelNames.length > 0) {
+                          return upstreamModelNames
+                        }
+                        throw new Error(
+                          response.message ||
+                            t('No models fetched from upstream')
+                        )
+                      }
+                      return upstreamModelNames
+                    }
                   const upstreamGroupValue =
                     key.group_name || key.group_id || ''
                   const currentGroupValue = config?.group ?? upstreamGroupValue

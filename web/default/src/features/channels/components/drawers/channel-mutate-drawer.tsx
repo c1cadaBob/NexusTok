@@ -124,6 +124,7 @@ import {
 import {
   fetchModels,
   fetchChannelAccountUpstreamModels,
+  fetchUpstreamPreviewKeyModels,
   getAllModels,
   getChannel,
   getChannelAccounts,
@@ -1832,6 +1833,7 @@ export function ChannelMutateDrawer({
         showBalance?: boolean
         showSuggestedToggle?: boolean
         emptyText?: string
+        previewId?: string
       } = {}
     ) => {
       const showSuggestedToggle = options.showSuggestedToggle !== false
@@ -2024,6 +2026,27 @@ export function ChannelMutateDrawer({
                           )
                         if (response.success && Array.isArray(response.data)) {
                           return response.data
+                        }
+                        throw new Error(
+                          response.message ||
+                            t('No models fetched from upstream')
+                        )
+                      }
+                      if (options.previewId) {
+                        const response = await fetchUpstreamPreviewKeyModels(
+                          options.previewId,
+                          {
+                            sync_id: key.sync_id,
+                            external_id: key.external_id,
+                            masked_key: key.masked_key,
+                            index,
+                          }
+                        )
+                        if (response.success && Array.isArray(response.data)) {
+                          return response.data
+                        }
+                        if (upstreamModelNames.length > 0) {
+                          return upstreamModelNames
                         }
                         throw new Error(
                           response.message ||
@@ -2251,7 +2274,16 @@ export function ChannelMutateDrawer({
         </div>
       )
     },
-    [currentModelsArray, t, upstreamAccountConfigs, upstreamApplySuggested]
+    [
+      canEditBasicFields,
+      channelId,
+      currentModelsArray,
+      noPermissionMessage,
+      permissions.canOperateChannelAccount,
+      t,
+      upstreamAccountConfigs,
+      upstreamApplySuggested,
+    ]
   )
 
   const currentTypeLabel = useMemo(
@@ -4954,7 +4986,9 @@ export function ChannelMutateDrawer({
                               )}
 
                             {upstreamSnapshot &&
-                              renderUpstreamSnapshotReview(upstreamSnapshot)}
+                              renderUpstreamSnapshotReview(upstreamSnapshot, {
+                                previewId: upstreamPreviewId,
+                              })}
                           </div>
                         </div>
                       )}
@@ -5368,7 +5402,10 @@ export function ChannelMutateDrawer({
 
                               {upstreamRefreshSnapshot &&
                                 renderUpstreamSnapshotReview(
-                                  upstreamRefreshSnapshot
+                                  upstreamRefreshSnapshot,
+                                  {
+                                    previewId: upstreamRefreshPreviewId,
+                                  }
                                 )}
                             </div>
                           </CollapsibleContent>

@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -68,6 +69,34 @@ func CompleteUpstreamAccount2FA(c *gin.Context) {
 		"message": "",
 		"data":    result,
 	})
+}
+
+// FetchUpstreamPreviewKeyModels 使用未保存预览快照里的指定密钥获取上游模型列表。
+//
+// 未保存的同步密钥不能把明文 key 交给前端，因此前端只提交 sync_id、external_id、
+// masked_key 和 index 这类安全定位信息。后端从短期 preview cache 中读取完整 key，
+// 构造一次性渠道副本并复用现有模型获取逻辑；响应只包含模型名。
+func FetchUpstreamPreviewKeyModels(c *gin.Context) {
+	previewID := strings.TrimSpace(c.Param("preview_id"))
+	var req upstreamaccount.PreviewKeyModelFetchRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		common.ApiErrorMsg(c, "无效的请求参数: "+err.Error())
+		return
+	}
+	channel, err := upstreamaccount.BuildChannelForPreviewKeyModelFetch(previewID, req)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	ids, err := fetchChannelUpstreamModelIDs(channel)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": fmt.Sprintf("获取模型列表失败: %s", err.Error()),
+		})
+		return
+	}
+	common.ApiSuccess(c, ids)
 }
 
 // CreateUpstreamAccountChannel 根据预览快照创建一个渠道和多条渠道账号。

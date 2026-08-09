@@ -51,6 +51,7 @@ import type {
   UpstreamAccountPreview2FAResponse,
   UpstreamAccountPreviewRequest,
   UpstreamAccountPreviewResponse,
+  UpstreamPreviewKeyModelsRequest,
   UpstreamAccountRefreshRequest,
   UpstreamAccountRefreshResponse,
 } from './types'
@@ -363,6 +364,20 @@ export async function fetchChannelAccountUpstreamModels(
 ): Promise<FetchModelsResponse> {
   const res = await api.get(
     `/api/channel/${channelId}/accounts/${accountId}/fetch_models`
+  )
+  return res.data
+}
+
+/**
+ * 使用后端短期预览缓存中的未保存同步密钥获取可用模型列表。
+ */
+export async function fetchUpstreamPreviewKeyModels(
+  previewId: string,
+  data: UpstreamPreviewKeyModelsRequest
+): Promise<FetchModelsResponse> {
+  const res = await api.post(
+    `/api/channel/upstream-account/preview/${encodeURIComponent(previewId)}/key-models`,
+    data
   )
   return res.data
 }

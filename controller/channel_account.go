@@ -202,10 +202,6 @@ func FetchChannelAccountUpstreamModels(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if account.Status != common.ChannelStatusEnabled {
-		common.ApiErrorMsg(c, "指定账号未启用")
-		return
-	}
 	if strings.TrimSpace(account.Key) == "" {
 		common.ApiErrorMsg(c, "指定账号密钥为空")
 		return
