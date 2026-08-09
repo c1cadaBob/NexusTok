@@ -581,6 +581,7 @@ export function aggregateChannelsByTag(
         created_time: 0,
         balance_updated_time: 0,
         models: '',
+        minimum_ratio: null,
         children: [],
       } as TagRow
       tagMap.set(tag, tagRow)
@@ -626,6 +627,19 @@ export function aggregateChannelsByTag(
           tagRow.group += ',' + g
         }
       })
+    }
+
+    // Aggregate minimum ratio (minimum numeric value among child channels)
+    if (
+      channel.minimum_ratio != null &&
+      Number.isFinite(channel.minimum_ratio)
+    ) {
+      if (
+        tagRow.minimum_ratio == null ||
+        channel.minimum_ratio < tagRow.minimum_ratio
+      ) {
+        tagRow.minimum_ratio = channel.minimum_ratio
+      }
     }
 
     // Aggregate status (enabled if any child is enabled)

@@ -161,6 +161,7 @@ var channelReadOnlyFields = map[string]struct{}{
 	"balance_updated_time":  {},
 	"used_quota":            {},
 	"channel_account_stats": {},
+	"minimum_ratio":         {},
 }
 
 // channelNonSensitiveFields 是普通管理员可调整的路由和展示字段。
@@ -204,6 +205,7 @@ func clearChannelReadOnlyFields(channel *PatchChannel, requestData map[string]an
 		channel.UsedQuota = 0
 	}
 	channel.ChannelAccountStats = nil
+	channel.MinimumRatio = nil
 }
 
 // equalOptionalStringPtr 比较可选字符串指针。

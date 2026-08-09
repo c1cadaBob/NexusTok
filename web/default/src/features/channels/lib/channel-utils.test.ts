@@ -19,9 +19,11 @@ For commercial licensing, please contact support@c1cada.dev
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import {
+  aggregateChannelsByTag,
   canManuallyMutateChannelAccounts,
   isUpstreamAccountSyncChannel,
 } from './channel-utils'
+import type { Channel } from '../types'
 
 describe('账号池手动入口可见性', () => {
   test('上游同步渠道不允许手动新增、导入或删除账号', () => {
@@ -41,5 +43,48 @@ describe('账号池手动入口可见性', () => {
 
     assert.equal(isUpstreamAccountSyncChannel(channel), false)
     assert.equal(canManuallyMutateChannelAccounts(channel), true)
+  })
+})
+
+describe('渠道 tag 聚合', () => {
+  test('聚合行保留子渠道中的最低倍率', () => {
+    const rows = aggregateChannelsByTag([
+      {
+        id: 1,
+        tag: 'sync',
+        group: 'default',
+        used_quota: 0,
+        response_time: 120,
+        priority: 1,
+        weight: 1,
+        status: 1,
+        minimum_ratio: 0.75,
+      },
+      {
+        id: 2,
+        tag: 'sync',
+        group: 'vip',
+        used_quota: 0,
+        response_time: 80,
+        priority: 1,
+        weight: 1,
+        status: 1,
+        minimum_ratio: 0.35,
+      },
+      {
+        id: 3,
+        tag: 'sync',
+        group: 'vip',
+        used_quota: 0,
+        response_time: 80,
+        priority: 1,
+        weight: 1,
+        status: 1,
+        minimum_ratio: null,
+      },
+    ] as unknown as Channel[])
+
+    assert.equal(rows.length, 1)
+    assert.equal(rows[0].minimum_ratio, 0.35)
   })
 })

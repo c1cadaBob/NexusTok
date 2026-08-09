@@ -87,6 +87,7 @@ export const channelSchema = z.object({
     multi_key_mode: 'random',
   }),
   channel_account_stats: channelAccountStatsSchema.optional(),
+  minimum_ratio: z.number().nullable().optional(),
   settings: z.string().default('{}'), // other_settings JSON
 })
 
@@ -677,6 +678,7 @@ export type ChannelSortBy =
   | 'balance'
   | 'response_time'
   | 'test_time'
+  | 'minimum_ratio'
 
 export type ChannelSortOrder = 'asc' | 'desc'
 

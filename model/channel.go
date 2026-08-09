@@ -71,6 +71,7 @@ type Channel struct {
 	Keys []string `json:"-" gorm:"-"` // 解析后的 Key 列表
 
 	ChannelAccountStats map[string]int64 `json:"channel_account_stats,omitempty" gorm:"-"` // 渠道账号统计
+	MinimumRatio        *float64         `json:"minimum_ratio,omitempty" gorm:"-"`         // 渠道内所有账号的最低换算倍率，仅用于列表展示与排序
 }
 
 // ChannelInfo 渠道配置信息结构体
@@ -92,7 +93,7 @@ type ChannelInfo struct {
 
 // ChannelSortOptions 渠道排序选项
 type ChannelSortOptions struct {
-	SortBy    string // 排序字段（id、name、priority、balance、response_time、test_time）
+	SortBy    string // 排序字段（id、name、priority、balance、response_time、test_time、minimum_ratio）
 	SortOrder string // 排序方向（asc、desc）
 	IDSort    bool   // 是否按 ID 排序（作为二级排序）
 }
@@ -105,6 +106,10 @@ var channelSortColumns = map[string]string{
 	"balance":       "balance",
 	"response_time": "response_time",
 	"test_time":     "test_time",
+}
+
+var channelComputedSortColumns = map[string]struct{}{
+	"minimum_ratio": {},
 }
 
 // NewChannelSortOptions 创建渠道排序选项
@@ -121,6 +126,16 @@ func NewChannelSortOptions(sortBy string, sortOrder string, idSort bool) Channel
 	normalizedSortBy := strings.ToLower(strings.TrimSpace(sortBy))
 	normalizedSortOrder := strings.ToLower(strings.TrimSpace(sortOrder))
 	if _, ok := channelSortColumns[normalizedSortBy]; !ok {
+		if _, computed := channelComputedSortColumns[normalizedSortBy]; computed {
+			if normalizedSortOrder != "asc" {
+				normalizedSortOrder = "desc"
+			}
+			return ChannelSortOptions{
+				SortBy:    normalizedSortBy,
+				SortOrder: normalizedSortOrder,
+				IDSort:    idSort,
+			}
+		}
 		normalizedSortBy = ""
 		normalizedSortOrder = ""
 	} else if normalizedSortOrder != "asc" {
@@ -142,6 +157,9 @@ func NewChannelSortOptions(sortBy string, sortOrder string, idSort bool) Channel
 // 返回值：
 //   - *gorm.DB: 应用排序后的查询对象
 func (options ChannelSortOptions) Apply(query *gorm.DB) *gorm.DB {
+	if options.IsMinimumRatioSort() {
+		return query
+	}
 	if columnName, ok := channelSortColumns[options.SortBy]; ok {
 		return query.Order(clause.OrderByColumn{
 			Column: clause.Column{Name: columnName},
@@ -158,6 +176,14 @@ func (options ChannelSortOptions) Apply(query *gorm.DB) *gorm.DB {
 		Column: clause.Column{Name: "priority"},
 		Desc:   true,
 	})
+}
+
+// IsMinimumRatioSort 判断当前排序是否依赖运行期聚合倍率。
+//
+// minimum_ratio 不是真实数据库列，它由账号同步元数据计算得出；调用方必须先取出
+// 过滤后的渠道集合、批量回填该字段，再在内存中排序和分页，不能交给数据库 ORDER BY。
+func (options ChannelSortOptions) IsMinimumRatioSort() bool {
+	return options.SortBy == "minimum_ratio"
 }
 
 // resolveChannelSortOptions 解析渠道排序选项

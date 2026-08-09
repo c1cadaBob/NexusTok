@@ -77,6 +77,7 @@ import {
   type TagRow,
 } from '../lib'
 import { parseUpstreamUpdateMeta } from '../lib/upstream-update-utils'
+import { formatUpstreamRatioCompact } from '../lib/upstream-sync'
 import type { Channel } from '../types'
 import { ChannelRowActionsLayoutContext } from './channel-row-actions-context'
 import { ChannelTypeIcon } from './channel-type-icon'
@@ -1028,6 +1029,32 @@ export function useChannelsColumns({
       },
       size: 150,
       enableSorting: false,
+    },
+
+    // 最低倍率列
+    {
+      accessorKey: 'minimum_ratio',
+      meta: { label: t('Minimum Ratio'), mobileHidden: true },
+      header: ({ column }) => (
+        <DataTableColumnHeader column={column} title={t('Minimum Ratio')} />
+      ),
+      cell: ({ row }) => {
+        const ratio = row.getValue('minimum_ratio') as
+          | number
+          | null
+          | undefined
+        if (ratio == null || !Number.isFinite(ratio)) {
+          return <span className='text-muted-foreground text-xs'>-</span>
+        }
+        return (
+          <span className='font-mono text-xs'>
+            {sensitiveVisible
+              ? `${formatUpstreamRatioCompact(ratio)}x`
+              : SENSITIVE_MASK}
+          </span>
+        )
+      },
+      size: 110,
     },
 
     // Tag 列

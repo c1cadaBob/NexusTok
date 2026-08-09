@@ -156,6 +156,10 @@ func GetAllChannels(c *gin.Context) {
 			channelData = append(channelData, filtered...)
 		}
 		total, _ = model.CountAllTags()
+		attachChannelMinimumRatios(channelData)
+		if sortOptions.IsMinimumRatioSort() {
+			upstreamaccount.SortChannelsByMinimumRatio(channelData, sortOptions.SortOrder != "asc")
+		}
 	} else {
 		baseQuery := model.DB.Model(&model.Channel{})
 		if typeFilter >= 0 {
@@ -169,11 +173,24 @@ func GetAllChannels(c *gin.Context) {
 
 		baseQuery.Count(&total)
 
-		err := sortOptions.Apply(baseQuery).Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Omit("key").Find(&channelData).Error
-		if err != nil {
-			common.SysError("failed to get channels: " + err.Error())
-			c.JSON(http.StatusOK, gin.H{"success": false, "message": "获取渠道列表失败，请稍后重试"})
-			return
+		if sortOptions.IsMinimumRatioSort() {
+			err := baseQuery.Omit("key").Find(&channelData).Error
+			if err != nil {
+				common.SysError("failed to get channels: " + err.Error())
+				c.JSON(http.StatusOK, gin.H{"success": false, "message": "获取渠道列表失败，请稍后重试"})
+				return
+			}
+			attachChannelMinimumRatios(channelData)
+			upstreamaccount.SortChannelsByMinimumRatio(channelData, sortOptions.SortOrder != "asc")
+			channelData = paginateChannelData(channelData, pageInfo)
+		} else {
+			err := sortOptions.Apply(baseQuery).Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Omit("key").Find(&channelData).Error
+			if err != nil {
+				common.SysError("failed to get channels: " + err.Error())
+				c.JSON(http.StatusOK, gin.H{"success": false, "message": "获取渠道列表失败，请稍后重试"})
+				return
+			}
+			attachChannelMinimumRatios(channelData)
 		}
 	}
 
@@ -205,6 +222,24 @@ func GetAllChannels(c *gin.Context) {
 		"type_counts": typeCounts,
 	})
 	return
+}
+
+func attachChannelMinimumRatios(channels []*model.Channel) {
+	if err := upstreamaccount.AttachChannelMinimumRatios(channels); err != nil {
+		common.SysLog("failed to attach channel minimum ratios: " + err.Error())
+	}
+}
+
+func paginateChannelData(channels []*model.Channel, pageInfo *common.PageInfo) []*model.Channel {
+	startIdx := pageInfo.GetStartIdx()
+	if startIdx > len(channels) {
+		startIdx = len(channels)
+	}
+	endIdx := startIdx + pageInfo.GetPageSize()
+	if endIdx > len(channels) {
+		endIdx = len(channels)
+	}
+	return channels[startIdx:endIdx]
 }
 
 func buildFetchModelsHeaders(channel *model.Channel, key string) (http.Header, error) {
@@ -356,6 +391,11 @@ func SearchChannels(c *gin.Context) {
 		channelData = filtered
 	}
 
+	if sortOptions.IsMinimumRatioSort() {
+		attachChannelMinimumRatios(channelData)
+		upstreamaccount.SortChannelsByMinimumRatio(channelData, sortOptions.SortOrder != "asc")
+	}
+
 	page, _ := strconv.Atoi(c.DefaultQuery("p", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
 	if page < 1 {
@@ -376,6 +416,10 @@ func SearchChannels(c *gin.Context) {
 	}
 
 	pagedData := channelData[startIdx:endIdx]
+
+	if !sortOptions.IsMinimumRatioSort() {
+		attachChannelMinimumRatios(pagedData)
+	}
 
 	for _, datum := range pagedData {
 		clearChannelInfo(datum)

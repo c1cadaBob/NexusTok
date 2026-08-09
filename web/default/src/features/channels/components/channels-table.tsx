@@ -73,6 +73,7 @@ const CHANNEL_SORTABLE_COLUMNS = new Set<ChannelSortBy>([
   'balance',
   'response_time',
   'test_time',
+  'minimum_ratio',
 ])
 
 const EMPTY_FILTER_VALUES: string[] = []
