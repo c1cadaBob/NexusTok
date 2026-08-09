@@ -227,6 +227,7 @@ import {
   UpstreamAccountCapturePanel,
   type UpstreamAccountCapturePanelHandle,
 } from '../upstream-account-capture-panel'
+import { UpstreamModelActions } from '../upstream-model-actions'
 import {
   ChannelAdvancedSection,
   ChannelApiAccessSection,
@@ -2008,18 +2009,6 @@ export function ChannelMutateDrawer({
                       models: formatModelsArray(dedupeModelNames(values)),
                     })
                   const upstreamModelNames = dedupeModelNames(key.models ?? [])
-                  const handleUseUpstreamKeyModels = () => {
-                    if (upstreamModelNames.length === 0) {
-                      toast.info(t('No upstream models returned for this key'))
-                      return
-                    }
-                    handleKeyModelsChange(upstreamModelNames)
-                    toast.success(
-                      t('Applied {{count}} upstream model(s)', {
-                        count: upstreamModelNames.length,
-                      })
-                    )
-                  }
                   const currentGroupValue = upstreamAccountConfigTextValue(
                     config?.group,
                     key.group_name || key.group_id || ''
@@ -2084,20 +2073,15 @@ export function ChannelMutateDrawer({
                           className='min-h-8'
                           compactInput
                         />
-                        <div className='flex flex-wrap gap-1'>
-                          <Button
-                            type='button'
-                            variant='ghost'
-                            size='sm'
-                            onClick={handleUseUpstreamKeyModels}
-                            disabled={upstreamModelNames.length === 0}
-                            className='h-7 px-2 text-xs'
-                          >
-                            <Sparkles data-icon='inline-start' />
-                            {t('Use Upstream Models')} (
-                            {upstreamModelNames.length})
-                          </Button>
-                        </div>
+                        <UpstreamModelActions
+                          mode='applySnapshot'
+                          sourceModels={upstreamModelNames}
+                          selectedModels={currentModelsArrayValue}
+                          onApply={handleKeyModelsChange}
+                          variant='outline'
+                          size='sm'
+                          buttonClassName='h-7 px-2 text-xs'
+                        />
                         {currentModelsArrayValue.length === 0 ? (
                           <span
                             className={cn(

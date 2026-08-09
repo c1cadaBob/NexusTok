@@ -26,7 +26,6 @@ import {
   PowerOff,
   RefreshCw,
   ShieldOff,
-  Sparkles,
   Trash2,
   Upload,
 } from 'lucide-react'
@@ -94,7 +93,7 @@ import {
 import type { ChannelAccount, ChannelAccountPayload } from '../../types'
 import { useChannels } from '../channels-provider'
 import { UpstreamAccountRefreshPanel } from '../upstream-account-refresh-panel'
-import { FetchModelsDialog } from './fetch-models-dialog'
+import { UpstreamModelActions } from '../upstream-model-actions'
 
 type ChannelAccountPoolDialogProps = {
   open: boolean
@@ -171,7 +170,6 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
   const [search, setSearch] = useState('')
   const [formOpen, setFormOpen] = useState(false)
   const [formState, setFormState] = useState<AccountFormState>(emptyForm)
-  const [fetchModelsDialogOpen, setFetchModelsDialogOpen] = useState(false)
   const [batchOpen, setBatchOpen] = useState(false)
   const [batchKeys, setBatchKeys] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<ChannelAccount | null>(null)
@@ -229,6 +227,17 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
       ]),
     [accounts, currentRow?.models, formState.models]
   )
+  const editingAccount = useMemo(
+    () =>
+      formState.id
+        ? accounts.find((account) => account.id === formState.id)
+        : undefined,
+    [accounts, formState.id]
+  )
+  const editingAccountModels = useMemo(
+    () => parseModelsString(editingAccount?.models ?? ''),
+    [editingAccount?.models]
+  )
 
   useEffect(() => {
     if (!props.open || allowManualAccountMutation) return
@@ -255,7 +264,6 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
   const resetForm = () => {
     setFormState(emptyForm)
     setFormOpen(false)
-    setFetchModelsDialogOpen(false)
   }
 
   const refresh = async (options?: { showSuccessToast?: boolean }) => {
@@ -516,17 +524,17 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
     }
   }
 
-  const openFetchModelsDialog = useCallback(() => {
-    if (!currentRow) return
+  const canOpenFetchModelsDialog = useCallback(() => {
+    if (!currentRow) return false
     if (!canOperateChannelAccounts || !canEditChannelAccounts) {
       toast.error(noPermissionMessage)
-      return
+      return false
     }
     if (!formState.id && !formState.key.trim()) {
       toast.error(t('Please enter API key first'))
-      return
+      return false
     }
-    setFetchModelsDialogOpen(true)
+    return true
   }, [
     canEditChannelAccounts,
     canOperateChannelAccounts,
@@ -849,25 +857,55 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                       compactInput={isUpstreamAccountSyncChannel(currentRow)}
                       className='min-h-9 lg:flex-1'
                     />
-                    <Button
-                      type='button'
-                      variant='outline'
-                      onClick={openFetchModelsDialog}
-                      disabled={
-                        actionLoading ||
-                        !canOperateChannelAccounts ||
-                        !canEditChannelAccounts
-                      }
-                      title={
-                        canOperateChannelAccounts && canEditChannelAccounts
-                          ? undefined
-                          : noPermissionMessage
-                      }
-                      className='w-full lg:w-auto'
-                    >
-                      <Sparkles data-icon='inline-start' />
-                      {t('Fetch from Upstream')}
-                    </Button>
+                    {isUpstreamAccountSyncedChannel && formState.id ? (
+                      <UpstreamModelActions
+                        mode='applySnapshot'
+                        sourceModels={editingAccountModels}
+                        selectedModels={parseModelsString(formState.models)}
+                        onApply={(models) =>
+                          setFormState((previous) => ({
+                            ...previous,
+                            models: formatModelsArray(dedupeModelNames(models)),
+                          }))
+                        }
+                        disabled={actionLoading || !canEditChannelAccounts}
+                        title={
+                          canEditChannelAccounts
+                            ? undefined
+                            : noPermissionMessage
+                        }
+                        buttonClassName='w-full lg:w-auto'
+                      />
+                    ) : (
+                      <UpstreamModelActions
+                        mode='fetch'
+                        onBeforeOpen={canOpenFetchModelsDialog}
+                        customFetcher={fetchModelsForCurrentAccountForm}
+                        existingModelsOverride={parseModelsString(
+                          formState.models
+                        )}
+                        channelName={formState.name.trim() || currentRow.name}
+                        requireOperatePermission={false}
+                        requireWritePermission={false}
+                        onModelsSelected={(models) => {
+                          setFormState((prev) => ({
+                            ...prev,
+                            models: formatModelsArray(dedupeModelNames(models)),
+                          }))
+                        }}
+                        disabled={
+                          actionLoading ||
+                          !canOperateChannelAccounts ||
+                          !canEditChannelAccounts
+                        }
+                        title={
+                          canOperateChannelAccounts && canEditChannelAccounts
+                            ? undefined
+                            : noPermissionMessage
+                        }
+                        buttonClassName='w-full lg:w-auto'
+                      />
+                    )}
                   </div>
                   <Input
                     value={formState.group}
@@ -1233,21 +1271,6 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
         handleConfirm={performDelete}
       />
 
-      <FetchModelsDialog
-        open={fetchModelsDialogOpen}
-        onOpenChange={setFetchModelsDialogOpen}
-        customFetcher={fetchModelsForCurrentAccountForm}
-        existingModelsOverride={parseModelsString(formState.models)}
-        channelName={formState.name.trim() || currentRow.name}
-        requireOperatePermission={false}
-        requireWritePermission={false}
-        onModelsSelected={(models) => {
-          setFormState((prev) => ({
-            ...prev,
-            models: formatModelsArray(dedupeModelNames(models)),
-          }))
-        }}
-      />
     </>
   )
 }
