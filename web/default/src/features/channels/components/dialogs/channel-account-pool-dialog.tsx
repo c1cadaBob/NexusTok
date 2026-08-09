@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Loader2,
@@ -26,6 +26,7 @@ import {
   PowerOff,
   RefreshCw,
   ShieldOff,
+  Sparkles,
   Trash2,
   Upload,
 } from 'lucide-react'
@@ -36,6 +37,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
@@ -64,6 +66,8 @@ import {
   batchCreateChannelAccounts,
   createChannelAccount,
   deleteChannelAccount,
+  fetchChannelAccountUpstreamModels,
+  fetchModels,
   getChannelAccounts,
   importMultiKeyToChannelAccounts,
   updateChannelAccount,
@@ -90,6 +94,7 @@ import {
 import type { ChannelAccount, ChannelAccountPayload } from '../../types'
 import { useChannels } from '../channels-provider'
 import { UpstreamAccountRefreshPanel } from '../upstream-account-refresh-panel'
+import { FetchModelsDialog } from './fetch-models-dialog'
 
 type ChannelAccountPoolDialogProps = {
   open: boolean
@@ -166,6 +171,7 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
   const [search, setSearch] = useState('')
   const [formOpen, setFormOpen] = useState(false)
   const [formState, setFormState] = useState<AccountFormState>(emptyForm)
+  const [fetchModelsDialogOpen, setFetchModelsDialogOpen] = useState(false)
   const [batchOpen, setBatchOpen] = useState(false)
   const [batchKeys, setBatchKeys] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<ChannelAccount | null>(null)
@@ -249,6 +255,7 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
   const resetForm = () => {
     setFormState(emptyForm)
     setFormOpen(false)
+    setFetchModelsDialogOpen(false)
   }
 
   const refresh = async (options?: { showSuccessToast?: boolean }) => {
@@ -509,6 +516,51 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
     }
   }
 
+  const openFetchModelsDialog = useCallback(() => {
+    if (!currentRow) return
+    if (!canOperateChannelAccounts || !canEditChannelAccounts) {
+      toast.error(noPermissionMessage)
+      return
+    }
+    if (!formState.id && !formState.key.trim()) {
+      toast.error(t('Please enter API key first'))
+      return
+    }
+    setFetchModelsDialogOpen(true)
+  }, [
+    canEditChannelAccounts,
+    canOperateChannelAccounts,
+    currentRow,
+    formState.id,
+    formState.key,
+    noPermissionMessage,
+    t,
+  ])
+
+  const fetchModelsForCurrentAccountForm = useCallback(async (): Promise<
+    string[]
+  > => {
+    if (!currentRow) return []
+    const replacementKey = formState.key.trim()
+    const response =
+      replacementKey || !formState.id
+        ? await fetchModels({
+            type: currentRow.type,
+            key: replacementKey,
+            base_url: currentRow.base_url || '',
+          })
+        : await fetchChannelAccountUpstreamModels(currentRow.id, formState.id)
+    if (response.success && response.data) {
+      return response.data
+    }
+    throw new Error(response.message || t('No models fetched from upstream'))
+  }, [
+    currentRow,
+    formState.id,
+    formState.key,
+    t,
+  ])
+
   if (!currentRow) return null
 
   return (
@@ -752,100 +804,134 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
             )}
 
             {formOpen && (
-              <div className='grid gap-3 rounded-lg border p-3 sm:grid-cols-2'>
-                <Input
-                  value={formState.name}
-                  onChange={(event) =>
-                    setFormState({ ...formState, name: event.target.value })
-                  }
-                  placeholder={t('Account name')}
-                />
-                {allowManualAccountMutation && (
+              <div className='flex flex-col gap-3 rounded-lg border p-3'>
+                <div className='grid gap-3 sm:grid-cols-2'>
                   <Input
-                    value={formState.key}
+                    value={formState.name}
                     onChange={(event) =>
-                      setFormState({ ...formState, key: event.target.value })
+                      setFormState({ ...formState, name: event.target.value })
                     }
-                    disabled={
-                      Boolean(formState.id) && !canSensitiveWriteChannelAccounts
-                    }
-                    placeholder={
-                      formState.id && canSensitiveWriteChannelAccounts
-                        ? t('Leave empty to keep existing key')
-                        : formState.id
-                          ? t('Sensitive channel settings are read-only')
-                          : t('Enter secret key')
-                    }
+                    placeholder={t('Account name')}
                   />
-                )}
-                <ModelCatalogMultiSelect
-                  selected={parseModelsString(formState.models)}
-                  onChange={(models) =>
-                    setFormState({
-                      ...formState,
-                      models: formatModelsArray(dedupeModelNames(models)),
-                    })
-                  }
-                  extraModels={accountExtraModels}
-                  placeholder={t('Select models or add custom ones')}
-                  createLabel='Add custom model "{{value}}"'
-                  maxVisibleChips={4}
-                  copyChipOnClick
-                  compactInput={isUpstreamAccountSyncChannel(currentRow)}
-                  className='min-h-9'
-                />
-                <Input
-                  value={formState.group}
-                  onChange={(event) =>
-                    setFormState({ ...formState, group: event.target.value })
-                  }
-                  placeholder={t('Group inherited from channel if empty')}
-                />
-                <Input
-                  value={formState.priority}
-                  onChange={(event) =>
-                    setFormState({ ...formState, priority: event.target.value })
-                  }
-                  placeholder={t('Key Priority')}
-                  inputMode='numeric'
-                />
-                <Input
-                  value={formState.weight}
-                  onChange={(event) =>
-                    setFormState({ ...formState, weight: event.target.value })
-                  }
-                  placeholder={t('Key Weight')}
-                  inputMode='numeric'
-                />
-                <Input
-                  value={formState.maxConcurrency}
-                  onChange={(event) =>
-                    setFormState({
-                      ...formState,
-                      maxConcurrency: event.target.value,
-                    })
-                  }
-                  placeholder={t('Max concurrency')}
-                  inputMode='numeric'
-                />
-                <div className='flex items-center gap-2'>
+                  {allowManualAccountMutation && (
+                    <Input
+                      value={formState.key}
+                      onChange={(event) =>
+                        setFormState({ ...formState, key: event.target.value })
+                      }
+                      disabled={
+                        Boolean(formState.id) &&
+                        !canSensitiveWriteChannelAccounts
+                      }
+                      placeholder={
+                        formState.id && canSensitiveWriteChannelAccounts
+                          ? t('Leave empty to keep existing key')
+                          : formState.id
+                            ? t('Sensitive channel settings are read-only')
+                            : t('Enter secret key')
+                      }
+                    />
+                  )}
+                  <div className='flex min-w-0 flex-col gap-2 sm:col-span-2 lg:flex-row lg:items-start'>
+                    <ModelCatalogMultiSelect
+                      selected={parseModelsString(formState.models)}
+                      onChange={(models) =>
+                        setFormState({
+                          ...formState,
+                          models: formatModelsArray(dedupeModelNames(models)),
+                        })
+                      }
+                      extraModels={accountExtraModels}
+                      placeholder={t('Select models or add custom ones')}
+                      createLabel='Add custom model "{{value}}"'
+                      maxVisibleChips={4}
+                      copyChipOnClick
+                      compactInput={isUpstreamAccountSyncChannel(currentRow)}
+                      className='min-h-9 lg:flex-1'
+                    />
+                    <Button
+                      type='button'
+                      variant='outline'
+                      onClick={openFetchModelsDialog}
+                      disabled={
+                        actionLoading ||
+                        !canOperateChannelAccounts ||
+                        !canEditChannelAccounts
+                      }
+                      title={
+                        canOperateChannelAccounts && canEditChannelAccounts
+                          ? undefined
+                          : noPermissionMessage
+                      }
+                      className='w-full lg:w-auto'
+                    >
+                      <Sparkles data-icon='inline-start' />
+                      {t('Fetch from Upstream')}
+                    </Button>
+                  </div>
+                  <Input
+                    value={formState.group}
+                    onChange={(event) =>
+                      setFormState({ ...formState, group: event.target.value })
+                    }
+                    placeholder={t('Group inherited from channel if empty')}
+                  />
+                  <Input
+                    value={formState.priority}
+                    onChange={(event) =>
+                      setFormState({
+                        ...formState,
+                        priority: event.target.value,
+                      })
+                    }
+                    placeholder={t('Key Priority')}
+                    inputMode='numeric'
+                  />
+                  <Input
+                    value={formState.weight}
+                    onChange={(event) =>
+                      setFormState({ ...formState, weight: event.target.value })
+                    }
+                    placeholder={t('Key Weight')}
+                    inputMode='numeric'
+                  />
+                  <Input
+                    value={formState.maxConcurrency}
+                    onChange={(event) =>
+                      setFormState({
+                        ...formState,
+                        maxConcurrency: event.target.value,
+                      })
+                    }
+                    placeholder={t('Max concurrency')}
+                    inputMode='numeric'
+                  />
+                </div>
+                <DialogFooter className='border-t pt-3 sm:justify-end'>
                   <Button
                     type='button'
-                    onClick={submitForm}
+                    variant='outline'
+                    onClick={resetForm}
+                    disabled={actionLoading}
+                    className='w-full sm:w-auto'
+                  >
+                    {t('Cancel')}
+                  </Button>
+                  <Button
+                    type='button'
+                    onClick={() => void submitForm()}
                     disabled={actionLoading || !canEditChannelAccounts}
                     title={
                       canEditChannelAccounts ? undefined : noPermissionMessage
                     }
+                    className='w-full sm:w-auto'
                   >
                     {actionLoading && (
                       <Loader2 className='mr-2 h-4 w-4 animate-spin' />
                     )}
                     {formState.id ? t('Save') : t('Create')}
                   </Button>
-                  <Button type='button' variant='ghost' onClick={resetForm}>
-                    {t('Cancel')}
-                  </Button>
-                </div>
+                </DialogFooter>
               </div>
             )}
 
@@ -1145,6 +1231,22 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
         confirmText={t('Delete')}
         destructive
         handleConfirm={performDelete}
+      />
+
+      <FetchModelsDialog
+        open={fetchModelsDialogOpen}
+        onOpenChange={setFetchModelsDialogOpen}
+        customFetcher={fetchModelsForCurrentAccountForm}
+        existingModelsOverride={parseModelsString(formState.models)}
+        channelName={formState.name.trim() || currentRow.name}
+        requireOperatePermission={false}
+        requireWritePermission={false}
+        onModelsSelected={(models) => {
+          setFormState((prev) => ({
+            ...prev,
+            models: formatModelsArray(dedupeModelNames(models)),
+          }))
+        }}
       />
     </>
   )

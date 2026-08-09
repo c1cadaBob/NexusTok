@@ -24,6 +24,7 @@ import {
   ExternalLink,
   Loader2,
   RefreshCw,
+  Sparkles,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -969,11 +970,6 @@ export function UpstreamAccountRefreshPanel({
                       })
                     )
                   }
-                  const preventModelActionBlur = (event: {
-                    preventDefault: () => void
-                  }) => {
-                    event.preventDefault()
-                  }
                   const upstreamGroupValue =
                     key.group_name || key.group_id || ''
                   const currentGroupValue = config?.group ?? upstreamGroupValue
@@ -1033,24 +1029,24 @@ export function UpstreamAccountRefreshPanel({
                           createLabel='Add custom model "{{value}}"'
                           maxVisibleChips={2}
                           copyChipOnClick
-                          contentFooter={
-                            <div className='bg-background flex flex-wrap gap-2 border-t pt-2'>
-                              <Button
-                                type='button'
-                                variant='ghost'
-                                size='sm'
-                                onMouseDown={preventModelActionBlur}
-                                onClick={handleUseUpstreamKeyModels}
-                              >
-                                {t('Use Upstream Models')} (
-                                {upstreamModelNames.length})
-                              </Button>
-                            </div>
-                          }
                           clearSearchOnSelect={false}
                           className='min-h-8'
                           compactInput
                         />
+                        <div className='flex flex-wrap gap-1'>
+                          <Button
+                            type='button'
+                            variant='ghost'
+                            size='sm'
+                            onClick={handleUseUpstreamKeyModels}
+                            disabled={upstreamModelNames.length === 0}
+                            className='h-7 px-2 text-xs'
+                          >
+                            <Sparkles data-icon='inline-start' />
+                            {t('Use Upstream Models')} (
+                            {upstreamModelNames.length})
+                          </Button>
+                        </div>
                         {currentModelsArrayValue.length === 0 ? (
                           <span
                             className={cn(

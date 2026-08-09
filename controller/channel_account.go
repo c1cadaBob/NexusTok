@@ -180,6 +180,49 @@ func GetChannelAccount(c *gin.Context) {
 	common.ApiSuccess(c, channelAccountResponseForContext(c, account))
 }
 
+// FetchChannelAccountUpstreamModels 使用指定渠道账号的密钥从上游获取模型列表。
+//
+// 账号池中的每个账号都可能有独立 Key、BaseURL、代理或请求头覆盖配置；如果继续使用
+// 渠道级 fetch，会由渠道账号池调度随机选择账号，无法保证取到的模型属于管理员正在编辑的
+// 那个密钥。因此这里先校验账号归属，再在内存中克隆渠道配置并覆盖账号级凭据，最后复用
+// 现有 provider 模型获取逻辑。该接口只返回模型名，不返回也不记录明文凭据。
+func FetchChannelAccountUpstreamModels(c *gin.Context) {
+	channelID, accountID, ok := parseChannelAccountParams(c)
+	if !ok {
+		return
+	}
+
+	channel, ok := ensureChannelExists(c, channelID)
+	if !ok {
+		return
+	}
+
+	account, err := model.GetChannelAccountById(channelID, accountID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if account.Status != common.ChannelStatusEnabled {
+		common.ApiErrorMsg(c, "指定账号未启用")
+		return
+	}
+	if strings.TrimSpace(account.Key) == "" {
+		common.ApiErrorMsg(c, "指定账号密钥为空")
+		return
+	}
+
+	ids, err := fetchChannelUpstreamModelIDs(channelWithAccountCredential(channel, account))
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": fmt.Sprintf("获取模型列表失败: %s", err.Error()),
+		})
+		return
+	}
+
+	common.ApiSuccess(c, ids)
+}
+
 func UpdateChannelAccount(c *gin.Context) {
 	channelID, accountID, ok := parseChannelAccountParams(c)
 	if !ok {
@@ -404,6 +447,49 @@ func ensureChannelExists(c *gin.Context, channelID int) (*model.Channel, bool) {
 		return nil, false
 	}
 	return channel, true
+}
+
+// channelWithAccountCredential 构造仅用于一次上游请求的渠道副本。
+//
+// 账号池账号允许覆盖渠道的连接参数。模型获取必须按正在编辑的账号执行，否则管理员会
+// 看到另一个密钥的可用模型并把错误能力写回当前账号。这里不修改原 channel/account，也
+// 不保存副本；副本只在本次 HTTP 请求中携带账号级 key 和可选覆盖项。
+func channelWithAccountCredential(channel *model.Channel, account *model.ChannelAccount) *model.Channel {
+	if channel == nil || account == nil {
+		return channel
+	}
+
+	cloned := *channel
+	cloned.Key = strings.TrimSpace(account.Key)
+	cloned.OpenAIOrganization = account.OpenAIOrganization
+	if strings.TrimSpace(account.Other) != "" {
+		cloned.Other = account.Other
+	}
+	if otherSettings := strings.TrimSpace(account.GetOtherSettings(channel.OtherSettings)); otherSettings != "" {
+		cloned.OtherSettings = otherSettings
+	}
+
+	if baseURL := strings.TrimSpace(account.GetBaseURL(channel.GetBaseURL())); baseURL != "" {
+		cloned.BaseURL = common.GetPointer(baseURL)
+	}
+
+	defaultSetting := ""
+	if channel.Setting != nil {
+		defaultSetting = *channel.Setting
+	}
+	if setting := strings.TrimSpace(account.GetSetting(defaultSetting)); setting != "" {
+		cloned.Setting = common.GetPointer(setting)
+	}
+
+	if headerOverride := account.GetHeaderOverride(channel.HeaderOverride); headerOverride != nil {
+		if trimmed := strings.TrimSpace(*headerOverride); trimmed != "" {
+			cloned.HeaderOverride = common.GetPointer(trimmed)
+		} else {
+			cloned.HeaderOverride = nil
+		}
+	}
+
+	return &cloned
 }
 
 // ensureManualChannelAccountMutationAllowed 限制上游同步渠道的账号池手动写入口。

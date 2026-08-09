@@ -39,6 +39,7 @@ func TestRegisterChannelRoutesKeepsCoreHandlers(t *testing.T) {
 	assertRouteHandler(t, engine, http.MethodPost, "/api/channel/upstream-account/credentials/parse", controller.ParseUpstreamAccountCredential)
 	assertRouteHandler(t, engine, http.MethodPost, "/api/channel/upstream-account/preview/2fa", controller.CompleteUpstreamAccount2FA)
 	assertRouteHandler(t, engine, http.MethodGet, "/api/channel/:id/accounts", controller.ListChannelAccounts)
+	assertRouteHandler(t, engine, http.MethodGet, "/api/channel/:id/accounts/:account_id/fetch_models", controller.FetchChannelAccountUpstreamModels)
 	assertRouteHandler(t, engine, http.MethodPost, "/api/channel/:id/codex/refresh", controller.RefreshCodexChannelCredential)
 	assertRouteHandler(t, engine, http.MethodGet, "/api/channel/:id/codex/usage/reset-credits", controller.GetCodexChannelRateLimitResetCredits)
 	assertRouteHandler(t, engine, http.MethodPost, "/api/channel/:id/codex/usage/reset", controller.ResetCodexChannelUsage)
@@ -82,6 +83,7 @@ func TestChannelPermissionRoutesClassifyCoreActions(t *testing.T) {
 func TestChannelPermissionRoutesClassifyChannelAccountActions(t *testing.T) {
 	assertPermissionRoute(t, http.MethodGet, "/:id/accounts", authz.ChannelAccountRead)
 	assertPermissionRoute(t, http.MethodGet, "/:id/accounts/:account_id", authz.ChannelAccountRead)
+	assertPermissionRoute(t, http.MethodGet, "/:id/accounts/:account_id/fetch_models", authz.ChannelAccountOperate)
 	assertPermissionRoute(t, http.MethodPost, "/:id/accounts/:account_id/status", authz.ChannelAccountOperate)
 	assertPermissionRoute(t, http.MethodPost, "/:id/accounts", authz.ChannelAccountSensitiveWrite)
 	assertPermissionRoute(t, http.MethodPost, "/:id/accounts/batch", authz.ChannelAccountSensitiveWrite)

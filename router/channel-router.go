@@ -91,6 +91,7 @@ var channelPermissionRoutes = []permissionRoute{
 	{method: http.MethodPost, path: "/:id/accounts/batch", permission: authz.ChannelAccountSensitiveWrite, handler: controller.BatchCreateChannelAccounts},
 	{method: http.MethodPost, path: "/:id/accounts/import-multikey", permission: authz.ChannelAccountSensitiveWrite, handler: controller.ImportMultiKeyToChannelAccounts},
 	{method: http.MethodGet, path: "/:id/accounts/:account_id", permission: authz.ChannelAccountRead, handler: controller.GetChannelAccount},
+	{method: http.MethodGet, path: "/:id/accounts/:account_id/fetch_models", permission: authz.ChannelAccountOperate, handler: controller.FetchChannelAccountUpstreamModels},
 	{method: http.MethodPut, path: "/:id/accounts/:account_id", permission: authz.ChannelAccountWrite, handler: controller.UpdateChannelAccount},
 	{method: http.MethodDelete, path: "/:id/accounts/:account_id", permission: authz.ChannelAccountSensitiveWrite, handler: controller.DeleteChannelAccount},
 	{method: http.MethodPost, path: "/:id/accounts/:account_id/status", permission: authz.ChannelAccountOperate, handler: controller.UpdateChannelAccountStatus},

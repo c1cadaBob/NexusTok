@@ -355,6 +355,19 @@ export async function fetchUpstreamModels(
 }
 
 /**
+ * 使用指定渠道账号从上游获取可用模型列表。
+ */
+export async function fetchChannelAccountUpstreamModels(
+  channelId: number,
+  accountId: number
+): Promise<FetchModelsResponse> {
+  const res = await api.get(
+    `/api/channel/${channelId}/accounts/${accountId}/fetch_models`
+  )
+  return res.data
+}
+
+/**
  * Copy/clone a channel
  */
 export async function copyChannel(
