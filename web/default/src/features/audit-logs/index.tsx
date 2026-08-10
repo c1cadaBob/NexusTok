@@ -16,21 +16,22 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import assert from 'node:assert/strict'
-import { describe, test } from 'node:test'
-import { buildApiParams } from './utils'
+import { useTranslation } from 'react-i18next'
+import { SectionPageLayout } from '@/components/layout'
+import { AuditLogsTable } from './components/audit-logs-table'
 
-describe('buildApiParams', () => {
-  test('不再发送 type 参数，使用日志由后端固定为消费日志', () => {
-    const params = buildApiParams({
-      page: 1,
-      pageSize: 100,
-      searchParams: { type: ['0'] },
-      isAdmin: false,
-    })
+export function AuditLogs() {
+  const { t } = useTranslation()
 
-    assert.equal(params.p, 1)
-    assert.equal(params.page_size, 100)
-    assert.equal('type' in params, false)
-  })
-})
+  return (
+    <SectionPageLayout>
+      <SectionPageLayout.Title>{t('Audit Logs')}</SectionPageLayout.Title>
+      <SectionPageLayout.Description>
+        {t('Review administrative actions and successful sign-ins.')}
+      </SectionPageLayout.Description>
+      <SectionPageLayout.Content>
+        <AuditLogsTable />
+      </SectionPageLayout.Content>
+    </SectionPageLayout>
+  )
+}

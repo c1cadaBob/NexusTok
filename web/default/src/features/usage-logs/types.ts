@@ -295,7 +295,6 @@ export interface TaskLog {
 export interface GetLogsParams {
   p?: number
   page_size?: number
-  type?: number
   username?: string
   token_name?: string
   model_name?: string
@@ -319,7 +318,6 @@ export interface GetLogsResponse {
 }
 
 export interface GetLogStatsParams {
-  type?: number
   username?: string
   token_name?: string
   model_name?: string

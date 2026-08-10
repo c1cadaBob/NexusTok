@@ -36,6 +36,7 @@ import {
   Calculator,
   DatabaseZap,
   ServerCog,
+  ShieldCheck,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/stores/auth-store'
@@ -75,6 +76,10 @@ export function useSidebarData(): SidebarData {
   const canReadSubscription = canReadAdminResource(
     user,
     ADMIN_PERMISSION_RESOURCES.SUBSCRIPTION
+  )
+  const canReadUsageLog = canReadAdminResource(
+    user,
+    ADMIN_PERMISSION_RESOURCES.USAGE_LOG
   )
 
   return {
@@ -127,6 +132,15 @@ export function useSidebarData(): SidebarData {
             url: '/usage-logs/common',
             icon: FileText,
           },
+          ...(canReadUsageLog
+            ? [
+                {
+                  title: t('Audit Logs'),
+                  url: '/audit-logs',
+                  icon: ShieldCheck,
+                },
+              ]
+            : []),
           {
             title: t('Task Logs'),
             url: '/usage-logs/task',

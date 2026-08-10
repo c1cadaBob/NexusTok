@@ -21,7 +21,6 @@ import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
 import {
   type ColumnDef,
-  flexRender,
   getCoreRowModel,
   getFacetedRowModel,
   getFacetedUniqueValues,
@@ -32,20 +31,14 @@ import {
 import { useMediaQuery } from '@/hooks'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { cn } from '@/lib/utils'
 import {
   ADMIN_PERMISSION_ACTIONS,
   ADMIN_PERMISSION_RESOURCES,
 } from '@/lib/admin-permissions'
 import { useAdminPermission } from '@/hooks/use-admin-permission'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
-import { TableCell, TableRow } from '@/components/ui/table'
 import { DataTablePage } from '@/components/data-table'
-import {
-  DEFAULT_LOGS_DATA,
-  LOG_TYPE_ALL_VALUE,
-  LOG_TYPE_ENUM,
-} from '../constants'
+import { DEFAULT_LOGS_DATA } from '../constants'
 import { useColumnsByCategory } from '../lib/columns'
 import { fetchLogsByCategory } from '../lib/utils'
 import type { LogCategory } from '../types'
@@ -54,17 +47,6 @@ import { TaskLogsFilterBar } from './task-logs-filter-bar'
 import { UsageLogsMobileList } from './usage-logs-mobile-card'
 
 const route = getRouteApi('/_authenticated/usage-logs/$section')
-
-const logTypeRowTint: Record<number, string> = {
-  [LOG_TYPE_ENUM.ERROR]: 'bg-rose-50/40 dark:bg-rose-950/20',
-  [LOG_TYPE_ENUM.REFUND]: 'bg-blue-50/30 dark:bg-blue-950/15',
-}
-
-function deserializeLogTypeFilter(value: unknown): unknown[] {
-  const values = Array.isArray(value) ? value : value ? [value] : []
-  // URL 中的 type=0 表示后端“全部类型”哨兵，不能进入本地表格过滤，否则会只显示 Unknown。
-  return values.filter((item) => String(item) !== LOG_TYPE_ALL_VALUE)
-}
 
 interface UsageLogsTableProps {
   logCategory: LogCategory
@@ -91,12 +73,6 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     pagination: { defaultPage: 1, defaultPageSize: isMobile ? 20 : 100 },
     globalFilter: { enabled: false },
     columnFilters: [
-      {
-        columnId: 'created_at',
-        searchKey: 'type',
-        type: 'array' as const,
-        deserialize: deserializeLogTypeFilter,
-      },
       { columnId: 'model_name', searchKey: 'model', type: 'string' as const },
       { columnId: 'token_name', searchKey: 'token', type: 'string' as const },
       { columnId: 'group', searchKey: 'group', type: 'string' as const },
@@ -214,23 +190,6 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
           <TaskLogsFilterBar table={table} logCategory={logCategory} />
         )
       }
-      renderRow={(row) => {
-        const logType = (row.original as Record<string, unknown>).type as
-          | number
-          | undefined
-        const tintClass =
-          isCommon && logType != null ? (logTypeRowTint[logType] ?? '') : ''
-
-        return (
-          <TableRow key={row.id} className={cn('transition-colors', tintClass)}>
-            {row.getVisibleCells().map((cell) => (
-              <TableCell key={cell.id} className={isCommon ? 'py-2' : 'py-3.5'}>
-                {flexRender(cell.column.columnDef.cell, cell.getContext())}
-              </TableCell>
-            ))}
-          </TableRow>
-        )
-      }}
     />
   )
 }

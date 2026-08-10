@@ -42,7 +42,6 @@ import {
 } from '@/components/ui/tooltip'
 import { DataTableColumnHeader } from '@/components/data-table'
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
-import { LOG_TYPE_ALL_VALUE } from '../../constants'
 import type { UsageLog } from '../../data/schema'
 import { getUsageLogChannelMarkers } from '../../lib/channel-markers'
 import {
@@ -324,11 +323,6 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
             />
           </div>
         )
-      },
-      filterFn: (row, _id, value) => {
-        if (!Array.isArray(value) || value.length === 0) return true
-        if (value.includes(LOG_TYPE_ALL_VALUE)) return true
-        return value.includes(String(row.original.type))
       },
       enableHiding: false,
       meta: { label: t('Time') },

@@ -18,36 +18,33 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import z from 'zod'
 import { createFileRoute, redirect } from '@tanstack/react-router'
-import { UsageLogs } from '@/features/usage-logs'
+import { useAuthStore } from '@/stores/auth-store'
 import {
-  isUsageLogsSectionId,
-  USAGE_LOGS_DEFAULT_SECTION,
-} from '@/features/usage-logs/section-registry'
+  ADMIN_PERMISSION_RESOURCES,
+  canReadAdminResource,
+} from '@/lib/admin-permissions'
+import { AuditLogs } from '@/features/audit-logs'
 
-const usageLogsSearchSchema = z.object({
+const auditLogsSearchSchema = z.object({
   page: z.number().optional().catch(1),
-  pageSize: z.number().optional().catch(20),
-  filter: z.string().optional().catch(''),
-  model: z.string().optional().catch(''),
-  token: z.string().optional().catch(''),
-  channel: z.string().optional().catch(''),
-  group: z.string().optional().catch(''),
+  pageSize: z.number().optional().catch(50),
   username: z.string().optional().catch(''),
   requestId: z.string().optional().catch(''),
-  upstreamRequestId: z.string().optional().catch(''),
   startTime: z.number().optional(),
   endTime: z.number().optional(),
 })
 
-export const Route = createFileRoute('/_authenticated/usage-logs/$section')({
-  beforeLoad: ({ params }) => {
-    if (!isUsageLogsSectionId(params.section)) {
+export const Route = createFileRoute('/_authenticated/audit-logs/')({
+  beforeLoad: () => {
+    const { auth } = useAuthStore.getState()
+    if (
+      !canReadAdminResource(auth.user, ADMIN_PERMISSION_RESOURCES.USAGE_LOG)
+    ) {
       throw redirect({
-        to: '/usage-logs/$section',
-        params: { section: USAGE_LOGS_DEFAULT_SECTION },
+        to: '/403',
       })
     }
   },
-  validateSearch: usageLogsSearchSchema,
-  component: UsageLogs,
+  validateSearch: auditLogsSearchSchema,
+  component: AuditLogs,
 })

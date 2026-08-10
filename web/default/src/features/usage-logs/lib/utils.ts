@@ -179,31 +179,10 @@ export function buildApiParams(config: {
 }): GetLogsParams {
   const { page, pageSize, searchParams, columnFilters = [], isAdmin } = config
 
-  // common logs 的 type 只支持单选；0 是后端约定的“全部类型”哨兵，必须保留并透传。
-  const processType = (value: unknown): number | undefined => {
-    const parseType = (raw: unknown): number | undefined => {
-      const type = Number(raw)
-      return Number.isFinite(type) ? type : undefined
-    }
-
-    if (Array.isArray(value) && value.length === 1) {
-      return parseType(value[0])
-    }
-    if (typeof value === 'number') {
-      return parseType(value)
-    }
-    if (typeof value === 'string' && value !== '') {
-      return parseType(value)
-    }
-    return undefined
-  }
-  const searchType = processType(searchParams.type)
-
   // Build base params from search params
   const params: GetLogsParams = {
     p: page,
     page_size: pageSize,
-    ...(searchType !== undefined ? { type: searchType } : {}),
     ...(searchParams.model ? { model_name: String(searchParams.model) } : {}),
     ...(searchParams.token ? { token_name: String(searchParams.token) } : {}),
     ...(searchParams.group ? { group: String(searchParams.group) } : {}),
@@ -228,9 +207,6 @@ export function buildApiParams(config: {
       if (value === undefined || value === null || value === '') return
 
       switch (id) {
-        case 'type':
-          params.type = processType(value)
-          break
         case 'model_name':
           params.model_name = String(value)
           break
