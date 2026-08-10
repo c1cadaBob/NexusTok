@@ -43,6 +43,7 @@ func TestFormatUserLogsStripsChannelAccountAdminInfo(t *testing.T) {
 			"account_pool":         true,
 			"channel_account_id":   18,
 			"channel_account_name": "c1cada",
+			"ratio_conversion":     0.35,
 			"use_channel":          []int{18},
 		},
 	}

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/c1cada/NexusTok/common"
+	"github.com/c1cada/NexusTok/constant"
 	relaycommon "github.com/c1cada/NexusTok/relay/common"
 
 	"github.com/gin-gonic/gin"
@@ -63,6 +64,21 @@ func TestAttachQuotaSaturationNoClampNoMarker(t *testing.T) {
 
 	_, exists := other["admin_info"]
 	require.False(t, exists)
+}
+
+func TestGenerateTextOtherInfoIncludesUpstreamRatioConversion(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(nil)
+	common.SetContextKey(ctx, constant.ContextKeyUpstreamRatioConversion, 0.35)
+
+	relayInfo := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{},
+	}
+	other := GenerateTextOtherInfo(ctx, relayInfo, 1, 1, 1, 0, 0, 0, 1)
+
+	adminInfo, ok := other["admin_info"].(map[string]interface{})
+	require.True(t, ok)
+	require.InDelta(t, 0.35, adminInfo["ratio_conversion"], 0.000001)
 }
 
 func TestComputeToolCallQuotaUsesQuotaRound(t *testing.T) {

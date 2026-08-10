@@ -17,6 +17,7 @@ package middleware
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"slices"
 	"strconv"
@@ -30,6 +31,7 @@ import (
 	"github.com/c1cada/NexusTok/model"                        // 数据模型
 	relayconstant "github.com/c1cada/NexusTok/relay/constant" // 中继常量
 	"github.com/c1cada/NexusTok/service"                      // 服务层
+	"github.com/c1cada/NexusTok/service/upstreamaccount"      // 上游账号同步元数据
 	"github.com/c1cada/NexusTok/setting/ratio_setting"        // 比率设置
 	"github.com/c1cada/NexusTok/types"                        // 类型定义
 
@@ -617,6 +619,7 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 //   - *types.NexusTokError: 设置错误，nil 表示成功
 func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, modelName string) *types.NexusTokError {
 	c.Set("original_model", modelName) // for retry
+	clearUpstreamRatioConversionContext(c)
 	if channel == nil {
 		return types.NewError(errors.New("channel is nil"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 	}
@@ -731,6 +734,36 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	return nil
 }
 
+// clearUpstreamRatioConversionContext 清空上一次渠道选择留下的上游成本倍率。
+//
+// Relay 失败重试会在同一个 Gin Context 上重新执行 SetupContextForSelectedChannel。
+// 如果不先清空，后续 fallback 到普通渠道或缺少同步元数据的账号时，消费日志可能错误沿用
+// 上一次失败渠道的倍率。0 表示“没有可展示的上游成本倍率”，日志生成时会忽略该值。
+func clearUpstreamRatioConversionContext(c *gin.Context) {
+	common.SetContextKey(c, constant.ContextKeyUpstreamRatioConversion, 0.0)
+}
+
+// validUpstreamRatioConversion 判断同步账号成本倍率是否可用于日志展示。
+//
+// ratio_conversion 表示“本次请求费用换算到上游真实成本”的倍率。只有正数且有限的值
+// 才能进入管理员日志；0、负数、NaN 或 Inf 都代表缺失或异常配置，应在前端显示为“-”。
+func validUpstreamRatioConversion(ratio float64) bool {
+	return ratio > 0 && !math.IsNaN(ratio) && !math.IsInf(ratio, 0)
+}
+
+// setUpstreamRatioConversionContext 从同步账号元数据中读取上游成本倍率并写入请求上下文。
+//
+// 该函数只读取 upstream_account_sync 中经过 upstreamaccount 包过滤后的安全展示字段，
+// 不解析或暴露 key_digest、external_id、credentials 等敏感身份字段。无有效倍率时保持
+// 已清空的 0 值，避免日志层误判为可计算成本。
+func setUpstreamRatioConversionContext(c *gin.Context, settings string) {
+	metadata := upstreamaccount.ReadAccountSyncDisplayMetadata(settings)
+	if !validUpstreamRatioConversion(metadata.RatioConversion) {
+		return
+	}
+	common.SetContextKey(c, constant.ContextKeyUpstreamRatioConversion, metadata.RatioConversion)
+}
+
 // applyChannelContext 将渠道配置应用到请求上下文
 // 处理渠道设置、参数覆盖、头部覆盖、模型映射等配置
 // 当存在账号（AccountPool 模式）时，账号配置会覆盖渠道配置
@@ -740,6 +773,11 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 //   - channel: 渠道对象
 //   - account: 渠道账号（可为 nil，表示使用渠道自身的配置）
 func applyChannelContext(c *gin.Context, channel *model.Channel, account *model.ChannelAccount) {
+	if account != nil {
+		setUpstreamRatioConversionContext(c, account.OtherSettings)
+	} else {
+		setUpstreamRatioConversionContext(c, channel.OtherSettings)
+	}
 	// 设置渠道设置（合并账号设置）
 	common.SetContextKey(c, constant.ContextKeyChannelSetting, resolveChannelSetting(channel, account))
 	// 设置其他设置
@@ -795,6 +833,11 @@ func applyChannelContext(c *gin.Context, channel *model.Channel, account *model.
 //   - group: 账号池组对象
 //   - account: 账号池账号对象
 func applyPoolAccountContext(c *gin.Context, channel *model.Channel, group *model.AccountPoolGroup, account *model.PoolAccount) {
+	if account != nil {
+		setUpstreamRatioConversionContext(c, account.OtherSettings)
+	} else {
+		setUpstreamRatioConversionContext(c, channel.OtherSettings)
+	}
 	common.SetContextKey(c, constant.ContextKeyChannelSetting, resolvePoolChannelSetting(channel, group, account))
 	common.SetContextKey(c, constant.ContextKeyChannelOtherSetting, resolvePoolChannelOtherSettings(channel, account))
 	paramOverride := resolvePoolChannelParamOverride(channel, account)
@@ -843,6 +886,7 @@ func applyPoolAccountContext(c *gin.Context, channel *model.Channel, group *mode
 //   - channel: 渠道对象
 //   - group: 账号池组对象
 func applyCLIProxyAccountPoolContext(c *gin.Context, channel *model.Channel, group *model.AccountPoolGroup) {
+	setUpstreamRatioConversionContext(c, channel.OtherSettings)
 	common.SetContextKey(c, constant.ContextKeyChannelSetting, resolvePoolChannelSetting(channel, group, nil))
 	common.SetContextKey(c, constant.ContextKeyChannelOtherSetting, channel.GetOtherSettings())
 	paramOverride := channel.GetParamOverride()

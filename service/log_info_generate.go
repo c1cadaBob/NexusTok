@@ -12,6 +12,7 @@ package service
 import (
 	"encoding/base64" // Base64 编码（用于编码计费表达式）
 	"fmt"
+	"math"
 	"strings" // 字符串操作
 
 	"github.com/c1cada/NexusTok/common"                   // 项目公共工具包
@@ -145,6 +146,14 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	adminInfo["use_channel"] = ctx.GetStringSlice("use_channel")
 	if credentialMode := common.GetContextKeyString(ctx, constant.ContextKeyChannelCredentialMode); credentialMode != "" {
 		adminInfo["credential_mode"] = credentialMode
+	}
+	// 上游成本倍率仅供管理员日志展示“费用 × 上游换算倍率”的估算成本。
+	// 倍率来自本次实际命中的同步账号元数据；普通用户日志会在 model 层移除整个 admin_info。
+	if ratioConversion, ok := common.GetContextKeyType[float64](ctx, constant.ContextKeyUpstreamRatioConversion); ok &&
+		ratioConversion > 0 &&
+		!math.IsNaN(ratioConversion) &&
+		!math.IsInf(ratioConversion, 0) {
+		adminInfo["ratio_conversion"] = ratioConversion
 	}
 	// 多 Key 模式信息
 	isMultiKey := common.GetContextKeyBool(ctx, constant.ContextKeyChannelIsMultiKey)

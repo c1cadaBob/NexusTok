@@ -211,6 +211,11 @@ function CommonLogsCard<TData>({
           cell={cells.get('channel')}
           valueClassName='[&_.flex-col]:max-w-none'
         />
+        <SummaryField
+          label={t('Upstream Cost')}
+          cell={cells.get('upstream_cost')}
+          primaryOnly
+        />
         <SummaryField label={t('User')} cell={cells.get('user')} primaryOnly />
         <SummaryField
           label={t('Token')}

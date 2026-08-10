@@ -111,6 +111,9 @@ const (
 	ContextKeyChannelAccountReserved ContextKey = "channel_account_reserved"
 	// ContextKeyChannelAccountRetryChannelId 渠道账号重试渠道 ID
 	ContextKeyChannelAccountRetryChannelId ContextKey = "channel_account_retry_channel_id"
+	// ContextKeyUpstreamRatioConversion 本次请求命中的上游账号成本换算倍率。
+	// 该值来自同步账号元数据，仅用于管理员消费日志展示上游成本，不参与实际扣费。
+	ContextKeyUpstreamRatioConversion ContextKey = "upstream_ratio_conversion"
 
 	// 账号池相关键
 	// ContextKeyPoolGroupId 账号池分组 ID

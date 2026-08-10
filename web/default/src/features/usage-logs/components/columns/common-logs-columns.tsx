@@ -97,6 +97,24 @@ function getGroupRatioText(other: LogOtherData | null): string | null {
   return null
 }
 
+function getUpstreamCost(log: UsageLog): number | null {
+  if (!isDisplayableLogType(log.type)) return null
+
+  const quota = Number(log.quota)
+  const other = parseLogOther(log.other)
+  const ratioConversion = other?.admin_info?.ratio_conversion
+  if (
+    !Number.isFinite(quota) ||
+    ratioConversion == null ||
+    !Number.isFinite(ratioConversion) ||
+    ratioConversion <= 0
+  ) {
+    return null
+  }
+
+  return quota * ratioConversion
+}
+
 function buildDetailSegments(
   log: UsageLog,
   other: LogOtherData | null,
@@ -834,68 +852,94 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
         )
       },
       meta: { label: t('Cost') },
-    },
-
-    {
-      accessorKey: 'content',
-      header: t('Details'),
-      cell: function DetailsCell({ row }) {
-        const [dialogOpen, setDialogOpen] = useState(false)
-        const log = row.original
-        const other = parseLogOther(log.other)
-
-        const segments = buildDetailSegments(log, other, t, isAdmin)
-        const primary = segments[0]
-        const hasMore = segments.length > 1
-
-        return (
-          <>
-            <button
-              type='button'
-              className='group flex max-w-[200px] items-center gap-1 text-left text-xs'
-              onClick={() => setDialogOpen(true)}
-              title={t('Click to view full details')}
-            >
-              {primary ? (
-                <span
-                  className={cn(
-                    'truncate leading-snug group-hover:underline',
-                    primary.muted
-                      ? 'text-muted-foreground/60'
-                      : primary.danger
-                        ? 'text-red-600 dark:text-red-400'
-                        : 'text-foreground'
-                  )}
-                >
-                  {primary.text}
-                  {hasMore && (
-                    <span className='text-muted-foreground/40 ml-0.5'>
-                      +{segments.length - 1}
-                    </span>
-                  )}
-                </span>
-              ) : log.content ? (
-                <span className='text-muted-foreground truncate group-hover:underline'>
-                  {log.content}
-                </span>
-              ) : (
-                <span className='text-muted-foreground/40'>—</span>
-              )}
-            </button>
-            <DetailsDialog
-              log={log}
-              isAdmin={isAdmin}
-              open={dialogOpen}
-              onOpenChange={setDialogOpen}
-            />
-          </>
-        )
-      },
-      meta: { label: t('Details') },
-      size: 180,
-      maxSize: 200,
     }
   )
+
+  if (isAdmin) {
+    columns.push({
+      id: 'upstream_cost',
+      accessorFn: getUpstreamCost,
+      header: ({ column }) => (
+        <DataTableColumnHeader column={column} title={t('Upstream Cost')} />
+      ),
+      cell: ({ row }) => {
+        const upstreamCost = row.getValue('upstream_cost') as number | null
+
+        if (upstreamCost == null || !Number.isFinite(upstreamCost)) {
+          return <span className='text-muted-foreground text-xs'>-</span>
+        }
+
+        return (
+          <div className='flex flex-col gap-0.5'>
+            <span className='border-border/80 bg-muted/60 inline-flex w-fit items-center rounded-md border px-1.5 py-0.5 font-mono text-xs font-semibold tabular-nums'>
+              {formatLogQuota(upstreamCost)}
+            </span>
+          </div>
+        )
+      },
+      meta: { label: t('Upstream Cost') },
+    })
+  }
+
+  columns.push({
+    accessorKey: 'content',
+    header: t('Details'),
+    cell: function DetailsCell({ row }) {
+      const [dialogOpen, setDialogOpen] = useState(false)
+      const log = row.original
+      const other = parseLogOther(log.other)
+
+      const segments = buildDetailSegments(log, other, t, isAdmin)
+      const primary = segments[0]
+      const hasMore = segments.length > 1
+
+      return (
+        <>
+          <button
+            type='button'
+            className='group flex max-w-[200px] items-center gap-1 text-left text-xs'
+            onClick={() => setDialogOpen(true)}
+            title={t('Click to view full details')}
+          >
+            {primary ? (
+              <span
+                className={cn(
+                  'truncate leading-snug group-hover:underline',
+                  primary.muted
+                    ? 'text-muted-foreground/60'
+                    : primary.danger
+                      ? 'text-red-600 dark:text-red-400'
+                      : 'text-foreground'
+                )}
+              >
+                {primary.text}
+                {hasMore && (
+                  <span className='text-muted-foreground/40 ml-0.5'>
+                    +{segments.length - 1}
+                  </span>
+                )}
+              </span>
+            ) : log.content ? (
+              <span className='text-muted-foreground truncate group-hover:underline'>
+                {log.content}
+              </span>
+            ) : (
+              <span className='text-muted-foreground/40'>—</span>
+            )}
+          </button>
+          <DetailsDialog
+            log={log}
+            isAdmin={isAdmin}
+            open={dialogOpen}
+            onOpenChange={setDialogOpen}
+          />
+        </>
+      )
+    },
+    meta: { label: t('Details') },
+    size: 180,
+    maxSize: 200,
+  })
 
   return columns
 }
