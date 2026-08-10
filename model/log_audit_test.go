@@ -93,6 +93,72 @@ func TestRecordLoginLogWritesVisibleLoginMetadata(t *testing.T) {
 	require.Equal(t, "password", params["method"])
 }
 
+func TestLogQueriesSeparateConsumeAndAuditEntries(t *testing.T) {
+	setupLogAuditTestDB(t)
+
+	require.NoError(t, LOG_DB.Create(&[]Log{
+		{
+			UserId:    1,
+			Username:  "alice",
+			Type:      LogTypeConsume,
+			TokenId:   7,
+			ModelName: "gpt-5",
+			Quota:     100,
+			CreatedAt: 100,
+		},
+		{
+			UserId:    1,
+			Username:  "alice",
+			Type:      LogTypeTopup,
+			TokenId:   7,
+			CreatedAt: 101,
+		},
+		{
+			UserId:    2,
+			Username:  "root",
+			Type:      LogTypeManage,
+			CreatedAt: 102,
+		},
+		{
+			UserId:    1,
+			Username:  "alice",
+			Type:      LogTypeLogin,
+			CreatedAt: 103,
+		},
+		{
+			UserId:    1,
+			Username:  "alice",
+			Type:      LogTypeError,
+			CreatedAt: 104,
+		},
+	}).Error)
+
+	consumeLogs, consumeTotal, err := GetConsumeLogs(0, 0, "", "", "", 0, 20, 0, "", "", "")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), consumeTotal)
+	require.Len(t, consumeLogs, 1)
+	require.Equal(t, LogTypeConsume, consumeLogs[0].Type)
+
+	userLogs, userTotal, err := GetUserConsumeLogs(1, 0, 0, "", "", 0, 20, "", "", "")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), userTotal)
+	require.Len(t, userLogs, 1)
+	require.Equal(t, LogTypeConsume, userLogs[0].Type)
+
+	tokenLogs, err := GetLogByTokenId(7)
+	require.NoError(t, err)
+	require.Len(t, tokenLogs, 1)
+	require.Equal(t, LogTypeConsume, tokenLogs[0].Type)
+
+	auditLogs, auditTotal, err := GetAuditLogs(0, 0, "", 0, 20, "")
+	require.NoError(t, err)
+	require.Equal(t, int64(2), auditTotal)
+	require.Len(t, auditLogs, 2)
+	for _, log := range auditLogs {
+		require.Contains(t, []int{LogTypeManage, LogTypeLogin}, log.Type)
+	}
+}
+
 func setupLogAuditTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 

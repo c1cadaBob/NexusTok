@@ -26,6 +26,7 @@ func TestRegisterLogDataAdminRoutesKeepsCoreHandlers(t *testing.T) {
 	assertRouteHandler(t, engine, http.MethodGet, "/api/log/search", controller.SearchAllLogs)
 	assertRouteHandler(t, engine, http.MethodGet, "/api/log/channel_affinity_usage_cache", controller.GetChannelAffinityUsageCacheStats)
 	assertRouteHandler(t, engine, http.MethodDelete, "/api/log/", controller.DeleteHistoryLogs)
+	assertRouteHandler(t, engine, http.MethodGet, "/api/audit-log/", controller.GetAuditLogs)
 	assertRouteHandler(t, engine, http.MethodGet, "/api/data/", controller.GetAllQuotaDates)
 	assertRouteHandler(t, engine, http.MethodGet, "/api/data/users", controller.GetQuotaDatesByUser)
 	assertRouteHandler(t, engine, http.MethodGet, "/api/data/flow", controller.GetAllFlowQuotaDates)
@@ -37,6 +38,7 @@ func TestLogDataPermissionRoutesClassifyCoreActions(t *testing.T) {
 	assertLogPermissionRoute(t, http.MethodGet, "/search", authz.UsageLogRead)
 	assertLogPermissionRoute(t, http.MethodGet, "/channel_affinity_usage_cache", authz.UsageLogRead)
 	assertLogPermissionRoute(t, http.MethodDelete, "/", authz.UsageLogSensitiveWrite)
+	assertAuditLogPermissionRoute(t, http.MethodGet, "/", authz.UsageLogRead)
 
 	assertDataPermissionRoute(t, http.MethodGet, "/", authz.UsageDataRead)
 	assertDataPermissionRoute(t, http.MethodGet, "/users", authz.UsageDataRead)
@@ -62,9 +64,30 @@ func TestLogDataPermissionRoutesDoNotCaptureSelfOrTokenPaths(t *testing.T) {
 		assert.NotContains(t, route.path, "/self", "%s %s", route.method, route.path)
 		assert.NotEqual(t, "/token", route.path, "%s %s", route.method, route.path)
 	}
+	for _, route := range auditLogPermissionRoutes {
+		assert.NotContains(t, route.path, "/self", "%s %s", route.method, route.path)
+		assert.NotEqual(t, "/token", route.path, "%s %s", route.method, route.path)
+	}
 	for _, route := range dataPermissionRoutes {
 		assert.NotContains(t, route.path, "/self", "%s %s", route.method, route.path)
 	}
+}
+
+func assertAuditLogPermissionRoute(t *testing.T, method string, path string, permission authz.Permission) {
+	t.Helper()
+	route := requireAuditLogPermissionRoute(t, method, path)
+	assert.Equal(t, permission, route.permission)
+}
+
+func requireAuditLogPermissionRoute(t *testing.T, method string, path string) permissionRoute {
+	t.Helper()
+	for _, route := range auditLogPermissionRoutes {
+		if route.method == method && route.path == path {
+			return route
+		}
+	}
+	t.Fatalf("audit log permission route %s %s not found", method, path)
+	return permissionRoute{}
 }
 
 func assertLogPermissionRoute(t *testing.T, method string, path string, permission authz.Permission) {

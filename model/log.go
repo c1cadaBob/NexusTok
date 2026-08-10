@@ -202,7 +202,13 @@ func GetLogByTokenId(tokenId int) (logs []*Log, err error) {
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		order = clickHouseLogOrder("")
 	}
-	err = LOG_DB.Model(&Log{}).Where("token_id = ?", tokenId).Order(order).Limit(common.MaxRecentItems).Find(&logs).Error
+	// Token 日志用于调用方查看本 Token 的 API 请求历史，不能混入充值、管理审计等
+	// 非调用类型记录，避免“使用日志”语义与管理员页面保持不一致。
+	err = LOG_DB.Model(&Log{}).
+		Where("token_id = ? AND type = ?", tokenId, LogTypeConsume).
+		Order(order).
+		Limit(common.MaxRecentItems).
+		Find(&logs).Error
 	formatUserLogs(logs, 0)
 	return logs, err
 }
@@ -606,12 +612,71 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	}
 }
 
+// GetAllLogs 保留按单一日志类型查询的通用能力，供内部兼容调用使用。
+//
+// 面向页面的消费日志与审计日志必须使用 GetConsumeLogs、GetAuditLogs，避免调用点
+// 重新开放“所有日志类型”而把两类页面语义混在一起。
 func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
-	var tx *gorm.DB
-	if logType == LogTypeUnknown {
-		tx = LOG_DB
-	} else {
-		tx = LOG_DB.Where("logs.type = ?", logType)
+	var logTypes []int
+	if logType != LogTypeUnknown {
+		logTypes = []int{logType}
+	}
+	return getAllLogsByTypes(logTypes, startTimestamp, endTimestamp, modelName, username, tokenName, startIdx, num, channel, group, requestId, upstreamRequestId)
+}
+
+// GetConsumeLogs 查询 API 调用产生的消费日志。
+//
+// 使用日志和跨用户用量查看均依赖该入口，类型在模型层固定，避免客户端 query 参数
+// 篡改或未来控制器遗漏筛选时暴露管理、充值等不属于 API 调用的记录。
+func GetConsumeLogs(startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
+	return getAllLogsByTypes(
+		[]int{LogTypeConsume},
+		startTimestamp,
+		endTimestamp,
+		modelName,
+		username,
+		tokenName,
+		startIdx,
+		num,
+		channel,
+		group,
+		requestId,
+		upstreamRequestId,
+	)
+}
+
+// GetAuditLogs 查询管理员操作和成功登录审计记录。
+//
+// 两种类型均使用结构化 Other 字段记录操作者、操作参数和登录元数据。查询范围在模型层
+// 固定，既避免 API 调用日志混入审计页，也避免后续页面误把充值、系统或错误日志当审计证据。
+func GetAuditLogs(startTimestamp int64, endTimestamp int64, username string, startIdx int, num int, requestId string) (logs []*Log, total int64, err error) {
+	return getAllLogsByTypes(
+		[]int{LogTypeManage, LogTypeLogin},
+		startTimestamp,
+		endTimestamp,
+		"",
+		username,
+		"",
+		startIdx,
+		num,
+		0,
+		"",
+		requestId,
+		"",
+	)
+}
+
+func getAllLogsByTypes(logTypes []int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
+	tx := LOG_DB
+	switch len(logTypes) {
+	case 1:
+		tx = tx.Where("logs.type = ?", logTypes[0])
+	case 2:
+		tx = tx.Where("logs.type IN ?", logTypes)
+	case 0:
+		// 空切片仅供兼容旧调用，表示不额外限制类型。面向页面的入口不会走此分支。
+	default:
+		tx = tx.Where("logs.type IN ?", logTypes)
 	}
 
 	if tx, err = applyExplicitLogTextFilter(tx, "logs.model_name", modelName); err != nil {
@@ -698,6 +763,26 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 }
 
 const logSearchCountLimit = 10000
+
+// GetUserConsumeLogs 查询当前用户的 API 调用消费日志。
+//
+// 用户可见的使用日志只表达请求使用量，因此即使调用方携带旧版 type 参数，也不能通过
+// 该入口查看管理、充值或系统类型日志。
+func GetUserConsumeLogs(userId int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
+	return GetUserLogs(
+		userId,
+		LogTypeConsume,
+		startTimestamp,
+		endTimestamp,
+		modelName,
+		tokenName,
+		startIdx,
+		num,
+		group,
+		requestId,
+		upstreamRequestId,
+	)
+}
 
 func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
 	var tx *gorm.DB

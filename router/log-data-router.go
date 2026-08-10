@@ -22,6 +22,10 @@ func registerLogDataAdminRoutes(apiRouter *gin.RouterGroup) {
 	logRoute.Use(middleware.AdminAuth())
 	registerPermissionRoutes(logRoute, logPermissionRoutes)
 
+	auditLogRoute := apiRouter.Group("/audit-log")
+	auditLogRoute.Use(middleware.AdminAuth())
+	registerPermissionRoutes(auditLogRoute, auditLogPermissionRoutes)
+
 	dataRoute := apiRouter.Group("/data")
 	dataRoute.Use(middleware.AdminAuth())
 	registerPermissionRoutes(dataRoute, dataPermissionRoutes)
@@ -36,6 +40,11 @@ var logPermissionRoutes = []permissionRoute{
 
 	// 同步删除历史日志会移除请求与管理审计证据，按敏感写处理。
 	{method: http.MethodDelete, path: "/", permission: authz.UsageLogSensitiveWrite, handler: controller.DeleteHistoryLogs},
+}
+
+var auditLogPermissionRoutes = []permissionRoute{
+	// 审计日志会暴露管理员操作路径、操作者和登录来源 IP，沿用 usage_log.read 统一授权。
+	{method: http.MethodGet, path: "/", permission: authz.UsageLogRead, handler: controller.GetAuditLogs},
 }
 
 var dataPermissionRoutes = []permissionRoute{
