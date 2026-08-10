@@ -25,6 +25,7 @@ import { PerformanceSection } from '../maintenance/performance-section'
 import { UpdateCheckerSection } from '../maintenance/update-checker-section'
 import type { OperationsSettings } from '../types'
 import { createSectionRegistry } from '../utils/section-registry'
+import { SystemTasksSection } from './system-tasks-section'
 
 const OPERATIONS_SECTIONS = [
   {
@@ -61,6 +62,17 @@ const OPERATIONS_SECTIONS = [
             settings['monitor_setting.auto_test_channel_enabled'],
           'monitor_setting.auto_test_channel_minutes':
             settings['monitor_setting.auto_test_channel_minutes'],
+        }}
+      />
+    ),
+  },
+  {
+    id: 'system-tasks',
+    titleKey: 'System Tasks',
+    descriptionKey: 'Configure background jobs and synchronization schedules.',
+    build: (settings: OperationsSettings) => (
+      <SystemTasksSection
+        defaultValues={{
           'upstream_account_sync.enabled':
             settings['upstream_account_sync.enabled'],
           'upstream_account_sync.interval':
