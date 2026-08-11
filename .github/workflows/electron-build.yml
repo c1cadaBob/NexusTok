@@ -50,12 +50,12 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '>=1.25.1'
+          go-version: '1.26.5'
 
       - name: Build default frontend
         env:
@@ -63,7 +63,7 @@ jobs:
           NODE_OPTIONS: "--max-old-space-size=4096"
         run: |
           cd web/default
-          bun install
+          bun install --frozen-lockfile
           DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION=$(git describe --tags) bun run build
           cd ../..
 
@@ -73,7 +73,7 @@ jobs:
           NODE_OPTIONS: "--max-old-space-size=4096"
         run: |
           cd web/classic
-          bun install
+          bun install --frozen-lockfile
           VITE_REACT_APP_VERSION=$(git describe --tags) bun run build
           cd ../..
 
@@ -114,7 +114,7 @@ jobs:
       - name: Install Electron dependencies
         run: |
           cd electron
-          npm install
+          npm ci
 
       # - name: Build Electron app (macOS)
       #   if: runner.os == 'macOS'

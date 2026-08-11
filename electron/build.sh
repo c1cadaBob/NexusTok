@@ -40,25 +40,25 @@ if [[ "${OSTYPE}" == "darwin"* ]]; then
   echo "Building for macOS..."
   CGO_ENABLED=1 go build -ldflags="${GO_LDFLAGS}" -o nexustok
   cd "${SCRIPT_DIR}"
-  npm install
+  npm ci
   npm run build:mac
 elif [[ "${OSTYPE}" == "linux-gnu"* ]]; then
   echo "Building for Linux..."
   CGO_ENABLED=1 go build -ldflags="${GO_LDFLAGS}" -o nexustok
   cd "${SCRIPT_DIR}"
-  npm install
+  npm ci
   npm run build:linux
 elif [[ "${OSTYPE}" == "msys" || "${OSTYPE}" == "cygwin" || "${OSTYPE}" == "win32" ]]; then
   echo "Building for Windows..."
   CGO_ENABLED=1 go build -ldflags="${GO_LDFLAGS}" -o nexustok.exe
   cd "${SCRIPT_DIR}"
-  npm install
+  npm ci
   npm run build:win
 else
   echo "Unknown OS, building for current platform..."
   CGO_ENABLED=1 go build -ldflags="${GO_LDFLAGS}" -o nexustok
   cd "${SCRIPT_DIR}"
-  npm install
+  npm ci
   npm run build
 fi
 

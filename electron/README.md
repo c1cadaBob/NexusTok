@@ -25,7 +25,7 @@ make dev-web
 
 ```bash
 cd electron
-npm install
+npm ci
 npm run dev-app
 ```
 
@@ -49,7 +49,7 @@ bun run dev -- --host 0.0.0.0 --port 3001
 
 # 终端 3：Electron
 cd electron
-npm install
+npm ci
 npm run dev-app
 ```
 
@@ -73,7 +73,7 @@ cd electron
 
 ```bash
 cd electron
-npm install
+npm ci
 npm run build:mac
 npm run build:win
 npm run build:linux

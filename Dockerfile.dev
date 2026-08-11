@@ -12,7 +12,7 @@
 # 暴露端口：3030
 
 # 后端构建阶段（跳过前端，使用占位符）
-FROM golang:1.26.1-alpine AS builder
+FROM golang:1.26.5-alpine AS builder
 
 ENV GO111MODULE=on CGO_ENABLED=0
 ARG TARGETOS

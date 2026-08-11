@@ -18,15 +18,18 @@
     "openai",
     "claude"
   ],
-  "author": "c1cada",
+  "author": {
+    "name": "c1cada",
+    "email": "support@c1cada.dev"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/c1cadaBob/NexusTok"
   },
   "devDependencies": {
-    "cross-env": "^7.0.3",
-    "electron": "39.8.5",
-    "electron-builder": "^26.7.0"
+    "cross-env": "^10.1.0",
+    "electron": "41.10.4",
+    "electron-builder": "^26.15.3"
   },
   "build": {
     "appId": "com.nexustok.desktop",

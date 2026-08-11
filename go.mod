@@ -1,7 +1,7 @@
 module github.com/c1cada/NexusTok
 
 // +heroku goVersion go1.18
-go 1.25.1
+go 1.26.5
 
 require (
 	github.com/Azure/go-ntlmssp v0.1.1
@@ -52,12 +52,12 @@ require (
 	github.com/waffo-com/waffo-go v1.3.1
 	github.com/waffo-com/waffo-pancake-sdk-go v0.3.1
 	github.com/yapingcat/gomedia v0.0.0-20240906162731-17feea57090c
-	golang.org/x/crypto v0.45.0
-	golang.org/x/image v0.38.0
-	golang.org/x/net v0.47.0
-	golang.org/x/sync v0.20.0
-	golang.org/x/sys v0.38.0
-	golang.org/x/text v0.35.0
+	golang.org/x/crypto v0.53.0
+	golang.org/x/image v0.43.0
+	golang.org/x/net v0.56.0
+	golang.org/x/sync v0.21.0
+	golang.org/x/sys v0.46.0
+	golang.org/x/text v0.39.0
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/driver/clickhouse v0.6.0
 	gorm.io/driver/mysql v1.4.3
@@ -66,18 +66,19 @@ require (
 )
 
 require (
-	github.com/ClickHouse/ch-go v0.58.2 // indirect
-	github.com/ClickHouse/clickhouse-go/v2 v2.15.0 // indirect
+	github.com/ClickHouse/ch-go v0.65.0 // indirect
+	github.com/ClickHouse/clickhouse-go/v2 v2.32.0 // indirect
 	github.com/bmatcuk/doublestar/v4 v4.6.1 // indirect
 	github.com/casbin/govaluate v1.3.0 // indirect
 	github.com/go-faster/city v1.0.1 // indirect
-	github.com/go-faster/errors v0.6.1 // indirect
-	github.com/hashicorp/go-version v1.6.0 // indirect
-	github.com/paulmach/orb v0.10.0 // indirect
-	github.com/pierrec/lz4/v4 v4.1.18 // indirect
+	github.com/go-faster/errors v0.7.1 // indirect
+	github.com/hashicorp/go-version v1.7.0 // indirect
+	github.com/paulmach/orb v0.11.1 // indirect
+	github.com/pierrec/lz4/v4 v4.1.22 // indirect
+	github.com/rogpeppe/go-internal v1.13.1 // indirect
 	github.com/segmentio/asm v1.2.0 // indirect
-	go.opentelemetry.io/otel v1.19.0 // indirect
-	go.opentelemetry.io/otel/trace v1.19.0 // indirect
+	go.opentelemetry.io/otel v1.34.0 // indirect
+	go.opentelemetry.io/otel/trace v1.34.0 // indirect
 )
 
 require (
