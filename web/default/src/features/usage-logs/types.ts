@@ -136,11 +136,26 @@ export interface LogOtherData {
     params?: Record<string, unknown>
   }
   audit_info?: {
+    source?: string
     method?: string
     route?: string
     path?: string
     status?: number
     success?: boolean
+    task_id?: string
+    runner_id?: string
+    scanned?: number
+    eligible?: number
+    skipped?: number
+    succeeded?: number
+    failed?: number
+    created?: number
+    updated?: number
+    disabled?: number
+    task_skipped?: boolean
+    skip_reason?: string
+    failures?: Array<Record<string, unknown>>
+    error?: string
     params?: Record<string, string>
   }
   // 登录审计字段（type=7），归属用户和管理员查看该用户日志时均可见。

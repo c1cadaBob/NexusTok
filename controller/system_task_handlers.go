@@ -198,20 +198,24 @@ func (upstreamAccountSyncHandler) NewPayload() any {
 func (upstreamAccountSyncHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
 	setting := operation_setting.GetUpstreamAccountSyncSetting()
 	if !setting.Enabled {
-		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, upstreamaccount.UpstreamAccountSyncSummary{
+		summary := &upstreamaccount.UpstreamAccountSyncSummary{
 			Skipped:    true,
 			SkipReason: "上游账号自动同步已关闭",
-		}, nil)
+		}
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, summary, nil)
+		recordSystemUpstreamAccountSyncAudit(task, runnerID, summary, nil)
 		return
 	}
 	if _, err := setting.Duration(); err != nil {
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
+		recordSystemUpstreamAccountSyncAudit(task, runnerID, nil, err)
 		return
 	}
 
 	summary, err := upstreamaccount.RunUpstreamAccountSync(ctx, service.NewSystemTaskProgressReporter(task, runnerID))
 	if err != nil {
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, summary, err)
+		recordSystemUpstreamAccountSyncAudit(task, runnerID, summary, err)
 		return
 	}
 	runErr := upstreamaccount.AutomaticSyncFailureError(summary)
@@ -220,6 +224,7 @@ func (upstreamAccountSyncHandler) Run(ctx context.Context, task *model.SystemTas
 		status = model.SystemTaskStatusFailed
 	}
 	finishSystemTaskHandler(task, runnerID, status, summary, runErr)
+	recordSystemUpstreamAccountSyncAudit(task, runnerID, summary, runErr)
 }
 
 func finishSystemTaskHandler(task *model.SystemTask, runnerID string, status model.SystemTaskStatus, result any, runErr error) {

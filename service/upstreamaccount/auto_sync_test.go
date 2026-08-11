@@ -2,6 +2,9 @@ package upstreamaccount
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/c1cada/NexusTok/common"
@@ -134,4 +137,104 @@ func TestRunUpstreamAccountSyncSkipsIneligibleChannels(t *testing.T) {
 	require.Equal(t, 0, summary.FailedChannels)
 	require.NotEmpty(t, progress)
 	require.Equal(t, [2]int{3, 3}, progress[len(progress)-1])
+}
+
+func TestRunUpstreamAccountSyncPreservesExistingRatioConversionConfig(t *testing.T) {
+	setupAutomaticSyncTestDB(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasPrefix(r.URL.Path, "/api/v1/") && r.URL.Path != "/api/v1/auth/login" {
+			require.Equal(t, "Bearer auto-token", r.Header.Get("Authorization"))
+		}
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			var body map[string]string
+			require.NoError(t, common.DecodeJson(r.Body, &body))
+			require.Equal(t, "alice@example.com", body["email"])
+			require.Equal(t, "secret", body["password"])
+			_, _ = w.Write([]byte(`{"code":0,"data":{"access_token":"auto-token","refresh_token":"auto-refresh","expires_in":3600,"user":{"id":5,"email":"alice@example.com","balance":1}}}`))
+		case "/api/v1/auth/me":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":10}}`))
+		case "/api/v1/user/profile":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":12.5}}`))
+		case "/api/v1/groups/available":
+			_, _ = w.Write([]byte(`{"code":0,"data":[{"id":3,"name":"vip","platform":"openai","rate_multiplier":10}]}`))
+		case "/api/v1/groups/rates":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"3":10}}`))
+		case "/api/v1/usage/dashboard/stats":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"total_actual_cost":1}}`))
+		case "/api/v1/keys":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"items":[{"id":9,"name":"auto-key","key":"sk-auto-key-new","status":"active","group_id":3,"group":{"id":3,"name":"vip"},"models":["gpt-4o"],"quota":20,"quota_used":3}],"total":1}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	channel := model.Channel{
+		Key:    constant.ChannelCredentialModeAccountPool,
+		Name:   "auto-ratio-channel",
+		Status: common.ChannelStatusEnabled,
+		OtherSettings: mergeChannelSyncMetadataWithCredential(
+			"",
+			&Snapshot{Platform: PlatformSub2API, BaseURL: server.URL},
+			Credential{
+				Platform: PlatformSub2API,
+				BaseURL:  server.URL,
+				Email:    "alice@example.com",
+				AuthMode: AuthModePassword,
+				Password: "secret",
+			},
+		),
+		ChannelInfo: model.ChannelInfo{
+			CredentialMode:     constant.ChannelCredentialModeAccountPool,
+			AccountPoolEnabled: true,
+		},
+	}
+	require.NoError(t, model.DB.Create(&channel).Error)
+
+	oldKey := SyncedKey{
+		ExternalID: "9",
+		Name:       "auto-key",
+		Key:        "sk-auto-key-old",
+		MaskedKey:  "sk-auto-key-old",
+		GroupID:    "3",
+		GroupName:  "vip",
+		Models:     []string{"gpt-4o"},
+		GroupRatio: floatPtr(10),
+	}
+	existingSnapshot := &Snapshot{
+		Platform: PlatformSub2API,
+		BaseURL:  server.URL,
+		Keys:     []SyncedKey{oldKey},
+	}
+	ApplyRatioConversion(existingSnapshot, RatioConversionConfig{
+		PaidCNY:           1,
+		PlatformUSDCredit: 1,
+	})
+	require.NoError(t, model.DB.Create(&model.ChannelAccount{
+		ChannelId:     channel.Id,
+		Name:          "auto-key",
+		Key:           "sk-auto-key-old",
+		Status:        common.ChannelStatusEnabled,
+		Models:        "gpt-4o",
+		Group:         "vip",
+		AccessGroups:  "default",
+		OtherSettings: mergeAccountSyncMetadata("", existingSnapshot, existingSnapshot.Keys[0]),
+	}).Error)
+
+	summary, err := RunUpstreamAccountSync(context.Background(), nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, summary.EligibleChannels)
+	require.Equal(t, 1, summary.SucceededChannels)
+	require.Equal(t, 1, summary.UpdatedAccounts)
+
+	var refreshed model.ChannelAccount
+	require.NoError(t, model.DB.Where("channel_id = ?", channel.Id).First(&refreshed).Error)
+	metadata := ReadAccountSyncDisplayMetadata(refreshed.OtherSettings)
+	require.NotNil(t, metadata.RatioConversionConfig)
+	require.Equal(t, float64(1), metadata.RatioConversionConfig.PaidCNY)
+	require.Equal(t, float64(1), metadata.RatioConversionConfig.PlatformUSDCredit)
+	require.InDelta(t, 10, metadata.RatioConversion, 0.000001)
 }

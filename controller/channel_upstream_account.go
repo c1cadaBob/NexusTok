@@ -135,6 +135,7 @@ func RefreshUpstreamAccountChannel(c *gin.Context) {
 	}
 	req.ChannelID = channelID
 	if err := applyUpstreamCaptureCredential(c, &req.Credential); err != nil {
+		recordManualUpstreamAccountSyncAudit(c, req, nil, err)
 		common.ApiError(c, err)
 		return
 	}
@@ -142,9 +143,11 @@ func RefreshUpstreamAccountChannel(c *gin.Context) {
 	defer cancel()
 	result, err := upstreamaccount.RefreshChannelFromCredential(ctx, req)
 	if err != nil {
+		recordManualUpstreamAccountSyncAudit(c, req, nil, err)
 		common.ApiError(c, err)
 		return
 	}
+	recordManualUpstreamAccountSyncAudit(c, req, result, nil)
 	common.ApiSuccess(c, result)
 }
 

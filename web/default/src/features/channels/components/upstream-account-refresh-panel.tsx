@@ -357,16 +357,16 @@ export function UpstreamAccountRefreshPanel({
         buildUpstreamAccountConfigsFromSnapshotKeys(data.snapshot.keys, prev)
       )
       const ratio = data.snapshot.ratio_conversion
-      setUpstreamPaidCny(
-        ratio?.paid_cny && Number.isFinite(ratio.paid_cny)
-          ? String(ratio.paid_cny)
-          : DEFAULT_UPSTREAM_PAID_AMOUNT
-      )
-      setUpstreamPlatformUsdCredit(
-        ratio?.platform_usd_credit && Number.isFinite(ratio.platform_usd_credit)
-          ? String(ratio.platform_usd_credit)
-          : DEFAULT_UPSTREAM_PLATFORM_CREDIT
-      )
+      if (
+        ratio?.paid_cny &&
+        Number.isFinite(ratio.paid_cny) &&
+        ratio.platform_usd_credit &&
+        Number.isFinite(ratio.platform_usd_credit)
+      ) {
+        setUpstreamPaidCny(String(ratio.paid_cny))
+        setUpstreamPlatformUsdCredit(String(ratio.platform_usd_credit))
+        ratioConfigLoadedRef.current = true
+      }
       toast.success(
         t('Synced {{count}} upstream key(s)', {
           count: data.snapshot.keys.length,
@@ -686,18 +686,15 @@ export function UpstreamAccountRefreshPanel({
     const ratioConfig = refreshAccounts.find(
       (account) => account.ratio_conversion_config
     )?.ratio_conversion_config
-    if (!ratioConfig) return
-    setUpstreamPaidCny(
-      ratioConfig.paid_cny && Number.isFinite(ratioConfig.paid_cny)
-        ? String(ratioConfig.paid_cny)
-        : DEFAULT_UPSTREAM_PAID_AMOUNT
-    )
-    setUpstreamPlatformUsdCredit(
+    if (
+      ratioConfig?.paid_cny &&
+      Number.isFinite(ratioConfig.paid_cny) &&
       ratioConfig.platform_usd_credit &&
-        Number.isFinite(ratioConfig.platform_usd_credit)
-        ? String(ratioConfig.platform_usd_credit)
-        : DEFAULT_UPSTREAM_PLATFORM_CREDIT
-    )
+      Number.isFinite(ratioConfig.platform_usd_credit)
+    ) {
+      setUpstreamPaidCny(String(ratioConfig.paid_cny))
+      setUpstreamPlatformUsdCredit(String(ratioConfig.platform_usd_credit))
+    }
     ratioConfigLoadedRef.current = true
   }, [open, refreshAccounts, upstreamRefreshSnapshot])
 
@@ -708,7 +705,10 @@ export function UpstreamAccountRefreshPanel({
       !upstreamUseSavedCredential ||
       busy ||
       autoPreviewTriggeredRef.current ||
-      upstreamRefreshSnapshot
+      upstreamRefreshSnapshot ||
+      (canReadChannelAccount &&
+        refreshAccounts.length > 0 &&
+        !ratioConfigLoadedRef.current)
     ) {
       return
     }
@@ -716,6 +716,8 @@ export function UpstreamAccountRefreshPanel({
     void handlePreviewUpstreamRefresh()
   }, [
     busy,
+    canReadChannelAccount,
+    refreshAccounts.length,
     handlePreviewUpstreamRefresh,
     open,
     savedUpstreamCredentialAvailable,

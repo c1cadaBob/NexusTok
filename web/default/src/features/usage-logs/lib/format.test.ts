@@ -56,6 +56,37 @@ describe('renderAuditContent', () => {
     assert.equal(text, 'Updated channel OpenAI (ID: 12)')
   })
 
+  test('上游渠道手动同步日志使用本地化模板摘要', () => {
+    const text = renderAuditContent(
+      {
+        op: {
+          action: 'channel.upstream_account_sync_refresh',
+          params: { name: 'Sub2API', id: 12 },
+        },
+      },
+      t
+    )
+
+    assert.equal(
+      text,
+      'Refreshed upstream account sync for channel Sub2API (ID: 12)'
+    )
+  })
+
+  test('上游账号系统任务日志支持 task_id 别名', () => {
+    const text = renderAuditContent(
+      {
+        op: {
+          action: 'system_task.upstream_account_sync',
+          params: { task_id: 'task-1' },
+        },
+      },
+      t
+    )
+
+    assert.equal(text, 'Ran upstream account sync system task task-1')
+  })
+
   test('兜底 generic 审计会渲染请求方法和路由', () => {
     const text = renderAuditContent(
       {

@@ -149,6 +149,7 @@ var auditRouteActions = map[string]string{
 	"POST /api/channel/:id/codex/oauth/complete":        "channel.codex_oauth_complete_for_channel",
 	"POST /api/channel/:id/codex/refresh":               "channel.codex_refresh",
 	"POST /api/channel/:id/codex/usage/reset":           "channel.codex_usage_reset",
+	"POST /api/channel/:id/upstream-account/refresh":    "channel.upstream_account_sync_refresh",
 	"POST /api/channel/ollama/pull":                     "channel.ollama_pull",
 	"POST /api/channel/ollama/pull/stream":              "channel.ollama_pull_stream",
 	"DELETE /api/channel/ollama/delete":                 "channel.ollama_delete",

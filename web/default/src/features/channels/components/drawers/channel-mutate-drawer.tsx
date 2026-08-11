@@ -2893,12 +2893,13 @@ export function ChannelMutateDrawer({
     const ratioConfig = syncedChannelAccounts.find(
       (account) => account.ratio_conversion_config
     )?.ratio_conversion_config
-    if (!ratioConfig) return
-    setUpstreamRatioConversionState(
-      ratioConfig,
-      setUpstreamPaidCny,
-      setUpstreamPlatformUsdCredit
-    )
+    if (ratioConfig) {
+      setUpstreamRatioConversionState(
+        ratioConfig,
+        setUpstreamPaidCny,
+        setUpstreamPlatformUsdCredit
+      )
+    }
     upstreamRatioConfigLoadedRef.current = true
   }, [
     isUpstreamAccountSyncedChannel,
@@ -3230,11 +3231,14 @@ export function ChannelMutateDrawer({
       setUpstreamAccountConfigs((prev) =>
         buildUpstreamAccountConfigsFromSnapshotKeys(data.snapshot.keys, prev)
       )
-      setUpstreamRatioConversionState(
-        data.snapshot.ratio_conversion,
-        setUpstreamPaidCny,
-        setUpstreamPlatformUsdCredit
-      )
+      if (data.snapshot.ratio_conversion) {
+        setUpstreamRatioConversionState(
+          data.snapshot.ratio_conversion,
+          setUpstreamPaidCny,
+          setUpstreamPlatformUsdCredit
+        )
+        upstreamRatioConfigLoadedRef.current = true
+      }
 
       if (mode === 'create') {
         const models = upstreamModelsToString(data.snapshot.keys)

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/c1cada/NexusTok/common"
@@ -18,6 +19,48 @@ import (
 )
 
 const upstreamLargeUsedQuota = int64(33508580000)
+
+func setupRefreshChannelTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ChannelAccount{}))
+	model.DB = db
+	model.LOG_DB = db
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+	return db
+}
+
+func createRefreshTestSyncedChannel(t *testing.T, db *gorm.DB, name string, settings string) model.Channel {
+	t.Helper()
+
+	channel := model.Channel{
+		Type:          constant.ChannelTypeOpenAI,
+		Key:           constant.ChannelCredentialModeAccountPool,
+		Name:          name,
+		Status:        common.ChannelStatusEnabled,
+		Models:        "gpt-4o",
+		Group:         "default",
+		OtherSettings: settings,
+		ChannelInfo: model.ChannelInfo{
+			CredentialMode:     constant.ChannelCredentialModeAccountPool,
+			AccountPoolEnabled: true,
+			AccountPoolMode:    constant.ChannelAccountPoolModePolling,
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+	return channel
+}
 
 func TestSnapshotUSDToQuotaInt64(t *testing.T) {
 	normalCost := 4.75
@@ -195,6 +238,252 @@ func TestRefreshChannelFromCredentialConsumesPreviewSnapshot(t *testing.T) {
 
 	_, err = GetPreviewRecord(preview.PreviewID)
 	require.Error(t, err)
+}
+
+func TestRefreshChannelFromCredentialUsesPasswordBeforeSavedSub2APISession(t *testing.T) {
+	db := setupRefreshChannelTestDB(t)
+	var loginCount atomic.Int32
+	var refreshCount atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasPrefix(r.URL.Path, "/api/v1/") && r.URL.Path != "/api/v1/auth/login" {
+			require.Equal(t, "Bearer password-token", r.Header.Get("Authorization"))
+		}
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			loginCount.Add(1)
+			var body map[string]string
+			require.NoError(t, common.DecodeJson(r.Body, &body))
+			require.Equal(t, "alice@example.com", body["email"])
+			require.Equal(t, "secret", body["password"])
+			_, _ = w.Write([]byte(`{"code":0,"data":{"access_token":"password-token","refresh_token":"password-refresh","expires_in":3600,"user":{"id":5,"email":"alice@example.com","balance":1}}}`))
+		case "/api/v1/auth/refresh":
+			refreshCount.Add(1)
+			http.Error(w, "refresh token should not be used when password is saved", http.StatusInternalServerError)
+		case "/api/v1/auth/me":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":10}}`))
+		case "/api/v1/user/profile":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":12.5}}`))
+		case "/api/v1/groups/available":
+			_, _ = w.Write([]byte(`{"code":0,"data":[{"id":3,"name":"vip","platform":"openai","rate_multiplier":0.25}]}`))
+		case "/api/v1/groups/rates":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"3":0.25}}`))
+		case "/api/v1/usage/dashboard/stats":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"total_actual_cost":1}}`))
+		case "/api/v1/keys":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"items":[{"id":9,"name":"sub-key","key":"sk-sub2-password-key","status":"active","group_id":3,"group":{"id":3,"name":"vip"},"models":["gpt-4o"],"quota":20,"quota_used":3}],"total":1}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	settings := mergeChannelSyncMetadataWithCredential(
+		"",
+		&Snapshot{
+			Platform: PlatformSub2API,
+			BaseURL:  server.URL,
+			AuthSession: &AuthenticatedSession{
+				Platform: PlatformSub2API,
+				BaseURL:  server.URL,
+				AuthMode: AuthModePassword,
+				Sub2API: &Sub2APISessionData{
+					AccessToken:  "saved-session-token",
+					RefreshToken: "saved-refresh-token",
+					ExpiresAt:    common.GetTimestamp() + 3600,
+				},
+			},
+		},
+		Credential{
+			Platform: PlatformSub2API,
+			BaseURL:  server.URL,
+			Email:    "alice@example.com",
+			AuthMode: AuthModePassword,
+			Password: "secret",
+		},
+	)
+	channel := createRefreshTestSyncedChannel(t, db, "sub2-password-priority", settings)
+
+	result, err := RefreshChannelFromCredential(context.Background(), RefreshRequest{ChannelID: channel.Id})
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Created)
+	require.EqualValues(t, 1, loginCount.Load())
+	require.EqualValues(t, 0, refreshCount.Load())
+
+	var refreshed model.Channel
+	require.NoError(t, db.First(&refreshed, channel.Id).Error)
+	credential, ok, err := ReadChannelSyncCredential(refreshed.OtherSettings)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NotNil(t, credential.Session)
+	require.Equal(t, "password-token", credential.Session.Sub2API.AccessToken)
+	require.Equal(t, "secret", credential.Password)
+}
+
+func TestRefreshChannelFromCredentialUsesPasswordBeforeSavedNewAPISession(t *testing.T) {
+	db := setupRefreshChannelTestDB(t)
+	var loginCount atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		require.NotEqual(t, "Bearer saved-newapi-token", r.Header.Get("Authorization"))
+		switch r.URL.Path {
+		case "/api/status":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"quota_per_unit":500000}}`))
+		case "/api/user/login":
+			loginCount.Add(1)
+			var body map[string]string
+			require.NoError(t, common.DecodeJson(r.Body, &body))
+			require.Equal(t, "alice", body["username"])
+			require.Equal(t, "secret", body["password"])
+			_, _ = w.Write([]byte(`{"success":true,"data":{"id":7,"username":"alice","group":"default","quota":1000000,"used_quota":500000}}`))
+		case "/api/user/self":
+			require.Equal(t, "7", r.Header.Get("New-Api-User"))
+			_, _ = w.Write([]byte(`{"success":true,"data":{"id":7,"username":"alice","group":"default","quota":1000000,"used_quota":500000}}`))
+		case "/api/user/self/groups":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"default":{"ratio":1,"desc":"default"}}}`))
+		case "/api/ratio_config":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"model_ratio":{},"completion_ratio":{},"cache_ratio":{},"create_cache_ratio":{},"model_price":{}}}`))
+		case "/api/token/":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"items":[{"id":11,"name":"new-key","key":"sk-newapi-password-key","group":"default","status":1,"model_limits":"gpt-4o","remain_quota":1000000,"used_quota":0}],"total":1}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	settings := mergeChannelSyncMetadataWithCredential(
+		"",
+		&Snapshot{
+			Platform: PlatformNewAPI,
+			BaseURL:  server.URL,
+			AuthSession: &AuthenticatedSession{
+				Platform: PlatformNewAPI,
+				BaseURL:  server.URL,
+				AuthMode: AuthModePassword,
+				NewAPI: &NewAPISessionData{
+					UserID:      "7",
+					AccessToken: "saved-newapi-token",
+				},
+			},
+		},
+		Credential{
+			Platform: PlatformNewAPI,
+			BaseURL:  server.URL,
+			Username: "alice",
+			AuthMode: AuthModePassword,
+			Password: "secret",
+		},
+	)
+	channel := createRefreshTestSyncedChannel(t, db, "newapi-password-priority", settings)
+
+	result, err := RefreshChannelFromCredential(context.Background(), RefreshRequest{ChannelID: channel.Id})
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Created)
+	require.EqualValues(t, 1, loginCount.Load())
+}
+
+func TestRefreshChannelFromCredentialKeepsAccessTokenPathWithoutPassword(t *testing.T) {
+	db := setupRefreshChannelTestDB(t)
+	var loginCount atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasPrefix(r.URL.Path, "/api/v1/") && r.URL.Path != "/api/v1/auth/login" {
+			require.Equal(t, "Bearer imported-token", r.Header.Get("Authorization"))
+		}
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			loginCount.Add(1)
+			http.Error(w, "password login should not be used without a password", http.StatusInternalServerError)
+		case "/api/v1/auth/me":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":10}}`))
+		case "/api/v1/user/profile":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":12.5}}`))
+		case "/api/v1/groups/available":
+			_, _ = w.Write([]byte(`{"code":0,"data":[{"id":3,"name":"vip","platform":"openai","rate_multiplier":0.25}]}`))
+		case "/api/v1/groups/rates":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"3":0.25}}`))
+		case "/api/v1/usage/dashboard/stats":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"total_actual_cost":1}}`))
+		case "/api/v1/keys":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"items":[{"id":9,"name":"sub-key","key":"sk-sub2-token-key","status":"active","group_id":3,"group":{"id":3,"name":"vip"},"models":["gpt-4o"],"quota":20,"quota_used":3}],"total":1}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	channel := createRefreshTestSyncedChannel(t, db, "sub2-token-refresh", "")
+	result, err := RefreshChannelFromCredential(context.Background(), RefreshRequest{
+		ChannelID: channel.Id,
+		Credential: Credential{
+			Platform:    PlatformSub2API,
+			BaseURL:     server.URL,
+			AuthMode:    AuthModeAccessToken,
+			AccessToken: "imported-token",
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Created)
+	require.EqualValues(t, 0, loginCount.Load())
+}
+
+func TestRefreshChannelFromCredentialPasswordFailureDoesNotFallbackToSavedToken(t *testing.T) {
+	db := setupRefreshChannelTestDB(t)
+	var authMeCount atomic.Int32
+	var refreshCount atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			_, _ = w.Write([]byte(`{"code":1,"message":"password=secret access_token=saved-session-token sk-secret-key failed"}`))
+		case "/api/v1/auth/me":
+			authMeCount.Add(1)
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":10}}`))
+		case "/api/v1/auth/refresh":
+			refreshCount.Add(1)
+			_, _ = w.Write([]byte(`{"code":0,"data":{"access_token":"refreshed-token","expires_in":3600}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	settings := mergeChannelSyncMetadataWithCredential(
+		"",
+		&Snapshot{
+			Platform: PlatformSub2API,
+			BaseURL:  server.URL,
+			AuthSession: &AuthenticatedSession{
+				Platform: PlatformSub2API,
+				BaseURL:  server.URL,
+				AuthMode: AuthModePassword,
+				Sub2API: &Sub2APISessionData{
+					AccessToken:  "saved-session-token",
+					RefreshToken: "saved-refresh-token",
+					ExpiresAt:    common.GetTimestamp() + 3600,
+				},
+			},
+		},
+		Credential{
+			Platform: PlatformSub2API,
+			BaseURL:  server.URL,
+			Email:    "alice@example.com",
+			AuthMode: AuthModePassword,
+			Password: "secret",
+		},
+	)
+	channel := createRefreshTestSyncedChannel(t, db, "sub2-password-failure", settings)
+
+	result, err := RefreshChannelFromCredential(context.Background(), RefreshRequest{ChannelID: channel.Id})
+	require.ErrorContains(t, err, "password=secret")
+	require.Nil(t, result)
+	require.EqualValues(t, 0, authMeCount.Load())
+	require.EqualValues(t, 0, refreshCount.Load())
 }
 
 func TestRefreshChannelFromSnapshotUpdatesChannelBaseURLWhenSyncSourceMigrates(t *testing.T) {
@@ -625,6 +914,138 @@ func TestRefreshChannelFromSnapshotPreservesLocalAccountOverrides(t *testing.T) 
 	require.Equal(t, "https://newapi.example", metadata.BaseURL)
 	require.Equal(t, "local", metadata.ExternalID)
 	require.Equal(t, keyDigest("sk-new-local"), metadata.KeyDigest)
+}
+
+func TestRefreshChannelFromSnapshotPreservesExistingRatioConversionConfig(t *testing.T) {
+	db := setupRefreshChannelTestDB(t)
+	channel := createRefreshTestSyncedChannel(t, db, "ratio-preserve-channel", "")
+
+	oldKey := SyncedKey{
+		ExternalID: "ratio-key",
+		Name:       "Ratio Key",
+		Key:        "sk-ratio-old",
+		MaskedKey:  "sk-ratio-old",
+		GroupName:  "default",
+		Models:     []string{"gpt-4o"},
+		GroupRatio: floatPtr(10),
+	}
+	existingSnapshot := &Snapshot{
+		Platform: PlatformNewAPI,
+		BaseURL:  "https://newapi.example",
+		Keys:     []SyncedKey{oldKey},
+	}
+	ApplyRatioConversion(existingSnapshot, RatioConversionConfig{
+		PaidCNY:           1,
+		PlatformUSDCredit: 1,
+	})
+	existing := model.ChannelAccount{
+		ChannelId:     channel.Id,
+		Name:          "Ratio Key",
+		Key:           "sk-ratio-old",
+		Status:        common.ChannelStatusEnabled,
+		Models:        "gpt-4o",
+		Group:         "default",
+		AccessGroups:  "default",
+		OtherSettings: mergeAccountSyncMetadata("", existingSnapshot, existingSnapshot.Keys[0]),
+	}
+	require.NoError(t, db.Create(&existing).Error)
+
+	result, err := RefreshChannelFromSnapshot(channel.Id, &Snapshot{
+		Platform: PlatformNewAPI,
+		BaseURL:  "https://newapi.example",
+		Keys: []SyncedKey{{
+			ExternalID:        "ratio-key",
+			Name:              "Ratio Key Refreshed",
+			Key:               "sk-ratio-new",
+			MaskedKey:         "sk-ratio-new",
+			GroupName:         "default",
+			Models:            []string{"gpt-4o"},
+			GroupRatio:        floatPtr(10),
+			SuggestedPriority: 1,
+			SuggestedWeight:   100,
+		}},
+	}, RefreshRequest{ChannelID: channel.Id})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Updated)
+
+	var refreshed model.ChannelAccount
+	require.NoError(t, db.First(&refreshed, existing.Id).Error)
+	metadata := ReadAccountSyncDisplayMetadata(refreshed.OtherSettings)
+	require.NotNil(t, metadata.RatioConversionConfig)
+	require.True(t, metadata.RatioConversionConfig.Enabled)
+	require.Equal(t, float64(1), metadata.RatioConversionConfig.PaidCNY)
+	require.Equal(t, float64(1), metadata.RatioConversionConfig.PlatformUSDCredit)
+	require.InDelta(t, 10, metadata.RatioConversion, 0.000001)
+}
+
+func TestRefreshChannelFromSnapshotExplicitRatioConversionOverridesExistingConfig(t *testing.T) {
+	db := setupRefreshChannelTestDB(t)
+	channel := createRefreshTestSyncedChannel(t, db, "ratio-override-channel", "")
+
+	oldKey := SyncedKey{
+		ExternalID: "ratio-key",
+		Name:       "Ratio Key",
+		Key:        "sk-ratio-old",
+		MaskedKey:  "sk-ratio-old",
+		GroupName:  "default",
+		Models:     []string{"gpt-4o"},
+		GroupRatio: floatPtr(10),
+	}
+	existingSnapshot := &Snapshot{
+		Platform: PlatformNewAPI,
+		BaseURL:  "https://newapi.example",
+		Keys:     []SyncedKey{oldKey},
+	}
+	ApplyRatioConversion(existingSnapshot, RatioConversionConfig{
+		PaidCNY:           1,
+		PlatformUSDCredit: 1,
+	})
+	existing := model.ChannelAccount{
+		ChannelId:     channel.Id,
+		Name:          "Ratio Key",
+		Key:           "sk-ratio-old",
+		Status:        common.ChannelStatusEnabled,
+		Models:        "gpt-4o",
+		Group:         "default",
+		AccessGroups:  "default",
+		OtherSettings: mergeAccountSyncMetadata("", existingSnapshot, existingSnapshot.Keys[0]),
+	}
+	require.NoError(t, db.Create(&existing).Error)
+
+	result, err := RefreshChannelFromSnapshot(channel.Id, &Snapshot{
+		Platform: PlatformNewAPI,
+		BaseURL:  "https://newapi.example",
+		Keys: []SyncedKey{{
+			ExternalID:        "ratio-key",
+			Name:              "Ratio Key Refreshed",
+			Key:               "sk-ratio-new",
+			MaskedKey:         "sk-ratio-new",
+			GroupName:         "default",
+			Models:            []string{"gpt-4o"},
+			GroupRatio:        floatPtr(10),
+			SuggestedPriority: 1,
+			SuggestedWeight:   100,
+		}},
+	}, RefreshRequest{
+		ChannelID: channel.Id,
+		RatioConversion: RatioConversionConfig{
+			PaidCNY:           2,
+			PlatformUSDCredit: 4,
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Updated)
+
+	var refreshed model.ChannelAccount
+	require.NoError(t, db.First(&refreshed, existing.Id).Error)
+	metadata := ReadAccountSyncDisplayMetadata(refreshed.OtherSettings)
+	require.NotNil(t, metadata.RatioConversionConfig)
+	require.True(t, metadata.RatioConversionConfig.Enabled)
+	require.Equal(t, float64(2), metadata.RatioConversionConfig.PaidCNY)
+	require.Equal(t, float64(4), metadata.RatioConversionConfig.PlatformUSDCredit)
+	require.InDelta(t, 5, metadata.RatioConversion, 0.000001)
 }
 
 func TestRefreshChannelFromSnapshotAppliesExplicitLocalModelsAndGroup(t *testing.T) {

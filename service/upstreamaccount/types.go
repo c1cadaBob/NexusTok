@@ -55,7 +55,8 @@ type Credential struct {
 // Password 和 Session 必须使用 common.EncryptSensitiveString 加密后再落库；对外返回
 // 渠道 settings 前必须通过 SanitizeChannelSyncSettings 移除 credentials，避免泄露
 // 可离线解密的敏感密文。Session 保存的是已通过上游 2FA 的登录态，用于降低刷新时
-// 反复输入验证码的频率；失效后仍会自动回退到保存的账号密码登录。
+// 反复输入验证码的频率。刷新同步渠道时如果同时保存了账号密码和登录态，会优先
+// 使用账号密码重新登录，避免即将失效或已经失效的 session / token 掩盖凭据问题。
 type StoredCredential struct {
 	Platform          string `json:"platform,omitempty"`
 	BaseURL           string `json:"base_url,omitempty"`

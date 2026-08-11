@@ -58,6 +58,28 @@ func TestRecordOperationAuditLogWritesStructuredOther(t *testing.T) {
 	require.Equal(t, true, auditInfo["success"])
 }
 
+func TestRecordOperationAuditLogUsesExplicitUsername(t *testing.T) {
+	setupLogAuditTestDB(t)
+
+	RecordOperationAuditLog(OperationAuditLogParams{
+		UserId:   0,
+		Username: "system",
+		Content:  "Ran upstream account sync system task task-1",
+		Ip:       "127.0.0.1",
+		Action:   "system_task.upstream_account_sync",
+		Params: map[string]interface{}{
+			"task_id": "task-1",
+			"source":  "system_task",
+			"success": true,
+		},
+	})
+
+	var log Log
+	require.NoError(t, LOG_DB.Where("type = ?", LogTypeManage).First(&log).Error)
+	require.Equal(t, 0, log.UserId)
+	require.Equal(t, "system", log.Username)
+}
+
 func TestRecordLoginLogWritesVisibleLoginMetadata(t *testing.T) {
 	setupLogAuditTestDB(t)
 

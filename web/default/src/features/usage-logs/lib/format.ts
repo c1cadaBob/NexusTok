@@ -353,6 +353,8 @@ const AUDIT_TEMPLATES: Record<string, string> = {
   'channel.tag_batch_set': 'Batch set tag for {{count}} channels',
   'channel.copy':
     'Copied channel {{sourceId}} to {{name}} (ID: {{id}})',
+  'channel.upstream_account_sync_refresh':
+    'Refreshed upstream account sync for channel {{name}} (ID: {{id}})',
   'channel.multi_key_manage':
     'Multi-key management {{action}} on channel (ID: {{id}})',
   'channel.upstream_apply':
@@ -463,6 +465,8 @@ const AUDIT_TEMPLATES: Record<string, string> = {
 
   'ratio_sync.fetch': 'Fetched upstream ratio sync data',
   'system_task.log_cleanup': 'Cleaned up historical logs',
+  'system_task.upstream_account_sync':
+    'Ran upstream account sync system task {{taskId}}',
   'log.clear': 'Cleared historical logs',
   generic: '{{method}} {{route}}',
 }
@@ -474,6 +478,7 @@ const AUDIT_PARAM_ALIASES: Record<string, string> = {
   plan_id: 'planId',
   role_key: 'roleKey',
   source_id: 'sourceId',
+  task_id: 'taskId',
   target_user_id: 'targetUserId',
 }
 

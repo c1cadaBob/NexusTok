@@ -278,6 +278,7 @@ func RecordLogWithAdminInfo(userId int, logType int, content string, adminInfo m
 //     状态码、业务 success 结果和路径参数；不要放请求体或密钥类字段。
 type OperationAuditLogParams struct {
 	UserId    int
+	Username  string
 	Content   string
 	Ip        string
 	Action    string
@@ -350,7 +351,10 @@ func RecordOperationAuditLog(params OperationAuditLogParams) {
 	if params.Action == "" {
 		params.Action = "generic"
 	}
-	username, _ := GetUsernameById(params.UserId, false)
+	username := strings.TrimSpace(params.Username)
+	if username == "" {
+		username, _ = GetUsernameById(params.UserId, false)
+	}
 	other := map[string]interface{}{
 		"op": buildOperationAuditOpField(params.Action, params.Params),
 	}

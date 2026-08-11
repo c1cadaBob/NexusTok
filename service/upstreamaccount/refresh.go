@@ -74,6 +74,15 @@ func RefreshChannelFromCredential(ctx context.Context, req RefreshRequest) (*Ref
 	if credentialNeedsPassword(req.Credential) {
 		return nil, fmt.Errorf("上游平台密码不能为空")
 	}
+	if refreshShouldUsePasswordLogin(req.Credential) {
+		// 刷新同步渠道时，账号密码比已保存的 session / token 更可靠。这里仅清空
+		// 本次内存凭据中的登录态，成功登录后平台客户端仍会把新的登录态重新挂到快照，
+		// 后续无密码场景可以继续复用。
+		req.Credential.Session = nil
+		req.Credential.AccessToken = ""
+		req.Credential.RefreshToken = ""
+		req.Credential.ExpiresAt = 0
+	}
 	client, err := NewPlatformClient(req.Platform)
 	if err != nil {
 		return nil, err
@@ -93,8 +102,6 @@ func RefreshChannelFromSnapshot(channelID int, snapshot *Snapshot, req RefreshRe
 	if snapshot == nil {
 		return nil, fmt.Errorf("上游账号快照为空")
 	}
-	applySnapshotRatioConversionForRequest(snapshot, req.RatioConversion)
-	ApplySyncIDs(snapshot)
 	result := &RefreshResult{ChannelID: channelID}
 	if err := model.DB.Transaction(func(tx *gorm.DB) error {
 		var channel model.Channel
@@ -108,6 +115,9 @@ func RefreshChannelFromSnapshot(channelID int, snapshot *Snapshot, req RefreshRe
 		if err := tx.Where("channel_id = ?", channelID).Find(&existing).Error; err != nil {
 			return err
 		}
+
+		applySnapshotRatioConversionForRefresh(snapshot, req.RatioConversion, existing)
+		ApplySyncIDs(snapshot)
 
 		defaultModels := strings.TrimSpace(channel.Models)
 		if inferred := inferModelsFromKeys(snapshot.Keys); inferred != "" {
@@ -219,6 +229,58 @@ func RefreshChannelFromSnapshot(channelID int, snapshot *Snapshot, req RefreshRe
 	}
 	model.InitChannelCache()
 	return result, nil
+}
+
+// refreshShouldUsePasswordLogin 判断刷新同步渠道时是否应强制走账号密码登录。
+//
+// 只有认证模式为 password、账号标识和密码都存在时才启用。调用方会清空本次内存
+// 中的 session / access_token / refresh_token，避免旧登录态短暂可用时掩盖账号密码
+// 已失效的问题；登录失败也不会回退旧 token。
+func refreshShouldUsePasswordLogin(credential Credential) bool {
+	if NormalizeAuthMode(credential.AuthMode) != AuthModePassword {
+		return false
+	}
+	if strings.TrimSpace(credential.Password) == "" {
+		return false
+	}
+	return strings.TrimSpace(firstNonEmpty(credential.Username, credential.Email)) != ""
+}
+
+// applySnapshotRatioConversionForRefresh 确定刷新落库时使用的成本换算配置。
+//
+// 优先级固定为：本次请求显式配置、快照已有配置、当前渠道账号 metadata 中保留的
+// 历史配置。最后一项用于系统自动同步和外部 API 刷新，避免未传 ratio_conversion
+// 时把管理员已保存的“实付金额 / 上游到账额度”重置为默认值。
+func applySnapshotRatioConversionForRefresh(snapshot *Snapshot, config RatioConversionConfig, existing []model.ChannelAccount) {
+	if config.Enabled() || (snapshot != nil && snapshot.RatioConversion != nil) {
+		applySnapshotRatioConversionForRequest(snapshot, config)
+		return
+	}
+	if preserved, ok := preservedRatioConversionConfig(existing); ok {
+		ApplyRatioConversion(snapshot, preserved)
+		ApplySuggestions(snapshot)
+		return
+	}
+	applySnapshotRatioConversionForRequest(snapshot, config)
+}
+
+// preservedRatioConversionConfig 从已有同步账号 metadata 中读取首个有效换算配置。
+//
+// 同一个同步渠道的账号共享渠道级成本换算配置，因此首个有效配置即可代表本渠道的
+// 历史设置；无效、关闭或不完整的旧数据会被跳过，不做 1/1 或 1/10 推断。
+func preservedRatioConversionConfig(accounts []model.ChannelAccount) (RatioConversionConfig, bool) {
+	for i := range accounts {
+		metadata := readAccountSyncMetadata(accounts[i].OtherSettings)
+		config := metadata.RatioConversionConfig
+		if config == nil || !config.Enabled || config.PaidCNY <= 0 || config.PlatformUSDCredit <= 0 {
+			continue
+		}
+		return RatioConversionConfig{
+			PaidCNY:           config.PaidCNY,
+			PlatformUSDCredit: config.PlatformUSDCredit,
+		}, true
+	}
+	return RatioConversionConfig{}, false
 }
 
 // syncedChannelBaseURLUpdate 判断刷新成功后是否可以把渠道调用地址迁移到快照地址。
