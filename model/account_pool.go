@@ -8,7 +8,7 @@
 //
 // 常量定义：
 // - 认证类型（AuthType）：api_key、official_oauth、cookie、service_account、custom_json
-// - 分组来源（Source）：native（原生）、cliproxyapi（CLI 代理 API）
+// - 分组来源（Source）：native（原生）
 // - 调度策略（Strategy）：round_robin（轮询）、random（随机）、weighted（加权）、fill_first（优先填满）、least_used（最少使用）、success_rate（成功率优先）
 //
 // 核心功能：
@@ -43,8 +43,6 @@ const (
 
 	// AccountPoolGroupSourceNative 原生分组（手动创建）
 	AccountPoolGroupSourceNative = "native"
-	// AccountPoolGroupSourceCLIProxyAPI CLI 代理 API 来源
-	AccountPoolGroupSourceCLIProxyAPI = "cliproxyapi"
 
 	// AccountPoolStrategyRoundRobin 轮询调度策略
 	AccountPoolStrategyRoundRobin = "round_robin"
@@ -163,6 +161,16 @@ const (
 	// AccountPoolTaskLimitMaxWaitSeconds 表示任务提交等待策略允许配置的最大超时时间。
 	AccountPoolTaskLimitMaxWaitSeconds = 30
 )
+
+// IsNativeAccountPoolGroupSource 判断账号池分组来源是否属于 NexusTok 原生实现。
+//
+// 历史版本允许 Source 为空，模型钩子会在新增记录时补成 native；这里仍把空字符串视为
+// 原生来源，是为了兼容旧数据库中尚未经过更新钩子的原生分组。任何其他来源都不能进入
+// 渠道绑定、Relay 选号、健康检查和后台任务，避免已移除的外部账号池路径重新参与运行。
+func IsNativeAccountPoolGroupSource(source string) bool {
+	source = strings.ToLower(strings.TrimSpace(source))
+	return source == "" || source == AccountPoolGroupSourceNative
+}
 
 var (
 	// ErrAccountPoolGroupDailyRequestLimitExceeded 表示账号池分组当天可调度请求次数已耗尽。
@@ -1701,16 +1709,19 @@ func CheckPoolAccountDailyQuotaLimit(accountID int) error {
 	return nil
 }
 
-// GetAccountPoolGroups 分页查询账号池分组列表
-// 支持按状态筛选和关键词搜索（名称、平台、认证类型、模型）
-func GetAccountPoolGroups(page int, pageSize int, status int, search string) ([]*AccountPoolGroup, int64, error) {
+// GetNativeAccountPoolGroups 分页查询原生账号池分组列表。
+//
+// 账号池已经收敛为 NexusTok 主服务的原生能力，因此面向管理页面和渠道选择的列表只返回
+// native 或历史空来源分组。旧外部来源分组会在迁移阶段尽量转为 native；无法转为原生的
+// 空镜像组保留在数据库中但不再通过常规接口暴露，避免管理员误把外部账号池服务当作可运行能力。
+func GetNativeAccountPoolGroups(page int, pageSize int, status int, search string) ([]*AccountPoolGroup, int64, error) {
 	if page <= 0 {
 		page = 1
 	}
 	if pageSize <= 0 {
 		pageSize = 20
 	}
-	query := DB.Model(&AccountPoolGroup{})
+	query := DB.Model(&AccountPoolGroup{}).Where("(source = ? OR source = '')", AccountPoolGroupSourceNative)
 	if status > 0 {
 		query = query.Where("status = ?", status)
 	}
@@ -1725,6 +1736,11 @@ func GetAccountPoolGroups(page int, pageSize int, status int, search string) ([]
 	groups := []*AccountPoolGroup{}
 	err := query.Order("id DESC").Limit(pageSize).Offset((page - 1) * pageSize).Find(&groups).Error
 	return groups, total, err
+}
+
+// GetAccountPoolGroups 保留旧函数名给包内外历史调用复用，行为已经收敛为原生账号池查询。
+func GetAccountPoolGroups(page int, pageSize int, status int, search string) ([]*AccountPoolGroup, int64, error) {
+	return GetNativeAccountPoolGroups(page, pageSize, status, search)
 }
 
 // AttachAccountPoolGroupStats 为分组列表附加账号统计信息

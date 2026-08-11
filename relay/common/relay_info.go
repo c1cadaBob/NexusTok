@@ -610,17 +610,6 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 		info.RequestURLPath = strings.TrimPrefix(info.RequestURLPath, "/pg")
 		info.RequestURLPath = "/v1" + info.RequestURLPath
 	}
-	if c.GetBool("account_pool_main_relay") {
-		// CPAMC 嵌入式 api-call 已经通过 NexusTok 管理员 session 完成鉴权，
-		// 这里将它标记为 Playground 语义，目的是复用主项目完整 Relay 规则
-		// 的同时避免要求浏览器或 CPAMC 保存额外的 NexusTok API Token。
-		//
-		// 该标记只跳过 Token 余额扣减；用户钱包或订阅仍会按主 Relay 的
-		// 预扣费、结算和日志逻辑处理。因此 CPAMC 发起的模型测试请求不会
-		// 绕过主项目的渠道选择、参数覆盖、敏感词、计费和使用日志。
-		info.IsPlayground = true
-	}
-
 	userSetting, ok := common.GetContextKeyType[dto.UserSetting](c, constant.ContextKeyUserSetting)
 	if ok {
 		info.UserSetting = userSetting

@@ -36,7 +36,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 
 | 功能 | NexusTok 文件/接口 | new-api-main 状态 | 原生化保留策略 |
 |------|-------------------|------------------|----------------|
-| 原生账号池 | `model/account_pool.go`、`controller/account_pool.go`、`service/account_pool_*`、`/api/account-pool/*` | 缺少 | 继续作为核心域模型，不退回外部 Sidecar/CPAMC/CLIProxyAPI。 |
+| 原生账号池 | `model/account_pool.go`、`controller/account_pool.go`、`service/account_pool_*`、`/api/account-pool/*` | 缺少 | 继续作为核心域模型，不退回外部账号池服务。 |
 | 认证文件管理 | `AccountPoolAuthFile`、`POST /api/account-pool/auth-files`、`POST /api/account-pool/auth-files/import` | 缺少 | 维持“凭证全局 + 组内 PoolAccount 派生”模型，后续再评估真正账号多对多关系。 |
 | 账号池健康看板 | `GET /api/account-pool/health`、`model/account_pool_health.go` | 缺少 | 后续可接入系统信息页，形成实例维度和账号池维度的统一健康视图。 |
 | 账号池使用日志 | `GET /api/account-pool/usage-logs`、`service/account_pool_usage_service.go` | 缺少 | 作为账号池审计主线，后续接入权限系统，限制非 Root 查看敏感账号。 |
@@ -356,7 +356,7 @@ NexusTok 当前已经在账号池方向形成了明显原生优势：有 `/api/a
 ### P0：保护并完成 NexusTok 已有账号池主线
 
 1. 保持 `AccountPoolGroup`、`PoolAccount`、`AccountPoolAuthFile` 为原生一等模型。
-2. 不引入外部 sub2api/CPAMC/Sidecar 作为运行依赖。
+2. 不引入外部 sub2api 或其它账号池服务作为运行依赖。
 3. 账号池检测任务已迁移到统一 SystemTask 执行层，但 API 响应继续兼容现有前端。
 4. 账号池导出、状态日志和使用日志继续脱敏，不向通用审计泄露完整凭据。
 5. 渠道表单继续以 `credential_mode` + `account_pool_group_id` 表示账号池模式。
@@ -8330,7 +8330,7 @@ MCP 真实点击首次复测发现：把 `Search results / Add {{count}} new mod
 2. 当渠道配置了 `proxy` 时，`VideoProxy` 继续使用 `service.GetHttpClientWithProxy(proxy)`，因为目标连接由代理侧建立；请求前 `ValidateURLWithFetchSetting` 保留。
 3. `RelayMidjourneyImage` 记录渠道 `proxy` 字符串；无代理时使用 `service.GetSSRFProtectedHTTPClient()`，有代理时保持 `service.NewProxyHttpClient(proxy)`。
 4. 两个调用点继续在 `client.Do` 前执行现有 `common.ValidateURLWithFetchSetting`，让错误尽早以 403 返回；直连实际请求时由 protected client 再做 RoundTrip 和 Dial 阶段校验。
-5. 不新增路由、不改数据库、不改 FetchSetting schema、不改变 Worker 下载、Webhook、Bark/Gotify、Relay 上游和账号池 Sidecar 代理边界。
+5. 不新增路由、不改数据库、不改 FetchSetting schema、不改变 Worker 下载、Webhook、Bark/Gotify、Relay 上游和账号池代理边界。
 
 ### 验收方式
 
@@ -8346,7 +8346,7 @@ MCP 真实点击首次复测发现：把 `Search results / Add {{count}} new mod
 
 已完成结果媒体代理 SSRF Dial 阶段补强。`controller.VideoProxy` 现在默认使用 `service.GetSSRFProtectedHTTPClient()` 发起任务结果视频请求；当渠道显式配置 `proxy` 时，继续使用 `service.GetHttpClientWithProxy(proxy)`，并保留请求前 URL 预校验作为代理路径的可执行边界。这样无代理直连视频代理会在 URL 预校验后，于真正拨号前再次解析和校验目标 IP，降低 DNS rebinding 风险。
 
-`relay.RelayMidjourneyImage` 也完成同类调整：无渠道代理时使用 protected client 代理任务图片；有渠道代理时继续使用 `service.NewProxyHttpClient(proxy)`，因为最终目标连接由代理侧建立。两处均未修改任务查询、provider 认证头、响应体转发、Content-Type、缓存头、Worker 下载、Webhook/Bark/Gotify 或 Relay 全局上游 client。SSRF 覆盖缺口审计结论同步写入实施索引：当前首批用户可控 URL 直连链路已覆盖下载、Webhook、Bark/Gotify、视频结果代理和 Midjourney 图片代理；Relay 上游、渠道显式代理、账号池 Sidecar、models.dev 同步和固定 OAuth/支付服务继续作为明确例外管理。
+`relay.RelayMidjourneyImage` 也完成同类调整：无渠道代理时使用 protected client 代理任务图片；有渠道代理时继续使用 `service.NewProxyHttpClient(proxy)`，因为最终目标连接由代理侧建立。两处均未修改任务查询、provider 认证头、响应体转发、Content-Type、缓存头、Worker 下载、Webhook/Bark/Gotify 或 Relay 全局上游 client。SSRF 覆盖缺口审计结论同步写入实施索引：当前首批用户可控 URL 直连链路已覆盖下载、Webhook、Bark/Gotify、视频结果代理和 Midjourney 图片代理；Relay 上游、渠道显式代理、models.dev 同步和固定 OAuth/支付服务继续作为明确例外管理。
 
 ### 验证记录
 

@@ -139,6 +139,9 @@ func selectPoolAccountOnce(c *gin.Context, channel *model.Channel, modelName str
 	if group == nil || group.Status != common.ChannelStatusEnabled {
 		return group, nil, ErrNoAvailablePoolAccount
 	}
+	if err := ensureNativeAccountPoolGroup(group); err != nil {
+		return group, nil, err
+	}
 	nowTime := time.Now()
 	if reset, err := model.ResetAccountPoolGroupDailyUsageIfNeeded(group.Id, nowTime); err != nil {
 		return group, nil, err

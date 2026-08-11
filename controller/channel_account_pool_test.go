@@ -88,11 +88,11 @@ func TestAccountPoolGroupOptionResponseReturnsNativeGroupsWithAccounts(t *testin
 
 	legacyGroup := &model.AccountPoolGroup{
 		Id:          2,
-		Name:        "empty-remote",
+		Name:        "empty-external",
 		Platform:    "codex",
 		AuthType:    model.AccountPoolAuthTypeOfficialOAuth,
-		Source:      model.AccountPoolGroupSourceCLIProxyAPI,
-		ExternalKey: "empty-remote",
+		Source:      "external_legacy",
+		ExternalKey: "empty-external",
 		Status:      common.ChannelStatusEnabled,
 		Stats:       map[string]int64{"total": 0, "enabled": 0},
 	}
@@ -102,11 +102,11 @@ func TestAccountPoolGroupOptionResponseReturnsNativeGroupsWithAccounts(t *testin
 
 	activeLegacyGroup := &model.AccountPoolGroup{
 		Id:          4,
-		Name:        "remote-main",
+		Name:        "external-main",
 		Platform:    "codex",
 		AuthType:    model.AccountPoolAuthTypeOfficialOAuth,
-		Source:      model.AccountPoolGroupSourceCLIProxyAPI,
-		ExternalKey: "remote-main",
+		Source:      "external_legacy",
+		ExternalKey: "external-main",
 		Status:      common.ChannelStatusEnabled,
 		Stats:       map[string]int64{"total": 2, "enabled": 1},
 	}
@@ -504,15 +504,15 @@ func TestAccountPoolGroupRequestNormalizesTaskLimitSettings(t *testing.T) {
 	require.Equal(t, model.AccountPoolTaskLimitDefaultWaitSeconds, updates["task_limit_wait_seconds"])
 }
 
-func TestValidateChannelGlobalAccountPoolRejectsCLIProxyGroup(t *testing.T) {
+func TestValidateChannelGlobalAccountPoolRejectsExternalGroup(t *testing.T) {
 	setupAccountPoolChannelTestDB(t)
 
 	group := &model.AccountPoolGroup{
-		Name:        "remote-only",
+		Name:        "external-only",
 		Platform:    "codex",
 		AuthType:    model.AccountPoolAuthTypeAPIKey,
-		Source:      model.AccountPoolGroupSourceCLIProxyAPI,
-		ExternalKey: "remote-only",
+		Source:      "external_legacy",
+		ExternalKey: "external-only",
 		Status:      common.ChannelStatusEnabled,
 	}
 	require.NoError(t, model.DB.Create(group).Error)

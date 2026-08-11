@@ -405,7 +405,7 @@ const poolAccountBatchOperationLimit = 100
 func ListAccountPoolGroups(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	status, _ := strconv.Atoi(c.Query("status"))
-	groups, total, err := model.GetAccountPoolGroups(pageInfo.GetPage(), pageInfo.GetPageSize(), status, c.Query("search"))
+	groups, total, err := model.GetNativeAccountPoolGroups(pageInfo.GetPage(), pageInfo.GetPageSize(), status, c.Query("search"))
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -2292,46 +2292,6 @@ func timestampOrZero(t time.Time) int64 {
 	return t.Unix()
 }
 
-func syncCLIProxyGroupsForList(c *gin.Context) {
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
-	defer cancel()
-	if err := service.SyncCLIProxyAccountGroups(ctx); err != nil {
-		common.SysLog(service.AccountPoolSidecarUnavailableError(err).Error())
-	}
-}
-
-func attachCLIProxyGroupStats(c *gin.Context, groups []*model.AccountPoolGroup) {
-	hasCLIProxyGroup := false
-	for _, group := range groups {
-		if service.IsCLIProxyAccountPoolGroup(group) {
-			hasCLIProxyGroup = true
-			break
-		}
-	}
-	if !hasCLIProxyGroup {
-		return
-	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
-	defer cancel()
-	stats, err := service.CLIProxyGroupStats(ctx)
-	if err != nil {
-		common.SysLog(service.AccountPoolSidecarUnavailableError(err).Error())
-		return
-	}
-	for _, group := range groups {
-		if !service.IsCLIProxyAccountPoolGroup(group) {
-			continue
-		}
-		groupKey := strings.TrimSpace(group.ExternalKey)
-		if groupKey == "" {
-			groupKey = strings.TrimSpace(group.Name)
-		}
-		if groupStats := stats[groupKey]; groupStats != nil {
-			group.Stats = groupStats
-		}
-	}
-}
-
 func buildAccountPoolGroupFromRequest(req accountPoolGroupUpsertRequest) (*model.AccountPoolGroup, error) {
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
@@ -2931,14 +2891,13 @@ func accountPoolGroupResponse(group *model.AccountPoolGroup) gin.H {
 
 // accountPoolGroupOptionResponse 构造渠道表单可选择的账号池组响应。
 // 原生账号池是当前唯一的账号池运行目标：渠道绑定分组后，Relay 会在本地数据库中
-// 查询该组下的 PoolAccount 并完成调度。这里不再同步或过滤外部 Sidecar 分组，只要求
+// 查询该组下的 PoolAccount 并完成调度。这里不再同步或过滤外部镜像分组，只要求
 // 分组启用且至少包含一个账号，避免用户选到空组后保存了不可运行的渠道。
 func accountPoolGroupOptionResponse(group *model.AccountPoolGroup) (gin.H, bool) {
 	if group == nil || group.Status != common.ChannelStatusEnabled {
 		return nil, false
 	}
-	source := strings.TrimSpace(group.Source)
-	if source != "" && !strings.EqualFold(source, model.AccountPoolGroupSourceNative) {
+	if !model.IsNativeAccountPoolGroupSource(group.Source) {
 		return nil, false
 	}
 	stats := group.Stats

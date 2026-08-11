@@ -12,8 +12,7 @@ docs/
 ├── i18n/                          ← 国际化与翻译
 ├── images/                        ← 文档图片资源
 ├── installation/                  ← 安装部署指南
-├── openapi/                       ← OpenAPI 规范文件
-└── sdk/                           ← CLIProxyAPI SDK 文档
+└── openapi/                       ← OpenAPI 规范文件
 ```
 
 ## 文档索引
@@ -32,15 +31,6 @@ docs/
 | [CLAUDE.md](../CLAUDE.md) | Claude Code 项目规范与编码约定 |
 | [AGENTS.md](../AGENTS.md) | Claude Agent SDK 配置 |
 | [web/default/AGENTS.md](../web/default/AGENTS.md) | 前端代理配置 |
-
-### SDK 文档（CLIProxyAPI）
-
-| 文档 | 说明 |
-|------|------|
-| [sdk-access.md](sdk/sdk-access.md) / [中文](sdk/sdk-access_CN.md) | 入站访问认证 SDK |
-| [sdk-usage.md](sdk/sdk-usage.md) / [中文](sdk/sdk-usage_CN.md) | SDK 嵌入使用指南 |
-| [sdk-advanced.md](sdk/sdk-advanced.md) / [中文](sdk/sdk-advanced_CN.md) | 执行器与翻译器扩展 |
-| [sdk-watcher.md](sdk/sdk-watcher.md) / [中文](sdk/sdk-watcher_CN.md) | Watcher 集成说明 |
 
 ### 安装部署
 
@@ -62,14 +52,6 @@ docs/
 | [i18n/translation-glossary.md](i18n/translation-glossary.md) | 翻译术语表（英文基准） |
 | [i18n/translation-glossary.fr.md](i18n/translation-glossary.fr.md) | 翻译术语表（法语） |
 | [i18n/translation-glossary.ru.md](i18n/translation-glossary.ru.md) | 翻译术语表（俄语） |
-
-### 模块文档
-
-| 文档 | 说明 |
-|------|------|
-| [modules/cpa-manager/README.md](../modules/cpa-manager/README.md) / [中文](../modules/cpa-manager/README_CN.md) | CPA-Manager 管理面板文档 |
-| [modules/MANIFEST.md](../modules/MANIFEST.md) | 模块清单 |
-| [modules/cliproxyapi/CLAUDE.md](../modules/cliproxyapi/CLAUDE.md) | CLIProxyAPI 子模块规范 |
 
 ### 架构文档
 

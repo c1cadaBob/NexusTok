@@ -13,7 +13,7 @@ NexusTok 后端是单个 Go 服务，前端有两套构建产物会被嵌入到 
 
 Go 入口文件 `main.go` 使用 `//go:embed` 嵌入以上构建产物。生产部署时只需要运行最终的 `nexustok` 二进制或 Docker 镜像，不需要额外提供前端文件。
 
-账号池已收敛为主服务内置的原生能力。原生账号池分组、池账号和认证文件由 NexusTok 主服务直接读写主数据库；默认前端账号池页面的 **Auth Files** 视图可导入原生、`sub2`、`newapi` 和 Sub2api 批量 JSON 凭据。CPAMC/CLIProxyAPI/Sidecar 管理器不再作为运行时入口，也不会在默认部署中启动。
+账号池是主服务内置的原生能力。账号池分组、池账号和认证文件由 NexusTok 主服务直接读写主数据库；默认前端账号池页面的 **Auth Files** 视图可导入原生、`sub2`、`newapi` 和 Sub2api 批量 JSON 凭据。仓库不包含独立账号池管理器或 Sidecar，部署时不需要额外账号池服务。
 
 运行时主题由配置项 `theme.frontend` 控制：
 
@@ -452,7 +452,7 @@ docker run --name nexustok -d --restart always \
 
 上面的命令保留 `/opt/nexustok/data` 和 `/opt/nexustok/logs`，不会删除 SQLite、会话密钥文件或日志。端口请按你的实际暴露端口调整：默认推荐 `-p 3030:3030`；如果仍想用宿主机 `3008` 访问，则使用 `-p 3008:3030`，对应地址为 `http://服务器IP:3008`。
 
-单容器模式和 Compose 模式都使用 NexusTok 原生账号池。账号池分组、池账号和认证文件 API 均由主服务直接提供，不需要额外启动 CLIProxyAPI Sidecar 或 CPA Usage Service。
+单容器模式和 Compose 模式都使用 NexusTok 原生账号池。账号池分组、池账号、认证文件、健康检查和用量日志 API 均由主服务直接提供。
 
 ## 从源码构建生产镜像
 

@@ -508,6 +508,9 @@ func migrateDB() error {
 			return err
 		}
 	}
+	if err := migrateLegacyCLIProxyAccountPoolGroups(); err != nil {
+		return err
+	}
 	if err := migrateSyncedAccountChannelTypes(); err != nil {
 		return err
 	}
@@ -594,6 +597,9 @@ func migrateDBFast() error {
 		}
 	}
 	if err := ensureAccountPoolAuthFileLinks(); err != nil {
+		return err
+	}
+	if err := migrateLegacyCLIProxyAccountPoolGroups(); err != nil {
 		return err
 	}
 	if err := migrateSyncedAccountChannelTypes(); err != nil {

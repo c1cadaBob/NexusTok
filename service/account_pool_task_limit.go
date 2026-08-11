@@ -59,6 +59,9 @@ func ReserveAccountPoolTaskLimit(c *gin.Context, opts AccountPoolTaskLimitOption
 	if group == nil || group.Status != common.ChannelStatusEnabled {
 		return group, nil
 	}
+	if err := ensureNativeAccountPoolGroup(group); err != nil {
+		return group, err
+	}
 	if group.GetTaskMaxConcurrency() <= 0 && group.GetTaskRateLimitRpm() <= 0 {
 		return group, nil
 	}

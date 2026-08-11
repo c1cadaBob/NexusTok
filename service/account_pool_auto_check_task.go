@@ -105,7 +105,7 @@ func shouldRunAccountPoolAutoCheck(group *model.AccountPoolGroup, now int64) boo
 	if group.Status != common.ChannelStatusEnabled {
 		return false
 	}
-	if group.Source != "" && group.Source != model.AccountPoolGroupSourceNative {
+	if !model.IsNativeAccountPoolGroupSource(group.Source) {
 		return false
 	}
 	return group.AutoCheckNextTime <= 0 || group.AutoCheckNextTime <= now

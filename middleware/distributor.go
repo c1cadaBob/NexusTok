@@ -71,9 +71,8 @@ func Distribute() func(c *gin.Context) {
 
 // PrepareRelayChannelContext 为一次 Relay 请求完成渠道选择并写入上下文。
 //
-// 该函数从 Distribute 中间件中抽出，供 CPAMC 嵌入式 api-call 这类“已经
-// 通过 NexusTok session 完成管理员鉴权，但仍需要复用主 Relay 链路”的入口调用。
-// 它保持与标准 TokenAuth -> Distribute 链路相同的不变量：
+// 该函数从 Distribute 中间件中抽出，供标准 Relay、Playground 和测试入口复用。
+// 它保持与 TokenAuth -> Distribute 链路相同的不变量：
 // - 根据请求体或路径解析模型；
 // - 检查 Token 模型限制；
 // - 按用户分组、渠道亲和性和随机策略选择渠道；
@@ -218,8 +217,8 @@ func selectRelayChannelForSetupRetry(
 // selectRelayChannel 按标准分发规则为请求选择渠道。
 //
 // 该函数只负责“自动选路”分支，管理员指定 specific_channel_id 的路径仍由
-// PrepareRelayChannelContext 直接处理。拆分出来是为了让中间件和 CPAMC
-// 内部重放请求共用同一套模型限制、分组、亲和性和随机选路逻辑。
+// PrepareRelayChannelContext 直接处理。拆分出来是为了让标准 Relay 和内部测试入口
+// 共用同一套模型限制、分组、亲和性和随机选路逻辑。
 func selectRelayChannel(c *gin.Context, modelRequest *ModelRequest, shouldSelectChannel bool) (*model.Channel, bool) {
 	var channel *model.Channel
 	var selectGroup string
@@ -365,8 +364,7 @@ func channelSupportsRequestPath(channel *model.Channel, requestPath string) bool
 
 // RecordRelayChannelAffinityIfSucceeded 在请求成功后记录渠道亲和性。
 //
-// 该函数独立出来，是为了让非标准 Gin 中间件链（例如 CPAMC api-call 在
-// NexusTok 后端内部重放到主 Relay）也能在成功时复用相同的亲和性记录规则。
+// 该函数独立出来，是为了让标准中间件链和测试入口都能在成功时复用相同的亲和性记录规则。
 func RecordRelayChannelAffinityIfSucceeded(c *gin.Context, channel *model.Channel) {
 	if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
 		service.RecordChannelAffinity(c, channel.Id)
@@ -875,40 +873,6 @@ func applyPoolAccountContext(c *gin.Context, channel *model.Channel, group *mode
 	case constant.ChannelTypeCoze:
 		c.Set("bot_id", channelOther)
 	}
-}
-
-// applyCLIProxyAccountPoolContext 应用 CLI Proxy 账号池上下文
-// CLI Proxy 是一种特殊的账号池模式，使用外部 CLI 工具代理请求
-// 配置来源：渠道 > 账号池组（头部覆盖合并）
-//
-// 参数：
-//   - c: Gin 上下文
-//   - channel: 渠道对象
-//   - group: 账号池组对象
-func applyCLIProxyAccountPoolContext(c *gin.Context, channel *model.Channel, group *model.AccountPoolGroup) {
-	setUpstreamRatioConversionContext(c, channel.OtherSettings)
-	common.SetContextKey(c, constant.ContextKeyChannelSetting, resolvePoolChannelSetting(channel, group, nil))
-	common.SetContextKey(c, constant.ContextKeyChannelOtherSetting, channel.GetOtherSettings())
-	paramOverride := channel.GetParamOverride()
-	if mergedParam, applied := service.ApplyChannelAffinityOverrideTemplate(c, paramOverride); applied {
-		paramOverride = mergedParam
-	}
-	headerOverride := service.MergeHeaderOverrides(channel.GetHeaderOverride(), service.BuildCLIProxyGroupHeaderOverride(group))
-	common.SetContextKey(c, constant.ContextKeyChannelParamOverride, paramOverride)
-	common.SetContextKey(c, constant.ContextKeyChannelHeaderOverride, headerOverride)
-	if channel.OpenAIOrganization != nil {
-		common.SetContextKey(c, constant.ContextKeyChannelOrganization, *channel.OpenAIOrganization)
-	} else {
-		common.SetContextKey(c, constant.ContextKeyChannelOrganization, "")
-	}
-	common.SetContextKey(c, constant.ContextKeyChannelModelMapping, resolvePoolChannelModelMapping(channel, group, nil))
-	common.SetContextKey(c, constant.ContextKeyChannelStatusCodeMapping, channel.GetStatusCodeMapping())
-	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, service.AccountPoolCLIProxyURL())
-
-	c.Set("api_version", "")
-	c.Set("region", "")
-	c.Set("plugin", "")
-	c.Set("bot_id", "")
 }
 
 // resolveChannelSetting 解析渠道设置

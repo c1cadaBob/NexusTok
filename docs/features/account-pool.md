@@ -4,7 +4,7 @@
 
 当前项目只使用 **原生账号池**：由 NexusTok 主服务直接管理 `AccountPoolGroup`、`PoolAccount` 和 `AccountPoolAuthFile`，数据保存在主数据库中，Relay 热路径直接从本地账号池选择账号。
 
-CPAMC/CLIProxyAPI/Sidecar 账号池路径已弃用，后续不再作为渠道配置、调度、测试或文档目标。认证文件导入后会生成可调度的 `PoolAccount`，因此渠道只需要绑定原生账号池分组即可使用导入的官方账号或 API Key。
+外部账号池管理器和 Sidecar 代码已经从仓库移除。认证文件导入后会生成可调度的 `PoolAccount`，渠道只需要绑定原生账号池分组即可使用导入的官方账号或 API Key。
 
 ## 架构概览
 
@@ -38,12 +38,11 @@ CPAMC/CLIProxyAPI/Sidecar 账号池路径已弃用，后续不再作为渠道配
 | `Group` | 关联的渠道分组 |
 | `ModelMapping` | 模型映射（JSON） |
 
-`Source` 的常见取值：
+`Source` 的运行时取值：
 
 | 来源 | 说明 |
 |------|------|
 | `native` | NexusTok 主服务原生维护的分组 |
-| `cliproxyapi` | 旧 Sidecar 兼容来源，已弃用，后续应迁移为 `native` |
 
 ### 池账号（PoolAccount）
 
@@ -420,7 +419,7 @@ DELETE /api/account-pool/auth-files/123?delete_account=false
 4. 账号凭据会被转换为现有 provider adaptor 可识别的 channel key 或 OAuth 凭据。
 5. 调用完成后释放并发槽位，并在结算阶段记录账号池维度用量。
 
-渠道账号池模式只应引用原生 `native` 分组。旧的 `cliproxyapi` 来源分组不再作为新渠道配置目标，应迁移为原生认证文件和原生池账号。
+渠道账号池模式只引用原生 `native` 分组，所有选号、凭据刷新、检测、限流和日志都由主服务完成。
 
 ## 使用流程
 
@@ -440,15 +439,9 @@ DELETE /api/account-pool/auth-files/123?delete_account=false
 3. 在渠道配置中引用账号池分组。
 4. 后续可按账号刷新凭据、重置运行时状态、调整状态或删除账号。
 
-### 旧 Sidecar 迁移
+### 历史分组升级
 
-CPAMC/CLIProxyAPI/Sidecar 路径已弃用。历史部署如果仍存在 `cliproxyapi` 来源分组，应按以下方式迁移：
-
-1. 导出或整理旧系统中的账号凭据。
-2. 通过原生认证文件导入入口写入 NexusTok。
-3. 生成原生 `PoolAccount` 并归属到原生 `AccountPoolGroup`。
-4. 修改渠道配置，绑定新的原生账号池分组。
-5. 确认 Relay 调用不再依赖 Sidecar 地址、管理 key 或外部分组头。
+升级时主服务会处理旧外部来源分组：已经拥有本地 `PoolAccount` 的分组会转为 `native` 并继续由原生调度器使用；没有本地账号的空镜像组会被禁用并保留历史记录。外部系统中的凭据如果尚未导入 NexusTok，需要通过原生认证文件入口重新导入。
 
 ## 安全与迁移注意事项
 
@@ -456,8 +449,8 @@ CPAMC/CLIProxyAPI/Sidecar 路径已弃用。历史部署如果仍存在 `cliprox
 - `FileDigest` 用原始 JSON 内容计算，用于阻止重复导入完全相同的认证文件。
 - 编辑认证文件级 `account_groups`、`models`、`proxy`、`base_url`、`priority`、`weight`、`max_concurrency`、`status` 会同步到关联池账号。
 - 认证文件删除默认会删除关联池账号，避免残留可调度凭据；需要保留账号时显式传 `delete_account=false`。
-- 从外部账号管理器迁移时，优先确认 provider、认证类型、代理和分组语义是否能一一映射。Sub2api 批量导出包可以直接导入；其它来源的批量格式如无法识别，应先拆分为单个认证对象。
-- 单容器部署不需要启动 CLIProxyAPI Sidecar；账号池和认证文件 API 均由 NexusTok 主服务提供。
+- 从其它账号管理器迁移时，优先确认 provider、认证类型、代理和分组语义是否能一一映射。Sub2api 批量导出包可以直接导入；其它来源的批量格式如无法识别，应先拆分为单个认证对象。
+- 单容器和 Compose 部署均由 NexusTok 主服务提供账号池和认证文件 API，不需要额外账号池服务。
 
 ## 关键文件
 
@@ -468,10 +461,8 @@ CPAMC/CLIProxyAPI/Sidecar 路径已弃用。历史部署如果仍存在 `cliprox
 | `service/account_pool_select.go` | 账号选择与负载均衡 |
 | `service/account_pool_refresh_task.go` | 凭据刷新任务 |
 | `service/account_pool_quota.go` | 配额管理 |
-| `service/account_pool_cliproxy.go` | 旧 CLIProxyAPI 兼容代码，待迁移清理 |
 | `service/accountauth/` | 认证提供者实现 |
 | `service/codex_oauth.go` | Codex OAuth 2.0 流程 |
 | `service/codex_credential_refresh.go` | 凭据刷新逻辑 |
 | `controller/account_pool.go` | 账号池管理 API |
-| `controller/account_pool_proxy.go` | 账号池 Relay 入口 |
 | `router/api-router.go` | `/api/account-pool` 路由注册 |

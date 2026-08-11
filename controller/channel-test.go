@@ -720,9 +720,9 @@ func shouldUseStreamForAutomaticChannelTest(channel *model.Channel) bool {
 	return channel != nil && channel.Type == constant.ChannelTypeCodex
 }
 
-// formatChannelTestFailureMessage 将上游/Sidecar 的底层错误转换成管理员可操作的提示。
+// formatChannelTestFailureMessage 将上游或账号池底层错误转换成管理员可操作的提示。
 //
-// 渠道测试经常会经过账号池、CPAMC/CLIProxyAPI 或上游模型服务。底层错误体可能是多层
+// 渠道测试经常会经过账号池或上游模型服务。底层错误体可能是多层
 // JSON 转义后的 `auth_unavailable`、`Unauthorized` 等信息，直接展示会让管理员难以判断
 // 是 NexusTok 登录态问题、渠道 Key 问题，还是账号池授权问题。这里仅改写展示文案，
 // 不改变原始日志和错误码，便于排查时仍能从日志看到完整响应。

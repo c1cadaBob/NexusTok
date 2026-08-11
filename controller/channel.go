@@ -537,10 +537,8 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 			return fmt.Errorf("账号池组未启用")
 		}
 		// 账号池模式已经收敛为 NexusTok 原生实现。渠道只允许绑定本地数据库中
-		// 由 AccountPoolGroup/PoolAccount 管理的原生分组，避免新请求继续依赖已弃用的
-		// CPAMC/CLIProxyAPI/Sidecar 外部分组和中转密钥。
-		source := strings.TrimSpace(group.Source)
-		if source != "" && !strings.EqualFold(source, model.AccountPoolGroupSourceNative) {
+		// 由 AccountPoolGroup/PoolAccount 管理的原生分组，避免新请求继续依赖外部镜像分组。
+		if !model.IsNativeAccountPoolGroupSource(group.Source) {
 			return fmt.Errorf("账号池模式只能选择原生账号池组")
 		}
 	}

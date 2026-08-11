@@ -13,8 +13,7 @@ fail() {
 
 is_allowed_runtime_like_path() {
   case "$1" in
-    modelcatalog/repository/*|\
-    modules/cpa-manager/usage-service/internal/httpapi/web/*)
+    modelcatalog/repository/*)
       return 0
       ;;
   esac

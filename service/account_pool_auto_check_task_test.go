@@ -153,7 +153,7 @@ func TestShouldRunAccountPoolAutoCheckGuardsNativeEnabledDueGroups(t *testing.T)
 		AutoCheckNextTime: now,
 	}, now))
 	require.False(t, shouldRunAccountPoolAutoCheck(&model.AccountPoolGroup{
-		Source:            model.AccountPoolGroupSourceCLIProxyAPI,
+		Source:            "external_legacy",
 		Status:            common.ChannelStatusEnabled,
 		AutoCheckEnabled:  true,
 		AutoCheckNextTime: now,

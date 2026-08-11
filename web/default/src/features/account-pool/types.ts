@@ -43,7 +43,7 @@ export type AccountPoolGroup = {
   name: string
   platform: string
   auth_type: string
-  source?: 'native' | 'cliproxyapi' | string
+  source?: 'native' | string
   external_group_key?: string
   status: number
   strategy: string
@@ -539,7 +539,7 @@ export type AccountPoolGroupOption = {
   name: string
   platform: string
   auth_type: string
-  source?: 'native' | 'cliproxyapi' | string
+  source?: 'native' | string
   external_group_key?: string
   strategy: string
   daily_limit_state?: AccountPoolDailyLimitState

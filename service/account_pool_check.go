@@ -186,6 +186,13 @@ func CheckPoolAccount(ctx context.Context, accountID int) (*AccountPoolCheckResu
 	if err != nil {
 		return nil, err
 	}
+	group, err := model.GetAccountPoolGroupById(account.PoolGroupId)
+	if err != nil {
+		return nil, err
+	}
+	if err := ensureNativeAccountPoolGroup(group); err != nil {
+		return nil, err
+	}
 	return checkPoolAccount(ctx, account)
 }
 
@@ -203,7 +210,11 @@ func CheckPoolAccountsByIDs(ctx context.Context, groupID int, accountIDs []int) 
 	var accounts []*model.PoolAccount
 	query := model.DB.Where("id IN ?", accountIDs)
 	if groupID > 0 {
-		if _, err := model.GetAccountPoolGroupById(groupID); err != nil {
+		group, err := model.GetAccountPoolGroupById(groupID)
+		if err != nil {
+			return nil, err
+		}
+		if err := ensureNativeAccountPoolGroup(group); err != nil {
 			return nil, err
 		}
 		query = query.Where("pool_group_id = ?", groupID)
@@ -224,7 +235,11 @@ func CheckPoolAccountsInGroup(ctx context.Context, groupID int, limit int) (*Acc
 	if limit <= 0 || limit > accountPoolCheckBatchLimit {
 		limit = accountPoolCheckBatchLimit
 	}
-	if _, err := model.GetAccountPoolGroupById(groupID); err != nil {
+	group, err := model.GetAccountPoolGroupById(groupID)
+	if err != nil {
+		return nil, err
+	}
+	if err := ensureNativeAccountPoolGroup(group); err != nil {
 		return nil, err
 	}
 	var accounts []*model.PoolAccount
@@ -244,6 +259,9 @@ func StartPoolAccountCheckTask(opts AccountPoolCheckTaskOptions) (*AccountPoolCh
 	}
 	group, err := model.GetAccountPoolGroupById(opts.PoolGroupID)
 	if err != nil {
+		return nil, err
+	}
+	if err := ensureNativeAccountPoolGroup(group); err != nil {
 		return nil, err
 	}
 	accountIDs, err := loadPoolAccountIDsForCheckTask(opts.PoolGroupID, opts.AccountIDs, opts.Limit)

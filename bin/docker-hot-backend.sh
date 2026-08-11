@@ -63,7 +63,6 @@ snapshot() {
     -path /app/.gomodcache -prune -o \
     -path /app/data -prune -o \
     -path /app/logs -prune -o \
-    -path /app/modules/cliproxyapi -prune -o \
     -path /app/tmp -prune -o \
     -path /app/upload -prune -o \
     -path /app/web/default/node_modules -prune -o \
