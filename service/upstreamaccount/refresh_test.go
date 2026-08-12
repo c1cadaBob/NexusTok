@@ -145,6 +145,7 @@ func TestRefreshChannelBalanceUsesStoredCredential(t *testing.T) {
 		Group:              "default",
 		Balance:            1,
 		BalanceUpdatedTime: 1,
+		UsedQuota:          4567,
 		OtherSettings:      settings,
 		ChannelInfo: model.ChannelInfo{
 			CredentialMode:     constant.ChannelCredentialModeAccountPool,
@@ -157,14 +158,13 @@ func TestRefreshChannelBalanceUsesStoredCredential(t *testing.T) {
 	result, err := RefreshChannelBalance(context.Background(), &channel)
 	require.NoError(t, err)
 	require.Equal(t, 12.5, result.Balance)
-	require.Equal(t, upstreamLargeUsedQuota, result.UsedQuota)
-	require.NotEqual(t, int64(common.MaxQuota), result.UsedQuota)
+	require.Equal(t, int64(4567), result.UsedQuota)
 	require.Greater(t, result.BalanceUpdatedTime, int64(1))
 
 	var refreshed model.Channel
 	require.NoError(t, db.First(&refreshed, channel.Id).Error)
 	require.Equal(t, 12.5, refreshed.Balance)
-	require.Equal(t, upstreamLargeUsedQuota, refreshed.UsedQuota)
+	require.Equal(t, int64(4567), refreshed.UsedQuota)
 	require.Greater(t, refreshed.BalanceUpdatedTime, int64(1))
 	credential, ok, err := ReadChannelSyncCredential(refreshed.OtherSettings)
 	require.NoError(t, err)
@@ -190,12 +190,13 @@ func TestRefreshChannelFromCredentialConsumesPreviewSnapshot(t *testing.T) {
 	})
 
 	channel := model.Channel{
-		Type:   constant.ChannelTypeOpenAI,
-		Key:    constant.ChannelCredentialModeAccountPool,
-		Name:   "synced-channel",
-		Status: common.ChannelStatusEnabled,
-		Models: "gpt-old",
-		Group:  "default",
+		Type:      constant.ChannelTypeOpenAI,
+		Key:       constant.ChannelCredentialModeAccountPool,
+		Name:      "synced-channel",
+		Status:    common.ChannelStatusEnabled,
+		Models:    "gpt-old",
+		Group:     "default",
+		UsedQuota: 1234,
 		ChannelInfo: model.ChannelInfo{
 			CredentialMode:     constant.ChannelCredentialModeAccountPool,
 			AccountPoolEnabled: true,
@@ -565,12 +566,13 @@ func TestRefreshChannelFromSnapshotUpsertsAccountsAndDisablesMissing(t *testing.
 	})
 
 	channel := model.Channel{
-		Type:   constant.ChannelTypeOpenAI,
-		Key:    constant.ChannelCredentialModeAccountPool,
-		Name:   "synced-channel",
-		Status: common.ChannelStatusEnabled,
-		Models: "gpt-old",
-		Group:  "default",
+		Type:      constant.ChannelTypeOpenAI,
+		Key:       constant.ChannelCredentialModeAccountPool,
+		Name:      "synced-channel",
+		Status:    common.ChannelStatusEnabled,
+		Models:    "gpt-old",
+		Group:     "default",
+		UsedQuota: 1234,
 		ChannelInfo: model.ChannelInfo{
 			CredentialMode:     constant.ChannelCredentialModeAccountPool,
 			AccountPoolEnabled: true,
@@ -672,8 +674,7 @@ func TestRefreshChannelFromSnapshotUpsertsAccountsAndDisablesMissing(t *testing.
 	require.Equal(t, "gpt-old,gpt-4o-mini", refreshed.Models)
 	require.Equal(t, "default", refreshed.Group)
 	require.Equal(t, float64(8), refreshed.Balance)
-	require.Equal(t, upstreamLargeUsedQuota, refreshed.UsedQuota)
-	require.NotEqual(t, int64(common.MaxQuota), refreshed.UsedQuota)
+	require.Equal(t, int64(1234), refreshed.UsedQuota)
 
 	var accounts []model.ChannelAccount
 	require.NoError(t, db.Order("id ASC").Find(&accounts).Error)

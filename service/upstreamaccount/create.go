@@ -157,19 +157,22 @@ func buildChannelAndAccounts(snapshot *Snapshot, req CreateRequest) (*model.Chan
 		BalanceUpdatedTime: common.GetTimestamp(),
 		Models:             models,
 		Group:              group,
-		UsedQuota:          usedQuotaValue(snapshot.Balance),
-		Priority:           priority,
-		AutoBan:            autoBan,
-		Status:             status,
-		TestModel:          req.Channel.TestModel,
-		Tag:                req.Channel.Tag,
-		Remark:             req.Channel.Remark,
-		Setting:            req.Channel.Setting,
-		ParamOverride:      req.Channel.ParamOverride,
-		HeaderOverride:     req.Channel.HeaderOverride,
-		StatusCodeMapping:  req.Channel.StatusCodeMapping,
-		Other:              req.Channel.Other,
-		OtherSettings:      mergeChannelSyncMetadataWithCredential(req.Channel.OtherSettings, snapshot, Credential{}),
+		// 渠道级 used_quota 表示 NexusTok 本地经该渠道产生的消费累计。
+		// 上游账号快照中的账号总用量可能包含站外消耗，只能展示在密钥明细或未来
+		// 独立的上游用量字段中，不能写入渠道本地累计值。
+		UsedQuota:         0,
+		Priority:          priority,
+		AutoBan:           autoBan,
+		Status:            status,
+		TestModel:         req.Channel.TestModel,
+		Tag:               req.Channel.Tag,
+		Remark:            req.Channel.Remark,
+		Setting:           req.Channel.Setting,
+		ParamOverride:     req.Channel.ParamOverride,
+		HeaderOverride:    req.Channel.HeaderOverride,
+		StatusCodeMapping: req.Channel.StatusCodeMapping,
+		Other:             req.Channel.Other,
+		OtherSettings:     mergeChannelSyncMetadataWithCredential(req.Channel.OtherSettings, snapshot, Credential{}),
 		ChannelInfo: model.ChannelInfo{
 			CredentialMode:      constant.ChannelCredentialModeAccountPool,
 			AccountPoolEnabled:  true,
@@ -501,13 +504,6 @@ func uniqueAccountCSV(accounts []model.ChannelAccount, valueFn func(model.Channe
 func balanceValue(balance *BalanceSnapshot) float64 {
 	if balance != nil && balance.BalanceUSD != nil {
 		return *balance.BalanceUSD
-	}
-	return 0
-}
-
-func usedQuotaValue(balance *BalanceSnapshot) int64 {
-	if balance != nil && balance.UsedUSD != nil {
-		return snapshotUSDToQuotaInt64(balance.UsedUSD)
 	}
 	return 0
 }

@@ -131,7 +131,6 @@ func RefreshChannelFromSnapshot(channelID int, snapshot *Snapshot, req RefreshRe
 		updates := map[string]any{
 			"balance":              balanceValue(snapshot.Balance),
 			"balance_updated_time": common.GetTimestamp(),
-			"used_quota":           usedQuotaValue(snapshot.Balance),
 			"settings":             mergeChannelSyncMetadataWithCredential(channel.OtherSettings, snapshot, req.Credential),
 		}
 		if baseURL, ok := syncedChannelBaseURLUpdate(channel, snapshot); ok {

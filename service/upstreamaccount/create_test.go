@@ -103,7 +103,7 @@ func TestCreateFromPreviewCreatesChannelAndAccounts(t *testing.T) {
 	require.ElementsMatch(t, []string{"gpt-4o", "gpt-4o-mini"}, strings.Split(channel.Models, ","))
 	require.Equal(t, "default", channel.Group)
 	require.Equal(t, float64(3.5), channel.Balance)
-	require.Equal(t, int64(common.QuotaPerUnit*1.2), channel.UsedQuota)
+	require.Zero(t, channel.UsedQuota)
 	credential, ok, err := ReadChannelSyncCredential(channel.OtherSettings)
 	require.NoError(t, err)
 	require.True(t, ok)

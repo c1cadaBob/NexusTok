@@ -414,6 +414,9 @@ func InitLogDB() (err error) {
 			common.SetLogDatabaseType(common.DatabaseTypeSQLite)
 		}
 		initCol()
+		if common.IsMasterNode {
+			return migrateSyncedAccountLocalUsedQuota()
+		}
 		return
 	}
 	db, err := chooseDB("LOG_SQL_DSN", true)
@@ -440,8 +443,10 @@ func InitLogDB() (err error) {
 			return nil
 		}
 		common.SysLog("database migration started")
-		err = migrateLOGDB()
-		return err
+		if err = migrateLOGDB(); err != nil {
+			return err
+		}
+		return migrateSyncedAccountLocalUsedQuota()
 	} else {
 		common.FatalLog(err)
 	}
@@ -512,6 +517,12 @@ func migrateDB() error {
 		return err
 	}
 	if err := migrateSyncedAccountChannelTypes(); err != nil {
+		return err
+	}
+	if err := migrateSyncedAccountAccessGroups(); err != nil {
+		return err
+	}
+	if err := migrateSyncedAccountModels(); err != nil {
 		return err
 	}
 	return nil
@@ -729,6 +740,83 @@ func migrateSyncedAccountModels() error {
 	}
 	if updated > 0 {
 		common.SysLog(fmt.Sprintf("migrated %d upstream synced account model list(s)", updated))
+	}
+	return nil
+}
+
+type channelQuotaSum struct {
+	ChannelID int   `gorm:"column:channel_id"`
+	Quota     int64 `gorm:"column:quota"`
+}
+
+// migrateSyncedAccountLocalUsedQuota 修复历史同步渠道的本地已用额度口径。
+//
+// 早期上游账号同步和余额刷新会把上游账号维度的 used_usd 覆盖到 Channel.used_quota，
+// 而该字段在 Relay 结算链路中承担“本地经该渠道产生的消费累计”。这里只处理带
+// upstream_account_sync 元数据且尚未标记完成的渠道，从消费日志按 channel_id 回算
+// 现存 LogTypeConsume 的 quota 总和，并写回主库。查询 LOG_DB 后再更新 DB，避免主库
+// 与日志库分离或 ClickHouse 独立日志库时做跨库 join。
+func migrateSyncedAccountLocalUsedQuota() error {
+	if DB == nil || LOG_DB == nil {
+		return nil
+	}
+	var channels []Channel
+	if err := DB.Select("id", "settings").
+		Where("settings LIKE ?", "%upstream_account_sync%").
+		Find(&channels).Error; err != nil {
+		return err
+	}
+	targets := make([]Channel, 0, len(channels))
+	channelIDs := make([]int, 0, len(channels))
+	for _, channel := range channels {
+		if !channel.HasUpstreamAccountSyncMetadata() {
+			continue
+		}
+		if syncedAccountMigrationDone(channel.OtherSettings, "local_used_quota_rebuilt") {
+			continue
+		}
+		targets = append(targets, channel)
+		channelIDs = append(channelIDs, channel.Id)
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+
+	quotaByChannel := make(map[int]int64, len(targets))
+	const batchSize = 500
+	for start := 0; start < len(channelIDs); start += batchSize {
+		end := start + batchSize
+		if end > len(channelIDs) {
+			end = len(channelIDs)
+		}
+		var rows []channelQuotaSum
+		if err := LOG_DB.Table("logs").
+			Select("channel_id, COALESCE(sum(quota), 0) as quota").
+			Where("type = ? AND channel_id IN ?", LogTypeConsume, channelIDs[start:end]).
+			Group("channel_id").
+			Scan(&rows).Error; err != nil {
+			return err
+		}
+		for _, row := range rows {
+			quotaByChannel[row.ChannelID] = row.Quota
+		}
+	}
+
+	updated := 0
+	for _, channel := range targets {
+		localUsedQuota := quotaByChannel[channel.Id]
+		if err := DB.Model(&Channel{}).
+			Where("id = ?", channel.Id).
+			Update("used_quota", localUsedQuota).Error; err != nil {
+			return err
+		}
+		if _, err := markSyncedAccountMigrationDone(channel.Id, channel.OtherSettings, "local_used_quota_rebuilt"); err != nil {
+			return err
+		}
+		updated++
+	}
+	if updated > 0 {
+		common.SysLog(fmt.Sprintf("rebuilt local used_quota for %d upstream synced channel(s)", updated))
 	}
 	return nil
 }
