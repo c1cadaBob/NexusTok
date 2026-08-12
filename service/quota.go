@@ -122,12 +122,37 @@ func calculateAudioQuota(info QuotaInfo) (int, *common.QuotaClamp) {
 
 	quota = quota.Mul(ratio)
 
-	// If ratio is not zero and quota is less than or equal to zero, set quota to 1
+	// 当有效倍率非 0 且计算结果小于等于 0 时，保持历史最小扣费 1 的语义。
 	if !ratio.IsZero() && quota.LessThanOrEqual(decimal.Zero) {
 		quota = decimal.NewFromInt(1)
 	}
 
 	return common.QuotaFromDecimalChecked(quota)
+}
+
+// calculateAudioStandardBillingQuota 使用相同音频计费规则计算排除下游分组倍率后的标准基准。
+//
+// 该值仅写入消费日志的 admin_info.standard_billing_quota，用于管理员成本列。
+// 真实扣费仍由 calculateAudioQuota 使用实际 group_ratio 计算，二者互不影响。
+func calculateAudioStandardBillingQuota(info QuotaInfo) int {
+	info.GroupRatio = 1
+	quota, _ := calculateAudioQuota(info)
+	return quota
+}
+
+// standardBillingQuotaFromTieredAudioResult 返回音频/WSS 阶梯计费的标准基准。
+//
+// TieredResult.ActualQuotaBeforeGroup 是表达式结算阶段已经排除 group_ratio 的额度；
+// 当表达式结算失败而只剩最终额度兜底时，再尝试按有效分组倍率反推。
+func standardBillingQuotaFromTieredAudioResult(fallback int, groupRatio float64, result *billingexpr.TieredResult) int {
+	if result != nil {
+		quota, _ := common.QuotaRoundChecked(result.ActualQuotaBeforeGroup)
+		return quota
+	}
+	if quota, ok := StandardBillingQuotaFromFinalQuota(fallback, groupRatio); ok {
+		return quota
+	}
+	return fallback
 }
 
 // PreWssConsumeQuota WebSocket 实时通信预扣配额
@@ -265,8 +290,10 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 
 	quota, clamp := calculateAudioQuota(quotaInfo)
 	relayInfo.NoteQuotaClamp(clamp)
+	standardBillingQuota := calculateAudioStandardBillingQuota(quotaInfo)
 	if tieredOk {
 		quota = tieredQuota
+		standardBillingQuota = standardBillingQuotaFromTieredAudioResult(tieredQuota, groupRatio, tieredResult)
 	}
 
 	totalTokens := usage.TotalTokens
@@ -278,11 +305,10 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		logContent = fmt.Sprintf("模型价格 %.2f，分组倍率 %.2f", modelPrice, groupRatio)
 	}
 
-	// record all the consume log even if quota is 0
+	// 即使 quota 为 0 也记录消费日志，便于管理员追踪上游超时或缺失用量。
 	if totalTokens == 0 {
-		// in this case, must be some error happened
-		// we cannot just return, because we may have to return the pre-consumed quota
 		quota = 0
+		standardBillingQuota = 0
 		logContent += "（可能是上游超时）"
 		logger.LogError(ctx, fmt.Sprintf("total tokens is 0, cannot consume quota, userId %d, channelId %d, "+
 			"tokenId %d, model %s， pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, modelName, relayInfo.FinalPreConsumedQuota))
@@ -305,6 +331,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	if tieredResult != nil {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
 	}
+	AttachStandardBillingQuotaToOther(other, standardBillingQuota)
 	AttachQuotaSaturation(ctx, relayInfo, other)
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
@@ -406,8 +433,10 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 
 	quota, clamp := calculateAudioQuota(quotaInfo)
 	relayInfo.NoteQuotaClamp(clamp)
+	standardBillingQuota := calculateAudioStandardBillingQuota(quotaInfo)
 	if tieredOk {
 		quota = tieredQuota
+		standardBillingQuota = standardBillingQuotaFromTieredAudioResult(tieredQuota, groupRatio, tieredResult)
 	}
 
 	totalTokens := usage.TotalTokens
@@ -419,11 +448,10 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		logContent = fmt.Sprintf("模型价格 %.2f，分组倍率 %.2f", modelPrice, groupRatio)
 	}
 
-	// record all the consume log even if quota is 0
+	// 即使 quota 为 0 也记录消费日志，便于管理员追踪上游超时或缺失用量。
 	if totalTokens == 0 {
-		// in this case, must be some error happened
-		// we cannot just return, because we may have to return the pre-consumed quota
 		quota = 0
+		standardBillingQuota = 0
 		logContent += "（可能是上游超时）"
 		logger.LogError(ctx, fmt.Sprintf("total tokens is 0, cannot consume quota, userId %d, channelId %d, "+
 			"tokenId %d, model %s， pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, relayInfo.OriginModelName, relayInfo.FinalPreConsumedQuota))
@@ -446,6 +474,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	if tieredResult != nil {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
 	}
+	AttachStandardBillingQuotaToOther(other, standardBillingQuota)
 	AttachQuotaSaturation(ctx, relayInfo, other)
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,

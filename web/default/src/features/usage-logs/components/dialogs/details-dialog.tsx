@@ -345,6 +345,17 @@ function BillingBreakdown(props: {
     })
   }
 
+  if (
+    isAdmin &&
+    typeof other.admin_info?.standard_billing_quota === 'number' &&
+    Number.isFinite(other.admin_info.standard_billing_quota)
+  ) {
+    rows.push({
+      label: t('Standard Billing Base'),
+      value: formatLogQuota(other.admin_info.standard_billing_quota),
+    })
+  }
+
   rows.push({
     label: t('Total Cost'),
     value: formatLogQuota(log.quota),

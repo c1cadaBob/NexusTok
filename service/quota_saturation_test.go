@@ -7,6 +7,7 @@ import (
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/constant"
 	relaycommon "github.com/c1cada/NexusTok/relay/common"
+	"github.com/c1cada/NexusTok/types"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -79,6 +80,45 @@ func TestGenerateTextOtherInfoIncludesUpstreamRatioConversion(t *testing.T) {
 	adminInfo, ok := other["admin_info"].(map[string]interface{})
 	require.True(t, ok)
 	require.InDelta(t, 0.35, adminInfo["ratio_conversion"], 0.000001)
+}
+
+func TestAttachStandardBillingQuotaNestsUnderAdminInfo(t *testing.T) {
+	other := map[string]interface{}{
+		"admin_info": map[string]interface{}{
+			"ratio_conversion": 0.35,
+		},
+	}
+
+	AttachStandardBillingQuotaToOther(other, 1234)
+
+	adminInfo := other["admin_info"].(map[string]interface{})
+	require.InDelta(t, 0.35, adminInfo["ratio_conversion"], 0.000001)
+	require.Equal(t, 1234, adminInfo["standard_billing_quota"])
+}
+
+func TestStandardBillingQuotaFromPriceDataIgnoresGroupRatio(t *testing.T) {
+	quota, ok := StandardBillingQuotaFromPriceData(types.PriceData{
+		UsePrice:   true,
+		ModelPrice: 0.004,
+		OtherRatios: map[string]float64{
+			"n": 2,
+		},
+		GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 3},
+		Quota:          12000,
+	}, 12000)
+
+	require.True(t, ok)
+	require.Equal(t, 4000, quota)
+}
+
+func TestStandardBillingQuotaFromPriceDataReportsUnavailableFallback(t *testing.T) {
+	quota, ok := StandardBillingQuotaFromPriceData(types.PriceData{
+		GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 0},
+		Quota:          0,
+	}, 0)
+
+	require.False(t, ok)
+	require.Equal(t, 0, quota)
 }
 
 func TestComputeToolCallQuotaUsesQuotaRound(t *testing.T) {

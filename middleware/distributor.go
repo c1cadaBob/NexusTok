@@ -743,8 +743,9 @@ func clearUpstreamRatioConversionContext(c *gin.Context) {
 
 // validUpstreamRatioConversion 判断同步账号成本倍率是否可用于日志展示。
 //
-// ratio_conversion 表示“本次请求费用换算到上游真实成本”的倍率。只有正数且有限的值
-// 才能进入管理员日志；0、负数、NaN 或 Inf 都代表缺失或异常配置，应在前端显示为“-”。
+// ratio_conversion 表示“本次请求标准计费基准换算到上游真实成本”的倍率。
+// 只有正数且有限的值才能进入管理员日志；0、负数、NaN 或 Inf 都代表缺失或异常配置，
+// 应在前端显示为“-”。
 func validUpstreamRatioConversion(ratio float64) bool {
 	return ratio > 0 && !math.IsNaN(ratio) && !math.IsInf(ratio, 0)
 }

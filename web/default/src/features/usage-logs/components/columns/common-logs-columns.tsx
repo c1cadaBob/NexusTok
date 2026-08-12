@@ -60,6 +60,7 @@ import {
   getLogTypeConfig,
   isPerCallBilling,
 } from '../../lib/utils'
+import { getUpstreamCost } from '../../lib/upstream-cost'
 import type { LogOtherData } from '../../types'
 import { DetailsDialog } from '../dialogs/details-dialog'
 import { ModelBadge } from '../model-badge'
@@ -94,24 +95,6 @@ function getGroupRatioText(other: LogOtherData | null): string | null {
   }
 
   return null
-}
-
-function getUpstreamCost(log: UsageLog): number | null {
-  if (!isDisplayableLogType(log.type)) return null
-
-  const quota = Number(log.quota)
-  const other = parseLogOther(log.other)
-  const ratioConversion = other?.admin_info?.ratio_conversion
-  if (
-    !Number.isFinite(quota) ||
-    ratioConversion == null ||
-    !Number.isFinite(ratioConversion) ||
-    ratioConversion <= 0
-  ) {
-    return null
-  }
-
-  return quota * ratioConversion
 }
 
 function buildDetailSegments(

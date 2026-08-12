@@ -55,6 +55,10 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 		other["is_model_mapped"] = true
 		other["upstream_model_name"] = info.UpstreamModelName
 	}
+	AttachUpstreamRatioConversionToOther(c, other)
+	if standardQuota, ok := StandardBillingQuotaFromPriceData(info.PriceData, info.PriceData.Quota); ok {
+		AttachStandardBillingQuotaToOther(other, standardQuota)
+	}
 	AttachQuotaSaturation(c, info, other)
 	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
 		ChannelId: info.ChannelId,

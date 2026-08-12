@@ -24,6 +24,7 @@ import (
 	"github.com/c1cada/NexusTok/types"                    // 类型定义（Relay 格式、PriceData 等）
 
 	"github.com/gin-gonic/gin" // Gin Web 框架
+	"github.com/shopspring/decimal"
 )
 
 // AttachQuotaSaturationToOther 将配额饱和事件写入 other.admin_info.quota_saturation。
@@ -39,6 +40,84 @@ func AttachQuotaSaturationToOther(other map[string]interface{}, clamp *common.Qu
 		other["admin_info"] = adminInfo
 	}
 	adminInfo["quota_saturation"] = clamp.AuditMap()
+}
+
+// AttachStandardBillingQuotaToOther 将排除下游分组倍率后的标准计费基准写入管理员日志。
+//
+// 成本列使用该基准乘以上游密钥换算倍率，避免站内给下游用户配置的 group_ratio 或
+// user_group_ratio 影响管理员看到的上游成本估算。字段放在 admin_info 下，普通用户
+// 日志视图会整体剥离 admin_info，因此不会暴露内部成本口径。
+func AttachStandardBillingQuotaToOther(other map[string]interface{}, standardQuota int) {
+	if other == nil || standardQuota < 0 {
+		return
+	}
+	adminInfo, ok := other["admin_info"].(map[string]interface{})
+	if !ok || adminInfo == nil {
+		adminInfo = map[string]interface{}{}
+		other["admin_info"] = adminInfo
+	}
+	adminInfo["standard_billing_quota"] = standardQuota
+}
+
+// AttachUpstreamRatioConversionToOther 将本次实际命中的上游密钥换算倍率写入管理员日志。
+//
+// 该倍率只表示“标准计费基准换算为上游成本”的比例，不能直接乘以最终扣费额度。
+// 因为最终扣费额度可能包含站内提供给下游用户的 group_ratio 或 user_group_ratio，
+// 而这些下游商业策略不应影响管理员查看的上游成本估算。
+func AttachUpstreamRatioConversionToOther(ctx *gin.Context, other map[string]interface{}) {
+	if ctx == nil || other == nil {
+		return
+	}
+	ratioConversion, ok := common.GetContextKeyType[float64](ctx, constant.ContextKeyUpstreamRatioConversion)
+	if !ok || ratioConversion <= 0 || math.IsNaN(ratioConversion) || math.IsInf(ratioConversion, 0) {
+		return
+	}
+	adminInfo, ok := other["admin_info"].(map[string]interface{})
+	if !ok || adminInfo == nil {
+		adminInfo = map[string]interface{}{}
+		other["admin_info"] = adminInfo
+	}
+	adminInfo["ratio_conversion"] = ratioConversion
+}
+
+// StandardBillingQuotaFromFinalQuota 在无法重放完整计费公式时，从最终扣费反推标准基准。
+//
+// 仅用于日志展示兜底：有效分组倍率必须为正数，否则免费组或异常配置会让最终扣费
+// 无法还原为上游成本基准，此时返回 0/false 让调用方跳过写入精确字段。
+func StandardBillingQuotaFromFinalQuota(finalQuota int, groupRatio float64) (int, bool) {
+	if finalQuota < 0 || groupRatio <= 0 || math.IsNaN(groupRatio) || math.IsInf(groupRatio, 0) {
+		return 0, false
+	}
+	quota, _ := common.QuotaFromDecimalChecked(decimal.NewFromInt(int64(finalQuota)).Div(decimal.NewFromFloat(groupRatio)))
+	return quota, true
+}
+
+// StandardBillingQuotaFromPriceData 按 PriceData 重新计算排除下游分组倍率后的按次计费基准。
+//
+// Midjourney、视频/音乐等异步任务常以固定价格或半倍率预扣为基础，再叠加
+// OtherRatios（时长、清晰度、数量等请求自身成本因子）。这里保留这些请求级因子，
+// 只移除 group_ratio/user_group_ratio；当价格信息不足时才退回到最终额度反推。
+func StandardBillingQuotaFromPriceData(priceData types.PriceData, finalQuota int) (int, bool) {
+	var base float64
+	switch {
+	case priceData.UsePrice || priceData.ModelPrice > 0:
+		base = priceData.ModelPrice * common.QuotaPerUnit
+	case priceData.ModelRatio > 0:
+		base = priceData.ModelRatio / 2 * common.QuotaPerUnit
+	default:
+		if quota, ok := StandardBillingQuotaFromFinalQuota(finalQuota, priceData.GroupRatioInfo.GroupRatio); ok {
+			return quota, true
+		}
+		return 0, false
+	}
+
+	for _, otherRatio := range priceData.OtherRatios {
+		if otherRatio > 0 && !math.IsNaN(otherRatio) && !math.IsInf(otherRatio, 0) {
+			base *= otherRatio
+		}
+	}
+	quota, _ := common.QuotaFromFloatChecked(base)
+	return quota, true
 }
 
 // AttachQuotaSaturation 将 RelayInfo 上记录的首个配额饱和事件附加到消费日志。
@@ -143,18 +222,12 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 
 	// 构建管理员信息（仅供管理员查看的调试信息）
 	adminInfo := make(map[string]interface{})
+	other["admin_info"] = adminInfo
 	adminInfo["use_channel"] = ctx.GetStringSlice("use_channel")
 	if credentialMode := common.GetContextKeyString(ctx, constant.ContextKeyChannelCredentialMode); credentialMode != "" {
 		adminInfo["credential_mode"] = credentialMode
 	}
-	// 上游成本倍率仅供管理员日志展示“费用 × 上游换算倍率”的估算成本。
-	// 倍率来自本次实际命中的同步账号元数据；普通用户日志会在 model 层移除整个 admin_info。
-	if ratioConversion, ok := common.GetContextKeyType[float64](ctx, constant.ContextKeyUpstreamRatioConversion); ok &&
-		ratioConversion > 0 &&
-		!math.IsNaN(ratioConversion) &&
-		!math.IsInf(ratioConversion, 0) {
-		adminInfo["ratio_conversion"] = ratioConversion
-	}
+	AttachUpstreamRatioConversionToOther(ctx, other)
 	// 多 Key 模式信息
 	isMultiKey := common.GetContextKeyBool(ctx, constant.ContextKeyChannelIsMultiKey)
 	if isMultiKey {
@@ -475,7 +548,7 @@ func GenerateClaudeOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 //
 // 返回值:
 //   - map[string]interface{}: 附加信息映射
-func GenerateMjOtherInfo(relayInfo *relaycommon.RelayInfo, priceData types.PriceData) map[string]interface{} {
+func GenerateMjOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, priceData types.PriceData) map[string]interface{} {
 	other := make(map[string]interface{})
 	other["model_price"] = priceData.ModelPrice
 	other["group_ratio"] = priceData.GroupRatioInfo.GroupRatio
@@ -483,7 +556,11 @@ func GenerateMjOtherInfo(relayInfo *relaycommon.RelayInfo, priceData types.Price
 	if priceData.GroupRatioInfo.HasSpecialRatio {
 		other["user_group_ratio"] = priceData.GroupRatioInfo.GroupSpecialRatio
 	}
-	appendRequestPath(nil, relayInfo, other)
+	AttachUpstreamRatioConversionToOther(ctx, other)
+	if standardQuota, ok := StandardBillingQuotaFromPriceData(priceData, priceData.Quota); ok {
+		AttachStandardBillingQuotaToOther(other, standardQuota)
+	}
+	appendRequestPath(ctx, relayInfo, other)
 	return other
 }
 

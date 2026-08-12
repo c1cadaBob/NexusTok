@@ -107,7 +107,9 @@ export interface LogOtherData {
     pool_account_name?: string
     pool_account_auth_type?: string
     local_count_tokens?: boolean
-    // 上游成本换算倍率，仅管理员日志可见，用于前端计算“费用 × 倍率”的成本列。
+    // 标准计费基准，仅管理员日志可见；表示排除下游分组倍率后的本次请求计费额度。
+    standard_billing_quota?: number
+    // 上游成本换算倍率，仅管理员日志可见，用于前端计算“标准计费基准 × 倍率”的成本列。
     ratio_conversion?: number
     channel_affinity?: ChannelAffinityInfo
     // 充值审计字段（type=1，仅管理员可见）

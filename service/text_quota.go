@@ -72,6 +72,8 @@ type textQuotaSummary struct {
 	AudioInputPrice          float64         // 音频输入单价
 	ImageGenerationCallPrice float64         // 图像生成调用单价
 	ToolCallSurchargeQuota   decimal.Decimal // 工具调用附加费配额
+	StandardToolSurcharge    decimal.Decimal // 排除下游分组倍率后的工具调用附加费
+	StandardBillingQuota     int             // 排除下游分组倍率后的标准计费基准
 }
 
 // cacheWriteTokensTotal 计算缓写 Token 总数
@@ -130,45 +132,68 @@ func isLegacyClaudeDerivedOpenAIUsage(relayInfo *relaycommon.RelayInfo, usage *d
 // 返回值：
 //   - decimal.Decimal: 工具调用附加费配额
 func calculateTextToolCallSurcharge(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, summary *textQuotaSummary) decimal.Decimal {
-	dGroupRatio := decimal.NewFromFloat(summary.GroupRatio)
+	return calculateTextToolCallSurchargeWithGroupRatio(ctx, relayInfo, summary, decimal.NewFromFloat(summary.GroupRatio), true)
+}
+
+// calculateTextToolCallSurchargeWithGroupRatio 按指定分组倍率计算文本工具调用附加费。
+//
+// 真实扣费路径使用当前下游有效 group_ratio；标准计费基准使用 1。两者共享同一套
+// 工具价格和调用次数来源，避免上游成本字段漏掉 Web Search、File Search、图像生成等
+// 请求自身产生的成本。recordDetails=true 时会把调用次数和单价写回 summary，用于日志展示。
+func calculateTextToolCallSurchargeWithGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, summary *textQuotaSummary, dGroupRatio decimal.Decimal, recordDetails bool) decimal.Decimal {
 	dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
 
 	var surcharge decimal.Decimal
 
 	if relayInfo.ResponsesUsageInfo != nil {
 		if webSearchTool, exists := relayInfo.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolWebSearchPreview]; exists && webSearchTool.CallCount > 0 {
-			summary.WebSearchCallCount = webSearchTool.CallCount
-			summary.WebSearchPrice = operation_setting.GetToolPriceForModel("web_search_preview", summary.ModelName)
-			surcharge = surcharge.Add(decimal.NewFromFloat(summary.WebSearchPrice).
+			webSearchPrice := operation_setting.GetToolPriceForModel("web_search_preview", summary.ModelName)
+			if recordDetails {
+				summary.WebSearchCallCount = webSearchTool.CallCount
+				summary.WebSearchPrice = webSearchPrice
+			}
+			surcharge = surcharge.Add(decimal.NewFromFloat(webSearchPrice).
 				Mul(decimal.NewFromInt(int64(webSearchTool.CallCount))).
 				Div(decimal.NewFromInt(1000)).
 				Mul(dGroupRatio).
 				Mul(dQuotaPerUnit))
 		}
 	} else if strings.HasSuffix(summary.ModelName, "search-preview") {
-		summary.WebSearchCallCount = 1
-		summary.WebSearchPrice = operation_setting.GetToolPriceForModel("web_search_preview", summary.ModelName)
-		surcharge = surcharge.Add(decimal.NewFromFloat(summary.WebSearchPrice).
+		webSearchPrice := operation_setting.GetToolPriceForModel("web_search_preview", summary.ModelName)
+		if recordDetails {
+			summary.WebSearchCallCount = 1
+			summary.WebSearchPrice = webSearchPrice
+		}
+		surcharge = surcharge.Add(decimal.NewFromFloat(webSearchPrice).
 			Div(decimal.NewFromInt(1000)).
 			Mul(dGroupRatio).
 			Mul(dQuotaPerUnit))
 	}
 
-	summary.ClaudeWebSearchCallCount = ctx.GetInt("claude_web_search_requests")
-	if summary.ClaudeWebSearchCallCount > 0 {
-		summary.ClaudeWebSearchPrice = operation_setting.GetToolPrice("web_search")
-		surcharge = surcharge.Add(decimal.NewFromFloat(summary.ClaudeWebSearchPrice).
+	claudeWebSearchCallCount := ctx.GetInt("claude_web_search_requests")
+	if recordDetails {
+		summary.ClaudeWebSearchCallCount = claudeWebSearchCallCount
+	}
+	if claudeWebSearchCallCount > 0 {
+		claudeWebSearchPrice := operation_setting.GetToolPrice("web_search")
+		if recordDetails {
+			summary.ClaudeWebSearchPrice = claudeWebSearchPrice
+		}
+		surcharge = surcharge.Add(decimal.NewFromFloat(claudeWebSearchPrice).
 			Div(decimal.NewFromInt(1000)).
 			Mul(dGroupRatio).
 			Mul(dQuotaPerUnit).
-			Mul(decimal.NewFromInt(int64(summary.ClaudeWebSearchCallCount))))
+			Mul(decimal.NewFromInt(int64(claudeWebSearchCallCount))))
 	}
 
 	if relayInfo.ResponsesUsageInfo != nil {
 		if fileSearchTool, exists := relayInfo.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolFileSearch]; exists && fileSearchTool.CallCount > 0 {
-			summary.FileSearchCallCount = fileSearchTool.CallCount
-			summary.FileSearchPrice = operation_setting.GetToolPrice("file_search")
-			surcharge = surcharge.Add(decimal.NewFromFloat(summary.FileSearchPrice).
+			fileSearchPrice := operation_setting.GetToolPrice("file_search")
+			if recordDetails {
+				summary.FileSearchCallCount = fileSearchTool.CallCount
+				summary.FileSearchPrice = fileSearchPrice
+			}
+			surcharge = surcharge.Add(decimal.NewFromFloat(fileSearchPrice).
 				Mul(decimal.NewFromInt(int64(fileSearchTool.CallCount))).
 				Div(decimal.NewFromInt(1000)).
 				Mul(dGroupRatio).
@@ -177,8 +202,11 @@ func calculateTextToolCallSurcharge(ctx *gin.Context, relayInfo *relaycommon.Rel
 	}
 
 	if ctx.GetBool("image_generation_call") {
-		summary.ImageGenerationCallPrice = operation_setting.GetGPTImage1PriceOnceCall(ctx.GetString("image_generation_call_quality"), ctx.GetString("image_generation_call_size"))
-		surcharge = surcharge.Add(decimal.NewFromFloat(summary.ImageGenerationCallPrice).
+		imageGenerationCallPrice := operation_setting.GetGPTImage1PriceOnceCall(ctx.GetString("image_generation_call_quality"), ctx.GetString("image_generation_call_size"))
+		if recordDetails {
+			summary.ImageGenerationCallPrice = imageGenerationCallPrice
+		}
+		surcharge = surcharge.Add(decimal.NewFromFloat(imageGenerationCallPrice).
 			Mul(dGroupRatio).
 			Mul(dQuotaPerUnit))
 	}
@@ -214,6 +242,48 @@ func composeTieredTextQuota(relayInfo *relaycommon.RelayInfo, summary textQuotaS
 
 	quota, clamp := common.QuotaFromDecimalChecked(decimal.NewFromInt(int64(tieredQuota)).Add(summary.ToolCallSurchargeQuota))
 	relayInfo.NoteQuotaClamp(clamp)
+	return quota
+}
+
+// composeTieredStandardBillingQuota 组合阶梯计费的标准计费基准。
+//
+// TieredResult.ActualQuotaBeforeGroup 已经是表达式部分排除 group_ratio 后的精确额度。
+// 工具调用附加费不属于表达式引擎，因此需要以 group_ratio=1 单独加回，保证成本列
+// 既不受下游倍率影响，也不会漏掉请求实际触发的工具成本。
+func composeTieredStandardBillingQuota(summary textQuotaSummary, tieredQuota int, tieredResult *billingexpr.TieredResult) int {
+	if tieredResult == nil {
+		if quotaBeforeGroup, ok := StandardBillingQuotaFromFinalQuota(tieredQuota, summary.GroupRatio); ok {
+			quota, _ := common.QuotaFromDecimalChecked(decimal.NewFromInt(int64(quotaBeforeGroup)).Add(summary.StandardToolSurcharge))
+			return quota
+		}
+		return summary.StandardBillingQuota
+	}
+	quota, _ := common.QuotaFromDecimalChecked(decimal.NewFromFloat(tieredResult.ActualQuotaBeforeGroup).Add(summary.StandardToolSurcharge))
+	return quota
+}
+
+// calculateTextStandardBillingQuota 计算文本请求排除下游分组倍率后的标准计费基准。
+//
+// 该函数与真实扣费公式保持同构：保留模型倍率/固定价、补全倍率、缓存/图片/音频
+// 细分倍率、工具调用附加费和 OtherRatios，只把下游 group_ratio/user_group_ratio 视为 1。
+func calculateTextStandardBillingQuota(relayInfo *relaycommon.RelayInfo, summary textQuotaSummary, promptQuota decimal.Decimal, completionQuota decimal.Decimal, audioInputQuota decimal.Decimal, standardToolSurcharge decimal.Decimal) int {
+	dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
+	var quotaCalculateDecimal decimal.Decimal
+	if !relayInfo.PriceData.UsePrice {
+		quotaCalculateDecimal = promptQuota.Add(completionQuota).Mul(decimal.NewFromFloat(summary.ModelRatio))
+	} else {
+		quotaCalculateDecimal = decimal.NewFromFloat(summary.ModelPrice).Mul(dQuotaPerUnit)
+	}
+	quotaCalculateDecimal = quotaCalculateDecimal.Add(standardToolSurcharge).Add(audioInputQuota)
+	if len(relayInfo.PriceData.OtherRatios) > 0 {
+		for _, otherRatio := range relayInfo.PriceData.OtherRatios {
+			quotaCalculateDecimal = quotaCalculateDecimal.Mul(decimal.NewFromFloat(otherRatio))
+		}
+	}
+	if !relayInfo.PriceData.UsePrice && summary.ModelRatio != 0 && quotaCalculateDecimal.LessThanOrEqual(decimal.Zero) {
+		quotaCalculateDecimal = decimal.NewFromInt(1)
+	}
+	quota, _ := common.QuotaFromDecimalChecked(quotaCalculateDecimal)
 	return quota
 }
 
@@ -303,8 +373,10 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 
 	ratio := dModelRatio.Mul(dGroupRatio)
 	summary.ToolCallSurchargeQuota = calculateTextToolCallSurcharge(ctx, relayInfo, &summary)
+	summary.StandardToolSurcharge = calculateTextToolCallSurchargeWithGroupRatio(ctx, relayInfo, &summary, decimal.NewFromInt(1), false)
 
 	var audioInputQuota decimal.Decimal
+	var standardAudioInputQuota decimal.Decimal
 	if !relayInfo.PriceData.UsePrice {
 		baseTokens := dPromptTokens
 
@@ -345,11 +417,14 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 				baseTokens = baseTokens.Sub(dAudioTokens)
 				audioInputQuota = decimal.NewFromFloat(summary.AudioInputPrice).
 					Div(decimal.NewFromInt(1000000)).Mul(dAudioTokens).Mul(dGroupRatio).Mul(dQuotaPerUnit)
+				standardAudioInputQuota = decimal.NewFromFloat(summary.AudioInputPrice).
+					Div(decimal.NewFromInt(1000000)).Mul(dAudioTokens).Mul(dQuotaPerUnit)
 			}
 		}
 
 		promptQuota := baseTokens.Add(cachedTokensWithRatio).Add(imageTokensWithRatio).Add(cachedCreationTokensWithRatio)
 		completionQuota := dCompletionTokens.Mul(dCompletionRatio)
+		summary.StandardBillingQuota = calculateTextStandardBillingQuota(relayInfo, summary, promptQuota, completionQuota, standardAudioInputQuota, summary.StandardToolSurcharge)
 		quotaCalculateDecimal := promptQuota.Add(completionQuota).Mul(ratio)
 		quotaCalculateDecimal = quotaCalculateDecimal.Add(summary.ToolCallSurchargeQuota)
 		quotaCalculateDecimal = quotaCalculateDecimal.Add(audioInputQuota)
@@ -367,6 +442,7 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		relayInfo.NoteQuotaClamp(clamp)
 		summary.Quota = quota
 	} else {
+		summary.StandardBillingQuota = calculateTextStandardBillingQuota(relayInfo, summary, decimal.Zero, decimal.Zero, audioInputQuota, summary.StandardToolSurcharge)
 		quotaCalculateDecimal := dModelPrice.Mul(dQuotaPerUnit).Mul(dGroupRatio)
 		quotaCalculateDecimal = quotaCalculateDecimal.Add(summary.ToolCallSurchargeQuota)
 		quotaCalculateDecimal = quotaCalculateDecimal.Add(audioInputQuota)
@@ -382,8 +458,14 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 
 	if summary.TotalTokens == 0 {
 		summary.Quota = 0
-	} else if !ratio.IsZero() && summary.Quota == 0 {
-		summary.Quota = 1
+		summary.StandardBillingQuota = 0
+	} else {
+		if !ratio.IsZero() && summary.Quota == 0 {
+			summary.Quota = 1
+		}
+		if !relayInfo.PriceData.UsePrice && summary.ModelRatio != 0 && summary.StandardBillingQuota == 0 {
+			summary.StandardBillingQuota = 1
+		}
 	}
 
 	return summary
@@ -449,6 +531,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 			tieredBillingApplied = true
 			tieredResult = tieredRes
 			summary.Quota = composeTieredTextQuota(relayInfo, summary, tieredQuota, tieredRes)
+			summary.StandardBillingQuota = composeTieredStandardBillingQuota(summary, tieredQuota, tieredRes)
 		}
 	}
 
@@ -566,6 +649,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	if tieredBillingApplied {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
 	}
+	AttachStandardBillingQuotaToOther(other, summary.StandardBillingQuota)
 	AttachQuotaSaturation(ctx, relayInfo, other)
 
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{

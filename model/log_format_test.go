@@ -40,11 +40,12 @@ func TestFormatUserLogsStripsChannelAccountAdminInfo(t *testing.T) {
 	other := map[string]interface{}{
 		"model_ratio": 1.25,
 		"admin_info": map[string]interface{}{
-			"account_pool":         true,
-			"channel_account_id":   18,
-			"channel_account_name": "c1cada",
-			"ratio_conversion":     0.35,
-			"use_channel":          []int{18},
+			"account_pool":           true,
+			"channel_account_id":     18,
+			"channel_account_name":   "c1cada",
+			"ratio_conversion":       0.35,
+			"standard_billing_quota": 1200,
+			"use_channel":            []int{18},
 		},
 	}
 	logs := []*Log{{Other: common.MapToJsonStr(other)}}

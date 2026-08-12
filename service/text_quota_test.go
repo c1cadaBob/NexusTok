@@ -22,6 +22,7 @@ import (
 	"github.com/c1cada/NexusTok/types"
 
 	"github.com/gin-gonic/gin"
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/require"
 )
 
@@ -80,6 +81,157 @@ func TestCalculateTextQuotaSummaryUnifiedForClaudeSemantic(t *testing.T) {
 	require.Equal(t, messageSummary.CacheCreationTokens1h, chatSummary.CacheCreationTokens1h)
 	require.True(t, chatSummary.IsClaudeUsageSemantic) // 应识别为 Claude 语义
 	require.Equal(t, 1488, chatSummary.Quota)          // 预期配额值
+	require.Equal(t, 1488, chatSummary.StandardBillingQuota)
+}
+
+func TestCalculateTextQuotaSummaryRecordsStandardBillingQuotaWithoutGroupRatio(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: "gpt-test",
+		PriceData: types.PriceData{
+			ModelRatio:           1.5,
+			CompletionRatio:      2,
+			CacheRatio:           0.5,
+			CacheCreationRatio:   1.25,
+			CacheCreation5mRatio: 1.25,
+			CacheCreation1hRatio: 2,
+			ImageRatio:           3,
+			GroupRatioInfo:       types.GroupRatioInfo{GroupRatio: 2},
+		},
+		StartTime: time.Now(),
+	}
+	usage := &dto.Usage{
+		PromptTokens:     120,
+		CompletionTokens: 40,
+		TotalTokens:      160,
+		PromptTokensDetails: dto.InputTokenDetails{
+			CachedTokens:         20,
+			CachedCreationTokens: 10,
+			ImageTokens:          5,
+		},
+	}
+
+	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+
+	// 标准基准保留模型/补全/缓存/图片倍率：((85 + 20*0.5 + 10*1.25 + 5*3) + 40*2) * 1.5 = 303.75 => 304。
+	require.Equal(t, 608, summary.Quota)
+	require.Equal(t, 304, summary.StandardBillingQuota)
+}
+
+func TestCalculateTextQuotaSummaryStandardBillingQuotaIgnoresUserGroupSpecialRatio(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: "gpt-special",
+		PriceData: types.PriceData{
+			ModelRatio:      1,
+			CompletionRatio: 1,
+			GroupRatioInfo: types.GroupRatioInfo{
+				GroupRatio:        3,
+				GroupSpecialRatio: 3,
+				HasSpecialRatio:   true,
+			},
+		},
+		StartTime: time.Now(),
+	}
+	usage := &dto.Usage{
+		PromptTokens:     100,
+		CompletionTokens: 20,
+		TotalTokens:      120,
+	}
+
+	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+
+	require.Equal(t, 360, summary.Quota)
+	require.Equal(t, 120, summary.StandardBillingQuota)
+}
+
+func TestCalculateTextQuotaSummaryStandardBillingQuotaForPriceMode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: "fixed-price",
+		PriceData: types.PriceData{
+			UsePrice:   true,
+			ModelPrice: 0.004,
+			GroupRatioInfo: types.GroupRatioInfo{
+				GroupRatio: 2.5,
+			},
+		},
+		StartTime: time.Now(),
+	}
+	usage := &dto.Usage{
+		PromptTokens:     1,
+		CompletionTokens: 1,
+		TotalTokens:      2,
+	}
+
+	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+
+	require.Equal(t, 5000, summary.Quota)
+	require.Equal(t, 2000, summary.StandardBillingQuota)
+}
+
+func TestCalculateTextQuotaSummaryStandardBillingQuotaKeepsOtherRatiosAndFreeGroup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: "free-downstream-group",
+		PriceData: types.PriceData{
+			ModelRatio:      2,
+			CompletionRatio: 1,
+			OtherRatios: map[string]float64{
+				"request_multiplier": 1.5,
+			},
+			GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 0},
+		},
+		StartTime: time.Now(),
+	}
+	usage := &dto.Usage{
+		PromptTokens:     100,
+		CompletionTokens: 0,
+		TotalTokens:      100,
+	}
+
+	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+
+	require.Equal(t, 0, summary.Quota)
+	require.Equal(t, 300, summary.StandardBillingQuota)
+}
+
+func TestCalculateTextQuotaSummaryStandardBillingQuotaKeepsMinimumWhenGroupIsFree(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: "tiny-free-group",
+		PriceData: types.PriceData{
+			ModelRatio:      0.001,
+			CompletionRatio: 1,
+			GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 0},
+		},
+		StartTime: time.Now(),
+	}
+	usage := &dto.Usage{
+		PromptTokens:     1,
+		CompletionTokens: 0,
+		TotalTokens:      1,
+	}
+
+	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+
+	require.Equal(t, 0, summary.Quota)
+	require.Equal(t, 1, summary.StandardBillingQuota)
 }
 
 // TestCalculateTextQuotaSummaryUsesSplitClaudeCacheCreationRatios 测试分离式缓存创建比率的应用，
@@ -392,9 +544,30 @@ func TestComposeTieredTextQuotaKeepsToolCallSurcharges(t *testing.T) {
 		ActualQuotaBeforeGroup: 1000,
 		ActualQuotaAfterGroup:  1000,
 	})
+	standardQuota := composeTieredStandardBillingQuota(summary, 1000, &billingexpr.TieredResult{
+		ActualQuotaBeforeGroup: 1000,
+		ActualQuotaAfterGroup:  1000,
+	})
 
 	require.Equal(t, int64(13000), summary.ToolCallSurchargeQuota.Round(0).IntPart()) // 工具调用附加费
+	require.Equal(t, int64(13000), summary.StandardToolSurcharge.Round(0).IntPart())  // group_ratio=1 的标准附加费
 	require.Equal(t, 14000, quota)                                                    // 总配额 = 分层配额 + 附加费
+	require.Equal(t, 14000, standardQuota)
+}
+
+func TestComposeTieredTextQuotaStandardBillingUsesBeforeGroup(t *testing.T) {
+	summary := textQuotaSummary{
+		GroupRatio:            2,
+		StandardBillingQuota:  999,
+		StandardToolSurcharge: decimal.NewFromInt(250),
+	}
+
+	standardQuota := composeTieredStandardBillingQuota(summary, 2000, &billingexpr.TieredResult{
+		ActualQuotaBeforeGroup: 1000,
+		ActualQuotaAfterGroup:  2000,
+	})
+
+	require.Equal(t, 1250, standardQuota)
 }
 
 func TestCalculateTextQuotaSummaryRecordsQuotaClamp(t *testing.T) {
