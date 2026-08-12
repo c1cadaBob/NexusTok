@@ -105,6 +105,20 @@ func GetChannelOps(c *gin.Context) {
 	})
 }
 
+// GetUpstreamAccountSummary 返回管理员钱包页使用的上游账号资产汇总。
+//
+// 该接口只挂在渠道只读权限下，普通用户不会进入该路由。汇总值来自同步渠道
+// settings 中保存的上游账号级余额快照；旧数据缺少账号级总用量时，服务层会回退
+// 到同步密钥 used_quota 并标记 partial，避免把近似数据伪装成完整账单。
+func GetUpstreamAccountSummary(c *gin.Context) {
+	summary, err := upstreamaccount.SummarizeUpstreamAccounts()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, summary)
+}
+
 func GetAllChannels(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	channelData := make([]*model.Channel, 0)

@@ -251,6 +251,7 @@ export interface LogStatistics {
   quota: number
   rpm: number
   tpm: number
+  upstream_cost?: number
 }
 
 // ============================================================================

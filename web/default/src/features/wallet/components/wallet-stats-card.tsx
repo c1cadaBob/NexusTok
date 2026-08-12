@@ -16,15 +16,25 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { Activity, BarChart3, WalletCards } from 'lucide-react'
+import {
+  Activity,
+  BarChart3,
+  Database,
+  TrendingUp,
+  WalletCards,
+} from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { formatQuota } from '@/lib/format'
+import { formatCurrencyUSD, formatQuota } from '@/lib/format'
+import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
-import type { UserWalletData } from '../types'
+import type { UserWalletData, UpstreamAccountSummary } from '../types'
 
 interface WalletStatsCardProps {
   user: UserWalletData | null
   loading?: boolean
+  showUpstream?: boolean
+  upstreamSummary?: UpstreamAccountSummary | null
+  upstreamLoading?: boolean
 }
 
 export function WalletStatsCard(props: WalletStatsCardProps) {
@@ -41,6 +51,17 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
             </div>
           ))}
         </div>
+        {props.showUpstream && (
+          <div className='border-border/60 grid grid-cols-1 border-t sm:grid-cols-2 sm:divide-x'>
+            {Array.from({ length: 2 }).map((_, i) => (
+              <div key={i} className='px-3 py-3 sm:px-5 sm:py-4'>
+                <Skeleton className='h-3.5 w-24' />
+                <Skeleton className='mt-2 h-7 w-32' />
+                <Skeleton className='mt-1.5 h-3.5 w-28' />
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     )
   }
@@ -65,6 +86,23 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
       icon: Activity,
     },
   ]
+  const upstreamSummary = props.upstreamSummary
+  const upstreamStats = [
+    {
+      label: t('Upstream Balance'),
+      value: formatCurrencyUSD(upstreamSummary?.upstream_balance_usd ?? 0),
+      description: t('Remaining quota'),
+      icon: Database,
+      partial: false,
+    },
+    {
+      label: t('Upstream Total Usage'),
+      value: formatCurrencyUSD(upstreamSummary?.upstream_used_usd ?? 0),
+      description: t('Total consumed quota'),
+      icon: TrendingUp,
+      partial: upstreamSummary?.partial === true,
+    },
+  ]
 
   return (
     <div className='overflow-hidden rounded-lg border'>
@@ -87,6 +125,43 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
           </div>
         ))}
       </div>
+      {props.showUpstream && (
+        <div className='border-border/60 grid grid-cols-1 border-t sm:grid-cols-2 sm:divide-x'>
+          {props.upstreamLoading
+            ? Array.from({ length: 2 }).map((_, i) => (
+                <div key={i} className='px-3 py-3 sm:px-5 sm:py-4'>
+                  <Skeleton className='h-3.5 w-24' />
+                  <Skeleton className='mt-2 h-7 w-32' />
+                  <Skeleton className='mt-1.5 h-3.5 w-28' />
+                </div>
+              ))
+            : upstreamStats.map((item) => (
+                <div key={item.label} className='px-3 py-3 sm:px-5 sm:py-4'>
+                  <div className='flex min-w-0 items-center gap-2'>
+                    <item.icon className='text-muted-foreground/60 size-3.5 shrink-0' />
+                    <div className='text-muted-foreground truncate text-xs font-medium tracking-wider uppercase'>
+                      {item.label}
+                    </div>
+                    {item.partial && (
+                      <Badge
+                        variant='secondary'
+                        className='shrink-0 text-[10px]'
+                      >
+                        {t('Partial upstream data')}
+                      </Badge>
+                    )}
+                  </div>
+
+                  <div className='text-foreground mt-1.5 font-mono text-base font-bold tracking-tight break-all tabular-nums sm:mt-2 sm:text-2xl'>
+                    {item.value}
+                  </div>
+                  <div className='text-muted-foreground/60 mt-1 hidden text-xs md:block'>
+                    {item.description}
+                  </div>
+                </div>
+              ))}
+        </div>
+      )}
     </div>
   )
 }

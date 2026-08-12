@@ -27,6 +27,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -837,9 +838,10 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 }
 
 type Stat struct {
-	Quota int `json:"quota"`
-	Rpm   int `json:"rpm"`
-	Tpm   int `json:"tpm"`
+	Quota        int     `json:"quota"`
+	Rpm          int     `json:"rpm"`
+	Tpm          int     `json:"tpm"`
+	UpstreamCost float64 `json:"upstream_cost,omitempty"`
 }
 
 func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string) (stat Stat, err error) {
@@ -896,6 +898,192 @@ func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelNa
 	}
 
 	return stat, nil
+}
+
+type upstreamCostLogRow struct {
+	Id        int    `gorm:"column:id"`
+	RequestId string `gorm:"column:request_id"`
+	CreatedAt int64  `gorm:"column:created_at"`
+	Quota     int    `gorm:"column:quota"`
+	Other     string `gorm:"column:other"`
+}
+
+// SumUpstreamCost 按管理员使用日志当前筛选条件汇总上游成本。
+//
+// 成本字段位于 logs.other.admin_info，无法用统一 SQL 在 SQLite/MySQL/PostgreSQL/
+// ClickHouse 上安全解析；这里沿用普通筛选条件分批扫描消费日志，并在 Go 层复用前端
+// 成本列口径：新日志使用 standard_billing_quota，旧日志用 quota / group_ratio 近似回退。
+func SumUpstreamCost(startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string) (float64, error) {
+	const batchSize = 1000
+	total := 0.0
+	offset := 0
+	order := "id asc"
+	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		order = "created_at asc, request_id asc"
+	}
+
+	for {
+		tx := LOG_DB.Table("logs").
+			Select("id, request_id, created_at, quota, other").
+			Where("type = ?", LogTypeConsume)
+		var err error
+		if tx, err = applyUpstreamCostFilters(tx, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group); err != nil {
+			return 0, err
+		}
+		var rows []upstreamCostLogRow
+		if err := tx.Order(order).Limit(batchSize).Offset(offset).Find(&rows).Error; err != nil {
+			common.SysError("failed to query upstream cost logs: " + err.Error())
+			return 0, errors.New("查询上游成本统计失败")
+		}
+		for _, row := range rows {
+			if cost, ok := upstreamCostFromLogRow(row); ok {
+				total += cost
+			}
+		}
+		if len(rows) < batchSize {
+			break
+		}
+		offset += batchSize
+	}
+
+	return total, nil
+}
+
+func applyUpstreamCostFilters(tx *gorm.DB, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string) (*gorm.DB, error) {
+	var err error
+	if tx, err = applyExplicitLogTextFilter(tx, "username", username); err != nil {
+		return nil, err
+	}
+	if tokenName != "" {
+		tx = tx.Where("token_name = ?", tokenName)
+	}
+	if startTimestamp != 0 {
+		tx = tx.Where("created_at >= ?", startTimestamp)
+	}
+	if endTimestamp != 0 {
+		tx = tx.Where("created_at <= ?", endTimestamp)
+	}
+	if tx, err = applyExplicitLogTextFilter(tx, "model_name", modelName); err != nil {
+		return nil, err
+	}
+	if channel != 0 {
+		tx = tx.Where("channel_id = ?", channel)
+	}
+	if group != "" {
+		tx = tx.Where(logGroupCol+" = ?", group)
+	}
+	return tx, nil
+}
+
+func upstreamCostFromLogRow(row upstreamCostLogRow) (float64, bool) {
+	other, err := common.StrToMap(row.Other)
+	if err != nil {
+		return 0, false
+	}
+	adminInfo, ok := mapFromAny(other["admin_info"])
+	if !ok {
+		return 0, false
+	}
+	ratioConversion, ok := positiveFloatFromAny(adminInfo["ratio_conversion"])
+	if !ok {
+		return 0, false
+	}
+	if standardQuota, ok := nonNegativeFloatFromAny(adminInfo["standard_billing_quota"]); ok {
+		cost := standardQuota * ratioConversion
+		if !finiteNonNegativeFloat(cost) {
+			return 0, false
+		}
+		return cost, true
+	}
+	groupRatio, ok := legacyEffectiveGroupRatio(other)
+	if !ok || row.Quota < 0 {
+		return 0, false
+	}
+	cost := (float64(row.Quota) / groupRatio) * ratioConversion
+	if !finiteNonNegativeFloat(cost) {
+		return 0, false
+	}
+	return cost, true
+}
+
+func mapFromAny(value any) (map[string]any, bool) {
+	raw, ok := value.(map[string]any)
+	if ok {
+		return raw, true
+	}
+	rawInterface, ok := value.(map[string]interface{})
+	if !ok {
+		return nil, false
+	}
+	result := make(map[string]any, len(rawInterface))
+	for key, item := range rawInterface {
+		result[key] = item
+	}
+	return result, true
+}
+
+func legacyEffectiveGroupRatio(other map[string]any) (float64, bool) {
+	if ratio, ok := positiveFloatFromAny(other["user_group_ratio"]); ok {
+		return ratio, true
+	}
+	if value, exists := other["user_group_ratio"]; exists {
+		if ratio, ok := finiteFloatFromAny(value); ok && ratio == -1 {
+			// user_group_ratio=-1 表示没有用户组特殊倍率，继续回退到普通 group_ratio。
+		} else {
+			return 0, false
+		}
+	}
+	if ratio, ok := positiveFloatFromAny(other["group_ratio"]); ok {
+		return ratio, true
+	}
+	if _, exists := other["group_ratio"]; exists {
+		return 0, false
+	}
+	return 1, true
+}
+
+func positiveFloatFromAny(value any) (float64, bool) {
+	number, ok := finiteFloatFromAny(value)
+	return number, ok && number > 0
+}
+
+func nonNegativeFloatFromAny(value any) (float64, bool) {
+	number, ok := finiteFloatFromAny(value)
+	return number, ok && number >= 0
+}
+
+func finiteFloatFromAny(value any) (float64, bool) {
+	switch v := value.(type) {
+	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return 0, false
+		}
+		return v, true
+	case float32:
+		number := float64(v)
+		if math.IsNaN(number) || math.IsInf(number, 0) {
+			return 0, false
+		}
+		return number, true
+	case int:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	case int32:
+		return float64(v), true
+	case uint:
+		return float64(v), true
+	case uint64:
+		return float64(v), true
+	case uint32:
+		return float64(v), true
+	default:
+		return 0, false
+	}
+}
+
+func finiteNonNegativeFloat(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0
 }
 
 func SumUsedToken(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string) (token int) {

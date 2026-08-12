@@ -34,6 +34,7 @@ import type {
   CompleteOrderRequest,
   CreemPaymentRequest,
   CreemPaymentResponse,
+  UpstreamAccountSummaryResponse,
   WaffoPaymentRequest,
   WaffoPaymentResponse,
   WaffoPancakePaymentRequest,
@@ -202,6 +203,14 @@ export async function getUserBillingHistory(
     params.append('keyword', keyword)
   }
   const res = await api.get(`/api/user/topup/self?${params.toString()}`)
+  return res.data
+}
+
+/**
+ * 获取管理员可见的上游账号账单汇总。
+ */
+export async function getUpstreamAccountSummary(): Promise<UpstreamAccountSummaryResponse> {
+  const res = await api.get('/api/channel/upstream-account/summary')
   return res.data
 }
 

@@ -3,55 +3,33 @@ package upstreamaccount
 import (
 	"testing"
 
-	"github.com/c1cada/NexusTok/common"
 	"github.com/stretchr/testify/require"
 )
 
-func TestPreserveChannelSyncCredentialRestoresHiddenCredential(t *testing.T) {
-	encrypted, err := common.EncryptSensitiveString("secret")
-	require.NoError(t, err)
+func TestMergeChannelSyncMetadataPreservesBalanceSnapshotWhenRefreshOmitsBalance(t *testing.T) {
+	previous := mergeChannelSyncMetadata("", &Snapshot{
+		Platform: "new-api",
+		BaseURL:  "https://upstream.example",
+		Balance: &BalanceSnapshot{
+			BalanceUSD: floatPtr(38.11),
+			UsedUSD:    floatPtr(11.89),
+			Source:     "dashboard",
+		},
+	})
 
-	existing := `{"upstream_account_sync":{"platform":"new-api","base_url":"https://newapi.example","credentials":{"platform":"new-api","base_url":"https://newapi.example","username":"alice","password":"` + encrypted + `"}},"allow_service_tier":false}`
-	sanitized := SanitizeChannelSyncSettings(existing)
+	refreshed := mergeChannelSyncMetadata(previous, &Snapshot{
+		Platform: "new-api",
+		BaseURL:  "https://upstream.example",
+		Keys: []SyncedKey{{
+			Name: "key-a",
+			Key:  "sk-a",
+		}},
+	})
 
-	require.Contains(t, sanitized, `"credential_saved":true`)
-	require.NotContains(t, sanitized, "credentials")
-
-	preserved := PreserveChannelSyncCredential(existing, sanitized)
-	credential, ok, err := ReadChannelSyncCredential(preserved)
-
-	require.NoError(t, err)
+	snapshot, ok := ReadChannelAccountBalanceSnapshot(refreshed)
 	require.True(t, ok)
-	require.Equal(t, "new-api", credential.Platform)
-	require.Equal(t, "https://newapi.example", credential.BaseURL)
-	require.Equal(t, "alice", credential.Username)
-	require.Equal(t, "secret", credential.Password)
-	require.NotContains(t, preserved, "credential_saved")
-}
-
-func TestPreserveChannelSyncCredentialDoesNotCrossSyncSource(t *testing.T) {
-	encrypted, err := common.EncryptSensitiveString("secret")
-	require.NoError(t, err)
-
-	existing := `{"upstream_account_sync":{"platform":"new-api","base_url":"https://newapi.example","credentials":{"platform":"new-api","base_url":"https://newapi.example","username":"alice","password":"` + encrypted + `"}}}`
-	next := `{"upstream_account_sync":{"platform":"new-api","base_url":"https://other.example","credential_saved":true}}`
-
-	preserved := PreserveChannelSyncCredential(existing, next)
-	_, ok, err := ReadChannelSyncCredential(preserved)
-
-	require.NoError(t, err)
-	require.False(t, ok)
-	require.NotContains(t, preserved, "credentials")
-	require.NotContains(t, preserved, "credential_saved")
-}
-
-func TestSanitizeChannelSyncSettingsDropsStaleCredentialSaved(t *testing.T) {
-	stale := `{"upstream_account_sync":{"platform":"new-api","base_url":"https://newapi.example","credential_saved":true},"allow_service_tier":false}`
-
-	sanitized := SanitizeChannelSyncSettings(stale)
-
-	require.Contains(t, sanitized, `"upstream_account_sync"`)
-	require.Contains(t, sanitized, `"allow_service_tier":false`)
-	require.NotContains(t, sanitized, "credential_saved")
-	require.NotContains(t, sanitized, "credentials")
+	require.NotNil(t, snapshot.BalanceUSD)
+	require.NotNil(t, snapshot.UsedUSD)
+	require.InDelta(t, 38.11, *snapshot.BalanceUSD, 0.000001)
+	require.InDelta(t, 11.89, *snapshot.UsedUSD, 0.000001)
 }

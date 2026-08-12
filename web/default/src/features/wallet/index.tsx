@@ -19,9 +19,15 @@ For commercial licensing, please contact support@c1cada.dev
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { getSelf } from '@/lib/api'
+import {
+  ADMIN_PERMISSION_ACTIONS,
+  ADMIN_PERMISSION_RESOURCES,
+} from '@/lib/admin-permissions'
+import { useAdminPermission } from '@/hooks/use-admin-permission'
 import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { SectionPageLayout } from '@/components/layout'
+import { getUpstreamAccountSummary } from './api'
 import { AffiliateRewardsCard } from './components/affiliate-rewards-card'
 import { BillingHistoryDialog } from './components/dialogs/billing-history-dialog'
 import { CreemConfirmDialog } from './components/dialogs/creem-confirm-dialog'
@@ -47,6 +53,7 @@ import {
 } from './lib'
 import type {
   UserWalletData,
+  UpstreamAccountSummary,
   PaymentMethod,
   PresetAmount,
   CreemProduct,
@@ -60,6 +67,9 @@ export function Wallet(props: WalletProps) {
   const { t } = useTranslation()
   const [user, setUser] = useState<UserWalletData | null>(null)
   const [userLoading, setUserLoading] = useState(true)
+  const [upstreamSummary, setUpstreamSummary] =
+    useState<UpstreamAccountSummary | null>(null)
+  const [upstreamSummaryLoading, setUpstreamSummaryLoading] = useState(false)
   const [topupAmount, setTopupAmount] = useState(0)
   const [selectedPreset, setSelectedPreset] = useState<number | null>(null)
   const [selectedPaymentMethod, setSelectedPaymentMethod] =
@@ -77,6 +87,10 @@ export function Wallet(props: WalletProps) {
   const { status } = useStatus()
   const { currency } = useSystemConfig()
   const { topupInfo, presetAmounts, loading: topupLoading } = useTopupInfo()
+  const canReadChannels = useAdminPermission(
+    ADMIN_PERMISSION_RESOURCES.CHANNEL,
+    ADMIN_PERMISSION_ACTIONS.READ
+  )
 
   // Calculate effective exchange rate - when display type is USD, use rate of 1
   const effectiveUsdExchangeRate = useMemo(() => {
@@ -119,9 +133,35 @@ export function Wallet(props: WalletProps) {
     }
   }, [])
 
+  // 管理员钱包页额外展示上游资产汇总；普通用户不会发起该请求。
+  const fetchUpstreamSummary = useCallback(async () => {
+    if (!canReadChannels) {
+      setUpstreamSummary(null)
+      setUpstreamSummaryLoading(false)
+      return
+    }
+    try {
+      setUpstreamSummaryLoading(true)
+      const response = await getUpstreamAccountSummary()
+      if (response.success && response.data) {
+        setUpstreamSummary(response.data)
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to fetch upstream account summary:', error)
+      setUpstreamSummary(null)
+    } finally {
+      setUpstreamSummaryLoading(false)
+    }
+  }, [canReadChannels])
+
   useEffect(() => {
     fetchUser()
   }, [fetchUser])
+
+  useEffect(() => {
+    fetchUpstreamSummary()
+  }, [fetchUpstreamSummary])
 
   useEffect(() => {
     if (props.initialShowHistory) {
@@ -266,7 +306,13 @@ export function Wallet(props: WalletProps) {
         </SectionPageLayout.Description>
         <SectionPageLayout.Content>
           <div className='mx-auto flex w-full max-w-7xl flex-col gap-4 sm:gap-5'>
-            <WalletStatsCard user={user} loading={userLoading} />
+            <WalletStatsCard
+              user={user}
+              loading={userLoading}
+              showUpstream={canReadChannels}
+              upstreamSummary={upstreamSummary}
+              upstreamLoading={upstreamSummaryLoading}
+            />
 
             <div
               className={

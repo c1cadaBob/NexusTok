@@ -54,6 +54,17 @@ export type WaffoPancakePaymentResponse = ApiResponse<
     }
   | string
 >
+export type UpstreamAccountSummaryResponse =
+  ApiResponse<UpstreamAccountSummary>
+
+export interface UpstreamAccountSummary {
+  upstream_balance_usd: number
+  upstream_used_usd: number
+  upstream_used_quota: number
+  synced_channel_count: number
+  partial: boolean
+  updated_at: number
+}
 
 /**
  * Creem product configuration

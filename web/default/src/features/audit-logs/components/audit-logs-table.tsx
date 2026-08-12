@@ -41,10 +41,7 @@ import {
 import { LOG_TYPE_ENUM } from '@/features/usage-logs/constants'
 import type { UsageLog } from '@/features/usage-logs/data/schema'
 import { parseLogOther, renderAuditContent } from '@/features/usage-logs/lib'
-import {
-  getDefaultTimeRange,
-  getLogTypeConfig,
-} from '@/features/usage-logs/lib/utils'
+import { getLogTypeConfig } from '@/features/usage-logs/lib/utils'
 import { getAuditLogs } from '../api'
 
 const route = getRouteApi('/_authenticated/audit-logs/')
@@ -79,6 +76,14 @@ function buildSourceKey(values: {
 
 function toTimestamp(date?: Date): number | undefined {
   return date ? Math.floor(date.getTime() / 1000) : undefined
+}
+
+function getDefaultAuditTimeRange() {
+  const now = Date.now()
+  return {
+    start: new Date(now - 7 * 24 * 60 * 60 * 1000),
+    end: new Date(now + 60 * 60 * 1000),
+  }
 }
 
 function useAuditLogsColumns(): ColumnDef<UsageLog>[] {
@@ -225,7 +230,7 @@ export function AuditLogsTable() {
   const isFetchingAuditLogs = useIsFetching({ queryKey: ['audit-logs'] })
 
   const searchState = useMemo<AuditLogDraft>(() => {
-    const { start, end } = getDefaultTimeRange()
+    const { start, end } = getDefaultAuditTimeRange()
     return {
       sourceKey: buildSourceKey({
         startTime: searchParams.startTime,
@@ -276,12 +281,12 @@ export function AuditLogsTable() {
         start_timestamp: toTimestamp(
           searchParams.startTime
             ? new Date(searchParams.startTime)
-            : getDefaultTimeRange().start
+            : getDefaultAuditTimeRange().start
         ),
         end_timestamp: toTimestamp(
           searchParams.endTime
             ? new Date(searchParams.endTime)
-            : getDefaultTimeRange().end
+            : getDefaultAuditTimeRange().end
         ),
         username: searchParams.username || undefined,
         request_id: searchParams.requestId || undefined,
@@ -341,7 +346,7 @@ export function AuditLogsTable() {
   }, [filters, navigate])
 
   const handleReset = useCallback(() => {
-    const { start, end } = getDefaultTimeRange()
+    const { start, end } = getDefaultAuditTimeRange()
     const nextFilters: AuditLogFilters = { startTime: start, endTime: end }
     const nextSearch = {
       startTime: start.getTime(),
@@ -402,7 +407,7 @@ export function AuditLogsTable() {
       isFetching={isFetching}
       emptyTitle={t('No Logs Found')}
       emptyDescription={t(
-        'Administrative actions and successful sign-ins will appear here.'
+        'No audit logs found in the selected time range. Try expanding the range or triggering an administrative action.'
       )}
       skeletonKeyPrefix='audit-log-skeleton'
       tableClassName='max-h-[calc(100dvh-13rem)] overflow-auto sm:max-h-[calc(100dvh-14rem)]'

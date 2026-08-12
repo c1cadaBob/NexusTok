@@ -50,6 +50,10 @@ function StatBadge(props: {
   )
 }
 
+function hasValidUpstreamCost(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
 export function CommonLogsStats() {
   const { t } = useTranslation()
   const isAdmin = useAdminPermission(
@@ -98,6 +102,15 @@ export function CommonLogsStats() {
         value={sensitiveVisible ? formatLogQuota(stats?.quota || 0) : '••••'}
         accent='bg-sky-500/70'
       />
+      {isAdmin && hasValidUpstreamCost(stats?.upstream_cost) && (
+        <StatBadge
+          label={t('Upstream Cost')}
+          value={
+            sensitiveVisible ? formatLogQuota(stats.upstream_cost) : '••••'
+          }
+          accent='bg-amber-500/70'
+        />
+      )}
       <StatBadge
         label={t('RPM')}
         value={stats?.rpm || 0}

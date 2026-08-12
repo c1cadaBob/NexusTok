@@ -80,6 +80,7 @@ var channelPermissionRoutes = []permissionRoute{
 	{method: http.MethodPost, path: "/upstream-account/capture-session/start", permission: authz.ChannelSensitiveWrite, handler: controller.StartUpstreamAccountCaptureSession},
 	{method: http.MethodGet, path: "/upstream-account/capture-session/:id", permission: authz.ChannelSensitiveWrite, handler: controller.GetUpstreamAccountCaptureSession},
 	{method: http.MethodPost, path: "/upstream-account/credentials/parse", permission: authz.ChannelSensitiveWrite, handler: controller.ParseUpstreamAccountCredential},
+	{method: http.MethodGet, path: "/upstream-account/summary", permission: authz.ChannelRead, handler: controller.GetUpstreamAccountSummary},
 	{method: http.MethodPost, path: "/upstream-account/create", permission: authz.ChannelSensitiveWrite, handler: controller.CreateUpstreamAccountChannel},
 	{method: http.MethodGet, path: "/:id", permission: authz.ChannelRead, handler: controller.GetChannel},
 	{method: http.MethodPost, path: "/:id/upstream-account/refresh", permission: authz.ChannelSensitiveWrite, handler: controller.RefreshUpstreamAccountChannel},

@@ -3,6 +3,7 @@ package upstreamaccount
 import (
 	"encoding/hex"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/c1cada/NexusTok/common"
@@ -26,6 +27,7 @@ type syncMetadata struct {
 	EffectiveRatio        float64                  `json:"effective_ratio,omitempty"`
 	RatioConversion       float64                  `json:"ratio_conversion,omitempty"`
 	RatioConversionConfig *RatioConversionSnapshot `json:"ratio_conversion_config,omitempty"`
+	BalanceSnapshot       *AccountBalanceSnapshot  `json:"balance_snapshot,omitempty"`
 }
 
 // AccountSyncDisplayMetadata 是可返回给前端展示的同步账号元数据。
@@ -41,6 +43,25 @@ type AccountSyncDisplayMetadata struct {
 	EffectiveRatio        float64                  `json:"effective_ratio,omitempty"`
 	RatioConversion       float64                  `json:"ratio_conversion,omitempty"`
 	RatioConversionConfig *RatioConversionSnapshot `json:"ratio_conversion_config,omitempty"`
+}
+
+// AccountBalanceSnapshot 是渠道 settings 中保存的上游账号级余额快照。
+//
+// Channel.balance 只保存当前余额，无法表达上游账号总用量、数据是否部分缺失、
+// 以及该快照来自哪个上游接口。该结构只包含非敏感账单摘要，允许返回给管理员汇总
+// 页面；密码、Cookie、access_token、refresh_token 和完整 API Key 仍然只存在
+// credentials 或 ChannelAccount.Key 中，不会写入这里。
+type AccountBalanceSnapshot struct {
+	BalanceUSD          *float64 `json:"balance_usd,omitempty"`
+	UsedUSD             *float64 `json:"used_usd,omitempty"`
+	RawBalance          *float64 `json:"raw_balance,omitempty"`
+	RawUsed             *float64 `json:"raw_used,omitempty"`
+	QuotaPerUnit        *float64 `json:"quota_per_unit,omitempty"`
+	Source              string   `json:"source,omitempty"`
+	Partial             bool     `json:"partial,omitempty"`
+	MissingUsedValue    bool     `json:"missing_used_value,omitempty"`
+	MissingBalanceValue bool     `json:"missing_balance_value,omitempty"`
+	SyncedAt            int64    `json:"synced_at,omitempty"`
 }
 
 func keyDigest(key string) string {
@@ -59,10 +80,12 @@ func mergeChannelSyncMetadata(existing string, snapshot *Snapshot) string {
 	if data == nil {
 		data = map[string]any{}
 	}
+	existingMetadata := readChannelSyncMetadata(existing)
+	syncedAt := common.GetTimestamp()
 	next := map[string]any{
 		"platform":  snapshot.Platform,
 		"base_url":  snapshotSyncMetadataBaseURL(snapshot),
-		"synced_at": common.GetTimestamp(),
+		"synced_at": syncedAt,
 	}
 	if managementBaseURL := snapshotManagementBaseURL(snapshot); managementBaseURL != "" {
 		next["management_base_url"] = managementBaseURL
@@ -70,7 +93,14 @@ func mergeChannelSyncMetadata(existing string, snapshot *Snapshot) string {
 	if relayBaseURL := snapshotRelayBaseURL(snapshot); relayBaseURL != "" {
 		next["relay_base_url"] = relayBaseURL
 	}
-	if existingMetadata := readChannelSyncMetadata(existing); existingMetadata.Credentials != nil {
+	if balanceSnapshot := buildAccountBalanceSnapshot(snapshot.Balance, syncedAt); balanceSnapshot != nil {
+		next["balance_snapshot"] = balanceSnapshot
+	} else if existingMetadata.BalanceSnapshot != nil {
+		// 某些上游只返回密钥列表而不返回余额；此时保留上一次账号级快照，
+		// 避免管理员钱包页因为一次不完整刷新突然归零或退化成旧密钥近似值。
+		next["balance_snapshot"] = existingMetadata.BalanceSnapshot
+	}
+	if existingMetadata.Credentials != nil {
 		next["credentials"] = existingMetadata.Credentials
 	}
 	data[upstreamAccountSyncMetadataKey] = next
@@ -166,6 +196,18 @@ func ReadAccountSyncDisplayMetadata(settings string) AccountSyncDisplayMetadata 
 		RatioConversion:       metadata.RatioConversion,
 		RatioConversionConfig: metadata.RatioConversionConfig,
 	}
+}
+
+// ReadChannelAccountBalanceSnapshot 读取同步渠道保存的账号级余额快照。
+//
+// 汇总接口会优先使用这里记录的上游账号级 used_usd；旧渠道可能只有
+// Channel.balance 和同步密钥 used_quota，因此该函数只负责安全读取快照，不做任何推断。
+func ReadChannelAccountBalanceSnapshot(settings string) (AccountBalanceSnapshot, bool) {
+	metadata := readChannelSyncMetadata(settings)
+	if metadata.BalanceSnapshot == nil {
+		return AccountBalanceSnapshot{}, false
+	}
+	return *metadata.BalanceSnapshot, true
 }
 
 // HasAccountSyncMetadata 判断账号 settings 是否包含上游同步身份。
@@ -473,6 +515,47 @@ func readSyncMetadata(settings string) syncMetadata {
 		return syncMetadata{}
 	}
 	return metadata
+}
+
+func buildAccountBalanceSnapshot(balance *BalanceSnapshot, syncedAt int64) *AccountBalanceSnapshot {
+	if balance == nil {
+		return nil
+	}
+	snapshot := &AccountBalanceSnapshot{
+		BalanceUSD:          finiteFloatPointer(balance.BalanceUSD),
+		UsedUSD:             finiteFloatPointer(balance.UsedUSD),
+		RawBalance:          finiteFloatPointer(balance.RawBalance),
+		RawUsed:             finiteFloatPointer(balance.RawUsed),
+		QuotaPerUnit:        finiteFloatPointer(balance.QuotaPerUnit),
+		Source:              strings.TrimSpace(balance.Source),
+		Partial:             balance.Partial,
+		MissingUsedValue:    balance.MissingUsedValue,
+		MissingBalanceValue: balance.MissingBalanceValue,
+		SyncedAt:            syncedAt,
+	}
+	if snapshot.BalanceUSD == nil &&
+		snapshot.UsedUSD == nil &&
+		snapshot.RawBalance == nil &&
+		snapshot.RawUsed == nil &&
+		snapshot.QuotaPerUnit == nil &&
+		snapshot.Source == "" &&
+		!snapshot.Partial &&
+		!snapshot.MissingUsedValue &&
+		!snapshot.MissingBalanceValue {
+		return nil
+	}
+	return snapshot
+}
+
+func finiteFloatPointer(value *float64) *float64 {
+	if value == nil {
+		return nil
+	}
+	if math.IsNaN(*value) || math.IsInf(*value, 0) {
+		return nil
+	}
+	v := *value
+	return &v
 }
 
 func buildStoredCredential(snapshot *Snapshot, credential Credential) (*StoredCredential, error) {
