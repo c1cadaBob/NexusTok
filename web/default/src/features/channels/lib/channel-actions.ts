@@ -112,6 +112,21 @@ function patchChannelBalanceInChannel<T extends Channel>(
     ...(response.balance_updated_time !== undefined
       ? { balance_updated_time: response.balance_updated_time }
       : {}),
+    ...(response.upstream_balance_usd !== undefined
+      ? { upstream_balance_usd: response.upstream_balance_usd }
+      : {}),
+    ...(response.upstream_used_usd !== undefined
+      ? { upstream_used_usd: response.upstream_used_usd }
+      : {}),
+    ...(response.upstream_used_quota !== undefined
+      ? { upstream_used_quota: response.upstream_used_quota }
+      : {}),
+    ...(response.upstream_conversion_factor !== undefined
+      ? { upstream_conversion_factor: response.upstream_conversion_factor }
+      : {}),
+    ...(response.upstream_partial !== undefined
+      ? { upstream_partial: response.upstream_partial }
+      : {}),
   }
 }
 

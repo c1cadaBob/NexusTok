@@ -550,6 +550,88 @@ func TestSub2APIPreviewFetchesKeysRatesAndBalance(t *testing.T) {
 	require.Equal(t, "sk-sub2-full-key", record.Snapshot.Keys[0].Key)
 }
 
+func TestSub2APIPreviewFallsBackToKeyUsageWhenAccountUsageIsMissing(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"access_token":"sub2-token","user":{"id":5,"email":"alice@example.com","balance":10}}}`))
+		case "/api/v1/auth/me":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":10}}`))
+		case "/api/v1/user/profile":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":12.5}}`))
+		case "/api/v1/groups/available":
+			_, _ = w.Write([]byte(`{"code":0,"data":[{"id":3,"name":"vip","platform":"openai","rate_multiplier":1}]}`))
+		case "/api/v1/groups/rates":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"3":1}}`))
+		case "/api/v1/usage/dashboard/stats":
+			_, _ = w.Write([]byte(`{"code":0,"data":{}}`))
+		case "/api/v1/keys":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"items":[{"id":9,"name":"sub-key","key":"sk-sub2-full-key","status":"active","group_id":3,"group":{"id":3,"name":"vip"},"models":["gpt-4o"],"quota":20,"quota_used":3}],"total":1}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	result, err := Preview(context.Background(), PreviewRequest{Credential: Credential{
+		Platform: PlatformSub2API,
+		BaseURL:  server.URL,
+		Email:    "alice@example.com",
+		Password: "secret",
+	}})
+
+	require.NoError(t, err)
+	require.NotNil(t, result.Snapshot)
+	require.NotNil(t, result.Snapshot.Balance)
+	require.NotNil(t, result.Snapshot.Balance.UsedUSD)
+	require.InDelta(t, 3, *result.Snapshot.Balance.UsedUSD, 0.000001)
+	require.True(t, result.Snapshot.Balance.Partial)
+	require.True(t, result.Snapshot.Balance.MissingUsedValue)
+	require.Equal(t, "sub2api:keys", result.Snapshot.Balance.Source)
+}
+
+func TestSub2APIPreviewFallsBackToKeyUsageWhenUsageEndpointFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"access_token":"sub2-token","user":{"id":5,"email":"alice@example.com","balance":10}}}`))
+		case "/api/v1/auth/me":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":10}}`))
+		case "/api/v1/user/profile":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":12.5}}`))
+		case "/api/v1/groups/available":
+			_, _ = w.Write([]byte(`{"code":0,"data":[{"id":3,"name":"vip","platform":"openai","rate_multiplier":1}]}`))
+		case "/api/v1/groups/rates":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"3":1}}`))
+		case "/api/v1/usage/dashboard/stats":
+			http.NotFound(w, r)
+		case "/api/v1/keys":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"items":[{"id":9,"name":"sub-key","key":"sk-sub2-full-key","status":"active","group_id":3,"group":{"id":3,"name":"vip"},"models":["gpt-4o"],"quota":20,"quota_used":3}],"total":1}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	result, err := Preview(context.Background(), PreviewRequest{Credential: Credential{
+		Platform: PlatformSub2API,
+		BaseURL:  server.URL,
+		Email:    "alice@example.com",
+		Password: "secret",
+	}})
+
+	require.NoError(t, err)
+	require.NotNil(t, result.Snapshot)
+	require.NotNil(t, result.Snapshot.Balance)
+	require.NotNil(t, result.Snapshot.Balance.UsedUSD)
+	require.InDelta(t, 3, *result.Snapshot.Balance.UsedUSD, 0.000001)
+	require.True(t, result.Snapshot.Balance.Partial)
+	require.True(t, result.Snapshot.Balance.MissingUsedValue)
+	require.Equal(t, "sub2api:keys", result.Snapshot.Balance.Source)
+}
+
 func TestSub2APIPreviewImportsAccessToken(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

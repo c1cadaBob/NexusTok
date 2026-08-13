@@ -72,6 +72,13 @@ type Channel struct {
 
 	ChannelAccountStats map[string]int64 `json:"channel_account_stats,omitempty" gorm:"-"` // 渠道账号统计
 	MinimumRatio        *float64         `json:"minimum_ratio,omitempty" gorm:"-"`         // 渠道内所有账号的最低换算倍率，仅用于列表展示与排序
+
+	// 以下字段只在同步渠道 API 响应阶段填充，不写入数据库。
+	UpstreamBalanceUSD       *float64 `json:"upstream_balance_usd,omitempty" gorm:"-"`
+	UpstreamUsedUSD          *float64 `json:"upstream_used_usd,omitempty" gorm:"-"`
+	UpstreamUsedQuota        *int64   `json:"upstream_used_quota,omitempty" gorm:"-"`
+	UpstreamConversionFactor *float64 `json:"upstream_conversion_factor,omitempty" gorm:"-"`
+	UpstreamPartial          bool     `json:"upstream_partial,omitempty" gorm:"-"`
 }
 
 // ChannelInfo 渠道配置信息结构体

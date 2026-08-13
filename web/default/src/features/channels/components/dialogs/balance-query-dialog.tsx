@@ -125,6 +125,17 @@ export function BalanceQueryDialog({
           balance: newBalance,
           used_quota: response.used_quota ?? currentRow.used_quota,
           balance_updated_time: updatedTime,
+          upstream_balance_usd:
+            response.upstream_balance_usd ?? currentRow.upstream_balance_usd,
+          upstream_used_usd:
+            response.upstream_used_usd ?? currentRow.upstream_used_usd,
+          upstream_used_quota:
+            response.upstream_used_quota ?? currentRow.upstream_used_quota,
+          upstream_conversion_factor:
+            response.upstream_conversion_factor ??
+            currentRow.upstream_conversion_factor,
+          upstream_partial:
+            response.upstream_partial ?? currentRow.upstream_partial,
         })
         patchChannelBalanceCache(queryClient, currentRow.id, response)
 

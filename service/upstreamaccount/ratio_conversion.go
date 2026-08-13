@@ -1,5 +1,7 @@
 package upstreamaccount
 
+import "math"
+
 // RatioConversionConfig 表示供应商充值到账换算配置。
 //
 // 这两个值只描述“管理员从上游供应商购买额度”的成本关系，不是 NexusTok 面向
@@ -12,7 +14,37 @@ type RatioConversionConfig struct {
 
 // Enabled 判断充值换算配置是否完整有效。
 func (config RatioConversionConfig) Enabled() bool {
-	return config.PaidCNY > 0 && config.PlatformUSDCredit > 0
+	return isFinitePositive(config.PaidCNY) && isFinitePositive(config.PlatformUSDCredit)
+}
+
+// AssetConversionFactor 返回上游资产展示使用的充值到账换算因子。
+//
+// 上游余额和上游累计用量属于供应商资产口径，只应用“实付金额 /
+// 上游平台到账额度”。该因子与同步密钥的模型倍率、分组倍率以及站内用户
+// 计费倍率完全独立；配置缺失或无效时按 1 处理，避免把普通余额查询误换算。
+func (config RatioConversionConfig) AssetConversionFactor() float64 {
+	if !config.Enabled() {
+		return 1
+	}
+	factor := config.PaidCNY / config.PlatformUSDCredit
+	if !isFinitePositive(factor) {
+		return 1
+	}
+	return factor
+}
+
+func isFinitePositive(value float64) bool {
+	return value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
+func ratioConversionConfigFromSnapshot(snapshot *RatioConversionSnapshot) RatioConversionConfig {
+	if snapshot == nil || !snapshot.Enabled {
+		return RatioConversionConfig{}
+	}
+	return RatioConversionConfig{
+		PaidCNY:           snapshot.PaidCNY,
+		PlatformUSDCredit: snapshot.PlatformUSDCredit,
+	}
 }
 
 // RatioConversionSnapshot 是写入快照与账号同步元数据的倍率换算结果。

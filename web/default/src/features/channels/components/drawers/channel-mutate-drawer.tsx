@@ -56,6 +56,7 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { formatCurrencyFromUSD } from '@/lib/currency'
 import { cn } from '@/lib/utils'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { useHiddenClickUnlock } from '@/hooks/use-hidden-click-unlock'
@@ -196,6 +197,7 @@ import {
   getUpstreamKeyRatioDisplayValue,
   getUpstreamKeyGroupLabel,
   getUpstreamRatioDisplayValue,
+  getUpstreamPreviewBalanceDisplay,
   collectUpstreamAccountCapabilityValidationErrors,
   summarizeUpstreamAccountCapabilities,
 } from '../../lib/upstream-sync'
@@ -387,6 +389,22 @@ function buildUpstreamRatioConversionPayload(
     paid_cny: normalizedPaidCny,
     platform_usd_credit: normalizedPlatformUsdCredit,
   }
+}
+
+const PREVIEW_UPSTREAM_AMOUNT_FORMAT = {
+  digitsLarge: 2,
+  digitsSmall: 6,
+  abbreviate: false,
+}
+
+function formatPreviewUpstreamAmount(value: number | undefined) {
+  if (value == null || !Number.isFinite(value)) return '-'
+  return formatCurrencyFromUSD(value, PREVIEW_UPSTREAM_AMOUNT_FORMAT)
+}
+
+function formatRawUpstreamUSD(value: number | undefined) {
+  if (value == null || !Number.isFinite(value)) return '-'
+  return `$${value.toFixed(6).replace(/\.?0+$/, '')}`
 }
 
 export function resolveUpstreamChannelGroup(groups: string[] | undefined) {
@@ -1841,6 +1859,10 @@ export function ChannelMutateDrawer({
         snapshot.keys,
         upstreamAccountConfigs
       )
+      const upstreamBalanceDisplay = getUpstreamPreviewBalanceDisplay(
+        snapshot.balance,
+        upstreamRatioConversion
+      )
       return (
         <div className='flex flex-col gap-3'>
           {options.showBalance !== false && (
@@ -1853,20 +1875,26 @@ export function ChannelMutateDrawer({
                   {snapshot.keys.length}
                 </div>
               </div>
-              <div className='rounded-md border p-3'>
+              <div
+                className='rounded-md border p-3'
+                title={`${t('Raw upstream value')}: ${formatRawUpstreamUSD(snapshot.balance?.balance_usd)}\n${t('Converted upstream value')}: ${formatPreviewUpstreamAmount(upstreamBalanceDisplay.balanceUSD)}`}
+              >
                 <div className='text-muted-foreground text-xs'>
-                  {t('Remaining Balance')}
+                  {t('Upstream Remaining')}
                 </div>
-                <div className='text-lg font-semibold'>
-                  {snapshot.balance?.balance_usd ?? '-'}
+                <div className='truncate text-lg font-semibold'>
+                  {formatPreviewUpstreamAmount(upstreamBalanceDisplay.balanceUSD)}
                 </div>
               </div>
-              <div className='rounded-md border p-3'>
+              <div
+                className='rounded-md border p-3'
+                title={`${t('Raw upstream value')}: ${formatRawUpstreamUSD(snapshot.balance?.used_usd)}\n${t('Converted upstream value')}: ${formatPreviewUpstreamAmount(upstreamBalanceDisplay.usedUSD)}`}
+              >
                 <div className='text-muted-foreground text-xs'>
-                  {t('Used Balance')}
+                  {t('Upstream Used')}
                 </div>
-                <div className='text-lg font-semibold'>
-                  {snapshot.balance?.used_usd ?? '-'}
+                <div className='truncate text-lg font-semibold'>
+                  {formatPreviewUpstreamAmount(upstreamBalanceDisplay.usedUSD)}
                 </div>
               </div>
             </div>
@@ -2289,6 +2317,7 @@ export function ChannelMutateDrawer({
       t,
       upstreamAccountConfigs,
       upstreamApplySuggested,
+      upstreamRatioConversion,
     ]
   )
 

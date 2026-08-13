@@ -219,6 +219,52 @@ describe('渠道余额缓存补丁', () => {
     const detailData = queryClient.getQueryData<GetChannelResponse>(detailKey)
     assert.equal(detailData?.data?.used_quota, largeUsedQuota)
   })
+
+  test('同步渠道余额刷新同时更新上游字段，不把上游已用量写入本地已用量', () => {
+    const queryClient = new QueryClient()
+    const listKey = channelsQueryKeys.list({ p: 1, page_size: 10 })
+    const detailKey = channelsQueryKeys.detail(1)
+
+    const channel = makeChannel({
+      id: 1,
+      balance: 2,
+      used_quota: 10,
+      balance_updated_time: 100,
+    })
+    queryClient.setQueryData<GetChannelsResponse>(listKey, {
+      success: true,
+      data: {
+        items: [channel],
+        total: 1,
+        page: 1,
+        page_size: 10,
+      },
+    })
+    queryClient.setQueryData<GetChannelResponse>(detailKey, {
+      success: true,
+      data: channel,
+    })
+
+    patchChannelBalanceCache(queryClient, 1, {
+      success: true,
+      balance: 26.9510572,
+      used_quota: 10,
+      upstream_balance_usd: 26.9510572,
+      upstream_used_usd: 96.510803,
+      upstream_used_quota: 96_510_803,
+      upstream_conversion_factor: 0.1,
+      upstream_partial: false,
+      balance_updated_time: 999,
+    })
+
+    const listData = queryClient.getQueryData<GetChannelsResponse>(listKey)
+    const detailData = queryClient.getQueryData<GetChannelResponse>(detailKey)
+    assert.equal(listData?.data?.items[0].used_quota, 10)
+    assert.equal(listData?.data?.items[0].upstream_used_quota, 96_510_803)
+    assert.equal(listData?.data?.items[0].upstream_conversion_factor, 0.1)
+    assert.equal(detailData?.data?.used_quota, 10)
+    assert.equal(detailData?.data?.upstream_used_usd, 96.510803)
+  })
 })
 
 describe('渠道测试请求参数', () => {

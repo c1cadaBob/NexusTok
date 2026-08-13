@@ -18,13 +18,17 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import type { UpstreamAccountKey } from '../types'
+import type { Channel, ChannelAccount, UpstreamAccountKey } from '../types'
 import {
   buildUpstreamAccountConfigDraft,
   buildUpstreamAccountPreviewRequest,
   buildUpstreamAccountRefreshPayload,
   collectUpstreamAccountCapabilityValidationErrors,
+  getChannelAccountAssetDisplaySource,
+  getChannelBalanceDisplaySource,
+  getUpstreamPreviewBalanceDisplay,
   summarizeUpstreamAccountCapabilities,
+  upstreamAssetConversionFactor,
 } from './upstream-sync'
 
 function makeSnapshotKey(
@@ -45,6 +49,158 @@ function makeSnapshotKey(
 }
 
 describe('上游账号刷新共享 payload', () => {
+  test('上游资产预览使用实付金额与到账额度换算', () => {
+    const display = getUpstreamPreviewBalanceDisplay(
+      {
+        balance_usd: 269.510572,
+        used_usd: 965.10803,
+      },
+      {
+        paid_cny: 1,
+        platform_usd_credit: 10,
+      }
+    )
+
+    assert.equal(display.conversionFactor, 0.1)
+    assert.ok(Math.abs((display.balanceUSD ?? 0) - 26.9510572) < 1e-12)
+    assert.ok(Math.abs((display.usedUSD ?? 0) - 96.510803) < 1e-12)
+  })
+
+  test('无效上游资产换算配置回退为 1', () => {
+    assert.equal(
+      upstreamAssetConversionFactor({
+        paid_cny: 0,
+        platform_usd_credit: 10,
+      }),
+      1
+    )
+    assert.equal(
+      upstreamAssetConversionFactor({
+        paid_cny: 1,
+        platform_usd_credit: Number.NaN,
+      }),
+      1
+    )
+  })
+
+  test('同步渠道优先展示换算后的上游资产，普通渠道继续展示本地资产', () => {
+    const syncedChannel = {
+      id: 1,
+      type: 59,
+      key: '',
+      name: 'synced',
+      status: 1,
+      created_time: 0,
+      test_time: 0,
+      response_time: 0,
+      balance: 999,
+      balance_updated_time: 0,
+      models: '',
+      group: 'default',
+      used_quota: 123,
+      other: '',
+      other_info: '',
+      remark: '',
+      settings:
+        '{"upstream_account_sync":{"platform":"sub2api","base_url":"https://upstream.example","synced_at":1}}',
+      max_input_tokens: 0,
+      channel_info: {
+        is_multi_key: false,
+        multi_key_size: 0,
+        multi_key_polling_index: 0,
+        multi_key_mode: 'random',
+      },
+      upstream_balance_usd: 26.95,
+      upstream_used_quota: 96510803,
+      upstream_partial: false,
+    } satisfies Channel
+    const plainChannel = {
+      ...syncedChannel,
+      type: 1,
+      balance: 55,
+      used_quota: 777,
+      upstream_balance_usd: undefined,
+      upstream_used_quota: undefined,
+      settings: '{}',
+    } satisfies Channel
+
+    assert.deepEqual(getChannelBalanceDisplaySource(syncedChannel), {
+      usedQuota: 96510803,
+      balanceUSD: 26.95,
+      partial: false,
+      upstream: true,
+    })
+    assert.deepEqual(getChannelBalanceDisplaySource(plainChannel), {
+      usedQuota: 777,
+      balanceUSD: 55,
+      partial: false,
+      upstream: false,
+    })
+
+    assert.deepEqual(
+      getChannelBalanceDisplaySource({
+        ...syncedChannel,
+        upstream_balance_usd: undefined,
+        upstream_used_quota: undefined,
+        upstream_partial: false,
+      }),
+      {
+        usedQuota: undefined,
+        balanceUSD: 999,
+        partial: false,
+        upstream: true,
+      }
+    )
+  })
+
+  test('同步密钥优先展示换算后的已用和剩余，旧数据回退本地已用', () => {
+    const syncedAccount = {
+      id: 1,
+      channel_id: 1,
+      name: 'synced-key',
+      key: 'sk-****',
+      status: 1,
+      models: '',
+      group: 'default',
+      access_groups: 'default',
+      priority: 0,
+      weight: 1,
+      last_used_time: 0,
+      used_quota: 10,
+      other: '',
+      settings: '{}',
+      last_error: '',
+      rate_limited_until: 0,
+      overload_until: 0,
+      temp_disabled_until: 0,
+      disabled_reason: '',
+      max_concurrency: 0,
+      created_time: 0,
+      upstream_used_quota: 96_510_803,
+      upstream_remaining_quota: 26_951_057,
+      upstream_partial: false,
+    } satisfies ChannelAccount
+    const legacyAccount = {
+      ...syncedAccount,
+      upstream_used_quota: undefined,
+      upstream_remaining_quota: undefined,
+      used_quota: 1234,
+    } satisfies ChannelAccount
+
+    assert.deepEqual(getChannelAccountAssetDisplaySource(syncedAccount), {
+      usedQuota: 96_510_803,
+      remainingQuota: 26_951_057,
+      upstream: true,
+      partial: false,
+    })
+    assert.deepEqual(getChannelAccountAssetDisplaySource(legacyAccount), {
+      usedQuota: 1234,
+      remainingQuota: undefined,
+      upstream: false,
+      partial: false,
+    })
+  })
+
   test('使用已保存登录预览时不发送账号密码', () => {
     const payload = buildUpstreamAccountPreviewRequest({
       channelId: 42,

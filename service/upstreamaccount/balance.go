@@ -10,9 +10,14 @@ import (
 
 // ChannelBalanceRefreshResult 表示同步渠道余额刷新后已经写入数据库并返回给前端的字段。
 type ChannelBalanceRefreshResult struct {
-	Balance            float64 `json:"balance"`
-	UsedQuota          int64   `json:"used_quota"`
-	BalanceUpdatedTime int64   `json:"balance_updated_time"`
+	Balance            float64  `json:"balance"`
+	UsedQuota          int64    `json:"used_quota"`
+	BalanceUpdatedTime int64    `json:"balance_updated_time"`
+	UpstreamBalanceUSD *float64 `json:"upstream_balance_usd,omitempty"`
+	UpstreamUsedUSD    *float64 `json:"upstream_used_usd,omitempty"`
+	UpstreamUsedQuota  *int64   `json:"upstream_used_quota,omitempty"`
+	UpstreamFactor     *float64 `json:"upstream_conversion_factor,omitempty"`
+	UpstreamPartial    bool     `json:"upstream_partial,omitempty"`
 }
 
 // RefreshChannelBalance 使用已加密保存的上游账号凭据刷新同步渠道的真实账号余额。
@@ -33,6 +38,14 @@ func RefreshChannelBalance(ctx context.Context, channel *model.Channel) (*Channe
 	if !ok {
 		return nil, fmt.Errorf("当前同步渠道没有保存上游账号凭据，请先在编辑渠道中重新同步上游账号")
 	}
+	if refreshShouldUsePasswordLogin(credential) {
+		// 保存凭据同时包含密码和旧登录态时，余额刷新也必须优先重新登录。
+		// 否则即使账号密码已经失效，旧 AT/RT 仍可能短暂成功，掩盖真实凭据问题。
+		credential.Session = nil
+		credential.AccessToken = ""
+		credential.RefreshToken = ""
+		credential.ExpiresAt = 0
+	}
 	client, err := NewPlatformClient(credential.Platform)
 	if err != nil {
 		return nil, err
@@ -41,13 +54,26 @@ func RefreshChannelBalance(ctx context.Context, channel *model.Channel) (*Channe
 	if err != nil {
 		return nil, err
 	}
+	var existingAccounts []model.ChannelAccount
+	if err := model.DB.Where("channel_id = ?", channel.Id).Find(&existingAccounts).Error; err != nil {
+		return nil, err
+	}
+	// 余额刷新不会携带前端换算表单；先恢复渠道或密钥 metadata 中的历史配置，
+	// 避免一次仅刷新余额的操作把管理员保存的资产换算因子丢掉。
+	applySnapshotRatioConversionForRefresh(
+		snapshot,
+		RatioConversionConfig{},
+		channel.OtherSettings,
+		existingAccounts,
+	)
 	attachStoredCredential(snapshot, credential)
 	balance := balanceValue(snapshot.Balance)
 	updatedTime := common.GetTimestamp()
+	mergedSettings := mergeChannelSyncMetadataWithCredential(channel.OtherSettings, snapshot, credential)
 	updates := map[string]any{
 		"balance":              balance,
 		"balance_updated_time": updatedTime,
-		"settings":             mergeChannelSyncMetadataWithCredential(channel.OtherSettings, snapshot, credential),
+		"settings":             mergedSettings,
 	}
 	if baseURL, ok := syncedChannelBaseURLUpdate(*channel, snapshot); ok {
 		updates["base_url"] = baseURL
@@ -56,9 +82,22 @@ func RefreshChannelBalance(ctx context.Context, channel *model.Channel) (*Channe
 		return nil, err
 	}
 	model.InitChannelCache()
+	displayChannel := *channel
+	displayChannel.OtherSettings = mergedSettings
+	displayChannel.Balance = balance
+	display := BuildChannelAssetDisplay(&displayChannel, existingAccounts)
 	return &ChannelBalanceRefreshResult{
 		Balance:            balance,
 		UsedQuota:          channel.UsedQuota,
 		BalanceUpdatedTime: updatedTime,
+		UpstreamBalanceUSD: display.BalanceUSD,
+		UpstreamUsedUSD:    display.UsedUSD,
+		UpstreamUsedQuota:  display.UsedQuota,
+		UpstreamFactor:     pointerFromFloat(display.ConversionFactor),
+		UpstreamPartial:    display.Partial,
 	}, nil
+}
+
+func pointerFromFloat(value float64) *float64 {
+	return &value
 }

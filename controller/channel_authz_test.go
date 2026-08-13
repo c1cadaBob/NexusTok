@@ -174,30 +174,44 @@ func TestChannelHasSensitiveChanges(t *testing.T) {
 }
 
 func TestClearChannelReadOnlyFields(t *testing.T) {
+	upstreamBalance := 26.95
+	upstreamUsed := 96.51
+	upstreamUsedQuota := int64(96510000)
+	upstreamFactor := 0.1
 	channel := PatchChannel{Channel: model.Channel{
-		CreatedTime:        11,
-		TestTime:           22,
-		ResponseTime:       33,
-		Balance:            44.5,
-		BalanceUpdatedTime: 55,
-		UsedQuota:          66,
-		Models:             "gpt-4o",
-		Group:              "default",
+		CreatedTime:              11,
+		TestTime:                 22,
+		ResponseTime:             33,
+		Balance:                  44.5,
+		BalanceUpdatedTime:       55,
+		UsedQuota:                66,
+		Models:                   "gpt-4o",
+		Group:                    "default",
+		UpstreamBalanceUSD:       &upstreamBalance,
+		UpstreamUsedUSD:          &upstreamUsed,
+		UpstreamUsedQuota:        &upstreamUsedQuota,
+		UpstreamConversionFactor: &upstreamFactor,
+		UpstreamPartial:          true,
 		ChannelAccountStats: map[string]int64{
 			"enabled": 1,
 		},
 	}}
 
 	clearChannelReadOnlyFields(&channel, map[string]any{
-		"created_time":          channel.CreatedTime,
-		"test_time":             channel.TestTime,
-		"response_time":         channel.ResponseTime,
-		"balance":               channel.Balance,
-		"balance_updated_time":  channel.BalanceUpdatedTime,
-		"used_quota":            channel.UsedQuota,
-		"channel_account_stats": channel.ChannelAccountStats,
-		"models":                channel.Models,
-		"group":                 channel.Group,
+		"created_time":               channel.CreatedTime,
+		"test_time":                  channel.TestTime,
+		"response_time":              channel.ResponseTime,
+		"balance":                    channel.Balance,
+		"balance_updated_time":       channel.BalanceUpdatedTime,
+		"used_quota":                 channel.UsedQuota,
+		"channel_account_stats":      channel.ChannelAccountStats,
+		"upstream_balance_usd":       upstreamBalance,
+		"upstream_used_usd":          upstreamUsed,
+		"upstream_used_quota":        upstreamUsedQuota,
+		"upstream_conversion_factor": upstreamFactor,
+		"upstream_partial":           true,
+		"models":                     channel.Models,
+		"group":                      channel.Group,
 	})
 
 	assert.Zero(t, channel.CreatedTime)
@@ -207,6 +221,11 @@ func TestClearChannelReadOnlyFields(t *testing.T) {
 	assert.Zero(t, channel.BalanceUpdatedTime)
 	assert.Zero(t, channel.UsedQuota)
 	assert.Nil(t, channel.ChannelAccountStats)
+	assert.Nil(t, channel.UpstreamBalanceUSD)
+	assert.Nil(t, channel.UpstreamUsedUSD)
+	assert.Nil(t, channel.UpstreamUsedQuota)
+	assert.Nil(t, channel.UpstreamConversionFactor)
+	assert.False(t, channel.UpstreamPartial)
 	assert.Equal(t, "gpt-4o", channel.Models)
 	assert.Equal(t, "default", channel.Group)
 }

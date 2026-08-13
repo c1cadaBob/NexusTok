@@ -27,6 +27,7 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { formatCurrencyFromUSD } from '@/lib/currency'
 import { cn } from '@/lib/utils'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -75,6 +76,7 @@ import {
   getUpstreamKeyGroupLabel,
   getUpstreamKeyRatioDisplayValue,
   getUpstreamPreviewChallenge,
+  getUpstreamPreviewBalanceDisplay,
   getUpstreamRatioDisplayValue,
   getUpstreamSyncBaseUrlFromSettings,
   getUpstreamSyncPlatformFromSettings,
@@ -101,6 +103,22 @@ import {
   type UpstreamAccountCapturePanelHandle,
 } from './upstream-account-capture-panel'
 import { UpstreamModelActions } from './upstream-model-actions'
+
+const PREVIEW_UPSTREAM_AMOUNT_FORMAT = {
+  digitsLarge: 2,
+  digitsSmall: 6,
+  abbreviate: false,
+}
+
+function formatPreviewUpstreamAmount(value: number | undefined) {
+  if (value == null || !Number.isFinite(value)) return '-'
+  return formatCurrencyFromUSD(value, PREVIEW_UPSTREAM_AMOUNT_FORMAT)
+}
+
+function formatRawUpstreamUSD(value: number | undefined) {
+  if (value == null || !Number.isFinite(value)) return '-'
+  return `$${value.toFixed(6).replace(/\.?0+$/, '')}`
+}
 
 type UpstreamAccountRefreshPanelProps = {
   open: boolean
@@ -833,9 +851,16 @@ export function UpstreamAccountRefreshPanel({
         snapshot.keys,
         upstreamAccountConfigs
       )
+      const upstreamBalanceDisplay = getUpstreamPreviewBalanceDisplay(
+        snapshot.balance,
+        buildUpstreamRatioConversionPayload(
+          upstreamPaidCny,
+          upstreamPlatformUsdCredit
+        )
+      )
       return (
         <div className='flex flex-col gap-3'>
-          <div className='grid gap-3 sm:grid-cols-3'>
+          <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-5'>
             <div className='rounded-md border p-3'>
               <div className='text-muted-foreground text-xs'>
                 {t('Synced Keys')}
@@ -843,6 +868,28 @@ export function UpstreamAccountRefreshPanel({
               <div className='text-lg font-semibold'>
                 {capabilitySummary.enabledKeyCount}/
                 {capabilitySummary.totalKeyCount}
+              </div>
+            </div>
+            <div
+              className='rounded-md border p-3'
+              title={`${t('Raw upstream value')}: ${formatRawUpstreamUSD(snapshot.balance?.balance_usd)}\n${t('Converted upstream value')}: ${formatPreviewUpstreamAmount(upstreamBalanceDisplay.balanceUSD)}`}
+            >
+              <div className='text-muted-foreground text-xs'>
+                {t('Upstream Remaining')}
+              </div>
+              <div className='truncate text-lg font-semibold'>
+                {formatPreviewUpstreamAmount(upstreamBalanceDisplay.balanceUSD)}
+              </div>
+            </div>
+            <div
+              className='rounded-md border p-3'
+              title={`${t('Raw upstream value')}: ${formatRawUpstreamUSD(snapshot.balance?.used_usd)}\n${t('Converted upstream value')}: ${formatPreviewUpstreamAmount(upstreamBalanceDisplay.usedUSD)}`}
+            >
+              <div className='text-muted-foreground text-xs'>
+                {t('Upstream Used')}
+              </div>
+              <div className='truncate text-lg font-semibold'>
+                {formatPreviewUpstreamAmount(upstreamBalanceDisplay.usedUSD)}
               </div>
             </div>
             <div className='rounded-md border p-3'>
@@ -1202,6 +1249,8 @@ export function UpstreamAccountRefreshPanel({
       t,
       upstreamAccountConfigs,
       upstreamApplySuggested,
+      upstreamPaidCny,
+      upstreamPlatformUsdCredit,
     ]
   )
 

@@ -77,7 +77,10 @@ import {
   type TagRow,
 } from '../lib'
 import { parseUpstreamUpdateMeta } from '../lib/upstream-update-utils'
-import { formatUpstreamRatioCompact } from '../lib/upstream-sync'
+import {
+  formatUpstreamRatioCompact,
+  getChannelBalanceDisplaySource,
+} from '../lib/upstream-sync'
 import type { Channel } from '../types'
 import { ChannelRowActionsLayoutContext } from './channel-row-actions-context'
 import { ChannelTypeIcon } from './channel-type-icon'
@@ -306,8 +309,9 @@ function BalanceCell({ channel }: { channel: Channel }) {
   const queryClient = useQueryClient()
   const isTagRow = isTagAggregateRow(channel)
   const isUpstreamAccountSync = isUpstreamAccountSyncChannel(channel)
-  const balance = channel.balance || 0
-  const usedQuota = channel.used_quota || 0
+  const displaySource = getChannelBalanceDisplaySource(channel)
+  const balance = displaySource.balanceUSD
+  const usedQuota = displaySource.usedQuota
   const [isUpdating, setIsUpdating] = useState(false)
   const [codexUsageOpen, setCodexUsageOpen] = useState(false)
   const [codexUsageResponse, setCodexUsageResponse] =
@@ -317,13 +321,16 @@ function BalanceCell({ channel }: { channel: Channel }) {
   const withSuffix = (value: string) =>
     tokenSuffix && value !== '-' ? `${value}${tokenSuffix}` : value
 
-  const usedFull = withSuffix(
-    formatQuotaWithCurrency(usedQuota, {
-      digitsLarge: 2,
-      digitsSmall: 4,
-      abbreviate: true,
-    })
-  )
+  const usedFull =
+    usedQuota == null
+      ? '-'
+      : withSuffix(
+          formatQuotaWithCurrency(usedQuota, {
+            digitsLarge: 2,
+            digitsSmall: 4,
+            abbreviate: true,
+          })
+        )
   const remainingFull = withSuffix(
     formatCurrencyFromUSD(balance, {
       digitsLarge: 2,
@@ -338,10 +345,18 @@ function BalanceCell({ channel }: { channel: Channel }) {
   const remainingDisplay = shouldCompact
     ? compactFormattedAmount(remainingFull)
     : remainingFull
-  const usedLabel = `${t('Used:')} ${usedFull}`
-  const remainingLabel = `${t('Remaining:')} ${remainingFull}`
-  const maskedUsedLabel = `${t('Used:')} ${SENSITIVE_MASK}`
-  const maskedRemainingLabel = `${t('Remaining:')} ${SENSITIVE_MASK}`
+  const usedLabel = displaySource.upstream
+    ? `${t('Upstream Used')}: ${usedFull}`
+    : `${t('Used:')} ${usedFull}`
+  const remainingLabel = displaySource.upstream
+    ? `${t('Upstream Remaining')}: ${remainingFull}`
+    : `${t('Remaining:')} ${remainingFull}`
+  const maskedUsedLabel = displaySource.upstream
+    ? `${t('Upstream Used')}: ${SENSITIVE_MASK}`
+    : `${t('Used:')} ${SENSITIVE_MASK}`
+  const maskedRemainingLabel = displaySource.upstream
+    ? `${t('Upstream Remaining')}: ${SENSITIVE_MASK}`
+    : `${t('Remaining:')} ${SENSITIVE_MASK}`
 
   // Tag 聚合行只展示该组累计已用额度；遮罩模式下仍保留“已用”语义，不暴露具体数值。
   if (isTagRow) {
@@ -369,7 +384,9 @@ function BalanceCell({ channel }: { channel: Channel }) {
     : channel.type === 57
       ? t('Click to view Codex usage')
       : isUpstreamAccountSync
-        ? t('Click to refresh the synced upstream account balance')
+        ? displaySource.partial
+          ? `${t('Click to refresh the synced upstream account balance')} · ${t('Partial upstream data')}`
+          : t('Click to refresh the synced upstream account balance')
         : remainingLabel
 
   const handleClickUpdate = async () => {

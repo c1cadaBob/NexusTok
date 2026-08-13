@@ -212,6 +212,9 @@ func GetAllChannels(c *gin.Context) {
 		clearChannelInfo(datum)
 	}
 	model.AttachChannelAccountStats(channelData)
+	if err := upstreamaccount.AttachChannelAssetDisplays(channelData); err != nil {
+		common.SysLog("failed to attach upstream asset displays: " + err.Error())
+	}
 
 	countQuery := model.DB.Model(&model.Channel{})
 	if statusFilter == common.ChannelStatusEnabled {
@@ -439,6 +442,9 @@ func SearchChannels(c *gin.Context) {
 		clearChannelInfo(datum)
 	}
 	model.AttachChannelAccountStats(pagedData)
+	if err := upstreamaccount.AttachChannelAssetDisplays(pagedData); err != nil {
+		common.SysLog("failed to attach upstream asset displays: " + err.Error())
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -466,6 +472,9 @@ func GetChannel(c *gin.Context) {
 	if channel != nil {
 		clearChannelInfo(channel)
 		model.AttachChannelAccountStats([]*model.Channel{channel})
+		if err := upstreamaccount.AttachChannelAssetDisplays([]*model.Channel{channel}); err != nil {
+			common.SysLog("failed to attach upstream asset display: " + err.Error())
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

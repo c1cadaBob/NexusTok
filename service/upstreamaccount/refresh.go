@@ -116,7 +116,12 @@ func RefreshChannelFromSnapshot(channelID int, snapshot *Snapshot, req RefreshRe
 			return err
 		}
 
-		applySnapshotRatioConversionForRefresh(snapshot, req.RatioConversion, existing)
+		applySnapshotRatioConversionForRefresh(
+			snapshot,
+			req.RatioConversion,
+			channel.OtherSettings,
+			existing,
+		)
 		ApplySyncIDs(snapshot)
 
 		defaultModels := strings.TrimSpace(channel.Models)
@@ -250,9 +255,19 @@ func refreshShouldUsePasswordLogin(credential Credential) bool {
 // 优先级固定为：本次请求显式配置、快照已有配置、当前渠道账号 metadata 中保留的
 // 历史配置。最后一项用于系统自动同步和外部 API 刷新，避免未传 ratio_conversion
 // 时把管理员已保存的“实付金额 / 上游到账额度”重置为默认值。
-func applySnapshotRatioConversionForRefresh(snapshot *Snapshot, config RatioConversionConfig, existing []model.ChannelAccount) {
+func applySnapshotRatioConversionForRefresh(
+	snapshot *Snapshot,
+	config RatioConversionConfig,
+	channelSettings string,
+	existing []model.ChannelAccount,
+) {
 	if config.Enabled() || (snapshot != nil && snapshot.RatioConversion != nil) {
 		applySnapshotRatioConversionForRequest(snapshot, config)
+		return
+	}
+	if preserved, ok := preservedRatioConversionConfigFromChannelSettings(channelSettings); ok {
+		ApplyRatioConversion(snapshot, preserved)
+		ApplySuggestions(snapshot)
 		return
 	}
 	if preserved, ok := preservedRatioConversionConfig(existing); ok {
@@ -261,6 +276,23 @@ func applySnapshotRatioConversionForRefresh(snapshot *Snapshot, config RatioConv
 		return
 	}
 	applySnapshotRatioConversionForRequest(snapshot, config)
+}
+
+// preservedRatioConversionConfigFromChannelSettings 读取渠道级历史换算配置。
+//
+// 新版同步渠道会把“实付金额 / 上游平台到账额度”同时保存到渠道和密钥
+// metadata；旧版或部分导入路径可能只保存了渠道级配置。余额刷新、系统同步
+// 不携带前端比例表单，因此必须先从渠道级配置恢复，避免密钥 metadata 被
+// 空配置覆盖后，前端显示突然退回未换算值。
+func preservedRatioConversionConfigFromChannelSettings(
+	settings string,
+) (RatioConversionConfig, bool) {
+	metadata := readChannelSyncMetadata(settings)
+	config := ratioConversionConfigFromSnapshot(metadata.RatioConversionConfig)
+	if !config.Enabled() {
+		return RatioConversionConfig{}, false
+	}
+	return config, true
 }
 
 // preservedRatioConversionConfig 从已有同步账号 metadata 中读取首个有效换算配置。

@@ -458,6 +458,12 @@ func (c *NewAPIClient) fetchTokens(ctx context.Context, api *httpClient, headers
 		if hasGroupRatio {
 			synced.GroupRatio = floatPtr(groupRatio)
 		}
+		if token.UnlimitedQuota {
+			// 无限额度不能把上游接口返回的 0 误显示成“剩余 0”。
+			// 已用量仍然有效，但额度上限和剩余量保持缺失，由前端展示为“-”。
+			synced.QuotaLimitUSD = nil
+			synced.QuotaRemainingUSD = nil
+		}
 		if rates != nil {
 			synced.ModelRatios = filterModelRatios(rates.ModelRatios, synced.Models)
 		}

@@ -479,11 +479,16 @@ func UpdateChannelBalance(c *gin.Context) {
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{
-			"success":              true,
-			"message":              "",
-			"balance":              result.Balance,
-			"used_quota":           result.UsedQuota,
-			"balance_updated_time": result.BalanceUpdatedTime,
+			"success":                    true,
+			"message":                    "",
+			"balance":                    result.Balance,
+			"used_quota":                 result.UsedQuota,
+			"balance_updated_time":       result.BalanceUpdatedTime,
+			"upstream_balance_usd":       result.UpstreamBalanceUSD,
+			"upstream_used_usd":          result.UpstreamUsedUSD,
+			"upstream_used_quota":        result.UpstreamUsedQuota,
+			"upstream_conversion_factor": result.UpstreamFactor,
+			"upstream_partial":           result.UpstreamPartial,
 		})
 		return
 	}

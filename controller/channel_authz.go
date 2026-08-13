@@ -154,14 +154,19 @@ var channelOperationalFields = map[string]struct{}{
 // 如果客户端误带这些字段，UpdateChannel 会清零并依赖 GORM 的零值跳过语义避免写入；
 // 后续若改为显式 Select 更新，也必须继续忽略这些字段。
 var channelReadOnlyFields = map[string]struct{}{
-	"created_time":          {},
-	"test_time":             {},
-	"response_time":         {},
-	"balance":               {},
-	"balance_updated_time":  {},
-	"used_quota":            {},
-	"channel_account_stats": {},
-	"minimum_ratio":         {},
+	"created_time":               {},
+	"test_time":                  {},
+	"response_time":              {},
+	"balance":                    {},
+	"balance_updated_time":       {},
+	"used_quota":                 {},
+	"channel_account_stats":      {},
+	"minimum_ratio":              {},
+	"upstream_balance_usd":       {},
+	"upstream_used_usd":          {},
+	"upstream_used_quota":        {},
+	"upstream_conversion_factor": {},
+	"upstream_partial":           {},
 }
 
 // channelNonSensitiveFields 是普通管理员可调整的路由和展示字段。
@@ -206,6 +211,11 @@ func clearChannelReadOnlyFields(channel *PatchChannel, requestData map[string]an
 	}
 	channel.ChannelAccountStats = nil
 	channel.MinimumRatio = nil
+	channel.UpstreamBalanceUSD = nil
+	channel.UpstreamUsedUSD = nil
+	channel.UpstreamUsedQuota = nil
+	channel.UpstreamConversionFactor = nil
+	channel.UpstreamPartial = false
 }
 
 // equalOptionalStringPtr 比较可选字符串指针。

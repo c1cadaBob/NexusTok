@@ -18,6 +18,7 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import { CHANNEL_STATUS } from '../constants'
 import type {
+  Channel,
   ChannelAccount,
   UpstreamAccountKey,
   UpstreamAccountPreviewData,
@@ -176,6 +177,112 @@ export function buildUpstreamRatioConversionPayload(
   return {
     paid_cny: normalizedPaidCny,
     platform_usd_credit: normalizedPlatformUsdCredit,
+  }
+}
+
+export function upstreamAssetConversionFactor(
+  ratioConversion: UpstreamAccountRatioConversion | null | undefined
+): number {
+  const paidCny = ratioConversion?.paid_cny
+  const platformUsdCredit = ratioConversion?.platform_usd_credit
+  if (
+    typeof paidCny !== 'number' ||
+    typeof platformUsdCredit !== 'number' ||
+    !Number.isFinite(paidCny) ||
+    !Number.isFinite(platformUsdCredit) ||
+    paidCny <= 0 ||
+    platformUsdCredit <= 0
+  ) {
+    return 1
+  }
+  return paidCny / platformUsdCredit
+}
+
+export function getUpstreamPreviewBalanceDisplay(
+  balance: {
+    balance_usd?: number
+    used_usd?: number
+  } | null | undefined,
+  ratioConversion: UpstreamAccountRatioConversion | null | undefined
+): {
+  balanceUSD?: number
+  usedUSD?: number
+  conversionFactor: number
+} {
+  const conversionFactor = upstreamAssetConversionFactor(ratioConversion)
+  return {
+    balanceUSD:
+      typeof balance?.balance_usd === 'number' &&
+      Number.isFinite(balance.balance_usd)
+        ? balance.balance_usd * conversionFactor
+        : undefined,
+    usedUSD:
+      typeof balance?.used_usd === 'number' && Number.isFinite(balance.used_usd)
+        ? balance.used_usd * conversionFactor
+        : undefined,
+    conversionFactor,
+  }
+}
+
+export function getChannelBalanceDisplaySource(channel: Channel): {
+  usedQuota?: number
+  balanceUSD: number
+  partial: boolean
+  upstream: boolean
+} {
+  const settings = parseSettingsRecord(channel.settings)
+  const upstreamSettings = settings[UPSTREAM_ACCOUNT_SYNC_SETTINGS_KEY]
+  const upstreamBalanceUSD =
+    typeof channel.upstream_balance_usd === 'number' &&
+    Number.isFinite(channel.upstream_balance_usd)
+      ? channel.upstream_balance_usd
+      : undefined
+  const upstreamUsedQuota =
+    typeof channel.upstream_used_quota === 'number' &&
+    Number.isFinite(channel.upstream_used_quota)
+      ? channel.upstream_used_quota
+      : undefined
+  const isSynced = Boolean(
+    (upstreamSettings !== undefined &&
+      upstreamSettings !== null &&
+      (typeof upstreamSettings === 'object' ||
+        (typeof upstreamSettings === 'string' &&
+          upstreamSettings.trim().length > 0) ||
+        upstreamSettings === true)) ||
+    channel.upstream_balance_usd != null ||
+    channel.upstream_used_quota != null ||
+    channel.upstream_partial === true
+  )
+  return {
+    usedQuota: isSynced ? upstreamUsedQuota : channel.used_quota || 0,
+    balanceUSD: upstreamBalanceUSD ?? channel.balance ?? 0,
+    partial: channel.upstream_partial === true,
+    upstream: isSynced,
+  }
+}
+
+export function getChannelAccountAssetDisplaySource(account: ChannelAccount): {
+  usedQuota: number
+  remainingQuota?: number
+  upstream: boolean
+  partial: boolean
+} {
+  const upstreamUsedQuota =
+    typeof account.upstream_used_quota === 'number' &&
+    Number.isFinite(account.upstream_used_quota)
+      ? account.upstream_used_quota
+      : undefined
+  const upstreamRemainingQuota =
+    typeof account.upstream_remaining_quota === 'number' &&
+    Number.isFinite(account.upstream_remaining_quota)
+      ? account.upstream_remaining_quota
+      : undefined
+  return {
+    usedQuota: upstreamUsedQuota ?? account.used_quota,
+    remainingQuota: upstreamRemainingQuota,
+    upstream:
+      upstreamUsedQuota !== undefined || upstreamRemainingQuota !== undefined,
+    partial: account.upstream_partial === true,
   }
 }
 

@@ -27,6 +27,9 @@ type syncMetadata struct {
 	EffectiveRatio        float64                  `json:"effective_ratio,omitempty"`
 	RatioConversion       float64                  `json:"ratio_conversion,omitempty"`
 	RatioConversionConfig *RatioConversionSnapshot `json:"ratio_conversion_config,omitempty"`
+	QuotaLimitUSD         *float64                 `json:"quota_limit_usd,omitempty"`
+	QuotaUsedUSD          *float64                 `json:"quota_used_usd,omitempty"`
+	QuotaRemainingUSD     *float64                 `json:"quota_remaining_usd,omitempty"`
 	BalanceSnapshot       *AccountBalanceSnapshot  `json:"balance_snapshot,omitempty"`
 }
 
@@ -92,6 +95,13 @@ func mergeChannelSyncMetadata(existing string, snapshot *Snapshot) string {
 	}
 	if relayBaseURL := snapshotRelayBaseURL(snapshot); relayBaseURL != "" {
 		next["relay_base_url"] = relayBaseURL
+	}
+	if snapshot.RatioConversion != nil {
+		next["ratio_conversion_config"] = snapshot.RatioConversion
+	} else if existingMetadata.RatioConversionConfig != nil {
+		// 余额刷新和部分旧上游接口可能只返回账号余额，不重新携带倍率配置；
+		// 此时必须继续保存渠道级历史配置，不能让下次展示退回因子 1。
+		next["ratio_conversion_config"] = existingMetadata.RatioConversionConfig
 	}
 	if balanceSnapshot := buildAccountBalanceSnapshot(snapshot.Balance, syncedAt); balanceSnapshot != nil {
 		next["balance_snapshot"] = balanceSnapshot
@@ -173,6 +183,9 @@ func mergeAccountSyncMetadata(existing string, snapshot *Snapshot, key SyncedKey
 		EffectiveRatio:        EffectiveKeyRatio(key),
 		RatioConversion:       ConvertedKeyRatio(key),
 		RatioConversionConfig: snapshot.RatioConversion,
+		QuotaLimitUSD:         finiteFloatPointer(key.QuotaLimitUSD),
+		QuotaUsedUSD:          finiteFloatPointer(key.QuotaUsedUSD),
+		QuotaRemainingUSD:     finiteFloatPointer(key.QuotaRemainingUSD),
 	}
 	bytes, err := common.Marshal(data)
 	if err != nil {
@@ -217,6 +230,15 @@ func ReadChannelAccountBalanceSnapshot(settings string) (AccountBalanceSnapshot,
 // JSON，也避免把 key_digest、external_id 等只供匹配使用的字段暴露到响应结构中。
 func HasAccountSyncMetadata(settings string) bool {
 	metadata := readAccountSyncMetadata(settings)
+	return syncMetadataHasIdentity(metadata)
+}
+
+// syncMetadataHasIdentity 判断 metadata 是否来自上游账号同步流程。
+//
+// 资产回退、账号脱敏展示和刷新匹配都依赖这个判断。它不能只看 quota 字段，
+// 因为管理员本地账号也可能拥有 used_quota；必须确认存在同步来源身份后，才能把
+// ChannelAccount.used_quota 当作旧版上游密钥已用快照。
+func syncMetadataHasIdentity(metadata syncMetadata) bool {
 	return metadata.Platform != "" ||
 		metadata.BaseURL != "" ||
 		metadata.ManagementBaseURL != "" ||

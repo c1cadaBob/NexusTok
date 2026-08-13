@@ -39,6 +39,7 @@ import { channelsQueryKeys, formatTimestamp } from '../lib'
 import {
   formatUpstreamModelRatioDetails,
   formatUpstreamRatioCompact,
+  getChannelAccountAssetDisplaySource,
   getUpstreamKeyRatioDisplayValue,
   getUpstreamKeyGroupLabel,
   getUpstreamRatioDisplayValue,
@@ -196,7 +197,8 @@ export function ChannelAccountInlinePanel({
               <TableHead>{t('Ratio Conversion')}</TableHead>
               <TableHead>{t('Key Priority')}</TableHead>
               <TableHead>{t('Key Weight')}</TableHead>
-              <TableHead>{t('Used')}</TableHead>
+              <TableHead>{t('Upstream Used')}</TableHead>
+              <TableHead>{t('Upstream Remaining')}</TableHead>
               <TableHead>{t('Last Used')}</TableHead>
             </TableRow>
           </TableHeader>
@@ -204,11 +206,20 @@ export function ChannelAccountInlinePanel({
             {accounts.map((account) => {
               const status = getAccountStatus(account, nowSeconds)
               const cooldownUntil = getCooldownUntil(account)
-              const usedQuota = formatQuotaWithCurrency(account.used_quota, {
+              const assetDisplay = getChannelAccountAssetDisplaySource(account)
+              const usedQuota = formatQuotaWithCurrency(assetDisplay.usedQuota, {
                 digitsLarge: 2,
                 digitsSmall: 4,
                 abbreviate: true,
               })
+              const remainingQuota =
+                assetDisplay.remainingQuota == null
+                  ? '-'
+                  : formatQuotaWithCurrency(assetDisplay.remainingQuota, {
+                      digitsLarge: 2,
+                      digitsSmall: 4,
+                      abbreviate: true,
+                    })
               const keyRatioValue = getUpstreamKeyRatioDisplayValue(account)
               const ratioValue = getUpstreamRatioDisplayValue(account)
               const ratioDetails = formatUpstreamModelRatioDetails(
@@ -307,6 +318,15 @@ export function ChannelAccountInlinePanel({
                   <TableCell>
                     <span className='font-mono text-xs tabular-nums'>
                       {sensitiveVisible ? usedQuota : SENSITIVE_MASK}
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    <span className='font-mono text-xs tabular-nums'>
+                      {sensitiveVisible
+                        ? remainingQuota
+                        : remainingQuota === '-'
+                          ? '-'
+                          : SENSITIVE_MASK}
                     </span>
                   </TableCell>
                   <TableCell>

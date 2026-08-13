@@ -3,7 +3,6 @@ package upstreamaccount
 import (
 	"math"
 
-	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/model"
 )
 
@@ -19,11 +18,6 @@ type UpstreamAccountSummary struct {
 	SyncedChannelCount int     `json:"synced_channel_count"`
 	Partial            bool    `json:"partial"`
 	UpdatedAt          int64   `json:"updated_at"`
-}
-
-type channelUsedQuotaTotal struct {
-	ChannelID int   `gorm:"column:channel_id"`
-	UsedQuota int64 `gorm:"column:used_quota"`
 }
 
 // SummarizeUpstreamAccounts 汇总所有同步渠道最近一次上游账号快照。
@@ -42,19 +36,15 @@ func SummarizeUpstreamAccounts() (UpstreamAccountSummary, error) {
 	}
 
 	syncedChannels := make([]model.Channel, 0, len(channels))
-	fallbackChannelIDs := make([]int, 0)
+	channelIDs := make([]int, 0)
 	for i := range channels {
 		if !channels[i].HasUpstreamAccountSyncMetadata() {
 			continue
 		}
 		syncedChannels = append(syncedChannels, channels[i])
-		snapshot, hasSnapshot := ReadChannelAccountBalanceSnapshot(channels[i].OtherSettings)
-		if !hasSnapshot || snapshot.UsedUSD == nil || !finiteNonNegativeFloat(*snapshot.UsedUSD) {
-			fallbackChannelIDs = append(fallbackChannelIDs, channels[i].Id)
-		}
+		channelIDs = append(channelIDs, channels[i].Id)
 	}
-
-	quotaByChannel, err := sumChannelAccountUsedQuotaByChannel(fallbackChannelIDs)
+	accountsByChannel, err := loadChannelAccountsByChannel(channelIDs)
 	if err != nil {
 		return UpstreamAccountSummary{}, err
 	}
@@ -65,6 +55,7 @@ func SummarizeUpstreamAccounts() (UpstreamAccountSummary, error) {
 	for i := range syncedChannels {
 		channel := syncedChannels[i]
 		snapshot, hasSnapshot := ReadChannelAccountBalanceSnapshot(channel.OtherSettings)
+		factor := BuildChannelAssetDisplay(&channel, accountsByChannel[channel.Id]).ConversionFactor
 		if hasSnapshot && snapshot.SyncedAt > summary.UpdatedAt {
 			summary.UpdatedAt = snapshot.SyncedAt
 		}
@@ -73,9 +64,9 @@ func SummarizeUpstreamAccounts() (UpstreamAccountSummary, error) {
 		}
 
 		if hasSnapshot && snapshot.BalanceUSD != nil && finiteNonNegativeFloat(*snapshot.BalanceUSD) {
-			summary.UpstreamBalanceUSD += *snapshot.BalanceUSD
+			summary.UpstreamBalanceUSD += *snapshot.BalanceUSD * factor
 		} else if finiteNonNegativeFloat(channel.Balance) {
-			summary.UpstreamBalanceUSD += channel.Balance
+			summary.UpstreamBalanceUSD += channel.Balance * factor
 			// 没有账号级余额或快照中的余额无效时，只能使用渠道余额作为近似值。
 			summary.Partial = true
 		} else {
@@ -83,15 +74,21 @@ func SummarizeUpstreamAccounts() (UpstreamAccountSummary, error) {
 		}
 
 		if hasSnapshot && snapshot.UsedUSD != nil && finiteNonNegativeFloat(*snapshot.UsedUSD) {
-			summary.UpstreamUsedUSD += *snapshot.UsedUSD
+			convertedUsedUSD := *snapshot.UsedUSD * factor
+			summary.UpstreamUsedUSD += convertedUsedUSD
 			summary.UpstreamUsedQuota = saturatingAddInt64(
 				summary.UpstreamUsedQuota,
-				snapshotUSDToQuotaInt64(snapshot.UsedUSD),
+				snapshotUSDToQuotaInt64(&convertedUsedUSD),
 			)
 		} else {
-			fallbackQuota := quotaByChannel[channel.Id]
-			summary.UpstreamUsedQuota = saturatingAddInt64(summary.UpstreamUsedQuota, fallbackQuota)
-			summary.UpstreamUsedUSD += float64(fallbackQuota) / common.QuotaPerUnit
+			if rawUsedUSD, ok := syncedAccountsRawUsedUSD(accountsByChannel[channel.Id]); ok {
+				convertedUsedUSD := rawUsedUSD * factor
+				summary.UpstreamUsedQuota = saturatingAddInt64(
+					summary.UpstreamUsedQuota,
+					snapshotUSDToQuotaInt64(&convertedUsedUSD),
+				)
+				summary.UpstreamUsedUSD += convertedUsedUSD
+			}
 			summary.Partial = true
 		}
 
@@ -103,25 +100,19 @@ func SummarizeUpstreamAccounts() (UpstreamAccountSummary, error) {
 	return summary, nil
 }
 
-func sumChannelAccountUsedQuotaByChannel(channelIDs []int) (map[int]int64, error) {
-	quotaByChannel := make(map[int]int64, len(channelIDs))
+func loadChannelAccountsByChannel(channelIDs []int) (map[int][]model.ChannelAccount, error) {
+	accountsByChannel := make(map[int][]model.ChannelAccount, len(channelIDs))
 	if len(channelIDs) == 0 {
-		return quotaByChannel, nil
+		return accountsByChannel, nil
 	}
-	var totals []channelUsedQuotaTotal
-	err := model.DB.
-		Model(&model.ChannelAccount{}).
-		Select("channel_id, COALESCE(sum(used_quota), 0) as used_quota").
-		Where("channel_id IN ?", channelIDs).
-		Group("channel_id").
-		Scan(&totals).Error
-	if err != nil {
+	var accounts []model.ChannelAccount
+	if err := model.DB.Where("channel_id IN ?", channelIDs).Find(&accounts).Error; err != nil {
 		return nil, err
 	}
-	for _, total := range totals {
-		quotaByChannel[total.ChannelID] = total.UsedQuota
+	for i := range accounts {
+		accountsByChannel[accounts[i].ChannelId] = append(accountsByChannel[accounts[i].ChannelId], accounts[i])
 	}
-	return quotaByChannel, nil
+	return accountsByChannel, nil
 }
 
 func finiteNonNegativeFloat(value float64) bool {

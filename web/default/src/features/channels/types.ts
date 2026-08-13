@@ -88,6 +88,11 @@ export const channelSchema = z.object({
   }),
   channel_account_stats: channelAccountStatsSchema.optional(),
   minimum_ratio: z.number().nullable().optional(),
+  upstream_balance_usd: z.number().nullable().optional(),
+  upstream_used_usd: z.number().nullable().optional(),
+  upstream_used_quota: z.number().nullable().optional(),
+  upstream_conversion_factor: z.number().nullable().optional(),
+  upstream_partial: z.boolean().optional(),
   settings: z.string().default('{}'), // other_settings JSON
 })
 
@@ -204,6 +209,11 @@ export interface ChannelBalanceResponse {
   balance?: number
   used_quota?: number
   balance_updated_time?: number
+  upstream_balance_usd?: number | null
+  upstream_used_usd?: number | null
+  upstream_used_quota?: number | null
+  upstream_conversion_factor?: number | null
+  upstream_partial?: boolean
   currency?: string
 }
 
@@ -238,6 +248,9 @@ export type UpstreamAccountAuthMode =
 export interface UpstreamAccountBalanceSnapshot {
   balance_usd?: number
   used_usd?: number
+  upstream_balance_usd?: number
+  upstream_used_usd?: number
+  upstream_conversion_factor?: number
   raw_balance?: number
   raw_used?: number
   quota_per_unit?: number
@@ -274,6 +287,12 @@ export interface UpstreamAccountKey {
   quota_limit_usd?: number
   quota_used_usd?: number
   quota_remaining_usd?: number
+  upstream_used_usd?: number
+  upstream_remaining_usd?: number
+  upstream_used_quota?: number
+  upstream_remaining_quota?: number
+  upstream_conversion_factor?: number
+  upstream_partial?: boolean
   unlimited?: boolean
   suggested_priority: number
   suggested_weight: number
@@ -604,6 +623,12 @@ export interface ChannelAccount {
   effective_ratio?: number
   ratio_conversion?: number
   ratio_conversion_config?: UpstreamAccountRatioConversion | null
+  upstream_used_usd?: number | null
+  upstream_remaining_usd?: number | null
+  upstream_used_quota?: number | null
+  upstream_remaining_quota?: number | null
+  upstream_conversion_factor?: number | null
+  upstream_partial?: boolean
 }
 
 export interface ChannelAccountListResponse {

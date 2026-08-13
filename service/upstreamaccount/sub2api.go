@@ -121,9 +121,9 @@ func normalizeSub2APIKeyTextStatus(status string) int {
 }
 
 type sub2APIUsageStats struct {
-	TotalActualCost float64 `json:"total_actual_cost"`
-	TotalCost       float64 `json:"total_cost"`
-	TodayActualCost float64 `json:"today_actual_cost"`
+	TotalActualCost *float64 `json:"total_actual_cost"`
+	TotalCost       *float64 `json:"total_cost"`
+	TodayActualCost *float64 `json:"today_actual_cost"`
 }
 
 type sub2APISnapshotStage string
@@ -528,15 +528,19 @@ func (c *Sub2APIClient) fetchSnapshotWithAuthenticatedSession(ctx context.Contex
 			Username: user.Username,
 			Email:    user.Email,
 		},
-		Balance: buildSub2APIBalance(user, usage),
-		Groups:  groups,
-		Keys:    keys,
+		Groups: groups,
+		Keys:   keys,
 		Rates: &RateSnapshot{
 			GroupRates: groupRates,
 			Source:     "sub2api:groups",
 		},
 		Warnings: warnings,
 	}
+	// 账号级 usage 接口在不同 Sub2API 版本中并不稳定；如果累计字段缺失，
+	// 仍然使用同一轮同步拿到的密钥已用量做近似回退，并明确标记 partial。
+	// 这样创建、手动刷新和系统同步不会因为一个可选统计接口缺失而把已用量
+	// 伪装成 0。
+	snapshot.Balance = buildSub2APIBalance(user, usage, keys)
 	ApplySuggestions(snapshot)
 	return snapshot, nil
 }
@@ -721,20 +725,20 @@ func (c *Sub2APIClient) fetchKeys(ctx context.Context, api *httpClient, headers 
 			quotaRemaining = 0
 		}
 		synced := SyncedKey{
-			ExternalID:        stringValue(key.ID),
-			Name:              key.Name,
-			Key:               key.Key,
-			MaskedKey:         maskKey(key.Key),
-			Status:            key.Status.value,
-			GroupID:           groupID,
-			GroupName:         groupName,
-			Models:            key.Models,
-			QuotaUsedUSD:      floatPtr(key.QuotaUsed),
-			QuotaRemainingUSD: floatPtr(quotaRemaining),
-			Unlimited:         key.Quota == 0,
+			ExternalID:   stringValue(key.ID),
+			Name:         key.Name,
+			Key:          key.Key,
+			MaskedKey:    maskKey(key.Key),
+			Status:       key.Status.value,
+			GroupID:      groupID,
+			GroupName:    groupName,
+			Models:       key.Models,
+			QuotaUsedUSD: floatPtr(key.QuotaUsed),
+			Unlimited:    key.Quota == 0,
 		}
 		if key.Quota > 0 {
 			synced.QuotaLimitUSD = floatPtr(key.Quota)
+			synced.QuotaRemainingUSD = floatPtr(quotaRemaining)
 		}
 		if hasRatio {
 			synced.GroupRatio = floatPtr(groupRatio)
@@ -744,7 +748,7 @@ func (c *Sub2APIClient) fetchKeys(ctx context.Context, api *httpClient, headers 
 	return result, nil
 }
 
-func buildSub2APIBalance(user sub2APIUser, usage *sub2APIUsageStats) *BalanceSnapshot {
+func buildSub2APIBalance(user sub2APIUser, usage *sub2APIUsageStats, keys []SyncedKey) *BalanceSnapshot {
 	balance := user.Balance
 	result := &BalanceSnapshot{
 		BalanceUSD: floatPtr(balance),
@@ -754,11 +758,47 @@ func buildSub2APIBalance(user sub2APIUser, usage *sub2APIUsageStats) *BalanceSna
 	if usage == nil {
 		result.Partial = true
 		result.MissingUsedValue = true
+		attachSub2APIKeyUsageFallback(result, keys)
 		return result
 	}
-	result.UsedUSD = floatPtr(usage.TotalActualCost)
-	result.RawUsed = floatPtr(usage.TotalActualCost)
+	var used *float64
+	switch {
+	case usage.TotalActualCost != nil && finiteNonNegativeFloat(*usage.TotalActualCost):
+		used = usage.TotalActualCost
+	case usage.TotalCost != nil && finiteNonNegativeFloat(*usage.TotalCost):
+		used = usage.TotalCost
+	default:
+		result.Partial = true
+		result.MissingUsedValue = true
+		attachSub2APIKeyUsageFallback(result, keys)
+		return result
+	}
+	value := *used
+	result.UsedUSD = &value
+	result.RawUsed = &value
 	return result
+}
+
+func attachSub2APIKeyUsageFallback(result *BalanceSnapshot, keys []SyncedKey) {
+	if result == nil {
+		return
+	}
+	var keyUsed float64
+	hasKeyUsed := false
+	for i := range keys {
+		if !finiteNonNegativeFloatPtr(keys[i].QuotaUsedUSD) {
+			continue
+		}
+		keyUsed += *keys[i].QuotaUsedUSD
+		hasKeyUsed = true
+	}
+	if !hasKeyUsed {
+		return
+	}
+	value := keyUsed
+	result.UsedUSD = &value
+	result.RawUsed = &value
+	result.Source = "sub2api:keys"
 }
 
 func optionalPositiveFloat(value float64) *float64 {

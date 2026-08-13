@@ -928,6 +928,14 @@ func channelAccountResponse(account *model.ChannelAccount, includeSensitive bool
 		"max_concurrency":     account.MaxConcurrency,
 		"created_time":        account.CreatedTime,
 	}
+	if display := upstreamaccount.BuildAccountAssetDisplay(account.OtherSettings, account.UsedQuota); display.HasUsed || display.HasRemaining {
+		response["upstream_used_usd"] = display.UsedUSD
+		response["upstream_remaining_usd"] = display.RemainingUSD
+		response["upstream_used_quota"] = display.UsedQuota
+		response["upstream_remaining_quota"] = display.RemainingQuota
+		response["upstream_conversion_factor"] = display.ConversionFactor
+		response["upstream_partial"] = display.Partial
+	}
 	if metadata := upstreamaccount.ReadAccountSyncDisplayMetadata(account.OtherSettings); metadata.KeyGroupID != "" ||
 		metadata.KeyGroupName != "" ||
 		metadata.GroupRatio != nil ||

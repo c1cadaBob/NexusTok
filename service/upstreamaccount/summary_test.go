@@ -93,3 +93,57 @@ func TestSummarizeUpstreamAccountsFallsBackToSyncedKeyUsageForLegacyData(t *test
 	require.True(t, summary.Partial)
 	require.Equal(t, int64(456), summary.UpdatedAt)
 }
+
+func TestSummarizeUpstreamAccountsIgnoresLocalAccountsInMixedSyncedChannel(t *testing.T) {
+	setupAutomaticSyncTestDB(t)
+
+	channel := model.Channel{
+		Key:           constant.ChannelCredentialModeAccountPool,
+		Name:          "mixed-synced-channel",
+		Status:        common.ChannelStatusEnabled,
+		Balance:       100,
+		OtherSettings: `{"upstream_account_sync":{"platform":"sub2api","base_url":"https://mixed.example","ratio_conversion_config":{"paid_cny":1,"platform_usd_credit":10,"enabled":true}}}`,
+		ChannelInfo: model.ChannelInfo{
+			CredentialMode:     constant.ChannelCredentialModeAccountPool,
+			AccountPoolEnabled: true,
+		},
+	}
+	require.NoError(t, model.DB.Create(&channel).Error)
+
+	snapshot := &Snapshot{
+		Platform: PlatformSub2API,
+		BaseURL:  "https://mixed.example",
+		Keys: []SyncedKey{{
+			ExternalID:   "upstream-key",
+			Key:          "sk-upstream-key",
+			QuotaUsedUSD: floatPtr(20),
+		}},
+	}
+	ApplyRatioConversion(snapshot, RatioConversionConfig{
+		PaidCNY:           1,
+		PlatformUSDCredit: 10,
+	})
+
+	require.NoError(t, model.DB.Create(&[]model.ChannelAccount{
+		{
+			ChannelId:     channel.Id,
+			Name:          "upstream-key",
+			Key:           "sk-upstream-key",
+			UsedQuota:     int64(20 * common.QuotaPerUnit),
+			OtherSettings: mergeAccountSyncMetadata("", snapshot, snapshot.Keys[0]),
+		},
+		{
+			ChannelId: channel.Id,
+			Name:      "local-account",
+			Key:       "sk-local-key",
+			UsedQuota: int64(1000 * common.QuotaPerUnit),
+		},
+	}).Error)
+
+	summary, err := SummarizeUpstreamAccounts()
+	require.NoError(t, err)
+	require.InDelta(t, 10, summary.UpstreamBalanceUSD, 0.000001)
+	require.InDelta(t, 2, summary.UpstreamUsedUSD, 0.000001)
+	require.Equal(t, int64(2*common.QuotaPerUnit), summary.UpstreamUsedQuota)
+	require.True(t, summary.Partial)
+}

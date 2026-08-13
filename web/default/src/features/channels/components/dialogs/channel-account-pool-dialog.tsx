@@ -31,6 +31,7 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { formatQuotaWithCurrency } from '@/lib/currency'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -84,6 +85,7 @@ import {
   parseModelsString,
 } from '../../lib'
 import {
+  getChannelAccountAssetDisplaySource,
   formatUpstreamModelRatioDetails,
   formatUpstreamRatioCompact,
   getUpstreamKeyRatioDisplayValue,
@@ -163,7 +165,7 @@ function statusLabel(
 
 export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
   const { t } = useTranslation()
-  const { currentRow } = useChannels()
+  const { currentRow, sensitiveVisible } = useChannels()
   const queryClient = useQueryClient()
   const [page, setPage] = useState(1)
   const [statusFilter, setStatusFilter] = useState('all')
@@ -1010,6 +1012,18 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                     >
                       {t('Key Weight')}
                     </TableHead>
+                    <TableHead
+                      className='w-28 truncate text-right'
+                      title={t('Upstream Used')}
+                    >
+                      {t('Upstream Used')}
+                    </TableHead>
+                    <TableHead
+                      className='w-28 truncate text-right'
+                      title={t('Upstream Remaining')}
+                    >
+                      {t('Upstream Remaining')}
+                    </TableHead>
                     <TableHead className='w-28 truncate' title={t('Cooldown')}>
                       {t('Cooldown')}
                     </TableHead>
@@ -1029,7 +1043,7 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                   {!canReadChannelAccounts ? (
                     <TableRow>
                       <TableCell
-                        colSpan={11}
+                        colSpan={13}
                         className='text-muted-foreground h-24 text-center'
                       >
                         {noPermissionMessage}
@@ -1037,14 +1051,14 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                     </TableRow>
                   ) : accountsQuery.isLoading ? (
                     <TableRow>
-                      <TableCell colSpan={11} className='h-24 text-center'>
+                      <TableCell colSpan={13} className='h-24 text-center'>
                         <Loader2 className='mx-auto h-5 w-5 animate-spin' />
                       </TableCell>
                     </TableRow>
                   ) : accounts.length === 0 ? (
                     <TableRow>
                       <TableCell
-                        colSpan={11}
+                        colSpan={13}
                         className='text-muted-foreground h-24 text-center'
                       >
                         {t('No accounts found')}
@@ -1068,6 +1082,37 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                       const keyGroupLabel =
                         getUpstreamKeyGroupLabel(account) || t('Inherited')
                       const cooldownLabel = cooldownText(account, nowSeconds)
+                      const assetDisplay =
+                        getChannelAccountAssetDisplaySource(account)
+                      const usedQuotaLabel = formatQuotaWithCurrency(
+                        assetDisplay.usedQuota,
+                        {
+                          digitsLarge: 2,
+                          digitsSmall: 4,
+                          abbreviate: true,
+                        }
+                      )
+                      const remainingQuotaLabel =
+                        assetDisplay.remainingQuota == null
+                          ? '-'
+                          : formatQuotaWithCurrency(
+                              assetDisplay.remainingQuota,
+                              {
+                                digitsLarge: 2,
+                                digitsSmall: 4,
+                                abbreviate: true,
+                              }
+                            )
+                      const displayedUsedQuotaLabel = sensitiveVisible
+                        ? usedQuotaLabel
+                        : usedQuotaLabel === '-'
+                          ? '-'
+                          : '••••'
+                      const displayedRemainingQuotaLabel = sensitiveVisible
+                        ? remainingQuotaLabel
+                        : remainingQuotaLabel === '-'
+                          ? '-'
+                          : '••••'
                       return (
                         <TableRow key={account.id}>
                           <TableCell
@@ -1116,6 +1161,12 @@ export function ChannelAccountPoolDialog(props: ChannelAccountPoolDialogProps) {
                           </TableCell>
                           <TableCell className='text-right tabular-nums'>
                             {account.weight || 1}
+                          </TableCell>
+                          <TableCell className='text-right font-mono text-xs tabular-nums'>
+                            {displayedUsedQuotaLabel}
+                          </TableCell>
+                          <TableCell className='text-right font-mono text-xs tabular-nums'>
+                            {displayedRemainingQuotaLabel}
                           </TableCell>
                           <TableCell
                             className='truncate text-xs whitespace-nowrap'
