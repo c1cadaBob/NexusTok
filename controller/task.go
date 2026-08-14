@@ -114,6 +114,9 @@ func tasksToDto(tasks []*model.Task, fillUser bool) []*dto.TaskDto {
 		userIdMap = make(map[int]*model.UserBase)
 		userIds := types.NewSet[int]()
 		for _, task := range tasks {
+			if task.UserId == 0 {
+				continue
+			}
 			userIds.Add(task.UserId)
 		}
 		for _, userId := range userIds.Items() {
@@ -126,7 +129,9 @@ func tasksToDto(tasks []*model.Task, fillUser bool) []*dto.TaskDto {
 	result := make([]*dto.TaskDto, len(tasks))
 	for i, task := range tasks {
 		if fillUser {
-			if user, ok := userIdMap[task.UserId]; ok {
+			if task.UserId == 0 {
+				task.Username = "System"
+			} else if user, ok := userIdMap[task.UserId]; ok {
 				task.Username = user.Username
 			}
 		}

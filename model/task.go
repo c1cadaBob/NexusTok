@@ -49,28 +49,30 @@ const (
 	TaskStatusInProgress            = "IN_PROGRESS"
 	TaskStatusFailure               = "FAILURE"
 	TaskStatusSuccess               = "SUCCESS"
+	TaskStatusSkipped    TaskStatus = "SKIPPED"
 	TaskStatusUnknown               = "UNKNOWN"
 )
 
 type Task struct {
-	ID         int64                 `json:"id" gorm:"primary_key;AUTO_INCREMENT"`
-	CreatedAt  int64                 `json:"created_at" gorm:"index"`
-	UpdatedAt  int64                 `json:"updated_at"`
-	TaskID     string                `json:"task_id" gorm:"type:varchar(191);index"` // 第三方id，不一定有/ song id\ Task id
-	Platform   constant.TaskPlatform `json:"platform" gorm:"type:varchar(30);index"` // 平台
-	UserId     int                   `json:"user_id" gorm:"index"`
-	Group      string                `json:"group" gorm:"type:varchar(50)"` // 修正计费用
-	ChannelId  int                   `json:"channel_id" gorm:"index"`
-	Quota      int                   `json:"quota"`
-	Action     string                `json:"action" gorm:"type:varchar(40);index"` // 任务类型, song, lyrics, description-mode
-	Status     TaskStatus            `json:"status" gorm:"type:varchar(20);index"` // 任务状态
-	FailReason string                `json:"fail_reason"`
-	SubmitTime int64                 `json:"submit_time" gorm:"index"`
-	StartTime  int64                 `json:"start_time" gorm:"index"`
-	FinishTime int64                 `json:"finish_time" gorm:"index"`
-	Progress   string                `json:"progress" gorm:"type:varchar(20);index"`
-	Properties Properties            `json:"properties" gorm:"type:json"`
-	Username   string                `json:"username,omitempty" gorm:"-"`
+	ID          int64                 `json:"id" gorm:"primary_key;AUTO_INCREMENT"`
+	CreatedAt   int64                 `json:"created_at" gorm:"index"`
+	UpdatedAt   int64                 `json:"updated_at"`
+	TaskID      string                `json:"task_id" gorm:"type:varchar(191);index"` // 第三方id，不一定有/ song id\ Task id
+	Platform    constant.TaskPlatform `json:"platform" gorm:"type:varchar(30);index"` // 平台
+	UserId      int                   `json:"user_id" gorm:"index"`
+	Group       string                `json:"group" gorm:"type:varchar(50)"` // 修正计费用
+	ChannelId   int                   `json:"channel_id" gorm:"index"`
+	Quota       int                   `json:"quota"`
+	Action      string                `json:"action" gorm:"type:varchar(40);index"` // 任务类型, song, lyrics, description-mode
+	Status      TaskStatus            `json:"status" gorm:"type:varchar(20);index"` // 任务状态
+	FailReason  string                `json:"fail_reason"`
+	SubmitTime  int64                 `json:"submit_time" gorm:"index"`
+	StartTime   int64                 `json:"start_time" gorm:"index"`
+	FinishTime  int64                 `json:"finish_time" gorm:"index"`
+	Progress    string                `json:"progress" gorm:"type:varchar(20);index"`
+	Properties  Properties            `json:"properties" gorm:"type:json"`
+	Username    string                `json:"username,omitempty" gorm:"-"`
+	ChannelName string                `json:"channel_name,omitempty" gorm:"-"`
 	// 禁止返回给用户，内部可能包含key等隐私信息
 	PrivateData TaskPrivateData `json:"-" gorm:"column:private_data;type:json"`
 	Data        json.RawMessage `json:"data" gorm:"type:json"`
@@ -300,8 +302,52 @@ func TaskGetAllTasks(startIdx int, num int, queryParams SyncTaskQueryParams) []*
 	if err != nil {
 		return nil
 	}
+	fillTaskChannelNames(tasks)
 
 	return tasks
+}
+
+// fillTaskChannelNames 为管理员任务日志批量补齐渠道名称。
+//
+// Task 表只保存 channel_id；页面展示时需要同时看到渠道名称和 ID。这里使用一次
+// 批量查询填充临时字段，不改变 Task 的持久化结构，也避免在控制器里为每行单独查库。
+func fillTaskChannelNames(tasks []*Task) {
+	if len(tasks) == 0 {
+		return
+	}
+	channelIDs := make([]int, 0, len(tasks))
+	seen := make(map[int]struct{}, len(tasks))
+	for _, task := range tasks {
+		if task == nil || task.ChannelId <= 0 {
+			continue
+		}
+		if _, ok := seen[task.ChannelId]; ok {
+			continue
+		}
+		seen[task.ChannelId] = struct{}{}
+		channelIDs = append(channelIDs, task.ChannelId)
+	}
+	if len(channelIDs) == 0 {
+		return
+	}
+
+	var channels []struct {
+		Id   int    `gorm:"column:id"`
+		Name string `gorm:"column:name"`
+	}
+	if err := DB.Table("channels").Select("id, name").Where("id IN ?", channelIDs).Find(&channels).Error; err != nil {
+		return
+	}
+	channelNames := make(map[int]string, len(channels))
+	for _, channel := range channels {
+		channelNames[channel.Id] = channel.Name
+	}
+	for _, task := range tasks {
+		if task == nil {
+			continue
+		}
+		task.ChannelName = channelNames[task.ChannelId]
+	}
 }
 
 func GetTimedOutUnfinishedTasks(cutoffUnix int64, limit int) []*Task {

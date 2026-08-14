@@ -212,7 +212,11 @@ func (upstreamAccountSyncHandler) Run(ctx context.Context, task *model.SystemTas
 		return
 	}
 
-	summary, err := upstreamaccount.RunUpstreamAccountSync(ctx, service.NewSystemTaskProgressReporter(task, runnerID))
+	summary, err := upstreamaccount.RunUpstreamAccountSync(
+		ctx,
+		service.NewSystemTaskProgressReporter(task, runnerID),
+		upstreamaccount.WithSystemTaskLog(task.TaskID, task.CreatedAt),
+	)
 	if err != nil {
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, summary, err)
 		recordSystemUpstreamAccountSyncAudit(task, runnerID, summary, err)

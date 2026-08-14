@@ -20,7 +20,7 @@ func setupAutomaticSyncTestDB(t *testing.T) {
 	originDB := model.DB
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.ChannelAccount{}, &model.Ability{}))
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.ChannelAccount{}, &model.Ability{}, &model.Task{}))
 	model.DB = db
 	t.Cleanup(func() {
 		model.DB = originDB
@@ -224,7 +224,11 @@ func TestRunUpstreamAccountSyncPreservesExistingRatioConversionConfig(t *testing
 		OtherSettings: mergeAccountSyncMetadata("", existingSnapshot, existingSnapshot.Keys[0]),
 	}).Error)
 
-	summary, err := RunUpstreamAccountSync(context.Background(), nil)
+	summary, err := RunUpstreamAccountSync(
+		context.Background(),
+		nil,
+		WithSystemTaskLog("systask_sync_test", 100),
+	)
 	require.NoError(t, err)
 	require.Equal(t, 1, summary.EligibleChannels)
 	require.Equal(t, 1, summary.SucceededChannels)
@@ -237,4 +241,104 @@ func TestRunUpstreamAccountSyncPreservesExistingRatioConversionConfig(t *testing
 	require.Equal(t, float64(1), metadata.RatioConversionConfig.PaidCNY)
 	require.Equal(t, float64(1), metadata.RatioConversionConfig.PlatformUSDCredit)
 	require.InDelta(t, 10, metadata.RatioConversion, 0.000001)
+}
+
+func TestRunUpstreamAccountSyncWritesPerChannelTaskLogsAndIsIdempotent(t *testing.T) {
+	setupAutomaticSyncTestDB(t)
+
+	channels := []model.Channel{
+		{
+			Key:    "normal-key",
+			Name:   "普通渠道",
+			Status: common.ChannelStatusEnabled,
+		},
+		{
+			Key:           constant.ChannelCredentialModeAccountPool,
+			Name:          "禁用同步渠道",
+			Status:        common.ChannelStatusManuallyDisabled,
+			OtherSettings: `{"upstream_account_sync":{"platform":"new-api","base_url":"https://upstream.example"}}`,
+			ChannelInfo: model.ChannelInfo{
+				CredentialMode:     constant.ChannelCredentialModeAccountPool,
+				AccountPoolEnabled: true,
+			},
+		},
+		{
+			Key:           constant.ChannelCredentialModeAccountPool,
+			Name:          "缺少凭据同步渠道",
+			Status:        common.ChannelStatusEnabled,
+			OtherSettings: `{"upstream_account_sync":{"platform":"new-api","base_url":"https://upstream.example"}}`,
+			ChannelInfo: model.ChannelInfo{
+				CredentialMode:     constant.ChannelCredentialModeAccountPool,
+				AccountPoolEnabled: true,
+			},
+		},
+	}
+	require.NoError(t, model.DB.Create(&channels).Error)
+
+	run := func() {
+		_, err := RunUpstreamAccountSync(
+			context.Background(),
+			nil,
+			WithSystemTaskLog("systask_idempotent_test", 200),
+		)
+		require.NoError(t, err)
+	}
+	run()
+	run()
+
+	var tasks []model.Task
+	require.NoError(t, model.DB.
+		Where("task_id = ? AND action = ?", "systask_idempotent_test", constant.TaskActionUpstreamAccountSync).
+		Order("channel_id").
+		Find(&tasks).Error)
+	require.Len(t, tasks, 2)
+	require.Equal(t, model.TaskStatusSkipped, tasks[0].Status)
+	require.Equal(t, model.TaskStatusSkipped, tasks[1].Status)
+	require.Equal(t, constant.TaskPlatformSystem, tasks[0].Platform)
+	require.Equal(t, 0, tasks[0].UserId)
+	require.Equal(t, tasks[0].TaskID, tasks[1].TaskID)
+	require.Equal(t, channels[1].Id, tasks[0].ChannelId)
+	require.Equal(t, channels[2].Id, tasks[1].ChannelId)
+	require.Contains(t, tasks[0].FailReason, "渠道已禁用")
+	require.Contains(t, tasks[1].FailReason, "没有保存上游账号凭据")
+
+	logs := model.TaskGetAllTasks(0, 20, model.SyncTaskQueryParams{
+		TaskID: "systask_idempotent_test",
+	})
+	require.Len(t, logs, 2)
+	channelNames := make(map[int]string, len(logs))
+	for _, log := range logs {
+		channelNames[log.ChannelId] = log.ChannelName
+	}
+	require.Equal(t, "禁用同步渠道", channelNames[channels[1].Id])
+	require.Equal(t, "缺少凭据同步渠道", channelNames[channels[2].Id])
+}
+
+func TestRunUpstreamAccountSyncMarksPendingChannelLogsWhenCanceled(t *testing.T) {
+	setupAutomaticSyncTestDB(t)
+
+	channel := model.Channel{
+		Key:           constant.ChannelCredentialModeAccountPool,
+		Name:          "取消同步渠道",
+		Status:        common.ChannelStatusEnabled,
+		OtherSettings: `{"upstream_account_sync":{"platform":"new-api","base_url":"https://upstream.example"}}`,
+		ChannelInfo: model.ChannelInfo{
+			CredentialMode:     constant.ChannelCredentialModeAccountPool,
+			AccountPoolEnabled: true,
+		},
+	}
+	require.NoError(t, model.DB.Create(&channel).Error)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := RunUpstreamAccountSync(ctx, nil, WithSystemTaskLog("systask_canceled_test", 300))
+	require.ErrorIs(t, err, context.Canceled)
+
+	var task model.Task
+	require.NoError(t, model.DB.
+		Where("task_id = ? AND channel_id = ?", "systask_canceled_test", channel.Id).
+		First(&task).Error)
+	require.Equal(t, model.TaskStatus("FAILURE"), task.Status)
+	require.Equal(t, "100%", task.Progress)
+	require.Contains(t, task.FailReason, "context canceled")
 }

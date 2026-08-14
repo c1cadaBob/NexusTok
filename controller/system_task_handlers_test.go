@@ -30,6 +30,7 @@ func setupSystemTaskHandlerTestDB(t *testing.T) {
 		&model.SystemTask{},
 		&model.SystemTaskLock{},
 		&model.Log{},
+		&model.Task{},
 	))
 	model.DB = db
 	model.LOG_DB = db
@@ -189,6 +190,16 @@ func TestUpstreamAccountSyncHandlerWritesFailureAuditSummary(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, finished)
 	require.Equal(t, model.SystemTaskStatusFailed, finished.Status)
+
+	var taskLog model.Task
+	require.NoError(t, model.DB.
+		Where("task_id = ? AND action = ?", task.TaskID, constant.TaskActionUpstreamAccountSync).
+		First(&taskLog).Error)
+	require.Equal(t, model.TaskStatus("FAILURE"), taskLog.Status)
+	require.Equal(t, channel.Id, taskLog.ChannelId)
+	require.NotContains(t, taskLog.FailReason, "secret")
+	require.NotContains(t, taskLog.FailReason, "old-token")
+	require.NotContains(t, taskLog.FailReason, "sk-failure-key")
 
 	var auditLog model.Log
 	require.NoError(t, model.LOG_DB.Where("type = ?", model.LogTypeManage).First(&auditLog).Error)

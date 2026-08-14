@@ -21,6 +21,8 @@ const (
 	TaskPlatformSuno TaskPlatform = "suno"
 	// TaskPlatformMidjourney Midjourney 图像生成平台
 	TaskPlatformMidjourney = "mj"
+	// TaskPlatformSystem 系统后台任务平台
+	TaskPlatformSystem TaskPlatform = "system"
 )
 
 // Suno 操作类型常量
@@ -43,6 +45,8 @@ const (
 	TaskActionReferenceGenerate = "referenceGenerate"
 	// TaskActionRemix 混音/重混操作
 	TaskActionRemix = "remixGenerate"
+	// TaskActionUpstreamAccountSync 上游账号自动同步操作
+	TaskActionUpstreamAccountSync = "upstreamAccountSync"
 )
 
 // SunoModel2Action Suno 模型名称到操作类型的映射

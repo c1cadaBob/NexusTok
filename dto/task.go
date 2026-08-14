@@ -63,6 +63,7 @@ func (t *TaskResponse[T]) IsSuccess() bool {
 // UserId：用户 ID
 // Group：用户组
 // ChannelId：使用的渠道 ID
+// ChannelName：渠道名称（管理员任务日志展示用）
 // Quota：消耗的配额
 // Action：任务动作（song/lyrics 等）
 // Status：任务状态（submitted/queueing/processing/success/failed）
@@ -74,26 +75,27 @@ func (t *TaskResponse[T]) IsSuccess() bool {
 // Username：用户名（关联查询时填充）
 // Data：原始任务数据（JSON 格式）
 type TaskDto struct {
-	ID         int64           `json:"id"`
-	CreatedAt  int64           `json:"created_at"`
-	UpdatedAt  int64           `json:"updated_at"`
-	TaskID     string          `json:"task_id"`
-	Platform   string          `json:"platform"`
-	UserId     int             `json:"user_id"`
-	Group      string          `json:"group"`
-	ChannelId  int             `json:"channel_id"`
-	Quota      int             `json:"quota"`
-	Action     string          `json:"action"`
-	Status     string          `json:"status"`
-	FailReason string          `json:"fail_reason"`
-	ResultURL  string          `json:"result_url,omitempty"` // 任务结果 URL（视频地址等）
-	SubmitTime int64           `json:"submit_time"`
-	StartTime  int64           `json:"start_time"`
-	FinishTime int64           `json:"finish_time"`
-	Progress   string          `json:"progress"`
-	Properties any             `json:"properties"`
-	Username   string          `json:"username,omitempty"`
-	Data       json.RawMessage `json:"data"`
+	ID          int64           `json:"id"`
+	CreatedAt   int64           `json:"created_at"`
+	UpdatedAt   int64           `json:"updated_at"`
+	TaskID      string          `json:"task_id"`
+	Platform    string          `json:"platform"`
+	UserId      int             `json:"user_id"`
+	Group       string          `json:"group"`
+	ChannelId   int             `json:"channel_id"`
+	ChannelName string          `json:"channel_name,omitempty"`
+	Quota       int             `json:"quota"`
+	Action      string          `json:"action"`
+	Status      string          `json:"status"`
+	FailReason  string          `json:"fail_reason"`
+	ResultURL   string          `json:"result_url,omitempty"` // 任务结果 URL（视频地址等）
+	SubmitTime  int64           `json:"submit_time"`
+	StartTime   int64           `json:"start_time"`
+	FinishTime  int64           `json:"finish_time"`
+	Progress    string          `json:"progress"`
+	Properties  any             `json:"properties"`
+	Username    string          `json:"username,omitempty"`
+	Data        json.RawMessage `json:"data"`
 }
 
 // FetchReq 批量查询请求
