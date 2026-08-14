@@ -189,7 +189,7 @@ export function createDurationColumn<T>(config: {
 }
 
 /**
- * Create a channel column (admin only) - #id badge matching common logs
+ * 创建渠道列，管理员视图中同时展示渠道 ID 和可选渠道名称。
  */
 export function createChannelColumn<T>(config: {
   accessorKey?: string
@@ -204,17 +204,28 @@ export function createChannelColumn<T>(config: {
     ),
     cell: ({ row }) => {
       const channelId = row.getValue(accessorKey) as number
+      const original = row.original as Record<string, unknown>
+      const rawChannelName = original.channel_name
+      const channelName =
+        typeof rawChannelName === 'string' ? rawChannelName.trim() : ''
       if (!channelId) {
         return <span className='text-muted-foreground/60 text-xs'>-</span>
       }
       return (
-        <StatusBadge
-          label={`#${channelId}`}
-          autoColor={String(channelId)}
-          copyText={String(channelId)}
-          size='sm'
-          className='font-mono'
-        />
+        <div className='flex max-w-[170px] flex-col gap-0.5'>
+          <StatusBadge
+            label={`#${channelId}`}
+            autoColor={String(channelId)}
+            copyText={String(channelId)}
+            size='sm'
+            className='font-mono'
+          />
+          {channelName && (
+            <span className='text-muted-foreground/70 truncate text-[11px]'>
+              {channelName}
+            </span>
+          )}
+        </div>
       )
     },
     meta: { label: headerLabel },

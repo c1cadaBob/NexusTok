@@ -80,7 +80,7 @@ const TYPE_LABEL: Record<string, string> = {
   account_pool_check: 'Account pool check',
   subscription_maintenance: 'Subscription maintenance',
   models_dev_sync: 'Models.dev model sync',
-  upstream_account_sync: 'Upstream account sync',
+  upstream_account_sync: 'Upstream Account Sync',
   system_update: 'System update',
   system_rollback: 'System rollback',
 }
@@ -362,7 +362,6 @@ function SystemTasksTable(props: SystemTasksTableProps) {
 export function SystemTasksPanel() {
   const { t } = useTranslation()
   // 任务数据与当前语言无关；t 只用于请求失败时的本地化兜底文案。
-  // eslint-disable-next-line @tanstack/query/exhaustive-deps
   const tasksQuery = useQuery({
     queryKey: ['system-info', 'system-tasks'],
     queryFn: async () => {

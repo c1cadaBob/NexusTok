@@ -283,24 +283,25 @@ export interface MidjourneyLog {
 }
 
 // ============================================================================
-// Task Logs Types
+// 异步任务日志类型。
 // ============================================================================
 
 export interface TaskLog {
   id: number
   user_id: number
   username?: string
-  platform: string // suno, kling, runway, etc.
+  platform: string // suno、kling、runway、system 等任务平台。
   task_id: string
-  action: string // MUSIC, LYRICS, GENERATE, TEXT_GENERATE, etc.
+  action: string // MUSIC、LYRICS、GENERATE、TEXT_GENERATE、upstreamAccountSync 等动作。
   channel_id: number
-  submit_time: number // seconds
-  finish_time?: number // seconds
+  channel_name?: string
+  submit_time: number // 秒级提交时间戳。
+  finish_time?: number // 秒级完成时间戳。
   progress?: string
   progress_message_en?: string
-  data?: string // JSON string
+  data?: unknown // 兼容历史 JSON 字符串和新结构化 JSON。
   fail_reason?: string
-  status: string // NOT_START, SUBMITTED, IN_PROGRESS, SUCCESS, FAILURE, QUEUED, UNKNOWN
+  status: string // NOT_START、SUBMITTED、IN_PROGRESS、SUCCESS、FAILURE、SKIPPED、QUEUED、UNKNOWN。
   other?: string
   created_at?: number
   updated_at?: number

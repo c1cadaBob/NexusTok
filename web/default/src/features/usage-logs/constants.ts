@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 /**
- * Shared constants for usage logs feature
+ * 用量日志功能的共享常量。
  */
 import type { StatusBadgeProps } from '@/components/status-badge'
 import type { LogStatistics, LogCategory } from './types'
@@ -27,7 +27,7 @@ import type { LogStatistics, LogCategory } from './types'
 // ============================================================================
 
 /**
- * Default log statistics when no data is available
+ * 没有统计数据时使用的默认值。
  */
 export const DEFAULT_LOG_STATS: LogStatistics = {
   quota: 0,
@@ -36,7 +36,7 @@ export const DEFAULT_LOG_STATS: LogStatistics = {
 }
 
 /**
- * Default empty logs data
+ * 没有日志数据时使用的默认列表。
  */
 export const DEFAULT_LOGS_DATA = {
   items: [],
@@ -72,7 +72,7 @@ export const LOG_TYPE_ALL_VALUE = '0' as const
 // ============================================================================
 
 /**
- * Quick time range presets for filter dialog
+ * 筛选弹窗中的快捷时间范围。
  */
 export const TIME_RANGE_PRESETS = [
   { days: 1, label: '24 Hours' },
@@ -118,8 +118,7 @@ export const LOG_TYPE_FILTERS = [
 // ============================================================================
 
 /**
- * Midjourney task types
- * Must match backend constants in constant/midjourney.go
+ * Midjourney 任务类型，必须与后端 constant/midjourney.go 保持一致。
  */
 export const MJ_TASK_TYPES = {
   IMAGINE: 'IMAGINE', // 绘图
@@ -143,7 +142,7 @@ export const MJ_TASK_TYPES = {
 } as const
 
 /**
- * Midjourney task status
+ * Midjourney 任务状态。
  */
 export const MJ_TASK_STATUS = {
   NOT_START: 'NOT_START', // 未启动
@@ -155,7 +154,7 @@ export const MJ_TASK_STATUS = {
 } as const
 
 /**
- * Midjourney submit result codes
+ * Midjourney 提交结果码。
  */
 export const MJ_SUBMIT_RESULT_CODES = {
   NOT_SUBMITTED: 0, // 未提交
@@ -169,8 +168,7 @@ export const MJ_SUBMIT_RESULT_CODES = {
 // ============================================================================
 
 /**
- * Task action types
- * Must match backend constants in constant/task.go
+ * 异步任务动作类型，必须与后端 constant/task.go 保持一致。
  */
 export const TASK_ACTIONS = {
   // Suno (uppercase)
@@ -183,10 +181,11 @@ export const TASK_ACTIONS = {
   FIRST_TAIL_GENERATE: 'firstTailGenerate', // 首尾生视频
   REFERENCE_GENERATE: 'referenceGenerate', // 参照生视频
   REMIX_GENERATE: 'remixGenerate', // 视频 Remix
+  UPSTREAM_ACCOUNT_SYNC: 'upstreamAccountSync', // 上游账号自动同步
 } as const
 
 /**
- * Task status
+ * 异步任务状态。
  */
 export const TASK_STATUS = {
   NOT_START: 'NOT_START', // 未启动
@@ -194,12 +193,13 @@ export const TASK_STATUS = {
   IN_PROGRESS: 'IN_PROGRESS', // 执行中
   SUCCESS: 'SUCCESS', // 成功
   FAILURE: 'FAILURE', // 失败
+  SKIPPED: 'SKIPPED', // 已跳过
   QUEUED: 'QUEUED', // 排队中
   UNKNOWN: 'UNKNOWN', // 未知
 } as const
 
 /**
- * Task platforms
+ * 异步任务平台。
  */
 export const TASK_PLATFORMS = {
   SUNO: 'suno',
@@ -207,6 +207,7 @@ export const TASK_PLATFORMS = {
   RUNWAY: 'runway',
   LUMA: 'luma',
   VIGGLE: 'viggle',
+  SYSTEM: 'system',
 } as const
 
 // ============================================================================
@@ -214,7 +215,7 @@ export const TASK_PLATFORMS = {
 // ============================================================================
 
 /**
- * Status mapping configuration type
+ * 状态映射配置类型。
  */
 export interface StatusMapping {
   label: string
@@ -222,7 +223,7 @@ export interface StatusMapping {
 }
 
 /**
- * Midjourney task type mappings
+ * Midjourney 任务类型展示映射。
  */
 export const MJ_TASK_TYPE_MAPPINGS: Record<string, StatusMapping> = {
   [MJ_TASK_TYPES.IMAGINE]: { label: 'Draw', variant: 'blue' },
@@ -245,7 +246,7 @@ export const MJ_TASK_TYPE_MAPPINGS: Record<string, StatusMapping> = {
 }
 
 /**
- * Midjourney task status mappings
+ * Midjourney 任务状态展示映射。
  */
 export const MJ_STATUS_MAPPINGS: Record<string, StatusMapping> = {
   [MJ_TASK_STATUS.SUCCESS]: { label: 'Success', variant: 'green' },
@@ -257,7 +258,7 @@ export const MJ_STATUS_MAPPINGS: Record<string, StatusMapping> = {
 }
 
 /**
- * Midjourney submit result mappings
+ * Midjourney 提交结果展示映射。
  */
 export const MJ_SUBMIT_RESULT_MAPPINGS: Record<string, StatusMapping> = {
   [String(MJ_SUBMIT_RESULT_CODES.SUBMITTED)]: {
@@ -279,7 +280,7 @@ export const MJ_SUBMIT_RESULT_MAPPINGS: Record<string, StatusMapping> = {
 }
 
 /**
- * Task action type mappings
+ * 异步任务动作展示映射。
  */
 export const TASK_ACTION_MAPPINGS: Record<string, StatusMapping> = {
   [TASK_ACTIONS.MUSIC]: { label: 'Generate Music', variant: 'neutral' },
@@ -298,10 +299,14 @@ export const TASK_ACTION_MAPPINGS: Record<string, StatusMapping> = {
     label: 'Video Remix',
     variant: 'blue',
   },
+  [TASK_ACTIONS.UPSTREAM_ACCOUNT_SYNC]: {
+    label: 'Upstream Account Sync',
+    variant: 'teal',
+  },
 }
 
 /**
- * Task status mappings
+ * 异步任务状态展示映射。
  */
 export const TASK_STATUS_MAPPINGS: Record<string, StatusMapping> = {
   [TASK_STATUS.SUCCESS]: { label: 'Success', variant: 'green' },
@@ -309,12 +314,13 @@ export const TASK_STATUS_MAPPINGS: Record<string, StatusMapping> = {
   [TASK_STATUS.SUBMITTED]: { label: 'Queued', variant: 'yellow' },
   [TASK_STATUS.IN_PROGRESS]: { label: 'In Progress', variant: 'blue' },
   [TASK_STATUS.FAILURE]: { label: 'Failed', variant: 'red' },
+  [TASK_STATUS.SKIPPED]: { label: 'Skipped', variant: 'amber' },
   [TASK_STATUS.QUEUED]: { label: 'Queued', variant: 'orange' },
   [TASK_STATUS.UNKNOWN]: { label: 'Unknown', variant: 'neutral' },
 }
 
 /**
- * Task platform mappings
+ * 异步任务平台展示映射。
  */
 export const TASK_PLATFORM_MAPPINGS: Record<string, StatusMapping> = {
   [TASK_PLATFORMS.SUNO]: { label: 'suno', variant: 'green' },
@@ -322,6 +328,7 @@ export const TASK_PLATFORM_MAPPINGS: Record<string, StatusMapping> = {
   [TASK_PLATFORMS.RUNWAY]: { label: 'runway', variant: 'violet' },
   [TASK_PLATFORMS.LUMA]: { label: 'luma', variant: 'orange' },
   [TASK_PLATFORMS.VIGGLE]: { label: 'viggle', variant: 'pink' },
+  [TASK_PLATFORMS.SYSTEM]: { label: 'System', variant: 'neutral' },
 }
 
 // ============================================================================
@@ -329,7 +336,7 @@ export const TASK_PLATFORM_MAPPINGS: Record<string, StatusMapping> = {
 // ============================================================================
 
 /**
- * Log category display labels
+ * 日志分类展示文案。
  */
 export const LOG_CATEGORY_LABELS: Record<LogCategory, string> = {
   common: 'Common',
@@ -342,11 +349,11 @@ export const LOG_CATEGORY_LABELS: Record<LogCategory, string> = {
 // ============================================================================
 
 /**
- * Log types that are displayable (have detailed info)
+ * 支持查看详情的日志类型。
  */
 export const DISPLAYABLE_LOG_TYPES = [0, 2, 5, 6] as const
 
 /**
- * Log types that show timing info
+ * 展示耗时信息的日志类型。
  */
 export const TIMING_LOG_TYPES = [2, 5] as const

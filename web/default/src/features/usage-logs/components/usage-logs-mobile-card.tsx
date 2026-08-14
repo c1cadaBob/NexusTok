@@ -264,6 +264,11 @@ function TaskLogsCard<TData>({
           label={t('Submit Time')}
           cell={cells.get('submit_time')}
         />
+        <SummaryField
+          label={t('Channel')}
+          cell={cells.get('channel_id')}
+          valueClassName='[&_.flex-col]:max-w-none'
+        />
         <SummaryField label={t('User')} cell={cells.get('user')} primaryOnly />
         <SummaryField
           label={t('Result')}

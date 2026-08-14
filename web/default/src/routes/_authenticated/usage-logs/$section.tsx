@@ -31,6 +31,7 @@ const usageLogsSearchSchema = z.object({
   model: z.string().optional().catch(''),
   token: z.string().optional().catch(''),
   channel: z.string().optional().catch(''),
+  channel_id: z.string().optional().catch(''),
   group: z.string().optional().catch(''),
   username: z.string().optional().catch(''),
   requestId: z.string().optional().catch(''),

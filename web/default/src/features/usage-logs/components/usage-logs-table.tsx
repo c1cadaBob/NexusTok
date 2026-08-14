@@ -60,6 +60,8 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   )
   const isMobile = useMediaQuery('(max-width: 640px)')
   const searchParams = route.useSearch()
+  const channelColumnId = logCategory === 'common' ? 'channel' : 'channel_id'
+  const channelSearchKey = logCategory === 'common' ? 'channel' : 'channel_id'
 
   const {
     columnFilters,
@@ -79,8 +81,8 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
       ...(isAdmin
         ? [
             {
-              columnId: 'channel',
-              searchKey: 'channel',
+              columnId: channelColumnId,
+              searchKey: channelSearchKey,
               type: 'string' as const,
             },
             {

@@ -28,7 +28,11 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { DataTableColumnHeader } from '@/components/data-table'
 import { StatusBadge } from '@/components/status-badge'
 import { TASK_ACTIONS, TASK_STATUS } from '../../constants'
-import { taskActionMapper, taskStatusMapper } from '../../lib/mappers'
+import {
+  taskActionMapper,
+  taskPlatformMapper,
+  taskStatusMapper,
+} from '../../lib/mappers'
 import type { TaskLog } from '../../types'
 import {
   AudioPreviewDialog,
@@ -42,17 +46,66 @@ import {
   createProgressColumn,
 } from './column-helpers'
 
-function parseTaskData(data: unknown): unknown[] {
-  if (Array.isArray(data)) return data
+type UpstreamAccountSyncTaskLogData = {
+  type?: string
+  system_task_id?: string
+  channel_id?: number
+  channel_name?: string
+  platform?: string
+  status?: string
+  created_accounts?: number
+  updated_accounts?: number
+  disabled_accounts?: number
+  skip_reason?: string
+  error?: string
+}
+
+function parseTaskValue(data: unknown): unknown {
   if (typeof data === 'string') {
     try {
-      const parsed = JSON.parse(data)
-      return Array.isArray(parsed) ? parsed : []
+      return JSON.parse(data)
     } catch {
-      return []
+      return data
     }
   }
+  return data
+}
+
+function parseTaskData(data: unknown): unknown[] {
+  const parsed = parseTaskValue(data)
+  if (Array.isArray(parsed)) return parsed
   return []
+}
+
+function parseTaskObjectData(data: unknown): Record<string, unknown> | null {
+  const parsed = parseTaskValue(data)
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    return parsed as Record<string, unknown>
+  }
+  return null
+}
+
+function getUpstreamAccountSyncData(
+  log: TaskLog
+): UpstreamAccountSyncTaskLogData | null {
+  if (
+    log.platform !== 'system' ||
+    log.action !== TASK_ACTIONS.UPSTREAM_ACCOUNT_SYNC
+  ) {
+    return null
+  }
+  return (
+    (parseTaskObjectData(log.data) as UpstreamAccountSyncTaskLogData | null) ??
+    {}
+  )
+}
+
+function readNumber(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
+function readString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
 }
 
 function AudioPreviewCell({ log }: { log: TaskLog }) {
@@ -130,7 +183,44 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
         const { sensitiveVisible, setSelectedUserId, setUserInfoDialogOpen } =
           useUsageLogsContext()
         const log = row.original
-        const displayName = log.username || String(log.user_id || '?')
+        const isSystemUser = log.user_id === 0
+        const displayName = isSystemUser
+          ? t('System')
+          : log.username || String(log.user_id || '?')
+
+        const content = (
+          <>
+            <Avatar className='ring-border/60 size-6 ring-1'>
+              <AvatarFallback
+                className={cn(
+                  'text-[11px] font-semibold',
+                  isSystemUser && 'bg-muted text-muted-foreground',
+                  !isSystemUser &&
+                    !sensitiveVisible &&
+                    'bg-muted text-muted-foreground'
+                )}
+                style={
+                  !isSystemUser && sensitiveVisible
+                    ? getUserAvatarStyle(displayName)
+                    : undefined
+                }
+              >
+                {isSystemUser
+                  ? 'S'
+                  : sensitiveVisible
+                    ? getUserAvatarFallback(displayName)
+                    : '•'}
+              </AvatarFallback>
+            </Avatar>
+            <span className='text-muted-foreground truncate text-sm hover:underline'>
+              {isSystemUser || sensitiveVisible ? displayName : '••••'}
+            </span>
+          </>
+        )
+
+        if (isSystemUser) {
+          return <div className='flex items-center gap-1.5'>{content}</div>
+        }
 
         return (
           <button
@@ -142,22 +232,7 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
               setUserInfoDialogOpen(true)
             }}
           >
-            <Avatar className='ring-border/60 size-6 ring-1'>
-              <AvatarFallback
-                className={cn(
-                  'text-[11px] font-semibold',
-                  !sensitiveVisible && 'bg-muted text-muted-foreground'
-                )}
-                style={
-                  sensitiveVisible ? getUserAvatarStyle(displayName) : undefined
-                }
-              >
-                {sensitiveVisible ? getUserAvatarFallback(displayName) : '•'}
-              </AvatarFallback>
-            </Avatar>
-            <span className='text-muted-foreground truncate text-sm hover:underline'>
-              {sensitiveVisible ? displayName : '••••'}
-            </span>
+            {content}
           </button>
         )
       },
@@ -187,7 +262,8 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
               className='border-border/60 bg-muted/30 max-w-full truncate rounded-md border px-1.5 py-0.5 font-mono'
             />
             <span className='text-muted-foreground/60 truncate text-[11px]'>
-              {t(log.platform)} · {t(taskActionMapper.getLabel(log.action))}
+              {t(taskPlatformMapper.getLabel(log.platform, log.platform))} ·{' '}
+              {t(taskActionMapper.getLabel(log.action, log.action))}
             </span>
           </div>
         )
@@ -231,6 +307,75 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
         const failReason = row.getValue('fail_reason') as string
         const status = log.status
         const [dialogOpen, setDialogOpen] = useState(false)
+        const upstreamAccountSyncData = getUpstreamAccountSyncData(log)
+
+        if (upstreamAccountSyncData) {
+          const created = readNumber(
+            upstreamAccountSyncData.created_accounts
+          )
+          const updated = readNumber(
+            upstreamAccountSyncData.updated_accounts
+          )
+          const disabled = readNumber(
+            upstreamAccountSyncData.disabled_accounts
+          )
+          const syncDetail =
+            readString(upstreamAccountSyncData.error) ||
+            readString(upstreamAccountSyncData.skip_reason) ||
+            failReason
+
+          if (status === TASK_STATUS.SUCCESS) {
+            return (
+              <span className='text-muted-foreground text-xs'>
+                {t(
+                  'Created {{created}}, updated {{updated}}, disabled {{disabled}}',
+                  { created, updated, disabled }
+                )}
+              </span>
+            )
+          }
+
+          if (status === TASK_STATUS.SKIPPED) {
+            return syncDetail ? (
+              <span
+                className='text-muted-foreground block max-w-[200px] truncate text-xs'
+                title={syncDetail}
+              >
+                {syncDetail}
+              </span>
+            ) : (
+              <span className='text-muted-foreground/60 text-xs'>-</span>
+            )
+          }
+
+          if (status === TASK_STATUS.FAILURE && syncDetail) {
+            return (
+              <>
+                <button
+                  type='button'
+                  className='group flex max-w-[200px] items-center gap-1 text-left text-xs'
+                  onClick={() => setDialogOpen(true)}
+                  title={t('Click to view full error message')}
+                >
+                  <span className='truncate leading-snug text-red-600 group-hover:underline dark:text-red-400'>
+                    {syncDetail}
+                  </span>
+                </button>
+                <FailReasonDialog
+                  failReason={syncDetail}
+                  open={dialogOpen}
+                  onOpenChange={setDialogOpen}
+                />
+              </>
+            )
+          }
+
+          return (
+            <span className='text-muted-foreground text-xs'>
+              {t('Syncing upstream account')}
+            </span>
+          )
+        }
 
         const isSunoSuccess =
           log.platform === 'suno' && status === TASK_STATUS.SUCCESS

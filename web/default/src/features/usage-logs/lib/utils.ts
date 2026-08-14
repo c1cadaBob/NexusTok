@@ -154,13 +154,15 @@ export function buildBaseParams(config: {
   end_timestamp?: number
 } {
   const { page, pageSize, searchParams, useMilliseconds = false } = config
+  // 任务类日志统一使用 channel_id；保留旧 channel 参数作为兼容输入。
+  const channelValue = searchParams.channel_id ?? searchParams.channel
 
   return {
     p: page,
     page_size: pageSize,
-    ...(searchParams.channel
+    ...(channelValue
       ? {
-          channel_id: String(searchParams.channel),
+          channel_id: String(channelValue),
         }
       : {}),
     ...buildTimeRangeParams(searchParams, useMilliseconds),

@@ -85,14 +85,14 @@ export function TaskLogsFilterBar<TData>(props: TaskLogsFilterBarProps<TData>) {
 
   useEffect(() => {
     const { start, end } = getDefaultTimeRange()
+    // 任务类接口的字段名是 channel_id；兼容旧链接中的 channel 参数。
+    const channelValue = searchParams.channel_id ?? searchParams.channel
     const baseFilters = {
       startTime: searchParams.startTime
         ? new Date(searchParams.startTime)
         : start,
       endTime: searchParams.endTime ? new Date(searchParams.endTime) : end,
-      ...(searchParams.channel
-        ? { channel: String(searchParams.channel) }
-        : {}),
+      ...(channelValue ? { channel: String(channelValue) } : {}),
     }
     const next: TaskLogsFilters =
       props.logCategory === 'drawing'
@@ -105,11 +105,14 @@ export function TaskLogsFilterBar<TData>(props: TaskLogsFilterBarProps<TData>) {
             ...(searchParams.filter ? { taskId: searchParams.filter } : {}),
           }
 
+    // URL 是筛选条件的外部来源；切换页面或使用浏览器前进后退时，需要同步更新控件状态。
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setFilters(next)
   }, [
     props.logCategory,
     searchParams.startTime,
     searchParams.endTime,
+    searchParams.channel_id,
     searchParams.channel,
     searchParams.filter,
   ])
