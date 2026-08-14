@@ -18,6 +18,17 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import { z } from 'zod'
 
+const optionalEmailSchema = z
+  .string()
+  .trim()
+  .max(50, 'Email address must be at most 50 characters long')
+  .refine(
+    (value) => value === '' || z.string().email().safeParse(value).success,
+    {
+      message: 'Please enter a valid email address',
+    }
+  )
+
 // ============================================================================
 // Form Schemas
 // ============================================================================
@@ -32,8 +43,12 @@ export const loginFormSchema = z.object({
 
 export const registerFormSchema = z
   .object({
-    username: z.string().min(1, 'Please enter your username'),
-    email: z.string().optional(),
+    username: z
+      .string()
+      .trim()
+      .min(1, 'Please enter your username')
+      .max(20, 'Username must be at most 20 characters long'),
+    email: optionalEmailSchema,
     password: z
       .string()
       .min(1, 'Please enter your password')

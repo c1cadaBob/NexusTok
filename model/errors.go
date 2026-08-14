@@ -23,6 +23,17 @@ var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	// ErrUserEmptyCredentials 用户名或密码为空
 	ErrUserEmptyCredentials = errors.New("empty credentials")
+	// ErrLoginUserNotFound 表示密码登录时没有找到匹配的用户名或邮箱。
+	//
+	// 该错误只用于服务端诊断分类，控制器仍然对外返回统一的“用户名或密码错误”
+	// 文案，避免通过错误差异枚举账号是否存在。
+	ErrLoginUserNotFound = errors.New("login user not found")
+	// ErrLoginPasswordMismatch 表示密码登录时 bcrypt 校验失败。
+	ErrLoginPasswordMismatch = errors.New("login password mismatch")
+	// ErrLoginUserDisabled 表示密码正确但账号已被禁用。
+	ErrLoginUserDisabled = errors.New("login user disabled")
+	// ErrLoginEmptyPasswordHash 表示目标账号没有可用于密码登录的哈希。
+	ErrLoginEmptyPasswordHash = errors.New("login empty password hash")
 	// ErrEmailAlreadyTaken 表示邮箱已被其他用户占用。
 	// 该错误用于注册、邮箱绑定和 OAuth 写入前的模型层唯一性保护。
 	ErrEmailAlreadyTaken = errors.New("email already taken")

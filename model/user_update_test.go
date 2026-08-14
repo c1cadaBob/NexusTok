@@ -220,6 +220,68 @@ func TestValidateAndFillRejectsPasswordlessUser(t *testing.T) {
 	assert.Empty(t, stored.Password)
 }
 
+func TestValidateAndFillClassifiesLoginFailures(t *testing.T) {
+	setupUserUpdateTestState(t)
+
+	hashedPassword, err := common.Password2Hash("Password123")
+	require.NoError(t, err)
+	require.NoError(t, DB.Create(&[]User{
+		{
+			Username: "login-user",
+			Password: hashedPassword,
+			Status:   common.UserStatusEnabled,
+			AffCode:  "login1",
+		},
+		{
+			Username: "disabled-user",
+			Password: hashedPassword,
+			Status:   common.UserStatusDisabled,
+			AffCode:  "login2",
+		},
+		{
+			Username: "empty-password-user",
+			Password: "",
+			Status:   common.UserStatusEnabled,
+			AffCode:  "login3",
+		},
+	}).Error)
+
+	cases := []struct {
+		name string
+		user User
+		want error
+	}{
+		{
+			name: "not found",
+			user: User{Username: "missing-user", Password: "Password123"},
+			want: ErrLoginUserNotFound,
+		},
+		{
+			name: "password mismatch",
+			user: User{Username: "login-user", Password: "WrongPassword123"},
+			want: ErrLoginPasswordMismatch,
+		},
+		{
+			name: "disabled",
+			user: User{Username: "disabled-user", Password: "Password123"},
+			want: ErrLoginUserDisabled,
+		},
+		{
+			name: "empty password hash",
+			user: User{Username: "empty-password-user", Password: "Password123"},
+			want: ErrLoginEmptyPasswordHash,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.user.ValidateAndFill()
+			require.ErrorIs(t, err, ErrInvalidCredentials)
+			require.ErrorIs(t, err, tc.want)
+		})
+	}
+}
+
 func TestResetUserPasswordByEmailRequiresSingleActiveMatch(t *testing.T) {
 	setupUserUpdateTestState(t)
 

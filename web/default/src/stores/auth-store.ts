@@ -61,6 +61,12 @@ interface AuthState {
   }
 }
 
+function clearStoredAuth() {
+  if (typeof window === 'undefined') return
+  window.localStorage.removeItem('user')
+  window.localStorage.removeItem('uid')
+}
+
 export const useAuthStore = create<AuthState>()((set) => {
   // Restore user info from localStorage
   const initUser = (() => {
@@ -72,7 +78,7 @@ export const useAuthStore = create<AuthState>()((set) => {
     } catch {
       // Clear dirty data when parsing fails
       if (typeof window !== 'undefined') {
-        window.localStorage.removeItem('user')
+        clearStoredAuth()
       }
     }
     return null
@@ -88,7 +94,7 @@ export const useAuthStore = create<AuthState>()((set) => {
             if (user) {
               window.localStorage.setItem('user', JSON.stringify(user))
             } else {
-              window.localStorage.removeItem('user')
+              clearStoredAuth()
             }
           }
           return { ...state, auth: { ...state.auth, user } }
@@ -96,7 +102,7 @@ export const useAuthStore = create<AuthState>()((set) => {
       reset: () =>
         set((state) => {
           if (typeof window !== 'undefined') {
-            window.localStorage.removeItem('user')
+            clearStoredAuth()
           }
           return {
             ...state,

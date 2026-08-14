@@ -58,9 +58,10 @@ func updateUserAuthorizationInTx(
 	roleKey string,
 	roleKeyProvided bool,
 	permissions map[string]map[string]bool,
+	permissionsProvided bool,
 ) error {
 	if c.GetInt("role") != common.RoleRootUser {
-		if permissions != nil || roleKeyProvided {
+		if permissionsProvided || roleKeyProvided {
 			return fmt.Errorf("only root can update admin permissions")
 		}
 		return nil

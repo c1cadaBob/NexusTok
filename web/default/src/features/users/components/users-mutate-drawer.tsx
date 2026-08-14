@@ -266,6 +266,13 @@ export function UsersMutateDrawer({
       toast.error(noPermissionMessage)
       return
     }
+    if (!isUpdate && !data.password) {
+      form.setError('password', {
+        type: 'manual',
+        message: t('Password is required'),
+      })
+      return
+    }
     setIsSubmitting(true)
     try {
       const payload = transformFormDataToPayload(
@@ -356,6 +363,7 @@ export function UsersMutateDrawer({
                           {...field}
                           placeholder={t('Enter username')}
                           disabled={isUpdate}
+                          autoComplete='off'
                         />
                       </FormControl>
                       <FormMessage />
@@ -433,6 +441,7 @@ export function UsersMutateDrawer({
                         <Input
                           {...field}
                           type='password'
+                          autoComplete='new-password'
                           placeholder={
                             isUpdate
                               ? t('Leave empty to keep unchanged')

@@ -28,15 +28,39 @@ import { DEFAULT_GROUP } from '../constants'
 import { type UserFormData, type User } from '../types'
 
 export const AUTHZ_ROLE_ADMIN_VALUE = 'admin'
+export const USERNAME_MAX_LENGTH = 20
+export const USER_PASSWORD_MIN_LENGTH = 8
+export const USER_PASSWORD_MAX_LENGTH = 20
+
+const optionalPasswordSchema = z
+  .string()
+  .refine(
+    (value) =>
+      value.trim() === '' || value.length >= USER_PASSWORD_MIN_LENGTH,
+    {
+      message: 'Password must be at least 8 characters long',
+    }
+  )
+  .refine(
+    (value) =>
+      value.trim() === '' || value.length <= USER_PASSWORD_MAX_LENGTH,
+    {
+      message: 'Password must be at most 20 characters long',
+    }
+  )
 
 // ============================================================================
 // Form Schema
 // ============================================================================
 
 export const userFormSchema = z.object({
-  username: z.string().min(1, 'Username is required'),
+  username: z
+    .string()
+    .trim()
+    .min(1, 'Username is required')
+    .max(USERNAME_MAX_LENGTH, 'Username must be at most 20 characters long'),
   display_name: z.string().optional(),
-  password: z.string().optional(),
+  password: optionalPasswordSchema,
   role: z.number().optional(),
   quota_dollars: z.number().min(0).optional(),
   group: z.string().optional(),

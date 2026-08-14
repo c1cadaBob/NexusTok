@@ -831,16 +831,19 @@ func (user *User) ValidateAndFill() (err error) {
 	err = DB.Where("username = ? OR LOWER(email) = ?", username, NormalizeEmail(username)).First(user).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ErrInvalidCredentials
+			return errors.Join(ErrInvalidCredentials, ErrLoginUserNotFound)
 		}
 		return fmt.Errorf("%w: %v", ErrDatabase, err)
 	}
 	if user.Password == "" {
-		return ErrInvalidCredentials
+		return errors.Join(ErrInvalidCredentials, ErrLoginEmptyPasswordHash)
 	}
 	okay := common.ValidatePasswordAndHash(password, user.Password)
-	if !okay || user.Status != common.UserStatusEnabled {
-		return ErrInvalidCredentials
+	if !okay {
+		return errors.Join(ErrInvalidCredentials, ErrLoginPasswordMismatch)
+	}
+	if user.Status != common.UserStatusEnabled {
+		return errors.Join(ErrInvalidCredentials, ErrLoginUserDisabled)
 	}
 	return nil
 }

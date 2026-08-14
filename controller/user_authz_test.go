@@ -424,6 +424,64 @@ func TestCreateUserAdminPermissions(t *testing.T) {
 	assertPermission(t, authz.CapabilitiesForUser(stored.Id, common.RoleAdminUser), authz.ResourceChannel, authz.ActionSensitiveWrite, true)
 }
 
+func TestAdminCreateCommonUserWithoutAuthzFields(t *testing.T) {
+	db := setupUserAuthzControllerTestDB(t)
+
+	resp := performCreateUserForAuthz(t, common.RoleAdminUser, model.User{
+		Username:    "admin-created-user",
+		Password:    "Password123",
+		DisplayName: "admin-created-user",
+		Role:        common.RoleCommonUser,
+	})
+
+	require.True(t, resp.Success, resp.Message)
+	var stored model.User
+	require.NoError(t, db.Where("username = ?", "admin-created-user").First(&stored).Error)
+	assert.Equal(t, common.RoleCommonUser, stored.Role)
+	assert.Empty(t, stored.AuthzRole)
+	records, err := model.GetAuthzUserOverrides(stored.Id)
+	require.NoError(t, err)
+	assert.Empty(t, records)
+}
+
+func TestRootCreateCommonUserDoesNotWriteAuthzOverrides(t *testing.T) {
+	db := setupUserAuthzControllerTestDB(t)
+
+	resp := performCreateUserForAuthz(t, common.RoleRootUser, model.User{
+		Username:    "root-created-common",
+		Password:    "Password123",
+		DisplayName: "root-created-common",
+		Role:        common.RoleCommonUser,
+	})
+
+	require.True(t, resp.Success, resp.Message)
+	var stored model.User
+	require.NoError(t, db.Where("username = ?", "root-created-common").First(&stored).Error)
+	assert.Equal(t, common.RoleCommonUser, stored.Role)
+	assert.Empty(t, stored.AuthzRole)
+	records, err := model.GetAuthzUserOverrides(stored.Id)
+	require.NoError(t, err)
+	assert.Empty(t, records)
+}
+
+func TestAdminCreateUserRejectsExplicitAuthzFields(t *testing.T) {
+	db := setupUserAuthzControllerTestDB(t)
+
+	resp := performCreateUserRawForAuthz(t, common.RoleAdminUser, `{
+		"username": "forged-authz-user",
+		"password": "Password123",
+		"display_name": "forged-authz-user",
+		"role": 1,
+		"authz_role": "admin"
+	}`)
+
+	require.False(t, resp.Success)
+	assert.Contains(t, resp.Message, "only root")
+	var count int64
+	require.NoError(t, db.Model(&model.User{}).Where("username = ?", "forged-authz-user").Count(&count).Error)
+	assert.Zero(t, count)
+}
+
 func TestUpdateUserClearsAdminPermissionsWhenTargetIsCommon(t *testing.T) {
 	db := setupUserAuthzControllerTestDB(t)
 
@@ -561,9 +619,15 @@ func performCreateUserForAuthz(t *testing.T, role int, payload model.User) simpl
 
 	body, err := common.Marshal(payload)
 	require.NoError(t, err)
+	return performCreateUserRawForAuthz(t, role, string(body))
+}
+
+func performCreateUserRawForAuthz(t *testing.T, role int, body string) simpleAuthzResponse {
+	t.Helper()
+
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodPost, "/api/user/", bytes.NewReader(body))
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/user/", strings.NewReader(body))
 	c.Set("id", 1)
 	c.Set("role", role)
 

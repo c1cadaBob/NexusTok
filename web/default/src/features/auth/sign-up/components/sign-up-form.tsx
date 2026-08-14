@@ -37,6 +37,7 @@ import {
 import {
   Form,
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -150,11 +151,14 @@ export function SignUpForm({
 
     setIsLoading(true)
     try {
+      const verifiedEmail = emailVerificationRequired ? data.email : undefined
       const res = await register({
         username: data.username,
         password: data.password,
-        email: data.email || undefined,
-        verification_code: verificationCode || undefined,
+        email: verifiedEmail,
+        verification_code: emailVerificationRequired
+          ? verificationCode || undefined
+          : undefined,
         aff: getAffiliateCode(),
         turnstile: turnstileToken,
       })
@@ -240,6 +244,36 @@ export function SignUpForm({
           )}
         />
 
+        {/* Email Field */}
+        <FormField
+          control={form.control}
+          name='email'
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>
+                {emailVerificationRequired
+                  ? t('Email (required for verification)')
+                  : t('Email (optional)')}
+              </FormLabel>
+              <FormControl>
+                <Input
+                  placeholder={t('name@example.com')}
+                  type='email'
+                  autoComplete='email'
+                  {...field}
+                  value={field.value ?? ''}
+                />
+              </FormControl>
+              {!emailVerificationRequired && (
+                <FormDescription>
+                  {t('Email is saved only when verification is enabled.')}
+                </FormDescription>
+              )}
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
         {/* Password Field */}
         <FormField
           control={form.control}
@@ -281,28 +315,6 @@ export function SignUpForm({
         {/* Email Verification Section */}
         {emailVerificationRequired && (
           <>
-            {/* Email Field */}
-            <FormField
-              control={form.control}
-              name='email'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>
-                    {t('Email (required for verification)')}
-                  </FormLabel>
-                  <FormControl>
-                    <Input
-                      placeholder={t('name@example.com')}
-                      type='email'
-                      autoComplete='email'
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
             {/* Verification Code Field */}
             <div className='flex items-end gap-2'>
               <div className='flex-1'>

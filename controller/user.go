@@ -27,6 +27,7 @@ import (
 
 	"github.com/gin-contrib/sessions" // 会话管理
 	"github.com/gin-gonic/gin"        // Gin 框架
+	"github.com/go-playground/validator/v10"
 	"gorm.io/gorm"
 )
 
@@ -34,6 +35,103 @@ import (
 type LoginRequest struct {
 	Username string `json:"username"` // 用户名
 	Password string `json:"password"` // 密码
+}
+
+// userValidationErrorMessage 将 validator 的结构体字段错误转换为稳定的用户可读文案。
+//
+// validator 原始错误会暴露 Go 结构体字段名和校验 tag，例如
+// `Key: 'User.Username' Error:Field validation...`。这些信息对用户没有帮助，
+// 也会让前端难以做本地化处理；因此用户相关入口统一在这里按字段和 tag
+// 转换成项目 i18n 文案。未识别的校验错误降级为通用“输入不合法”，避免泄露
+// 内部结构。
+func userValidationErrorMessage(c *gin.Context, err error) string {
+	var validationErrors validator.ValidationErrors
+	if !errors.As(err, &validationErrors) || len(validationErrors) == 0 {
+		return common.TranslateMessage(c, i18n.MsgInvalidInput)
+	}
+	first := validationErrors[0]
+	params := map[string]any{
+		"Min": first.Param(),
+		"Max": first.Param(),
+	}
+	switch first.Field() {
+	case "Username":
+		if first.Tag() == "max" {
+			if params["Max"] == "" {
+				params["Max"] = model.UserNameMaxLength
+			}
+			return common.TranslateMessage(c, i18n.MsgUserUsernameTooLong, params)
+		}
+	case "Password":
+		if first.Tag() == "min" {
+			return common.TranslateMessage(c, i18n.MsgUserPasswordTooShort, params)
+		}
+		if first.Tag() == "max" {
+			return common.TranslateMessage(c, i18n.MsgUserPasswordTooLong, params)
+		}
+	case "DisplayName":
+		if first.Tag() == "max" {
+			return common.TranslateMessage(c, i18n.MsgUserDisplayNameTooLong, params)
+		}
+	case "Email":
+		if first.Tag() == "max" {
+			return common.TranslateMessage(c, i18n.MsgUserEmailTooLong, params)
+		}
+		if first.Tag() == "email" {
+			return common.TranslateMessage(c, i18n.MsgUserEmailInvalid)
+		}
+	case "Remark":
+		if first.Tag() == "max" {
+			return common.TranslateMessage(c, i18n.MsgUserRemarkTooLong, params)
+		}
+	}
+	return common.TranslateMessage(c, i18n.MsgInvalidInput)
+}
+
+// loginFailureReason 返回密码登录失败的内部诊断分类。
+//
+// 分类只进入服务端日志，不改变对外响应；所有凭据错误仍返回同一个公共文案，
+// 避免通过接口差异判断账号是否存在、是否被禁用或是否绑定了密码。
+func loginFailureReason(err error) string {
+	switch {
+	case errors.Is(err, model.ErrDatabase):
+		return "db_error"
+	case errors.Is(err, model.ErrUserEmptyCredentials):
+		return "empty_credentials"
+	case errors.Is(err, model.ErrLoginUserNotFound):
+		return "not_found"
+	case errors.Is(err, model.ErrLoginPasswordMismatch):
+		return "password_mismatch"
+	case errors.Is(err, model.ErrLoginUserDisabled):
+		return "disabled"
+	case errors.Is(err, model.ErrLoginEmptyPasswordHash):
+		return "empty_password_hash"
+	default:
+		return "invalid_credentials"
+	}
+}
+
+// loginIdentifierTypeForLog 只保留登录标识的类型和长度，不记录原始用户名或邮箱。
+func loginIdentifierTypeForLog(username string) (string, int) {
+	trimmed := strings.TrimSpace(username)
+	identifierType := "username"
+	if trimmed == "" {
+		identifierType = "empty"
+	} else if strings.Contains(trimmed, "@") {
+		identifierType = "email"
+	}
+	return identifierType, len([]rune(trimmed))
+}
+
+// logLoginFailure 写入不含密码、hash 或完整账号标识的登录失败诊断。
+func logLoginFailure(username string, err error) {
+	identifierType, identifierLen := loginIdentifierTypeForLog(username)
+	common.SysLog(fmt.Sprintf(
+		"Login failed: reason=%s, identifier_type=%s, identifier_len=%d",
+		loginFailureReason(err),
+		identifierType,
+		identifierLen,
+	))
 }
 
 // Login 用户登录控制器
@@ -81,11 +179,11 @@ func Login(c *gin.Context) {
 	// 验证用户凭据并填充用户信息
 	err = user.ValidateAndFill()
 	if err != nil {
+		logLoginFailure(username, err)
 		// 根据错误类型返回不同的错误信息
 		switch {
 		case errors.Is(err, model.ErrDatabase):
 			// 数据库错误
-			common.SysLog(fmt.Sprintf("Login database error for user %s: %v", username, err))
 			common.ApiErrorI18n(c, i18n.MsgDatabaseError)
 		case errors.Is(err, model.ErrUserEmptyCredentials):
 			// 空凭据
@@ -234,14 +332,24 @@ func Register(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
+	user.Username = strings.TrimSpace(user.Username)
 	user.Email = model.NormalizeEmail(user.Email)
+	if !common.EmailVerificationEnabled {
+		// 未启用邮箱验证码时，邮箱不能被视为可信身份。即使前端展示了邮箱输入，
+		// 后端也不会将其用于唯一性检查、登录或找回密码，避免未验证邮箱被占用。
+		user.Email = ""
+	}
 	if err := common.Validate.Struct(&user); err != nil {
-		common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})
+		common.ApiErrorMsg(c, userValidationErrorMessage(c, err))
 		return
 	}
 	if common.EmailVerificationEnabled {
 		if user.Email == "" || user.VerificationCode == "" {
 			common.ApiErrorI18n(c, i18n.MsgUserEmailVerificationRequired)
+			return
+		}
+		if err := common.Validate.Var(user.Email, "email"); err != nil {
+			common.ApiErrorI18n(c, i18n.MsgUserEmailInvalid)
 			return
 		}
 		if !common.VerifyCodeWithKey(user.Email, user.VerificationCode, common.EmailVerificationPurpose) {
@@ -689,11 +797,12 @@ func UpdateUser(c *gin.Context) {
 	var requestData map[string]interface{}
 	_ = common.Unmarshal(body, &requestData)
 	_, authzRoleProvided := requestData["authz_role"]
+	_, adminPermissionsProvided := requestData["admin_permissions"]
 	if updatedUser.Password == "" {
 		updatedUser.Password = "$I_LOVE_U" // 校验器要求密码非空，后续会在真正更新前恢复为空。
 	}
 	if err := common.Validate.Struct(&updatedUser); err != nil {
-		common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})
+		common.ApiErrorMsg(c, userValidationErrorMessage(c, err))
 		return
 	}
 	originUser, err := model.GetUserById(updatedUser.Id, false)
@@ -722,7 +831,7 @@ func UpdateUser(c *gin.Context) {
 		if err := updatedUser.EditWithTx(tx, updatePassword); err != nil {
 			return err
 		}
-		return updateUserAuthorizationInTx(c, tx, updatedUser.Id, originUser.Role, authzRole, authzRoleProvided, updatedUser.AdminPermissions)
+		return updateUserAuthorizationInTx(c, tx, updatedUser.Id, originUser.Role, authzRole, authzRoleProvided, updatedUser.AdminPermissions, adminPermissionsProvided)
 	}); err != nil {
 		common.ApiError(c, err)
 		return
@@ -954,14 +1063,23 @@ func DeleteSelf(c *gin.Context) {
 
 func CreateUser(c *gin.Context) {
 	var user model.User
-	err := common.DecodeJson(c.Request.Body, &user)
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	err = common.Unmarshal(body, &user)
 	user.Username = strings.TrimSpace(user.Username)
 	if err != nil || user.Username == "" || user.Password == "" {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
+	var requestData map[string]interface{}
+	_ = common.Unmarshal(body, &requestData)
+	_, authzRoleProvided := requestData["authz_role"]
+	_, adminPermissionsProvided := requestData["admin_permissions"]
 	if err := common.Validate.Struct(&user); err != nil {
-		common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})
+		common.ApiErrorMsg(c, userValidationErrorMessage(c, err))
 		return
 	}
 	if user.DisplayName == "" {
@@ -983,7 +1101,7 @@ func CreateUser(c *gin.Context) {
 		if err := cleanUser.InsertWithTx(tx, 0); err != nil {
 			return err
 		}
-		return updateUserAuthorizationInTx(c, tx, cleanUser.Id, cleanUser.Role, user.AuthzRole, true, user.AdminPermissions)
+		return updateUserAuthorizationInTx(c, tx, cleanUser.Id, cleanUser.Role, user.AuthzRole, authzRoleProvided, user.AdminPermissions, adminPermissionsProvided)
 	}); err != nil {
 		common.ApiError(c, err)
 		return
