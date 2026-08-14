@@ -53,13 +53,13 @@ NexusTok は OpenAI 互換 API、Claude、Gemini、Azure、AWS Bedrock などの
 
 ## 🚀 クイックスタート
 
-### Docker Compose（推奨）
+### Docker Compose（推奨：PostgreSQL + Redis）
 
 ```bash
 git clone https://github.com/c1cadaBob/NexusTok.git
 cd NexusTok
 
-# 本番利用前に docker-compose.yml を確認してください。
+# Compose は PostgreSQL + Redis をデフォルトで起動します。本番利用前に docker-compose.yml のパスワードと秘密情報を変更してください。
 nano docker-compose.yml
 
 docker-compose up -d
@@ -68,7 +68,7 @@ docker-compose up -d
 起動後、`http://localhost:3030` を開き、初期化ウィザードを完了してください。
 
 <details>
-<summary><strong>Docker コマンド</strong></summary>
+<summary><strong>Docker コマンド（本番推奨：外部 PostgreSQL + Redis）</strong></summary>
 
 ```bash
 docker pull c1cadabob/nexustok:latest
@@ -82,9 +82,9 @@ docker run --name nexustok -d --restart always \
   c1cadabob/nexustok:latest
 ```
 
-`-v ./data:/data` は SQLite と実行時データをローカルの `data` ディレクトリに保存します。本番環境では絶対パスの利用を推奨します。`/var/run/docker.sock` はダッシュボードから Docker イメージを取得してコンテナを再作成するために使います。これはホストの Docker 管理権限と同等なので、信頼できる管理者環境でのみマウントしてください。マウントしない場合も更新確認はできますが、ページ上から Docker 更新を適用できません。
+`-v ./data:/data` は SQLite と実行時データをローカルの `data` ディレクトリに保存します。この方式はローカル体験または小規模な単一ノードの fallback 用です。単一ノードの本番で利用する場合は絶対パスを推奨します。`/var/run/docker.sock` はダッシュボードから Docker イメージを取得してコンテナを再作成するために使います。これはホストの Docker 管理権限と同等なので、信頼できる管理者環境でのみマウントしてください。マウントしない場合も更新確認はできますが、ページ上から Docker 更新を適用できません。
 
-Docker イメージには NexusTok アプリケーションのみが含まれ、PostgreSQL サーバーは同梱されません。単一コンテナは既定で SQLite を使用します。外部 MySQL または PostgreSQL に接続する場合は `SQL_DSN` を指定してください。例：
+Docker イメージには NexusTok アプリケーションのみが含まれ、データベースや Redis サーバーは同梱されません。本番の単一コンテナでは外部 PostgreSQL + Redis を推奨し、`SQL_DSN` と `REDIS_CONN_STRING` を指定してください。例：
 
 ```bash
 -e SQL_DSN="postgresql://user:password@host:5432/nexustok?sslmode=disable"
@@ -99,9 +99,10 @@ Docker イメージには NexusTok アプリケーションのみが含まれ、
 
 | コンポーネント | 要件 |
 |----------------|------|
-| ローカル DB | `/data` ボリュームを永続化した SQLite |
-| リモート DB | MySQL >= 5.7.8 または PostgreSQL >= 9.6 |
-| キャッシュ | Redis 推奨。小規模環境ではメモリキャッシュも利用可能 |
+| 本番 DB | PostgreSQL >= 9.6（推奨） |
+| 互換 DB | SQLite、MySQL >= 5.7.8。SQLite はローカル体験と小規模な単一ノードに適しています |
+| 本番キャッシュ | Redis（推奨） |
+| 小規模 fallback | SQLite + メモリキャッシュ。外部 DB と Redis は不要 |
 | 実行方式 | Docker / Docker Compose または Go バイナリ |
 
 よく使う環境変数：

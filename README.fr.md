@@ -53,13 +53,13 @@ NexusTok regroupe les interfaces compatibles OpenAI, Claude, Gemini, Azure, AWS 
 
 ## 🚀 Démarrage rapide
 
-### Docker Compose (recommandé)
+### Docker Compose (recommandé : PostgreSQL + Redis)
 
 ```bash
 git clone https://github.com/c1cadaBob/NexusTok.git
 cd NexusTok
 
-# Vérifiez docker-compose.yml avant un usage en production.
+# Compose démarre PostgreSQL et Redis par défaut. Modifiez les mots de passe et les secrets dans docker-compose.yml avant la production.
 nano docker-compose.yml
 
 docker-compose up -d
@@ -68,7 +68,7 @@ docker-compose up -d
 Après le démarrage, ouvrez `http://localhost:3030` et terminez l'assistant d'initialisation.
 
 <details>
-<summary><strong>Commande Docker</strong></summary>
+<summary><strong>Commande Docker (recommandation de production : PostgreSQL + Redis externes)</strong></summary>
 
 ```bash
 docker pull c1cadabob/nexustok:latest
@@ -82,9 +82,9 @@ docker run --name nexustok -d --restart always \
   c1cadabob/nexustok:latest
 ```
 
-`-v ./data:/data` stocke SQLite et les données d'exécution dans le dossier local `data`. Utilisez un chemin absolu pour les déploiements de production. `/var/run/docker.sock` active les mises à jour Docker depuis le tableau de bord en autorisant NexusTok à récupérer l'image et à recréer son conteneur ; cela équivaut à un accès d'administration Docker sur l'hôte et ne doit être monté que dans un environnement administrateur de confiance. Sans ce montage, NexusTok peut vérifier les mises à jour mais ne peut pas les appliquer depuis la page.
+`-v ./data:/data` stocke SQLite et les données d'exécution dans le dossier local `data`. Ce mode sert de fallback pour les essais locaux ou les petites installations sur un seul nœud ; utilisez un chemin absolu si vous le retenez en production. `/var/run/docker.sock` active les mises à jour Docker depuis le tableau de bord en autorisant NexusTok à récupérer l'image et à recréer son conteneur ; cela équivaut à un accès d'administration Docker sur l'hôte et ne doit être monté que dans un environnement administrateur de confiance. Sans ce montage, NexusTok peut vérifier les mises à jour mais ne peut pas les appliquer depuis la page.
 
-L'image Docker contient uniquement l'application NexusTok, pas de serveur PostgreSQL intégré. Un conteneur seul utilise SQLite par défaut ; connectez MySQL ou PostgreSQL externe avec `SQL_DSN`, par exemple :
+L'image Docker contient uniquement l'application NexusTok, sans serveur de base de données ni Redis intégré. Pour un conteneur de production, utilisez de préférence PostgreSQL et Redis externes avec `SQL_DSN` et `REDIS_CONN_STRING`, par exemple :
 
 ```bash
 -e SQL_DSN="postgresql://user:password@host:5432/nexustok?sslmode=disable"
@@ -99,9 +99,10 @@ L'image Docker contient uniquement l'application NexusTok, pas de serveur Postgr
 
 | Composant | Exigence |
 |-----------|----------|
-| Base locale | SQLite avec volume `/data` persistant |
-| Base distante | MySQL >= 5.7.8 ou PostgreSQL >= 9.6 |
-| Cache | Redis recommandé ; cache mémoire disponible pour les petits déploiements |
+| Base de production | PostgreSQL >= 9.6 (recommandé) |
+| Bases compatibles | SQLite, MySQL >= 5.7.8 ; SQLite convient aux essais locaux et petites installations mono-nœud |
+| Cache de production | Redis (recommandé) |
+| Fallback petite installation | SQLite + cache mémoire, sans base ni Redis externes |
 | Runtime | Docker / Docker Compose ou binaire Go |
 
 Variables d'environnement fréquentes :

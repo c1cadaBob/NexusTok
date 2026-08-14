@@ -54,13 +54,13 @@ NexusTok 将 OpenAI 兼容接口、Claude、Gemini、Azure、AWS Bedrock 等上�
 
 ## 🚀 快速开始
 
-### Docker Compose（推荐）
+### Docker Compose（推荐：PostgreSQL + Redis）
 
 ```bash
 git clone https://github.com/c1cadaBob/NexusTok.git
 cd NexusTok
 
-# 生产使用前请先检查 docker-compose.yml 配置。
+# Compose 默认启动 PostgreSQL + Redis；生产使用前请修改 docker-compose.yml 中的密码和密钥。
 nano docker-compose.yml
 
 docker-compose up -d
@@ -69,7 +69,7 @@ docker-compose up -d
 启动后访问 `http://localhost:3030`，按初始化向导完成配置。
 
 <details>
-<summary><strong>Docker 命令</strong></summary>
+<summary><strong>Docker 命令（生产推荐外接 PostgreSQL + Redis）</strong></summary>
 
 ```bash
 docker pull c1cadabob/nexustok:latest
@@ -83,9 +83,9 @@ docker run --name nexustok -d --restart always \
   c1cadabob/nexustok:latest
 ```
 
-`-v ./data:/data` 会把 SQLite 和运行时数据保存到当前目录的 `data` 文件夹。生产部署建议使用绝对路径。`/var/run/docker.sock` 用于系统维护页内自动拉取镜像并重建容器，等同宿主机 Docker 管理权限，只应在可信管理员环境中挂载；不挂载时仍可检查更新，但不能在页面内应用 Docker 更新。
+`-v ./data:/data` 会把 SQLite 和运行时数据保存到当前目录的 `data` 文件夹。该模式适合作为本地体验或小规模单机 fallback；如选择单机部署，生产环境建议使用绝对路径。`/var/run/docker.sock` 用于系统维护页内自动拉取镜像并重建容器，等同宿主机 Docker 管理权限，只应在可信管理员环境中挂载；不挂载时仍可检查更新，但不能在页面内应用 Docker 更新。
 
-Docker 镜像只包含 NexusTok 应用，不内置 PostgreSQL 服务。单容器默认使用 SQLite；外接 MySQL 或 PostgreSQL 时通过 `SQL_DSN` 指定连接串，例如：
+Docker 镜像只包含 NexusTok 应用，不内置数据库或 Redis 服务。生产单容器推荐外接 PostgreSQL + Redis，并通过 `SQL_DSN` 和 `REDIS_CONN_STRING` 指定连接串，例如：
 
 ```bash
 -e SQL_DSN="postgresql://user:password@host:5432/nexustok?sslmode=disable"
@@ -100,9 +100,10 @@ Docker 镜像只包含 NexusTok 应用，不内置 PostgreSQL 服务。单容器
 
 | 组件 | 要求 |
 |------|------|
-| 本地数据库 | SQLite，并持久化挂载 `/data` 目录 |
-| 远程数据库 | MySQL >= 5.7.8 或 PostgreSQL >= 9.6 |
-| 缓存 | 推荐 Redis；小规模部署可使用内存缓存 |
+| 生产主数据库 | PostgreSQL >= 9.6（推荐） |
+| 兼容数据库 | SQLite、MySQL >= 5.7.8；SQLite 适合本地体验和小规模单机部署 |
+| 生产缓存 | Redis（推荐） |
+| 小规模 fallback | SQLite + 内存缓存，无需外部数据库和 Redis |
 | 高并发推荐 | PostgreSQL 主库 + Redis，消费日志可拆分到独立日志库或 ClickHouse |
 | 运行方式 | Docker / Docker Compose 或 Go 二进制部署 |
 

@@ -30,9 +30,9 @@ curl -sS http://127.0.0.1:3030/api/status | grep -o '"theme":"[^"]*"'
 
 如果页面样式没有变化，优先确认 `theme.frontend` 是否仍为 `classic`，以及 Go 服务是否已经重新编译嵌入了最新 `dist`。
 
-## 推荐生产部署：Docker Compose
+## 推荐生产部署：Docker Compose（PostgreSQL + Redis）
 
-生产环境推荐使用仓库根目录的 `docker-compose.yml`：
+生产环境推荐使用仓库根目录的 `docker-compose.yml`。该 Compose 默认提供 PostgreSQL 主库和 Redis 热路径，适合作为官方生产部署基线：
 
 ```bash
 git clone https://github.com/c1cadaBob/NexusTok.git
@@ -83,12 +83,12 @@ docker compose down -v
 |------|------|------|
 | `SESSION_SECRET` 或 `SESSION_SECRET_FILE` | `environment` | 多实例部署必须固定；否则登录态会失效 |
 | `CRYPTO_SECRET` | `environment` | 使用 Redis 或多实例时建议固定，避免加密数据无法解密 |
-| `SQL_DSN` | `environment` | 数据库连接串，支持 SQLite、MySQL、PostgreSQL |
+| `SQL_DSN` | `environment` | 生产推荐使用 PostgreSQL 连接串；同时兼容 SQLite 和 MySQL |
 | `REDIS_CONN_STRING` | `environment` | Redis 连接串 |
 | PostgreSQL 密码 | `postgres.environment` | 默认 `123456` 只能用于本地测试 |
 | Redis 密码 | `redis.command` | 默认 `123456` 只能用于本地测试 |
 
-## 多节点高并发部署基线
+## PostgreSQL + Redis 多节点高并发部署基线
 
 高并发生产环境建议采用 **PostgreSQL 主库 + Redis 热路径 + 独立日志库/ClickHouse + Caddy/Nginx 反向代理** 的渐进方案。SQLite 仍适合快速体验和低流量单机部署，但不建议作为多节点生产主库。
 
@@ -430,7 +430,7 @@ docker run --name nexustok -d --restart always \
   c1cadabob/nexustok:latest
 ```
 
-Docker 镜像只包含 NexusTok 应用进程，不会在同一个容器里内置 PostgreSQL、MySQL 或 Redis。单容器默认使用 SQLite；外接 MySQL/PostgreSQL 时通过 `SQL_DSN` 指向外部服务；需要同时编排 PostgreSQL 和 Redis 时，请优先使用本仓库的 Docker Compose。ClickHouse 只能配置为 `LOG_SQL_DSN` 日志库，不能作为主业务库。
+Docker 镜像只包含 NexusTok 应用进程，不会在同一个容器里内置 PostgreSQL、MySQL 或 Redis。生产单容器推荐通过 `SQL_DSN` 和 `REDIS_CONN_STRING` 连接外部 PostgreSQL + Redis；SQLite 仍保留为本地体验和小规模单机 fallback，MySQL 仍为兼容选项。需要同时编排 PostgreSQL 和 Redis 时，请优先使用本仓库的 Docker Compose。ClickHouse 只能配置为 `LOG_SQL_DSN` 日志库，不能作为主业务库。
 
 ### 已按旧命令启动时启用页面自动更新
 

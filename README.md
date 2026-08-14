@@ -31,14 +31,14 @@
 
 ## 🚀 快速开始
 
-### 使用 Docker Compose（推荐）
+### 使用 Docker Compose（推荐：PostgreSQL + Redis）
 
 ```bash
 # 克隆项目
 git clone https://github.com/c1cadaBob/NexusTok.git
 cd NexusTok
 
-# 编辑 docker-compose.yml 配置
+# 编辑 docker-compose.yml 配置；Compose 默认启动 PostgreSQL + Redis，生产前请修改密码和密钥。
 nano docker-compose.yml
 
 # 启动服务
@@ -46,13 +46,13 @@ docker-compose up -d
 ```
 
 <details>
-<summary><strong>使用 Docker 命令</strong></summary>
+<summary><strong>使用 Docker 命令（生产推荐外接 PostgreSQL + Redis）</strong></summary>
 
 ```bash
 # 拉取最新镜像
 docker pull c1cadabob/nexustok:latest
 
-# 使用 SQLite（默认），数据和日志保存在 /opt/nexustok
+# 本地体验/小规模 fallback：使用 SQLite，数据和日志保存在 /opt/nexustok
 mkdir -p /opt/nexustok/data /opt/nexustok/logs
 docker rm -f nexustok 2>/dev/null || true
 
@@ -78,7 +78,7 @@ docker run --name nexustok -d --restart always \
   -v /var/run/docker.sock:/var/run/docker.sock \
   c1cadabob/nexustok:latest
 
-# 使用 PostgreSQL（外接数据库）
+# 生产单容器推荐：使用外接 PostgreSQL + Redis
 docker run --name nexustok -d --restart always \
   -p 3030:3030 \
   -e SQL_DSN="postgresql://user:password@host:5432/nexustok?sslmode=disable" \
@@ -112,9 +112,11 @@ curl -sS http://127.0.0.1:3030/api/status
 
 | 组件 | 要求 |
 |------|------|
-| **本地数据库** | SQLite（Docker 需挂载 `/data` 目录）|
-| **远程数据库** | MySQL ≥ 5.7.8 或 PostgreSQL ≥ 9.6 |
-| **高并发推荐** | PostgreSQL 主库 + Redis，消费日志可拆分到独立日志库或 ClickHouse |
+| **生产主数据库** | PostgreSQL ≥ 9.6（推荐）|
+| **兼容数据库** | SQLite、MySQL ≥ 5.7.8；SQLite 适合本地体验和小规模单机部署 |
+| **生产缓存** | Redis（推荐）|
+| **小规模 fallback** | SQLite + 内存缓存，无需外部数据库和 Redis |
+| **高并发推荐** | PostgreSQL 主库 + Redis 热路径，消费日志可拆分到独立日志库或 ClickHouse |
 | **容器引擎** | Docker / Docker Compose |
 
 ### ⚙️ 环境变量配置
@@ -159,7 +161,7 @@ curl -sS http://127.0.0.1:3030/api/status
 📘 **维护手册：** [启动与部署维护手册](./docs/installation/deployment.md) 汇总了生产部署、热重载环境、二进制部署、主题切换和常见排障流程。
 
 <details>
-<summary><strong>方式 1：Docker Compose（推荐）</strong></summary>
+<summary><strong>方式 1：Docker Compose（推荐：PostgreSQL + Redis）</strong></summary>
 
 ```bash
 # 克隆项目
@@ -178,7 +180,7 @@ docker-compose up -d
 <details>
 <summary><strong>方式 2：Docker 命令</strong></summary>
 
-**使用 SQLite：**
+**本地体验/小规模 fallback：使用 SQLite：**
 ```bash
 docker pull c1cadabob/nexustok:latest
 mkdir -p /opt/nexustok/data /opt/nexustok/logs
@@ -213,7 +215,7 @@ docker run --name nexustok -d --restart always \
   c1cadabob/nexustok:latest
 ```
 
-**使用 PostgreSQL：**
+**生产单容器推荐：使用外接 PostgreSQL + Redis：**
 ```bash
 docker run --name nexustok -d --restart always \
   -p 3030:3030 \
