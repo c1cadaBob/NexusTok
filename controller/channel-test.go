@@ -47,6 +47,7 @@ import (
 	relayconstant "github.com/c1cada/NexusTok/relay/constant"
 	"github.com/c1cada/NexusTok/relay/helper"
 	"github.com/c1cada/NexusTok/service"
+	"github.com/c1cada/NexusTok/service/upstreamaccount"
 	"github.com/c1cada/NexusTok/setting/operation_setting"
 	"github.com/c1cada/NexusTok/setting/ratio_setting"
 	"github.com/c1cada/NexusTok/types"
@@ -59,9 +60,13 @@ import (
 
 // testResult 渠道测试结果
 type testResult struct {
-	context     *gin.Context         // 测试上下文
-	localErr    error                // 本地错误
-	newAPIError *types.NexusTokError // API 错误
+	context                 *gin.Context         // 测试上下文
+	localErr                error                // 本地错误
+	newAPIError             *types.NexusTokError // API 错误
+	countForAutoDisable     bool                 // 是否属于可归因到指定同步密钥的真实上游失败
+	autoCheckFailureCount   int                  // 指定同步密钥连续失败次数
+	autoCheckDisabled       bool                 // 本次测试是否触发自动禁用
+	autoCheckFailureCounted bool                 // 本次测试是否已写入自动检查失败计数
 }
 
 func normalizeChannelTestEndpoint(channel *model.Channel, modelName, endpointType string) string {
@@ -473,9 +478,10 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
 		return testResult{
-			context:     c,
-			localErr:    err,
-			newAPIError: types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError),
+			context:             c,
+			localErr:            err,
+			newAPIError:         types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError),
+			countForAutoDisable: true,
 		}
 	}
 	var httpResp *http.Response
@@ -494,42 +500,47 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 				err,
 			))
 			return testResult{
-				context:     c,
-				localErr:    err,
-				newAPIError: types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError),
+				context:             c,
+				localErr:            err,
+				newAPIError:         types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError),
+				countForAutoDisable: true,
 			}
 		}
 	}
 	usageA, respErr := adaptor.DoResponse(c, httpResp, info)
 	if respErr != nil {
 		return testResult{
-			context:     c,
-			localErr:    respErr,
-			newAPIError: respErr,
+			context:             c,
+			localErr:            respErr,
+			newAPIError:         respErr,
+			countForAutoDisable: true,
 		}
 	}
 	usage, usageErr := coerceTestUsage(usageA, isStream, info.GetEstimatePromptTokens())
 	if usageErr != nil {
 		return testResult{
-			context:     c,
-			localErr:    usageErr,
-			newAPIError: types.NewOpenAIError(usageErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError),
+			context:             c,
+			localErr:            usageErr,
+			newAPIError:         types.NewOpenAIError(usageErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError),
+			countForAutoDisable: true,
 		}
 	}
 	result := w.Result()
 	respBody, err := readTestResponseBody(result.Body, isStream)
 	if err != nil {
 		return testResult{
-			context:     c,
-			localErr:    err,
-			newAPIError: types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError),
+			context:             c,
+			localErr:            err,
+			newAPIError:         types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError),
+			countForAutoDisable: true,
 		}
 	}
 	if bodyErr := validateTestResponseBody(respBody, isStream); bodyErr != nil {
 		return testResult{
-			context:     c,
-			localErr:    bodyErr,
-			newAPIError: types.NewOpenAIError(bodyErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError),
+			context:             c,
+			localErr:            bodyErr,
+			newAPIError:         types.NewOpenAIError(bodyErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError),
+			countForAutoDisable: true,
 		}
 	}
 	info.SetEstimatePromptTokens(usage.PromptTokens)
@@ -539,6 +550,18 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	milliseconds := tok.Sub(tik).Milliseconds()
 	consumedTime := float64(milliseconds) / 1000.0
 	other := buildTestLogOther(c, info, priceData, usage, tieredResult)
+	failureCount, countedSuccess := applyManualChannelAccountTestSuccess(channel.Id, selectedAccountID)
+	attachChannelTestLogMetadata(other, channelTestLogMetadata{
+		Status:                 "success",
+		Model:                  info.OriginModelName,
+		EndpointType:           endpointType,
+		Stream:                 info.IsStream,
+		SelectedAccountID:      common.GetContextKeyInt(c, constant.ContextKeyChannelAccountId),
+		SelectedAccountName:    common.GetContextKeyString(c, constant.ContextKeyChannelAccountName),
+		CountedForAutoDisable:  false,
+		AutoCheckFailureCount:  failureCount,
+		AutoCheckResultUpdated: countedSuccess,
+	})
 	model.RecordConsumeLog(c, testUserID, model.RecordConsumeLogParams{
 		ChannelId:        channel.Id,
 		PromptTokens:     usage.PromptTokens,
@@ -617,6 +640,264 @@ func buildTestLogOther(c *gin.Context, info *relaycommon.RelayInfo, priceData ty
 	}
 	service.AttachQuotaSaturation(c, info, other)
 	return other
+}
+
+type channelTestLogMetadata struct {
+	Status                 string
+	Model                  string
+	EndpointType           string
+	Stream                 bool
+	SelectedAccountID      int
+	SelectedAccountName    string
+	ErrorCode              string
+	Error                  string
+	CountedForAutoDisable  bool
+	AutoCheckFailureCount  int
+	AutoCheckDisabled      bool
+	AutoCheckResultUpdated bool
+}
+
+// attachChannelTestLogMetadata 将模型测试结果写入消费日志的结构化字段。
+//
+// 该字段只保存测试状态、模型、选中的同步密钥展示信息和脱敏错误摘要，不保存明文
+// key、token、Cookie 或可恢复登录态。前端用量日志依赖该字段区分真实调用和管理员
+// 手动模型测试，失败时也能直接展示错误摘要。
+func attachChannelTestLogMetadata(other map[string]interface{}, metadata channelTestLogMetadata) {
+	if other == nil {
+		return
+	}
+	endpointType := strings.TrimSpace(metadata.EndpointType)
+	if endpointType == "" {
+		endpointType = "auto"
+	}
+	payload := map[string]interface{}{
+		"status":                    strings.TrimSpace(metadata.Status),
+		"model":                     strings.TrimSpace(metadata.Model),
+		"endpoint_type":             endpointType,
+		"stream":                    metadata.Stream,
+		"selected_account_id":       metadata.SelectedAccountID,
+		"selected_account_name":     strings.TrimSpace(metadata.SelectedAccountName),
+		"counted_for_auto_disable":  metadata.CountedForAutoDisable,
+		"failure_count":             metadata.AutoCheckFailureCount,
+		"auto_disabled":             metadata.AutoCheckDisabled,
+		"auto_check_result_updated": metadata.AutoCheckResultUpdated,
+	}
+	if metadata.ErrorCode != "" {
+		payload["error_code"] = metadata.ErrorCode
+	}
+	if metadata.Error != "" {
+		payload["error"] = metadata.Error
+	}
+	other["channel_test"] = payload
+}
+
+func channelTestErrorText(result testResult) string {
+	if result.newAPIError != nil {
+		return result.newAPIError.Error()
+	}
+	if result.localErr != nil {
+		return result.localErr.Error()
+	}
+	return "渠道模型测试失败"
+}
+
+func channelTestErrorCode(result testResult) string {
+	if result.newAPIError == nil {
+		return ""
+	}
+	return string(result.newAPIError.GetErrorCode())
+}
+
+func channelTestSelectedAccountForLog(ctx *gin.Context, channelID int, selectedAccountID int) (int, string, *model.ChannelAccount) {
+	accountID := 0
+	accountName := ""
+	if ctx != nil {
+		accountID = common.GetContextKeyInt(ctx, constant.ContextKeyChannelAccountId)
+		accountName = common.GetContextKeyString(ctx, constant.ContextKeyChannelAccountName)
+	}
+	if accountID <= 0 {
+		accountID = selectedAccountID
+	}
+	if accountID <= 0 {
+		return 0, "", nil
+	}
+	account, err := model.GetChannelAccountById(channelID, accountID)
+	if err != nil {
+		return accountID, accountName, nil
+	}
+	if accountName == "" {
+		accountName = account.Name
+	}
+	return accountID, accountName, account
+}
+
+func sanitizeChannelTestLogError(errText string, account *model.ChannelAccount) string {
+	errText = strings.TrimSpace(errText)
+	if errText == "" {
+		errText = "渠道模型测试失败"
+	}
+	errText = common.MaskSensitiveInfo(errText)
+	if account != nil {
+		if key := strings.TrimSpace(account.Key); key != "" {
+			errText = strings.ReplaceAll(errText, key, "[redacted-key]")
+		}
+	}
+	return errText
+}
+
+func applyManualChannelAccountTestSuccess(channelID int, selectedAccountID int) (failureCount int, updated bool) {
+	if channelID <= 0 || selectedAccountID <= 0 {
+		return 0, false
+	}
+	account, err := model.GetChannelAccountById(channelID, selectedAccountID)
+	if err != nil || account == nil || !upstreamaccount.HasAccountSyncMetadata(account.OtherSettings) {
+		return 0, false
+	}
+	setting := operation_setting.GetUpstreamAccountKeyCheckSetting()
+	recovered, _, err := applyUpstreamAccountKeyCheckSuccess(setting, account)
+	if err != nil {
+		common.SysLog(fmt.Sprintf("failed to mark channel account model test success: channel_id=%d account_id=%d error=%v", channelID, selectedAccountID, err))
+		return upstreamaccount.ReadAccountAutoCheckMetadata(account.OtherSettings).FailureCount, false
+	}
+	if recovered {
+		_ = refreshChangedAccountChannels(map[int]struct{}{channelID: {}})
+	}
+	return upstreamaccount.ReadAccountAutoCheckMetadata(account.OtherSettings).FailureCount, true
+}
+
+func applyManualChannelAccountTestFailure(channelID int, selectedAccountID int, errText string, countFailure bool) (failureCount int, counted bool, disabled bool) {
+	if channelID <= 0 || selectedAccountID <= 0 || !countFailure {
+		return 0, false, false
+	}
+	account, err := model.GetChannelAccountById(channelID, selectedAccountID)
+	if err != nil || account == nil || !upstreamaccount.HasAccountSyncMetadata(account.OtherSettings) {
+		return 0, false, false
+	}
+	if account.Status != common.ChannelStatusEnabled {
+		return upstreamaccount.ReadAccountAutoCheckMetadata(account.OtherSettings).FailureCount, false, false
+	}
+	before := upstreamaccount.ReadAccountAutoCheckMetadata(account.OtherSettings).FailureCount
+	setting := operation_setting.GetUpstreamAccountKeyCheckSetting()
+	_, disabled, _ = applyUpstreamAccountKeyCheckFailure(setting, account, errors.New(errText))
+	after := upstreamaccount.ReadAccountAutoCheckMetadata(account.OtherSettings)
+	if after.FailureCount <= before {
+		common.SysLog(fmt.Sprintf("failed to mark channel account model test failure: channel_id=%d account_id=%d error=%s", channelID, selectedAccountID, errText))
+		return before, false, false
+	}
+	if disabled {
+		if refreshErr := refreshChangedAccountChannels(map[int]struct{}{channelID: {}}); refreshErr != nil {
+			common.SysLog(fmt.Sprintf("failed to refresh channel account capabilities after model test disable: channel_id=%d account_id=%d error=%v", channelID, selectedAccountID, refreshErr))
+		}
+	}
+	return after.FailureCount, true, disabled
+}
+
+func channelTestLogGroup(ctx *gin.Context, userID int) string {
+	if ctx != nil {
+		if group := strings.TrimSpace(ctx.GetString("group")); group != "" {
+			return group
+		}
+		if group := common.GetContextKeyString(ctx, constant.ContextKeyUserGroup); group != "" {
+			return group
+		}
+	}
+	group, _ := model.GetUserGroup(userID, false)
+	return group
+}
+
+func buildChannelTestFailureLogOther(ctx *gin.Context) map[string]interface{} {
+	other := map[string]interface{}{}
+	adminInfo := map[string]interface{}{}
+	other["admin_info"] = adminInfo
+	if ctx == nil {
+		return other
+	}
+	adminInfo["use_channel"] = ctx.GetStringSlice("use_channel")
+	if credentialMode := common.GetContextKeyString(ctx, constant.ContextKeyChannelCredentialMode); credentialMode != "" {
+		adminInfo["credential_mode"] = credentialMode
+	}
+	if common.GetContextKeyBool(ctx, constant.ContextKeyChannelAccountPool) {
+		adminInfo["account_pool"] = true
+		adminInfo["channel_account_id"] = common.GetContextKeyInt(ctx, constant.ContextKeyChannelAccountId)
+		adminInfo["channel_account_name"] = common.GetContextKeyString(ctx, constant.ContextKeyChannelAccountName)
+	}
+	if ctx.Request != nil && ctx.Request.URL != nil {
+		other["request_path"] = ctx.Request.URL.Path
+	}
+	service.AttachUpstreamRatioConversionToOther(ctx, other)
+	return other
+}
+
+func recordManualChannelTestFailureLog(
+	requestCtx *gin.Context,
+	channel *model.Channel,
+	testUserID int,
+	testModel string,
+	endpointType string,
+	isStream bool,
+	selectedAccountID int,
+	consumedTime float64,
+	result testResult,
+) testResult {
+	if channel == nil {
+		return result
+	}
+	logCtx := result.context
+	if logCtx == nil {
+		logCtx = requestCtx
+	}
+	modelName := strings.TrimSpace(testModel)
+	if logCtx != nil {
+		if originalModel := strings.TrimSpace(logCtx.GetString("original_model")); originalModel != "" {
+			modelName = originalModel
+		}
+	}
+	if modelName == "" {
+		models := channel.GetModels()
+		if len(models) > 0 {
+			modelName = strings.TrimSpace(models[0])
+		}
+	}
+	if modelName == "" {
+		modelName = "gpt-4o-mini"
+	}
+
+	accountID, accountName, account := channelTestSelectedAccountForLog(logCtx, channel.Id, selectedAccountID)
+	errText := sanitizeChannelTestLogError(channelTestErrorText(result), account)
+	failureCount, counted, disabled := applyManualChannelAccountTestFailure(channel.Id, selectedAccountID, errText, result.countForAutoDisable)
+	result.autoCheckFailureCount = failureCount
+	result.autoCheckFailureCounted = counted
+	result.autoCheckDisabled = disabled
+
+	other := buildChannelTestFailureLogOther(logCtx)
+	attachChannelTestLogMetadata(other, channelTestLogMetadata{
+		Status:                 "failed",
+		Model:                  modelName,
+		EndpointType:           normalizeChannelTestEndpoint(channel, modelName, endpointType),
+		Stream:                 shouldUseStreamForChannelTest(channel, isStream),
+		SelectedAccountID:      accountID,
+		SelectedAccountName:    accountName,
+		ErrorCode:              channelTestErrorCode(result),
+		Error:                  errText,
+		CountedForAutoDisable:  counted,
+		AutoCheckFailureCount:  failureCount,
+		AutoCheckDisabled:      disabled,
+		AutoCheckResultUpdated: counted,
+	})
+	model.RecordConsumeLog(logCtx, testUserID, model.RecordConsumeLogParams{
+		ChannelId:        channel.Id,
+		PromptTokens:     0,
+		CompletionTokens: 0,
+		ModelName:        modelName,
+		TokenName:        "模型测试",
+		Quota:            0,
+		Content:          "模型测试",
+		UseTimeSeconds:   int(consumedTime),
+		IsStream:         shouldUseStreamForChannelTest(channel, isStream),
+		Group:            channelTestLogGroup(logCtx, testUserID),
+		Other:            other,
+	})
+	return result
 }
 
 func coerceTestUsage(usageAny any, isStream bool, estimatePromptTokens int) (*dto.Usage, error) {
@@ -984,11 +1265,15 @@ func TestChannel(c *gin.Context) {
 	}
 	tik := time.Now()
 	result := testChannel(c.Request.Context(), channel, testUserID, testModel, endpointType, isStream, selectedAccountID)
+	tok := time.Now()
+	milliseconds := tok.Sub(tik).Milliseconds()
+	consumedTime := float64(milliseconds) / 1000.0
 	if result.localErr != nil {
+		result = recordManualChannelTestFailureLog(c, channel, testUserID, testModel, endpointType, isStream, selectedAccountID, consumedTime, result)
 		resp := gin.H{
 			"success": false,
 			"message": formatChannelTestFailureMessage(channel, testModel, result.localErr),
-			"time":    0.0,
+			"time":    consumedTime,
 		}
 		if result.newAPIError != nil {
 			resp["error_code"] = result.newAPIError.GetErrorCode()
@@ -996,11 +1281,9 @@ func TestChannel(c *gin.Context) {
 		c.JSON(http.StatusOK, resp)
 		return
 	}
-	tok := time.Now()
-	milliseconds := tok.Sub(tik).Milliseconds()
 	go channel.UpdateResponseTime(milliseconds)
-	consumedTime := float64(milliseconds) / 1000.0
 	if result.newAPIError != nil {
+		result = recordManualChannelTestFailureLog(c, channel, testUserID, testModel, endpointType, isStream, selectedAccountID, consumedTime, result)
 		c.JSON(http.StatusOK, gin.H{
 			"success":    false,
 			"message":    formatChannelTestFailureMessage(channel, testModel, result.newAPIError),
