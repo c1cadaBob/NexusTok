@@ -31,6 +31,7 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
@@ -50,6 +51,8 @@ type MinimumRatioColumnHeaderProps<TData, TValue> =
     column: Column<TData, TValue>
   }
 
+const RATIO_MODEL_SEARCH_THRESHOLD = 12
+
 function RatioModelMenuBody({
   modelOptions,
   selectedModel,
@@ -57,6 +60,7 @@ function RatioModelMenuBody({
 }: MinimumRatioModelSelectorProps) {
   const { t } = useTranslation()
   const [search, setSearch] = useState('')
+  const showSearch = modelOptions.length > RATIO_MODEL_SEARCH_THRESHOLD
   const filteredModels = useMemo(() => {
     const normalized = search.trim().toLowerCase()
     if (!normalized) return modelOptions
@@ -83,17 +87,22 @@ function RatioModelMenuBody({
           </Button>
         )}
       </div>
-      <Input
-        value={search}
-        onChange={(event) => setSearch(event.target.value)}
-        onClick={(event) => event.stopPropagation()}
-        onKeyDown={(event) => event.stopPropagation()}
-        placeholder={t('Select ratio model')}
-        className='h-8'
-      />
+      {showSearch && (
+        <Input
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          onClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
+          placeholder={t('Search models')}
+          className='h-8'
+        />
+      )}
       <div className='max-h-64 overflow-y-auto'>
         <DropdownMenuGroup>
-          <DropdownMenuItem onClick={() => onModelChange('')}>
+          <DropdownMenuCheckboxItem
+            checked={!selectedModel}
+            onClick={() => onModelChange('')}
+          >
             <span
               className={cn(
                 'min-w-0 flex-1 truncate',
@@ -102,14 +111,18 @@ function RatioModelMenuBody({
             >
               {t('All synced key models')}
             </span>
-          </DropdownMenuItem>
+          </DropdownMenuCheckboxItem>
           {filteredModels.length === 0 ? (
             <div className='text-muted-foreground px-2 py-3 text-xs'>
               {t('No synced key models found')}
             </div>
           ) : (
             filteredModels.map((model) => (
-              <DropdownMenuItem key={model} onClick={() => onModelChange(model)}>
+              <DropdownMenuCheckboxItem
+                key={model}
+                checked={selectedModel === model}
+                onClick={() => onModelChange(model)}
+              >
                 <span
                   className={cn(
                     'min-w-0 flex-1 truncate font-mono text-xs',
@@ -119,7 +132,7 @@ function RatioModelMenuBody({
                 >
                   {model}
                 </span>
-              </DropdownMenuItem>
+              </DropdownMenuCheckboxItem>
             ))
           )}
         </DropdownMenuGroup>
