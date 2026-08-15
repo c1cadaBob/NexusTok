@@ -222,11 +222,24 @@ func fetchModelsResponseBody(channelType int, baseURL string, channel *model.Cha
 			return body, nil
 		}
 		lastErr = err
+		if !shouldTryNextModelsURL(err) {
+			break
+		}
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("模型列表地址为空")
 	}
 	return nil, lastErr
+}
+
+func shouldTryNextModelsURL(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	return strings.Contains(message, "status code: 404") ||
+		strings.Contains(message, "status code: 405") ||
+		strings.Contains(message, "status code: 410")
 }
 
 func fetchModelsCandidateURLs(channelType int, baseURL string) []string {
