@@ -8,7 +8,7 @@ package upstreamaccount
 import (
 	"context"
 	"fmt"
-	"sort"
+	"math"
 	"strings"
 )
 
@@ -260,51 +260,41 @@ func NormalizePlatform(platform string) string {
 	return normalized
 }
 
-// ApplySuggestions 根据倍率为密钥生成默认优先级和权重建议。
+// ApplySuggestions 根据倍率为同步密钥生成默认调度建议。
 //
-// 规则保持保守：倍率越低优先级越高，同一倍率下权重相同。没有倍率时使用
-// 中性建议，前端仍可让管理员手动覆盖。
+// 同步密钥的优先级统一固定为 1，避免不同上游平台的倍率差异直接改变优先级层级；
+// 权重则按倍率相对 1 的偏移微调：低于 1 的 key 每便宜 0.01 权重加 1，高于 1 的
+// key 每贵 0.01 权重减 1。不足 0.01 也按一步计算，保证 0.999/1.001 这类轻微差异
+// 在加权随机或轮询时仍能体现。
 func ApplySuggestions(snapshot *Snapshot) {
 	if snapshot == nil || len(snapshot.Keys) == 0 {
 		return
 	}
 	ApplySyncIDs(snapshot)
 	ApplyExistingRatioConversion(snapshot)
-	ratios := make([]float64, 0, len(snapshot.Keys))
 	for i := range snapshot.Keys {
 		ratio := ConvertedKeyRatio(snapshot.Keys[i])
-		ratios = append(ratios, ratio)
+		snapshot.Keys[i].SuggestedPriority = 1
+		snapshot.Keys[i].SuggestedWeight = SuggestedWeightForRatio(ratio)
 	}
-	uniqueRatios := make([]float64, 0, len(ratios))
-	seen := map[float64]struct{}{}
-	for _, ratio := range ratios {
-		if _, ok := seen[ratio]; ok {
-			continue
-		}
-		seen[ratio] = struct{}{}
-		uniqueRatios = append(uniqueRatios, ratio)
+}
+
+// SuggestedWeightForRatio 按同步密钥倍率换算生成默认权重。
+func SuggestedWeightForRatio(ratio float64) int {
+	if ratio <= 0 {
+		return 100
 	}
-	sort.Float64s(uniqueRatios)
-	ratioRank := map[float64]int64{}
-	for index, ratio := range uniqueRatios {
-		ratioRank[ratio] = int64(len(uniqueRatios) - index)
+	if ratio < 1 {
+		return 100 + int(math.Ceil(((1-ratio)/0.01)-1e-9))
 	}
-	for i := range snapshot.Keys {
-		ratio := ConvertedKeyRatio(snapshot.Keys[i])
-		snapshot.Keys[i].SuggestedPriority = ratioRank[ratio]
-		if ratio <= 0 {
-			snapshot.Keys[i].SuggestedWeight = 100
-			continue
+	if ratio > 1 {
+		weight := 100 - int(math.Ceil(((ratio-1)/0.01)-1e-9))
+		if weight < 0 {
+			return 0
 		}
-		weight := int(100 / ratio)
-		if weight < 1 {
-			weight = 1
-		}
-		if weight > 100 {
-			weight = 100
-		}
-		snapshot.Keys[i].SuggestedWeight = weight
+		return weight
 	}
+	return 100
 }
 
 // ApplySyncIDs 为每个同步密钥生成前后端一致的配置标识。
