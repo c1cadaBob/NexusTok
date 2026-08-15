@@ -42,6 +42,56 @@ func TestAttachChannelMinimumRatiosUsesConvertedRatioAndDisabledAccounts(t *test
 	require.Nil(t, channelC.MinimumRatio)
 }
 
+func TestAttachChannelMinimumRatiosForModelOnlyUsesMatchingAccounts(t *testing.T) {
+	withTestChannelMinimumRatioDB(t)
+
+	channelA := createMinimumRatioChannel(t, "ratio-a")
+	channelB := createMinimumRatioChannel(t, "ratio-b")
+	channelC := createMinimumRatioChannel(t, "ratio-c")
+
+	createMinimumRatioAccountWithModels(t, channelA.Id, common.ChannelStatusEnabled, "gpt-4o,gpt-5", map[string]any{
+		"ratio_conversion": 0.6,
+	})
+	createMinimumRatioAccountWithModels(t, channelA.Id, common.ChannelStatusEnabled, "claude-*", map[string]any{
+		"ratio_conversion": 0.2,
+	})
+	createMinimumRatioAccountWithModels(t, channelB.Id, common.ChannelStatusEnabled, "gpt-*", map[string]any{
+		"ratio_conversion": 0.35,
+	})
+	createMinimumRatioAccountWithModels(t, channelC.Id, common.ChannelStatusEnabled, "gpt-4.1", map[string]any{
+		"ratio_conversion": 0.1,
+	})
+
+	channels := []*model.Channel{channelA, channelB, channelC}
+	require.NoError(t, AttachChannelMinimumRatiosForModel(channels, "gpt-5"))
+
+	require.NotNil(t, channelA.MinimumRatio)
+	require.InDelta(t, 0.6, *channelA.MinimumRatio, 0.000001)
+	require.NotNil(t, channelB.MinimumRatio)
+	require.InDelta(t, 0.35, *channelB.MinimumRatio, 0.000001)
+	require.Nil(t, channelC.MinimumRatio)
+}
+
+func TestCollectChannelMinimumRatioModelsOnlyUsesSyncedAccounts(t *testing.T) {
+	withTestChannelMinimumRatioDB(t)
+
+	channel := createMinimumRatioChannel(t, "ratio-models")
+	createMinimumRatioAccountWithModels(t, channel.Id, common.ChannelStatusEnabled, "gpt-5,Claude-3,gpt-5", map[string]any{
+		"ratio_conversion": 0.6,
+	})
+	require.NoError(t, model.DB.Create(&model.ChannelAccount{
+		ChannelId: channel.Id,
+		Name:      "plain-account",
+		Key:       "sk-plain",
+		Status:    common.ChannelStatusEnabled,
+		Models:    "plain-model",
+	}).Error)
+
+	models, err := CollectChannelMinimumRatioModels([]*model.Channel{channel})
+	require.NoError(t, err)
+	require.Equal(t, []string{"Claude-3", "gpt-5"}, models)
+}
+
 func TestSortChannelsByMinimumRatioPutsEmptyLast(t *testing.T) {
 	low := &model.Channel{Id: 10, MinimumRatio: minimumRatioPtr(0.5)}
 	high := &model.Channel{Id: 20, MinimumRatio: minimumRatioPtr(1.2)}
@@ -86,6 +136,17 @@ func createMinimumRatioAccount(
 	metadata map[string]any,
 ) {
 	t.Helper()
+	createMinimumRatioAccountWithModels(t, channelID, status, "", metadata)
+}
+
+func createMinimumRatioAccountWithModels(
+	t *testing.T,
+	channelID int,
+	status int,
+	models string,
+	metadata map[string]any,
+) {
+	t.Helper()
 	syncMetadata := map[string]any{
 		"platform": "new-api",
 		"base_url": "https://upstream.example",
@@ -102,6 +163,7 @@ func createMinimumRatioAccount(
 		Name:          "synced-key",
 		Key:           "sk-test",
 		Status:        status,
+		Models:        models,
 		OtherSettings: string(settingsBytes),
 	}
 	require.NoError(t, model.DB.Create(account).Error)

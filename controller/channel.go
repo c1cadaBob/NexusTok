@@ -25,6 +25,7 @@ import (
 	"github.com/c1cada/NexusTok/service/upstreamaccount"    // 上游账号同步服务
 
 	"github.com/gin-gonic/gin" // Gin 框架
+	"gorm.io/gorm"
 )
 
 var (
@@ -126,6 +127,7 @@ func GetAllChannels(c *gin.Context) {
 	sortOptions := model.NewChannelSortOptions(c.Query("sort_by"), c.Query("sort_order"), idSort)
 	enableTagMode, _ := strconv.ParseBool(c.Query("tag_mode"))
 	statusParam := c.Query("status")
+	minimumRatioModel := strings.TrimSpace(c.Query("minimum_ratio_model"))
 	// statusFilter: -1 all, 1 enabled, 0 disabled (include auto & manual)
 	statusFilter := parseStatusFilter(statusParam)
 	// type filter
@@ -138,6 +140,7 @@ func GetAllChannels(c *gin.Context) {
 	}
 
 	var total int64
+	minimumRatioModels := []string{}
 
 	if enableTagMode {
 		tags, err := model.GetPaginatedTags(pageInfo.GetStartIdx(), pageInfo.GetPageSize())
@@ -170,7 +173,8 @@ func GetAllChannels(c *gin.Context) {
 			channelData = append(channelData, filtered...)
 		}
 		total, _ = model.CountAllTags()
-		attachChannelMinimumRatios(channelData)
+		minimumRatioModels = collectChannelMinimumRatioModels(channelData)
+		attachChannelMinimumRatios(channelData, minimumRatioModel)
 		if sortOptions.IsMinimumRatioSort() {
 			upstreamaccount.SortChannelsByMinimumRatio(channelData, sortOptions.SortOrder != "asc")
 		}
@@ -194,17 +198,19 @@ func GetAllChannels(c *gin.Context) {
 				c.JSON(http.StatusOK, gin.H{"success": false, "message": "获取渠道列表失败，请稍后重试"})
 				return
 			}
-			attachChannelMinimumRatios(channelData)
+			minimumRatioModels = collectChannelMinimumRatioModels(channelData)
+			attachChannelMinimumRatios(channelData, minimumRatioModel)
 			upstreamaccount.SortChannelsByMinimumRatio(channelData, sortOptions.SortOrder != "asc")
 			channelData = paginateChannelData(channelData, pageInfo)
 		} else {
+			minimumRatioModels = collectChannelMinimumRatioModelsFromQuery(baseQuery)
 			err := sortOptions.Apply(baseQuery).Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Omit("key").Find(&channelData).Error
 			if err != nil {
 				common.SysError("failed to get channels: " + err.Error())
 				c.JSON(http.StatusOK, gin.H{"success": false, "message": "获取渠道列表失败，请稍后重试"})
 				return
 			}
-			attachChannelMinimumRatios(channelData)
+			attachChannelMinimumRatios(channelData, minimumRatioModel)
 		}
 	}
 
@@ -232,19 +238,42 @@ func GetAllChannels(c *gin.Context) {
 		typeCounts[r.Type] = r.Count
 	}
 	common.ApiSuccess(c, gin.H{
-		"items":       channelData,
-		"total":       total,
-		"page":        pageInfo.GetPage(),
-		"page_size":   pageInfo.GetPageSize(),
-		"type_counts": typeCounts,
+		"items":                channelData,
+		"total":                total,
+		"page":                 pageInfo.GetPage(),
+		"page_size":            pageInfo.GetPageSize(),
+		"type_counts":          typeCounts,
+		"minimum_ratio_models": minimumRatioModels,
 	})
 	return
 }
 
-func attachChannelMinimumRatios(channels []*model.Channel) {
-	if err := upstreamaccount.AttachChannelMinimumRatios(channels); err != nil {
+func attachChannelMinimumRatios(channels []*model.Channel, minimumRatioModel string) {
+	if err := upstreamaccount.AttachChannelMinimumRatiosForModel(channels, minimumRatioModel); err != nil {
 		common.SysLog("failed to attach channel minimum ratios: " + err.Error())
 	}
+}
+
+func collectChannelMinimumRatioModels(channels []*model.Channel) []string {
+	models, err := upstreamaccount.CollectChannelMinimumRatioModels(channels)
+	if err != nil {
+		common.SysLog("failed to collect channel minimum ratio models: " + err.Error())
+		return []string{}
+	}
+	return models
+}
+
+func collectChannelMinimumRatioModelsFromQuery(query *gorm.DB) []string {
+	var ids []int
+	if err := query.Session(&gorm.Session{}).Pluck("id", &ids).Error; err != nil {
+		common.SysLog("failed to collect channel ids for minimum ratio models: " + err.Error())
+		return []string{}
+	}
+	channels := make([]*model.Channel, 0, len(ids))
+	for _, id := range ids {
+		channels = append(channels, &model.Channel{Id: id})
+	}
+	return collectChannelMinimumRatioModels(channels)
 }
 
 func paginateChannelData(channels []*model.Channel, pageInfo *common.PageInfo) []*model.Channel {
@@ -340,6 +369,7 @@ func SearchChannels(c *gin.Context) {
 	idSort, _ := strconv.ParseBool(c.Query("id_sort"))
 	sortOptions := model.NewChannelSortOptions(c.Query("sort_by"), c.Query("sort_order"), idSort)
 	enableTagMode, _ := strconv.ParseBool(c.Query("tag_mode"))
+	minimumRatioModel := strings.TrimSpace(c.Query("minimum_ratio_model"))
 	channelData := make([]*model.Channel, 0)
 	if enableTagMode {
 		tags, err := model.SearchTags(keyword, group, modelKeyword, idSort)
@@ -408,8 +438,9 @@ func SearchChannels(c *gin.Context) {
 		channelData = filtered
 	}
 
+	minimumRatioModels := collectChannelMinimumRatioModels(channelData)
 	if sortOptions.IsMinimumRatioSort() {
-		attachChannelMinimumRatios(channelData)
+		attachChannelMinimumRatios(channelData, minimumRatioModel)
 		upstreamaccount.SortChannelsByMinimumRatio(channelData, sortOptions.SortOrder != "asc")
 	}
 
@@ -435,7 +466,7 @@ func SearchChannels(c *gin.Context) {
 	pagedData := channelData[startIdx:endIdx]
 
 	if !sortOptions.IsMinimumRatioSort() {
-		attachChannelMinimumRatios(pagedData)
+		attachChannelMinimumRatios(pagedData, minimumRatioModel)
 	}
 
 	for _, datum := range pagedData {
@@ -450,9 +481,10 @@ func SearchChannels(c *gin.Context) {
 		"success": true,
 		"message": "",
 		"data": gin.H{
-			"items":       pagedData,
-			"total":       total,
-			"type_counts": typeCounts,
+			"items":                pagedData,
+			"total":                total,
+			"type_counts":          typeCounts,
+			"minimum_ratio_models": minimumRatioModels,
 		},
 	})
 	return

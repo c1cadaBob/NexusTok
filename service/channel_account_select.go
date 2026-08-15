@@ -379,11 +379,11 @@ func channelAccountSupportsModel(account *model.ChannelAccount, channel *model.C
 	} else if strings.TrimSpace(models) == "" && channel != nil {
 		models = channel.Models
 	}
-	modelList := splitCommaValues(models)
+	modelList := model.SplitCommaValues(models)
 	if len(modelList) == 0 {
 		return true
 	}
-	return matchesModelList(modelList, modelName)
+	return model.MatchesModelList(modelList, modelName)
 }
 
 // channelAccountSupportsGroup 检查渠道账号是否属于指定的使用分组。
@@ -413,7 +413,7 @@ func channelAccountSupportsGroup(account *model.ChannelAccount, channel *model.C
 			group = channel.Group
 		}
 	}
-	groups := splitCommaValues(group)
+	groups := model.SplitCommaValues(group)
 	if len(groups) == 0 {
 		return true
 	}
@@ -423,46 +423,6 @@ func channelAccountSupportsGroup(account *model.ChannelAccount, channel *model.C
 		}
 	}
 	return false
-}
-
-// matchesModelList 检查模型名称是否匹配模型列表中的任一项。
-// 支持精确匹配、规范化名称匹配、通配符 "*" 全匹配和前缀通配符匹配（如 "gpt-*"）。
-func matchesModelList(models []string, modelName string) bool {
-	modelName = strings.TrimSpace(modelName)
-	canonicalModel := ratio_setting.FormatMatchingModelName(modelName)
-	for _, candidate := range models {
-		if candidate == "*" || candidate == modelName || candidate == canonicalModel {
-			return true
-		}
-		normalizedCandidate := ratio_setting.FormatMatchingModelName(candidate)
-		if normalizedCandidate == modelName || normalizedCandidate == canonicalModel {
-			return true
-		}
-		if strings.HasSuffix(candidate, "*") {
-			prefix := strings.TrimSuffix(candidate, "*")
-			if strings.HasPrefix(modelName, prefix) || strings.HasPrefix(canonicalModel, prefix) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// splitCommaValues 将逗号分隔的字符串拆分为切片。
-// 每个值会被去除首尾空格，空值会被过滤掉。
-func splitCommaValues(value string) []string {
-	if strings.TrimSpace(value) == "" {
-		return nil
-	}
-	parts := strings.Split(value, ",")
-	result := make([]string, 0, len(parts))
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part != "" {
-			result = append(result, part)
-		}
-	}
-	return result
 }
 
 // removeChannelAccount 从渠道账号列表中移除指定 ID 的账号。

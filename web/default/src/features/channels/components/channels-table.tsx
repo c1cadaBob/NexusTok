@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
 import {
@@ -63,6 +63,7 @@ import { ChannelTypeIcon } from './channel-type-icon'
 import { useChannelsColumns } from './channels-columns'
 import { useChannels } from './channels-provider'
 import { DataTableBulkActions } from './data-table-bulk-actions'
+import { MinimumRatioModelFilterButton } from './minimum-ratio-model-selector'
 
 const route = getRouteApi('/_authenticated/channels/')
 
@@ -133,6 +134,12 @@ function loadSavedChannelSorting(): SortingState {
 
 export function ChannelsTable() {
   const { t } = useTranslation()
+  const routeSearch = route.useSearch()
+  const navigate = route.useNavigate()
+  const minimumRatioModel =
+    typeof routeSearch.minimumRatioModel === 'string'
+      ? routeSearch.minimumRatioModel.trim()
+      : ''
   const {
     enableTagMode,
     idSort,
@@ -160,8 +167,8 @@ export function ChannelsTable() {
     onPaginationChange,
     ensurePageInRange,
   } = useTableUrlState({
-    search: route.useSearch(),
-    navigate: route.useNavigate(),
+    search: routeSearch,
+    navigate,
     pagination: {
       defaultPage: 1,
       defaultPageSize: isMobile ? 10 : DEFAULT_PAGE_SIZE,
@@ -203,6 +210,20 @@ export function ChannelsTable() {
 
   // 全局关键字或模型过滤存在时走搜索接口，否则走普通列表接口。
   const shouldSearch = Boolean(globalFilter?.trim() || modelFilter.trim())
+
+  const handleMinimumRatioModelChange = useCallback(
+    (model: string) => {
+      const nextModel = model.trim()
+      navigate({
+        search: (prev) => ({
+          ...(prev as Record<string, unknown>),
+          page: undefined,
+          minimumRatioModel: nextModel || undefined,
+        }),
+      })
+    },
+    [navigate]
+  )
 
   const sortParams = useMemo(() => {
     const activeSort = normalizeChannelSorting(sorting)[0]
@@ -275,6 +296,7 @@ export function ChannelsTable() {
           : undefined,
       tag_mode: enableTagMode,
       id_sort: idSort,
+      minimum_ratio_model: minimumRatioModel || undefined,
       ...sortParams,
       p: pagination.pageIndex + 1,
       page_size: pagination.pageSize,
@@ -298,6 +320,7 @@ export function ChannelsTable() {
               : undefined,
           tag_mode: enableTagMode,
           id_sort: idSort,
+          minimum_ratio_model: minimumRatioModel || undefined,
           ...sortParams,
           p: pagination.pageIndex + 1,
           page_size: pagination.pageSize,
@@ -318,6 +341,7 @@ export function ChannelsTable() {
               : undefined,
           tag_mode: enableTagMode,
           id_sort: idSort,
+          minimum_ratio_model: minimumRatioModel || undefined,
           ...sortParams,
           p: pagination.pageIndex + 1,
           page_size: pagination.pageSize,
@@ -340,9 +364,15 @@ export function ChannelsTable() {
 
   const totalCount = data?.data?.total || 0
   const typeCounts = data?.data?.type_counts
+  const minimumRatioModels = data?.data?.minimum_ratio_models ?? []
 
   // 列定义会跟随批量模式决定是否注入选择列。
-  const columns = useChannelsColumns({ enableSelection: batchMode })
+  const columns = useChannelsColumns({
+    enableSelection: batchMode,
+    minimumRatioModel,
+    minimumRatioModels,
+    onMinimumRatioModelChange: handleMinimumRatioModelChange,
+  })
 
   // 公共 DataTable hook 统一管理列显隐、行选择、展开行和页码范围修正。
   const { table } = useDataTable({
@@ -527,6 +557,7 @@ export function ChannelsTable() {
         searchPlaceholder: t('Filter by name, ID, or key...'),
         onReset: () => {
           resetModelFilterInput()
+          handleMinimumRatioModelChange('')
         },
         preActions: (
           <Tooltip>
@@ -549,14 +580,21 @@ export function ChannelsTable() {
           </Tooltip>
         ),
         additionalSearch: (
-          <Input
-            placeholder={t('Filter by model...')}
-            value={modelFilterInput}
-            onChange={onModelFilterInputChange}
-            onCompositionStart={onModelFilterCompositionStart}
-            onCompositionEnd={onModelFilterCompositionEnd}
-            className='w-full sm:w-[150px] lg:w-[180px]'
-          />
+          <div className='flex w-full min-w-0 flex-col gap-2 sm:w-auto sm:flex-row'>
+            <MinimumRatioModelFilterButton
+              modelOptions={minimumRatioModels}
+              selectedModel={minimumRatioModel}
+              onModelChange={handleMinimumRatioModelChange}
+            />
+            <Input
+              placeholder={t('Filter by model...')}
+              value={modelFilterInput}
+              onChange={onModelFilterInputChange}
+              onCompositionStart={onModelFilterCompositionStart}
+              onCompositionEnd={onModelFilterCompositionEnd}
+              className='w-full sm:w-[150px] lg:w-[180px]'
+            />
+          </div>
         ),
         filters: [
           {

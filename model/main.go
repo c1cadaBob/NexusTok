@@ -85,6 +85,15 @@ func initCol() {
 	}
 }
 
+// ensureCommonColumnNames 确保保留字列名已经按当前数据库方言初始化。
+// 正常启动路径会在 InitDB 中调用 initCol；部分轻量单元测试直接替换 model.DB，
+// 没有执行完整数据库初始化。这里作为只读查询入口的兜底，避免生成空列名 SQL。
+func ensureCommonColumnNames() {
+	if commonGroupCol == "" || commonKeyCol == "" {
+		initCol()
+	}
+}
+
 // DB 主数据库连接实例
 var DB *gorm.DB
 

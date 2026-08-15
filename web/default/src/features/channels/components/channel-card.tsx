@@ -113,6 +113,7 @@ function ChannelCardComponent({
   const priorityCell = renderCell(row, 'priority')
   const weightCell = renderCell(row, 'weight')
   const balanceCell = renderCell(row, 'balance')
+  const minimumRatioCell = renderCell(row, 'minimum_ratio')
   const responseCell = renderCell(row, 'response_time')
   const testCell = renderCell(row, 'test_time')
 
@@ -159,6 +160,17 @@ function ChannelCardComponent({
               </div>
               <div className='min-w-0 overflow-hidden text-sm'>
                 {balanceCell ?? (
+                  <span className='text-muted-foreground'>-</span>
+                )}
+              </div>
+            </div>
+
+            <div className='min-w-0'>
+              <div className={cn('mb-1', labelClass)}>
+                {t('Minimum Ratio')}
+              </div>
+              <div className='min-w-0 overflow-hidden text-sm'>
+                {minimumRatioCell ?? (
                   <span className='text-muted-foreground'>-</span>
                 )}
               </div>

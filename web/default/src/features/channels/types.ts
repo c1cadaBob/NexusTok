@@ -173,6 +173,7 @@ export interface GetChannelsResponse {
     page: number
     page_size: number
     type_counts?: Record<string, number>
+    minimum_ratio_models?: string[]
   }
 }
 
@@ -183,6 +184,7 @@ export interface SearchChannelsResponse {
     items: Channel[]
     total: number
     type_counts?: Record<string, number>
+    minimum_ratio_models?: string[]
   }
 }
 
@@ -717,6 +719,7 @@ export interface GetChannelsParams {
   tag_mode?: boolean
   sort_by?: ChannelSortBy
   sort_order?: ChannelSortOrder
+  minimum_ratio_model?: string
 }
 
 export interface SearchChannelsParams {
@@ -729,6 +732,7 @@ export interface SearchChannelsParams {
   tag_mode?: boolean
   sort_by?: ChannelSortBy
   sort_order?: ChannelSortOrder
+  minimum_ratio_model?: string
   p?: number
   page_size?: number
 }

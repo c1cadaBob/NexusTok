@@ -1028,11 +1028,11 @@ func poolAccountSupportsModel(account *model.PoolAccount, group *model.AccountPo
 	if strings.TrimSpace(models) == "" && group != nil {
 		models = group.Models
 	}
-	modelList := splitCommaValues(models)
+	modelList := model.SplitCommaValues(models)
 	if len(modelList) == 0 {
 		return true
 	}
-	return matchesModelList(modelList, modelName)
+	return model.MatchesModelList(modelList, modelName)
 }
 
 // poolAccountSupportsGroup 检查账号是否属于指定的使用分组。
@@ -1046,7 +1046,7 @@ func poolAccountSupportsGroup(account *model.PoolAccount, group *model.AccountPo
 	if strings.TrimSpace(groupValue) == "" && group != nil {
 		groupValue = group.Group
 	}
-	groups := splitCommaValues(groupValue)
+	groups := model.SplitCommaValues(groupValue)
 	if len(groups) == 0 {
 		return true
 	}

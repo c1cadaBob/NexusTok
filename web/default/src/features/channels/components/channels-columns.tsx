@@ -91,6 +91,7 @@ import {
   CodexUsageDialog,
   type CodexUsageDialogData,
 } from './dialogs/codex-usage-dialog'
+import { MinimumRatioColumnHeader } from './minimum-ratio-model-selector'
 import { NumericSpinnerInput } from './numeric-spinner-input'
 
 const SENSITIVE_MASK = '••••'
@@ -502,6 +503,9 @@ function BalanceCell({ channel }: { channel: Channel }) {
 
 type UseChannelsColumnsOptions = {
   enableSelection?: boolean
+  minimumRatioModel?: string
+  minimumRatioModels?: string[]
+  onMinimumRatioModelChange?: (model: string) => void
 }
 
 /**
@@ -509,6 +513,9 @@ type UseChannelsColumnsOptions = {
  */
 export function useChannelsColumns({
   enableSelection = true,
+  minimumRatioModel = '',
+  minimumRatioModels = [],
+  onMinimumRatioModelChange,
 }: UseChannelsColumnsOptions = {}): ColumnDef<Channel>[] {
   const { t } = useTranslation()
   const {
@@ -1053,7 +1060,12 @@ export function useChannelsColumns({
       accessorKey: 'minimum_ratio',
       meta: { label: t('Minimum Ratio'), mobileHidden: true },
       header: ({ column }) => (
-        <DataTableColumnHeader column={column} title={t('Minimum Ratio')} />
+        <MinimumRatioColumnHeader
+          column={column}
+          modelOptions={minimumRatioModels}
+          selectedModel={minimumRatioModel}
+          onModelChange={onMinimumRatioModelChange ?? (() => undefined)}
+        />
       ),
       cell: ({ row }) => {
         const ratio = row.getValue('minimum_ratio') as

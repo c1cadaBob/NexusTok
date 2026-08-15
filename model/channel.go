@@ -547,6 +547,7 @@ func GetChannelsByTag(tag string, idSort bool, selectAll bool, sortOptions ...Ch
 }
 
 func SearchChannels(keyword string, group string, model string, idSort bool, sortOptions ...ChannelSortOptions) ([]*Channel, error) {
+	ensureCommonColumnNames()
 	var channels []*Channel
 	modelsCol := "`models`"
 
@@ -1078,6 +1079,7 @@ func GetPaginatedTags(offset int, limit int) ([]*string, error) {
 }
 
 func SearchTags(keyword string, group string, model string, idSort bool) ([]*string, error) {
+	ensureCommonColumnNames()
 	var tags []*string
 	modelsCol := "`models`"
 
