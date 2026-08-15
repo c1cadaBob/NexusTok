@@ -10,12 +10,13 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestAttachChannelMinimumRatiosUsesConvertedRatioAndDisabledAccounts(t *testing.T) {
+func TestAttachChannelMinimumRatiosIgnoresDisabledAccounts(t *testing.T) {
 	withTestChannelMinimumRatioDB(t)
 
 	channelA := createMinimumRatioChannel(t, "ratio-a")
 	channelB := createMinimumRatioChannel(t, "ratio-b")
 	channelC := createMinimumRatioChannel(t, "ratio-c")
+	channelD := createMinimumRatioChannel(t, "ratio-disabled-only")
 
 	createMinimumRatioAccount(t, channelA.Id, common.ChannelStatusManuallyDisabled, map[string]any{
 		"ratio_conversion": 0.35,
@@ -31,15 +32,19 @@ func TestAttachChannelMinimumRatiosUsesConvertedRatioAndDisabledAccounts(t *test
 			"gpt-b": 0.7,
 		},
 	})
+	createMinimumRatioAccount(t, channelD.Id, common.ChannelStatusAutoDisabled, map[string]any{
+		"ratio_conversion": 0.1,
+	})
 
-	channels := []*model.Channel{channelA, channelB, channelC}
+	channels := []*model.Channel{channelA, channelB, channelC, channelD}
 	require.NoError(t, AttachChannelMinimumRatios(channels))
 
 	require.NotNil(t, channelA.MinimumRatio)
-	require.InDelta(t, 0.35, *channelA.MinimumRatio, 0.000001)
+	require.InDelta(t, 0.6, *channelA.MinimumRatio, 0.000001)
 	require.NotNil(t, channelB.MinimumRatio)
 	require.InDelta(t, 0.7, *channelB.MinimumRatio, 0.000001)
 	require.Nil(t, channelC.MinimumRatio)
+	require.Nil(t, channelD.MinimumRatio)
 }
 
 func TestAttachChannelMinimumRatiosForModelOnlyUsesMatchingAccounts(t *testing.T) {
@@ -60,6 +65,9 @@ func TestAttachChannelMinimumRatiosForModelOnlyUsesMatchingAccounts(t *testing.T
 	})
 	createMinimumRatioAccountWithModels(t, channelC.Id, common.ChannelStatusEnabled, "gpt-4.1", map[string]any{
 		"ratio_conversion": 0.1,
+	})
+	createMinimumRatioAccountWithModels(t, channelC.Id, common.ChannelStatusManuallyDisabled, "gpt-5", map[string]any{
+		"ratio_conversion": 0.05,
 	})
 
 	channels := []*model.Channel{channelA, channelB, channelC}
@@ -86,6 +94,9 @@ func TestCollectChannelMinimumRatioModelsOnlyUsesSyncedAccounts(t *testing.T) {
 		Status:    common.ChannelStatusEnabled,
 		Models:    "plain-model",
 	}).Error)
+	createMinimumRatioAccountWithModels(t, channel.Id, common.ChannelStatusAutoDisabled, "disabled-model", map[string]any{
+		"ratio_conversion": 0.1,
+	})
 
 	models, err := CollectChannelMinimumRatioModels([]*model.Channel{channel})
 	require.NoError(t, err)

@@ -33,6 +33,7 @@ func TestGetAllChannelsSortsByMinimumRatioBeforePagination(t *testing.T) {
 	channelB := createMinimumRatioListChannel(t, "ratio-empty", &highPriority)
 	channelC := createMinimumRatioListChannel(t, "ratio-020", &lowPriority)
 	createMinimumRatioListAccount(t, channelA.Id, 0.5)
+	createMinimumRatioListAccountWithStatus(t, channelA.Id, common.ChannelStatusAutoDisabled, 0.1)
 	createMinimumRatioListAccount(t, channelC.Id, 0.2)
 	require.NoError(t, db.Create(&model.ChannelAccount{
 		ChannelId: channelB.Id,
@@ -70,6 +71,7 @@ func TestGetAllChannelsSortsByMinimumRatioForSelectedModel(t *testing.T) {
 	createMinimumRatioListAccount(t, channelA.Id, 0.5, "gpt-5")
 	createMinimumRatioListAccount(t, channelB.Id, 0.1, "claude-3-5-haiku")
 	createMinimumRatioListAccount(t, channelC.Id, 0.2, "gpt-*")
+	createMinimumRatioListAccountWithStatus(t, channelB.Id, common.ChannelStatusManuallyDisabled, 0.05, "gpt-5")
 
 	var channelCount int64
 	require.NoError(t, db.Model(&model.Channel{}).Count(&channelCount).Error)
@@ -103,6 +105,7 @@ func TestSearchChannelsReturnsMinimumRatioModels(t *testing.T) {
 	channelB := createMinimumRatioListChannel(t, "search-ratio-claude", &priority)
 	createMinimumRatioListAccount(t, channelA.Id, 0.5, "gpt-5")
 	createMinimumRatioListAccount(t, channelB.Id, 0.2, "claude-3-5-haiku")
+	createMinimumRatioListAccountWithStatus(t, channelB.Id, common.ChannelStatusAutoDisabled, 0.05, "disabled-only")
 
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
@@ -143,6 +146,11 @@ func createMinimumRatioListChannel(t *testing.T, name string, priority *int64) *
 
 func createMinimumRatioListAccount(t *testing.T, channelID int, ratio float64, models ...string) {
 	t.Helper()
+	createMinimumRatioListAccountWithStatus(t, channelID, common.ChannelStatusEnabled, ratio, models...)
+}
+
+func createMinimumRatioListAccountWithStatus(t *testing.T, channelID int, status int, ratio float64, models ...string) {
+	t.Helper()
 	settingsBytes, err := common.Marshal(map[string]any{
 		"upstream_account_sync": map[string]any{
 			"platform":         "new-api",
@@ -156,7 +164,7 @@ func createMinimumRatioListAccount(t *testing.T, channelID int, ratio float64, m
 		ChannelId:     channelID,
 		Name:          "synced-key",
 		Key:           "sk-test",
-		Status:        common.ChannelStatusEnabled,
+		Status:        status,
 		Models:        firstMinimumRatioListModel(models),
 		OtherSettings: string(settingsBytes),
 	}

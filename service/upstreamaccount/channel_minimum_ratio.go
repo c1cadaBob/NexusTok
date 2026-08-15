@@ -5,14 +5,16 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/model"
 )
 
 // AttachChannelMinimumRatios 为渠道列表批量附加最低换算倍率。
 //
 // minimum_ratio 是运行期展示字段，不落库。它从渠道内所有账号的同步元数据中读取
-// ratio_conversion / effective_ratio / group_ratio 等安全展示字段，包含禁用账号，
-// 因为该列表达的是成本参考信息，不代表实际路由可用性。
+// ratio_conversion / effective_ratio / group_ratio 等安全展示字段。禁用账号当前无法
+// 被 Relay 调度，因此不参与最低倍率展示和排序，避免列表把不可调用密钥的低成本当作
+// 可用成本参考。
 func AttachChannelMinimumRatios(channels []*model.Channel) error {
 	return AttachChannelMinimumRatiosForModel(channels, "")
 }
@@ -41,7 +43,7 @@ func AttachChannelMinimumRatiosForModel(channels []*model.Channel, modelName str
 	}
 	if err := model.DB.Model(&model.ChannelAccount{}).
 		Select("channel_id", "settings", "models").
-		Where("channel_id IN ?", channelIDs).
+		Where("channel_id IN ? AND status = ?", channelIDs, common.ChannelStatusEnabled).
 		Find(&rows).Error; err != nil {
 		return err
 	}
@@ -99,7 +101,7 @@ func CollectChannelMinimumRatioModels(channels []*model.Channel) ([]string, erro
 	}
 	if err := model.DB.Model(&model.ChannelAccount{}).
 		Select("settings", "models").
-		Where("channel_id IN ?", channelIDs).
+		Where("channel_id IN ? AND status = ?", channelIDs, common.ChannelStatusEnabled).
 		Find(&rows).Error; err != nil {
 		return nil, err
 	}
