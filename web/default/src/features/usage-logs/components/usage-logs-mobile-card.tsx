@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cada.dev
 */
 import { flexRender, type Cell, type Table } from '@tanstack/react-table'
-import { Database } from 'lucide-react'
+import { CircleAlert, Database } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -35,8 +35,9 @@ import {
   type StatusVariant,
 } from '@/components/status-badge'
 import { LOG_TYPE_ENUM } from '../constants'
+import { getStreamSeverity, parseLogOther } from '../lib/format'
 import { getLogTypeConfig } from '../lib/utils'
-import type { LogCategory } from '../types'
+import type { LogCategory, LogOtherData } from '../types'
 
 const logTypeRowTint: Record<number, string> = {
   [LOG_TYPE_ENUM.ERROR]: 'border-l-destructive bg-destructive/5',
@@ -143,9 +144,11 @@ function SummaryField<TData>({
 function MobileLogTimeStatus({
   createdAt,
   type,
+  streamStatus,
 }: {
   createdAt: unknown
   type: unknown
+  streamStatus?: LogOtherData['stream_status']
 }) {
   const { t } = useTranslation()
   const timestamp = typeof createdAt === 'number' ? createdAt : undefined
@@ -154,6 +157,15 @@ function MobileLogTimeStatus({
   const variant = (
     config.color === 'default' ? 'neutral' : config.color
   ) as StatusVariant
+  const streamSeverity = getStreamSeverity(streamStatus)
+  const isClientGone =
+    streamSeverity === 'warning' && streamStatus?.end_reason === 'client_gone'
+  const streamLabel =
+    streamSeverity === 'warning'
+      ? isClientGone
+        ? t('Client disconnected')
+        : t('Warning')
+      : t('Error')
 
   return (
     <div className='flex min-w-0 flex-col gap-1'>
@@ -172,6 +184,20 @@ function MobileLogTimeStatus({
         />
         <span>{t(config.label)}</span>
       </div>
+      {streamSeverity !== 'ok' && (
+        <div
+          className={cn(
+            'flex min-w-0 items-center gap-1 text-[11px] leading-tight font-medium',
+            streamSeverity === 'warning'
+              ? 'text-amber-700 dark:text-amber-400'
+              : 'text-red-600 dark:text-red-400'
+          )}
+          title={streamStatus?.end_reason || streamLabel}
+        >
+          <CircleAlert className='size-3 shrink-0' aria-hidden='true' />
+          <span className='truncate'>{streamLabel}</span>
+        </div>
+      )}
     </div>
   )
 }
@@ -185,6 +211,9 @@ function CommonLogsCard<TData>({
   const rowData = cells.get('created_at')?.row.original as
     | Record<string, unknown>
     | undefined
+  const other = parseLogOther(
+    typeof rowData?.other === 'string' ? rowData.other : ''
+  )
 
   return (
     <div className='flex min-w-0 flex-col gap-2.5'>
@@ -204,6 +233,7 @@ function CommonLogsCard<TData>({
           <MobileLogTimeStatus
             createdAt={rowData?.created_at}
             type={rowData?.type}
+            streamStatus={other?.stream_status}
           />
         </div>
         <SummaryField
