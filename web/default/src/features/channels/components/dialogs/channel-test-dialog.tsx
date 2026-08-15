@@ -26,9 +26,19 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table'
-import { Check, Copy, Info, Loader2, Settings } from 'lucide-react'
+import {
+  Check,
+  ChevronDown,
+  Copy,
+  Info,
+  KeyRound,
+  Loader2,
+  Search,
+  Settings,
+} from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -47,8 +57,21 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
+import {
+  Drawer,
+  DrawerContent,
+  DrawerDescription,
+  DrawerHeader,
+  DrawerTitle,
+  DrawerTrigger,
+} from '@/components/ui/drawer'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
 import {
   Select,
   SelectContent,
@@ -89,9 +112,15 @@ import {
   handleTestChannel,
   isUpstreamAccountSyncChannel,
 } from '../../lib'
+import {
+  formatUpstreamRatioCompact,
+  getUpstreamRatioDisplayValue,
+} from '../../lib/upstream-sync'
 import { getChannelAccounts } from '../../api'
+import { CHANNEL_STATUS } from '../../constants'
 import { useChannelPermissions } from '../../hooks/use-channel-permissions'
 import { useChannels } from '../channels-provider'
+import type { ChannelAccount } from '../../types'
 
 type ChannelTestDialogProps = {
   open: boolean
@@ -115,6 +144,13 @@ type FailureDetailsState = {
   model: string
   summary: string
   details: string
+}
+
+type AccountAvailability = {
+  unavailable: boolean
+  label: string
+  reason?: string
+  variant: 'success' | 'warning' | 'danger' | 'neutral'
 }
 
 const endpointTypeOptions: Array<{ value: string; label: string }> = [
@@ -145,6 +181,74 @@ const STREAM_INCOMPATIBLE_ENDPOINTS = new Set([
   'openai-response-compact',
 ])
 
+function parseAccountModels(value: string | null | undefined): string[] {
+  if (!value) return []
+  return value
+    .split(',')
+    .map((model) => model.trim())
+    .filter(Boolean)
+}
+
+function getAccountDisplayName(account: ChannelAccount): string {
+  return account.name?.trim() || `#${account.id}`
+}
+
+function getAccountRatioText(account: ChannelAccount): string {
+  const ratio = getUpstreamRatioDisplayValue(account)
+  return ratio == null ? '-' : `${formatUpstreamRatioCompact(ratio)}x`
+}
+
+function getAccountModelCount(account: ChannelAccount): number {
+  return parseAccountModels(account.models).length
+}
+
+function getAccountGroupText(account: ChannelAccount): string {
+  const parts = [account.group, account.access_groups]
+    .map((value) => value?.trim())
+    .filter(Boolean)
+  return parts.length ? parts.join(' / ') : '-'
+}
+
+function getAccountAvailability(
+  account: ChannelAccount,
+  nowSeconds: number,
+  t: (key: string) => string
+): AccountAvailability {
+  if (account.status !== CHANNEL_STATUS.ENABLED) {
+    const label =
+      account.status === CHANNEL_STATUS.AUTO_DISABLED
+        ? t('Auto Disabled')
+        : t('Disabled')
+    return {
+      unavailable: true,
+      label,
+      reason: account.disabled_reason || account.last_error || label,
+      variant:
+        account.status === CHANNEL_STATUS.AUTO_DISABLED ? 'danger' : 'neutral',
+    }
+  }
+
+  const cooldownUntil = Math.max(
+    account.rate_limited_until || 0,
+    account.overload_until || 0,
+    account.temp_disabled_until || 0
+  )
+  if (cooldownUntil > nowSeconds) {
+    return {
+      unavailable: true,
+      label: t('Cooling down'),
+      reason: account.disabled_reason || t('Cooling down'),
+      variant: 'warning',
+    }
+  }
+
+  return {
+    unavailable: false,
+    label: t('Available'),
+    variant: 'success',
+  }
+}
+
 export function ChannelTestDialog({
   open,
   onOpenChange,
@@ -153,6 +257,9 @@ export function ChannelTestDialog({
   const { currentRow } = useChannels()
   const [endpointType, setEndpointType] = useState('auto')
   const [selectedAccountId, setSelectedAccountId] = useState('auto')
+  const [accountSelectorOpen, setAccountSelectorOpen] = useState(false)
+  const [accountSearch, setAccountSearch] = useState('')
+  const [accountStatusNow, setAccountStatusNow] = useState(0)
   const [isStreamTest, setIsStreamTest] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({})
@@ -170,10 +277,7 @@ export function ChannelTestDialog({
   const permissions = useChannelPermissions()
   const noPermissionMessage = t("You don't have necessary permission")
 
-  const resetState = useCallback(() => {
-    setEndpointType('auto')
-    setSelectedAccountId('auto')
-    setIsStreamTest(false)
+  const resetModelTestState = useCallback(() => {
     setSearchTerm('')
     setTestResults({})
     setRowSelection({})
@@ -182,6 +286,15 @@ export function ChannelTestDialog({
     setFailureDetails(null)
     setPagination({ pageIndex: 0, pageSize: 10 })
   }, [])
+
+  const resetState = useCallback(() => {
+    setEndpointType('auto')
+    setSelectedAccountId('auto')
+    setAccountSelectorOpen(false)
+    setAccountSearch('')
+    setIsStreamTest(false)
+    resetModelTestState()
+  }, [resetModelTestState])
 
   useEffect(() => {
     if (open && currentRow) {
@@ -207,8 +320,34 @@ export function ChannelTestDialog({
     staleTime: 30_000,
   })
 
-  const testAccounts =
-    channelAccountsQuery.data?.data?.accounts.items ?? []
+  const testAccounts = useMemo(
+    () => channelAccountsQuery.data?.data?.accounts.items ?? [],
+    [channelAccountsQuery.data?.data?.accounts.items]
+  )
+
+  const selectedAccount =
+    selectedAccountId === 'auto'
+      ? null
+      : testAccounts.find((account) => String(account.id) === selectedAccountId)
+
+  const handleSelectedAccountChange = useCallback(
+    (value: string) => {
+      setSelectedAccountId(value)
+      setAccountSelectorOpen(false)
+      setAccountSearch('')
+      resetModelTestState()
+    },
+    [resetModelTestState]
+  )
+
+  useEffect(() => {
+    if (
+      selectedAccountId !== 'auto' &&
+      !testAccounts.some((account) => String(account.id) === selectedAccountId)
+    ) {
+      handleSelectedAccountChange('auto')
+    }
+  }, [handleSelectedAccountChange, selectedAccountId, testAccounts])
 
   useEffect(() => {
     if (streamDisabled) {
@@ -216,15 +355,20 @@ export function ChannelTestDialog({
     }
   }, [streamDisabled])
 
-  const modelsValue = currentRow?.models ?? ''
+  useEffect(() => {
+    if (open || accountSelectorOpen) {
+      setAccountStatusNow(Math.floor(Date.now() / 1000))
+    }
+  }, [accountSelectorOpen, open])
+
+  const modelsValue =
+    selectedAccountId === 'auto'
+      ? (currentRow?.models ?? '')
+      : (selectedAccount?.models ?? '')
   const defaultTestModel = currentRow?.test_model?.trim()
 
   const models = useMemo(() => {
-    if (!modelsValue) return []
-    return modelsValue
-      .split(',')
-      .map((model) => model.trim())
-      .filter(Boolean)
+    return parseAccountModels(modelsValue)
   }, [modelsValue])
 
   const filteredModels = useMemo(() => {
@@ -476,72 +620,76 @@ export function ChannelTestDialog({
     return null
   }
 
+  const modelSectionTitle =
+    selectedAccountId === 'auto' ? t('Channel models') : t('Synced key models')
+  const modelSectionDescription =
+    selectedAccountId === 'auto'
+      ? t('Select models to run batch tests.')
+      : t('Only models synced for the selected upstream key are shown.')
+  const emptyModelsMessage =
+    selectedAccountId === 'auto'
+      ? t('This channel has no configured models.')
+      : t('This upstream key has no synced models.')
+
   return (
     <>
       <Dialog open={open} onOpenChange={handleClose}>
         <DialogContent className='max-h-[90vh] overflow-hidden sm:max-w-3xl'>
-        <DialogHeader>
-          <DialogTitle>{t('Test Channel Connection')}</DialogTitle>
-          <DialogDescription>
-            {t('Test connectivity for:')} <strong>{currentRow.name}</strong>
-          </DialogDescription>
-        </DialogHeader>
+          <DialogHeader>
+            <DialogTitle>{t('Test Channel Connection')}</DialogTitle>
+            <DialogDescription>
+              {t('Test connectivity for:')} <strong>{currentRow.name}</strong>
+            </DialogDescription>
+          </DialogHeader>
 
-        <div className='max-h-[78vh] space-y-4 overflow-y-auto py-4 pr-1'>
-          <div className='grid gap-4 md:grid-cols-2'>
-            {isSyncedAccountPool ? (
-              <div className='grid gap-2 md:col-span-2'>
-                <Label htmlFor='upstream-account'>
-                  {t('Upstream key for this test')}
-                </Label>
+          <div className='max-h-[78vh] space-y-4 overflow-y-auto py-4 pr-1'>
+            <div className='grid gap-4 md:grid-cols-2'>
+              {isSyncedAccountPool ? (
+                <div className='grid gap-2 md:col-span-2'>
+                  <Label htmlFor='upstream-account-trigger'>
+                    {t('Upstream key for this test')}
+                  </Label>
+                  <UpstreamAccountSelector
+                    open={accountSelectorOpen}
+                    onOpenChange={setAccountSelectorOpen}
+                    accounts={testAccounts}
+                    selectedAccountId={selectedAccountId}
+                    selectedAccount={selectedAccount}
+                    searchValue={accountSearch}
+                    onSearchValueChange={setAccountSearch}
+                    onValueChange={handleSelectedAccountChange}
+                    loading={channelAccountsQuery.isFetching}
+                    nowSeconds={accountStatusNow}
+                  />
+                  <p className='text-muted-foreground text-xs'>
+                    {t(
+                      'Choose a specific upstream key for single-model and batch tests. Automatic selection keeps the normal account pool routing.'
+                    )}
+                  </p>
+                </div>
+              ) : null}
+              <div className='grid gap-2'>
+                <Label htmlFor='endpoint-type'>{t('Endpoint Type')}</Label>
                 <Select
                   items={[
-                    { value: 'auto', label: t('Automatic selection') },
-                    ...testAccounts.map((account) => ({
-                      value: String(account.id),
-                      label: `${account.name || `#${account.id}`} (${account.key})`,
-                    })),
+                    ...endpointTypeOptions.map((option) => {
+                      const itemValue = option.value
+                      return { value: itemValue, label: t(option.label) }
+                    }),
                   ]}
-                  value={selectedAccountId}
-                  onValueChange={(value) =>
-                    value !== null && setSelectedAccountId(value)
-                  }
+                  value={endpointType}
+                  onValueChange={(v) => v !== null && setEndpointType(v)}
                 >
-                  <SelectTrigger id='upstream-account' className='w-full'>
-                    <SelectValue placeholder={t('Automatic selection')} />
+                  <SelectTrigger id='endpoint-type'>
+                    <SelectValue placeholder={t('Auto detect (default)')} />
                   </SelectTrigger>
                   <SelectContent alignItemWithTrigger={false}>
                     <SelectGroup>
-                      <SelectItem value='auto'>
-                        {t('Automatic selection')}
-                      </SelectItem>
-                      {testAccounts.map((account) => {
-                        const now = Math.floor(Date.now() / 1000)
-                        const unavailable =
-                          account.status !== 1 ||
-                          account.rate_limited_until > now ||
-                          account.overload_until > now ||
-                          account.temp_disabled_until > now
-                        const statusLabel =
-                          account.status !== 1
-                            ? t('Disabled')
-                            : unavailable
-                              ? t('Cooling down')
-                              : t('Available')
+                      {endpointTypeOptions.map((option) => {
+                        const itemValue = option.value
                         return (
-                          <SelectItem
-                            key={account.id}
-                            value={String(account.id)}
-                            disabled={unavailable}
-                          >
-                            <span className='flex min-w-0 items-center justify-between gap-3'>
-                              <span className='truncate'>
-                                {account.name || `#${account.id}`} ({account.key})
-                              </span>
-                              <span className='text-muted-foreground text-xs'>
-                                {statusLabel}
-                              </span>
-                            </span>
+                          <SelectItem key={itemValue} value={itemValue}>
+                            {t(option.label)}
                           </SelectItem>
                         )
                       })}
@@ -550,153 +698,121 @@ export function ChannelTestDialog({
                 </Select>
                 <p className='text-muted-foreground text-xs'>
                   {t(
-                    'Choose a specific upstream key for single-model and batch tests. Automatic selection keeps the normal account pool routing.'
+                    'Override the endpoint used for testing. Leave empty to auto detect.'
                   )}
                 </p>
               </div>
-            ) : null}
-            <div className='grid gap-2'>
-              <Label htmlFor='endpoint-type'>{t('Endpoint Type')}</Label>
-              <Select
-                items={[
-                  ...endpointTypeOptions.map((option) => {
-                    const itemValue = option.value
-                    return { value: itemValue, label: t(option.label) }
-                  }),
-                ]}
-                value={endpointType}
-                onValueChange={(v) => v !== null && setEndpointType(v)}
-              >
-                <SelectTrigger id='endpoint-type'>
-                  <SelectValue placeholder={t('Auto detect (default)')} />
-                </SelectTrigger>
-                <SelectContent alignItemWithTrigger={false}>
-                  <SelectGroup>
-                    {endpointTypeOptions.map((option) => {
-                      const itemValue = option.value
-                      return (
-                        <SelectItem key={itemValue} value={itemValue}>
-                          {t(option.label)}
-                        </SelectItem>
-                      )
-                    })}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-              <p className='text-muted-foreground text-xs'>
-                {t(
-                  'Override the endpoint used for testing. Leave empty to auto detect.'
-                )}
-              </p>
-            </div>
-            <div className='grid gap-2'>
-              <Label htmlFor='stream-toggle'>{t('Stream Mode')}</Label>
-              <div className='flex items-center gap-2'>
-                <Switch
-                  id='stream-toggle'
-                  checked={isStreamTest}
-                  onCheckedChange={setIsStreamTest}
-                  disabled={streamDisabled}
-                />
-                <span className='text-sm'>
-                  {isStreamTest ? t('Enabled') : t('Disabled')}
-                </span>
-              </div>
-              <p className='text-muted-foreground text-xs'>
-                {t('Enable streaming mode for the test request.')}
-              </p>
-            </div>
-          </div>
-
-          <div className='space-y-3 max-sm:has-[div[role="toolbar"]]:pb-16'>
-            <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
-              <div>
-                <p className='text-sm font-medium'>{t('Channel models')}</p>
+              <div className='grid gap-2'>
+                <Label htmlFor='stream-toggle'>{t('Stream Mode')}</Label>
+                <div className='flex items-center gap-2'>
+                  <Switch
+                    id='stream-toggle'
+                    checked={isStreamTest}
+                    onCheckedChange={setIsStreamTest}
+                    disabled={streamDisabled}
+                  />
+                  <span className='text-sm'>
+                    {isStreamTest ? t('Enabled') : t('Disabled')}
+                  </span>
+                </div>
                 <p className='text-muted-foreground text-xs'>
-                  {t('Select models to run batch tests.')}
+                  {t('Enable streaming mode for the test request.')}
                 </p>
               </div>
-              <Input
-                placeholder={t('Filter models...')}
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className='sm:w-64'
-              />
             </div>
 
-            <div className='space-y-3'>
-              <div className='overflow-hidden rounded-md border' role='region'>
-                <div className='max-h-[360px] overflow-y-auto'>
-                  <Table>
-                    <TableHeader>
-                      {table.getHeaderGroups().map((headerGroup) => (
-                        <TableRow key={headerGroup.id}>
-                          {headerGroup.headers.map((header) => (
-                            <TableHead key={header.id}>
-                              {header.isPlaceholder
-                                ? null
-                                : flexRender(
-                                    header.column.columnDef.header,
-                                    header.getContext()
-                                  )}
-                            </TableHead>
-                          ))}
-                        </TableRow>
-                      ))}
-                    </TableHeader>
-                    <TableBody>
-                      {table.getRowModel().rows.length ? (
-                        table.getRowModel().rows.map((row) => (
-                          <TableRow
-                            key={row.id}
-                            data-state={
-                              row.getIsSelected() ? 'selected' : undefined
-                            }
-                          >
-                            {row.getVisibleCells().map((cell) => (
-                              <TableCell key={cell.id}>
-                                {flexRender(
-                                  cell.column.columnDef.cell,
-                                  cell.getContext()
-                                )}
-                              </TableCell>
-                            ))}
-                          </TableRow>
-                        ))
-                      ) : (
-                        <TableRow>
-                          <TableCell
-                            colSpan={table.getVisibleLeafColumns().length}
-                            className='text-muted-foreground h-16 text-center text-sm'
-                          >
-                            {models.length
-                              ? t('No models matched your search.')
-                              : t('This channel has no configured models.')}
-                          </TableCell>
-                        </TableRow>
-                      )}
-                    </TableBody>
-                  </Table>
+            <div className='space-y-3 max-sm:has-[div[role="toolbar"]]:pb-16'>
+              <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
+                <div>
+                  <p className='text-sm font-medium'>{modelSectionTitle}</p>
+                  <p className='text-muted-foreground text-xs'>
+                    {modelSectionDescription}
+                  </p>
                 </div>
+                <Input
+                  placeholder={t('Filter models...')}
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className='sm:w-64'
+                />
               </div>
 
-              <DataTablePagination table={table} />
+              <div className='space-y-3'>
+                <div
+                  className='overflow-hidden rounded-md border'
+                  role='region'
+                >
+                  <div className='max-h-[360px] overflow-y-auto'>
+                    <Table>
+                      <TableHeader>
+                        {table.getHeaderGroups().map((headerGroup) => (
+                          <TableRow key={headerGroup.id}>
+                            {headerGroup.headers.map((header) => (
+                              <TableHead key={header.id}>
+                                {header.isPlaceholder
+                                  ? null
+                                  : flexRender(
+                                      header.column.columnDef.header,
+                                      header.getContext()
+                                    )}
+                              </TableHead>
+                            ))}
+                          </TableRow>
+                        ))}
+                      </TableHeader>
+                      <TableBody>
+                        {table.getRowModel().rows.length ? (
+                          table.getRowModel().rows.map((row) => (
+                            <TableRow
+                              key={row.id}
+                              data-state={
+                                row.getIsSelected() ? 'selected' : undefined
+                              }
+                            >
+                              {row.getVisibleCells().map((cell) => (
+                                <TableCell key={cell.id}>
+                                  {flexRender(
+                                    cell.column.columnDef.cell,
+                                    cell.getContext()
+                                  )}
+                                </TableCell>
+                              ))}
+                            </TableRow>
+                          ))
+                        ) : (
+                          <TableRow>
+                            <TableCell
+                              colSpan={table.getVisibleLeafColumns().length}
+                              className='text-muted-foreground h-16 text-center text-sm'
+                            >
+                              {models.length
+                                ? t('No models matched your search.')
+                                : emptyModelsMessage}
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+
+                <DataTablePagination table={table} />
+              </div>
+
+              <TestModelsBulkActions
+                table={table}
+                disabled={isAnyTesting || !permissions.canOperate}
+                disabledReason={noPermissionMessage}
+                onTestSelected={handleBatchTest}
+              />
             </div>
-
-            <TestModelsBulkActions
-              table={table}
-              disabled={isAnyTesting || !permissions.canOperate}
-              disabledReason={noPermissionMessage}
-              onTestSelected={handleBatchTest}
-            />
           </div>
-        </div>
 
-        <DialogFooter>
-          <Button variant='outline' onClick={handleClose}>
-            {t('Close')}
-          </Button>
-        </DialogFooter>
+          <DialogFooter>
+            <Button variant='outline' onClick={handleClose}>
+              {t('Close')}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
       <FailureDetailsSheet
@@ -736,6 +852,370 @@ function TestStatusCell({ result }: { result?: TestResult }) {
   }
 
   return <StatusBadge label={t('Failed')} variant='danger' copyable={false} />
+}
+
+function UpstreamAccountSelector({
+  open,
+  onOpenChange,
+  accounts,
+  selectedAccountId,
+  selectedAccount,
+  searchValue,
+  onSearchValueChange,
+  onValueChange,
+  loading,
+  nowSeconds,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  accounts: ChannelAccount[]
+  selectedAccountId: string
+  selectedAccount: ChannelAccount | null | undefined
+  searchValue: string
+  onSearchValueChange: (value: string) => void
+  onValueChange: (value: string) => void
+  loading?: boolean
+  nowSeconds: number
+}) {
+  const { t } = useTranslation()
+  const isMobile = useIsMobile()
+  const normalizedSearch = searchValue.trim().toLowerCase()
+  const filteredAccounts = useMemo(() => {
+    if (!normalizedSearch) return accounts
+    return accounts.filter((account) => {
+      const fields = [
+        account.name,
+        String(account.id),
+        account.key,
+        account.models,
+        account.group,
+        account.access_groups,
+        getAccountRatioText(account),
+      ]
+      return fields
+        .filter(Boolean)
+        .some((field) => String(field).toLowerCase().includes(normalizedSearch))
+    })
+  }, [accounts, normalizedSearch])
+
+  const triggerContent = (
+    <AccountSelectorTriggerContent
+      selectedAccountId={selectedAccountId}
+      selectedAccount={selectedAccount}
+    />
+  )
+  const tableContent = (
+    <UpstreamAccountSelectorTable
+      accounts={filteredAccounts}
+      selectedAccountId={selectedAccountId}
+      loading={loading}
+      searchValue={searchValue}
+      onSearchValueChange={onSearchValueChange}
+      onValueChange={onValueChange}
+      nowSeconds={nowSeconds}
+    />
+  )
+
+  if (isMobile) {
+    return (
+      <Drawer open={open} onOpenChange={onOpenChange}>
+        <DrawerTrigger asChild>
+          <Button
+            id='upstream-account-trigger'
+            type='button'
+            variant='outline'
+            className='h-auto min-h-12 w-full justify-between gap-2 px-3 py-2 text-left'
+          >
+            {triggerContent}
+          </Button>
+        </DrawerTrigger>
+        <DrawerContent className='h-[85dvh] max-h-[85dvh] p-0'>
+          <div className='flex min-h-0 flex-1 flex-col overflow-hidden'>
+            <DrawerHeader className='border-b px-4 py-3 text-left'>
+              <DrawerTitle>{t('Choose upstream key')}</DrawerTitle>
+              <DrawerDescription>
+                {t('Upstream key for this test')}
+              </DrawerDescription>
+            </DrawerHeader>
+            <div className='min-h-0 flex-1 overflow-hidden'>{tableContent}</div>
+          </div>
+        </DrawerContent>
+      </Drawer>
+    )
+  }
+
+  return (
+    <Popover open={open} onOpenChange={onOpenChange}>
+      <PopoverTrigger
+        render={
+          <Button
+            id='upstream-account-trigger'
+            type='button'
+            variant='outline'
+            role='combobox'
+            aria-expanded={open}
+            className='h-auto min-h-12 w-full justify-between gap-2 px-3 py-2 text-left'
+          />
+        }
+      >
+        {triggerContent}
+      </PopoverTrigger>
+      <PopoverContent
+        align='start'
+        className='w-[min(920px,calc(100vw-2rem))] overflow-hidden p-0'
+        onWheel={(event) => event.stopPropagation()}
+        onTouchMove={(event) => event.stopPropagation()}
+        onPointerDown={(event) => event.stopPropagation()}
+      >
+        {tableContent}
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+function AccountSelectorTriggerContent({
+  selectedAccountId,
+  selectedAccount,
+}: {
+  selectedAccountId: string
+  selectedAccount: ChannelAccount | null | undefined
+}) {
+  const { t } = useTranslation()
+  const accountName = selectedAccount
+    ? getAccountDisplayName(selectedAccount)
+    : ''
+  const ratioText = selectedAccount ? getAccountRatioText(selectedAccount) : ''
+
+  return (
+    <>
+      <span className='flex min-w-0 flex-1 flex-col gap-0.5'>
+        <span className='truncate text-sm font-medium'>
+          {selectedAccountId === 'auto' || !selectedAccount
+            ? t('Automatic selection')
+            : `${accountName} #${selectedAccount.id}`}
+        </span>
+        <span className='text-muted-foreground truncate text-xs'>
+          {selectedAccountId === 'auto' || !selectedAccount
+            ? t('Normal account pool routing')
+            : `${selectedAccount.key || '-'} · ${t('Conversion ratio')} ${ratioText}`}
+        </span>
+      </span>
+      <ChevronDown data-icon='inline-end' className='shrink-0 opacity-60' />
+    </>
+  )
+}
+
+function UpstreamAccountSelectorTable({
+  accounts,
+  selectedAccountId,
+  loading,
+  searchValue,
+  onSearchValueChange,
+  onValueChange,
+  nowSeconds,
+}: {
+  accounts: ChannelAccount[]
+  selectedAccountId: string
+  loading?: boolean
+  searchValue: string
+  onSearchValueChange: (value: string) => void
+  onValueChange: (value: string) => void
+  nowSeconds: number
+}) {
+  const { t } = useTranslation()
+
+  return (
+    <div className='flex h-full min-h-0 flex-col'>
+      <div className='border-b p-3'>
+        <div className='relative'>
+          <Search
+            className='text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2'
+            aria-hidden='true'
+          />
+          <Input
+            value={searchValue}
+            onChange={(event) => onSearchValueChange(event.target.value)}
+            placeholder={t('Search upstream keys...')}
+            className='pl-8'
+          />
+        </div>
+      </div>
+      <div className='min-h-0 flex-1 overflow-auto'>
+        <Table className='min-w-[760px]'>
+          <TableHeader>
+            <TableRow>
+              <TableHead className='w-12'>{t('Select')}</TableHead>
+              <TableHead>{t('Account')}</TableHead>
+              <TableHead>{t('Key')}</TableHead>
+              <TableHead>{t('Key status')}</TableHead>
+              <TableHead className='text-right'>{t('Models count')}</TableHead>
+              <TableHead className='text-right'>
+                {t('Conversion ratio')}
+              </TableHead>
+              <TableHead>{t('Group / Access Groups')}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <TableRow
+              className='cursor-pointer'
+              data-state={selectedAccountId === 'auto' ? 'selected' : undefined}
+              tabIndex={0}
+              onClick={() => onValueChange('auto')}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault()
+                  onValueChange('auto')
+                }
+              }}
+            >
+              <TableCell>
+                {selectedAccountId === 'auto' ? (
+                  <Check className='text-success' aria-hidden='true' />
+                ) : (
+                  <span className='text-muted-foreground'>-</span>
+                )}
+              </TableCell>
+              <TableCell>
+                <div className='flex min-w-0 items-center gap-2'>
+                  <KeyRound className='text-muted-foreground shrink-0' />
+                  <div className='min-w-0'>
+                    <p className='truncate text-sm font-medium'>
+                      {t('Automatic selection')}
+                    </p>
+                    <p className='text-muted-foreground truncate text-xs'>
+                      {t('Normal account pool routing')}
+                    </p>
+                  </div>
+                </div>
+              </TableCell>
+              <TableCell className='text-muted-foreground text-xs'>-</TableCell>
+              <TableCell>
+                <StatusBadge
+                  label={t('Available')}
+                  variant='success'
+                  copyable={false}
+                />
+              </TableCell>
+              <TableCell className='text-muted-foreground text-right text-xs'>
+                -
+              </TableCell>
+              <TableCell className='text-muted-foreground text-right text-xs'>
+                -
+              </TableCell>
+              <TableCell className='text-muted-foreground text-xs'>-</TableCell>
+            </TableRow>
+            {loading ? (
+              <TableRow>
+                <TableCell colSpan={7} className='h-14 text-center'>
+                  <span className='text-muted-foreground inline-flex items-center gap-2 text-sm'>
+                    <Loader2 className='animate-spin' aria-hidden='true' />
+                    {t('Loading...')}
+                  </span>
+                </TableCell>
+              </TableRow>
+            ) : accounts.length ? (
+              accounts.map((account) => {
+                const availability = getAccountAvailability(
+                  account,
+                  nowSeconds,
+                  t
+                )
+                const selected = selectedAccountId === String(account.id)
+
+                return (
+                  <TableRow
+                    key={account.id}
+                    className={cn(
+                      !availability.unavailable && 'cursor-pointer',
+                      availability.unavailable &&
+                        'cursor-not-allowed opacity-60'
+                    )}
+                    data-state={selected ? 'selected' : undefined}
+                    tabIndex={availability.unavailable ? -1 : 0}
+                    aria-disabled={availability.unavailable}
+                    title={availability.reason}
+                    onClick={() => {
+                      if (!availability.unavailable) {
+                        onValueChange(String(account.id))
+                      }
+                    }}
+                    onKeyDown={(event) => {
+                      if (
+                        !availability.unavailable &&
+                        (event.key === 'Enter' || event.key === ' ')
+                      ) {
+                        event.preventDefault()
+                        onValueChange(String(account.id))
+                      }
+                    }}
+                  >
+                    <TableCell>
+                      {selected ? (
+                        <Check className='text-success' aria-hidden='true' />
+                      ) : (
+                        <span className='text-muted-foreground'>-</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <div className='min-w-0'>
+                        <p className='truncate text-sm font-medium'>
+                          {getAccountDisplayName(account)}
+                        </p>
+                        <p className='text-muted-foreground font-mono text-xs'>
+                          #{account.id}
+                        </p>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <span className='font-mono text-xs'>
+                        {account.key || '-'}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <div className='flex min-w-0 flex-col gap-0.5'>
+                        <StatusBadge
+                          label={availability.label}
+                          variant={availability.variant}
+                          copyable={false}
+                        />
+                        {availability.reason && (
+                          <span className='text-muted-foreground max-w-36 truncate text-[11px]'>
+                            {availability.reason}
+                          </span>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell className='text-right font-mono text-xs tabular-nums'>
+                      {getAccountModelCount(account)}
+                    </TableCell>
+                    <TableCell className='text-right font-mono text-xs tabular-nums'>
+                      {getAccountRatioText(account)}
+                    </TableCell>
+                    <TableCell>
+                      <span className='text-muted-foreground block max-w-40 truncate text-xs'>
+                        {getAccountGroupText(account)}
+                      </span>
+                    </TableCell>
+                  </TableRow>
+                )
+              })
+            ) : (
+              <TableRow>
+                <TableCell
+                  colSpan={7}
+                  className='text-muted-foreground h-14 text-center text-sm'
+                >
+                  {searchValue.trim()
+                    ? t('No upstream keys matched your search.')
+                    : t('No upstream keys were found for this account.')}
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
+    </div>
+  )
 }
 
 function TestResultCell({
@@ -950,7 +1430,9 @@ function TestModelsBulkActions({
           )}
         </TooltipTrigger>
         <TooltipContent>
-          <p>{disabled ? disabledReason : t('Run tests for the selected models')}</p>
+          <p>
+            {disabled ? disabledReason : t('Run tests for the selected models')}
+          </p>
         </TooltipContent>
       </Tooltip>
     </BulkActionsToolbar>
