@@ -56,16 +56,38 @@ func UpsertPerfMetric(metric *PerfMetric) error {
 			{Name: "group"},
 			{Name: "bucket_ts"},
 		},
-		DoUpdates: clause.Assignments(map[string]interface{}{
-			"request_count":    gorm.Expr("request_count + ?", metric.RequestCount),
-			"success_count":    gorm.Expr("success_count + ?", metric.SuccessCount),
-			"total_latency_ms": gorm.Expr("total_latency_ms + ?", metric.TotalLatencyMs),
-			"ttft_sum_ms":      gorm.Expr("ttft_sum_ms + ?", metric.TtftSumMs),
-			"ttft_count":       gorm.Expr("ttft_count + ?", metric.TtftCount),
-			"output_tokens":    gorm.Expr("output_tokens + ?", metric.OutputTokens),
-			"generation_ms":    gorm.Expr("generation_ms + ?", metric.GenerationMs),
-		}),
+		DoUpdates: clause.Assignments(perfMetricUpsertAssignments(DB)),
 	}).Create(metric).Error
+}
+
+// perfMetricUpsertAssignments 构造性能指标 upsert 的累加表达式。
+//
+// PostgreSQL 的 ON CONFLICT 更新语句同时可见目标表字段和 EXCLUDED 字段，
+// 因此目标字段必须显式限定，避免出现 generation_ms 等字段名歧义。SQLite 和
+// MySQL 使用各自的 excluded/VALUES 语法，但仍统一通过 clause.Column 交给 GORM
+// 处理列名引用，避免手写数据库专用引号。
+func perfMetricUpsertAssignments(db *gorm.DB) map[string]interface{} {
+	accumulate := func(column string) clause.Expr {
+		currentColumn := clause.Column{Table: clause.CurrentTable, Name: column}
+		incomingColumn := clause.Column{Name: column}
+		switch db.Dialector.Name() {
+		case "postgres":
+			return gorm.Expr("? + EXCLUDED.?", currentColumn, incomingColumn)
+		case "mysql":
+			return gorm.Expr("? + VALUES(?)", currentColumn, incomingColumn)
+		default:
+			return gorm.Expr("? + excluded.?", currentColumn, incomingColumn)
+		}
+	}
+	return map[string]interface{}{
+		"request_count":    accumulate("request_count"),
+		"success_count":    accumulate("success_count"),
+		"total_latency_ms": accumulate("total_latency_ms"),
+		"ttft_sum_ms":      accumulate("ttft_sum_ms"),
+		"ttft_count":       accumulate("ttft_count"),
+		"output_tokens":    accumulate("output_tokens"),
+		"generation_ms":    accumulate("generation_ms"),
+	}
 }
 
 // GetPerfMetrics 获取指定模型和时间范围的性能指标
