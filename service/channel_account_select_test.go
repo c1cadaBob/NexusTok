@@ -80,3 +80,38 @@ func TestSelectSpecificChannelAccountReportsEmptyModelsForUpstreamSync(t *testin
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "未配置可路由模型")
 }
+
+func TestSelectSpecificChannelAccountForTestAllowsDisabledSyncedAccount(t *testing.T) {
+	db := setupChannelAccountSelectTestDB(t)
+	channel := model.Channel{
+		Type:          constant.ChannelTypeOpenAI,
+		Status:        common.ChannelStatusEnabled,
+		Name:          "synced-channel",
+		Models:        "gpt-channel",
+		Group:         "default",
+		OtherSettings: `{"upstream_account_sync":{"platform":"new-api","base_url":"https://upstream.example"}}`,
+		ChannelInfo: model.ChannelInfo{
+			CredentialMode:     constant.ChannelCredentialModeAccountPool,
+			AccountPoolEnabled: true,
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+	account := model.ChannelAccount{
+		ChannelId:         channel.Id,
+		Name:              "disabled-key",
+		Key:               "sk-disabled",
+		Status:            common.ChannelStatusManuallyDisabled,
+		Models:            "gpt-channel",
+		AccessGroups:      "default",
+		RateLimitedUntil:  common.GetTimestamp() + 3600,
+		TempDisabledUntil: common.GetTimestamp() + 3600,
+	}
+	require.NoError(t, db.Create(&account).Error)
+
+	_, normalErr := SelectSpecificChannelAccount(nil, &channel, "gpt-channel", "default", account.Id, 0)
+	selected, testErr := SelectSpecificChannelAccountForTest(nil, &channel, "gpt-channel", "default", account.Id, 0)
+
+	require.Error(t, normalErr)
+	require.NoError(t, testErr)
+	require.Equal(t, account.Id, selected.Id)
+}

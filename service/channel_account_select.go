@@ -132,6 +132,34 @@ func SelectSpecificChannelAccount(
 	accountID int,
 	relayMode int,
 ) (*model.ChannelAccount, error) {
+	return selectSpecificChannelAccount(c, channel, modelName, usingGroup, accountID, relayMode, false)
+}
+
+// SelectSpecificChannelAccountForTest 校验并选择管理员手动测试指定的同步密钥。
+//
+// 该入口只允许测试接口使用。它允许手动禁用、自动禁用或处于临时冷却中的同步密钥
+// 被指定测试，以便管理员确认上游恢复后重新启用；但仍然校验渠道归属、模型白名单、
+// NexusTok 访问组、完整凭据和并发限制，避免测试路径绕过账号池的基本安全边界。
+func SelectSpecificChannelAccountForTest(
+	c *gin.Context,
+	channel *model.Channel,
+	modelName string,
+	usingGroup string,
+	accountID int,
+	relayMode int,
+) (*model.ChannelAccount, error) {
+	return selectSpecificChannelAccount(c, channel, modelName, usingGroup, accountID, relayMode, true)
+}
+
+func selectSpecificChannelAccount(
+	c *gin.Context,
+	channel *model.Channel,
+	modelName string,
+	usingGroup string,
+	accountID int,
+	relayMode int,
+	allowDisabledForTest bool,
+) (*model.ChannelAccount, error) {
 	_ = relayMode
 	if channel == nil || accountID <= 0 {
 		return nil, ErrNoAvailableChannelAccount
@@ -142,11 +170,14 @@ func SelectSpecificChannelAccount(
 	if err := model.DB.Where("channel_id = ? AND id = ?", channel.Id, accountID).First(&account).Error; err != nil {
 		return nil, fmt.Errorf("指定的上游密钥不属于当前渠道")
 	}
-	if account.Status != common.ChannelStatusEnabled {
+	if !allowDisabledForTest && account.Status != common.ChannelStatusEnabled {
 		return nil, fmt.Errorf("指定的上游密钥未启用")
 	}
-	if account.IsCoolingDown(common.GetTimestamp()) {
+	if !allowDisabledForTest && account.IsCoolingDown(common.GetTimestamp()) {
 		return nil, fmt.Errorf("指定的上游密钥当前处于冷却或临时禁用状态")
+	}
+	if strings.TrimSpace(account.Key) == "" {
+		return nil, fmt.Errorf("指定的上游密钥缺少完整凭据")
 	}
 	if channel.HasUpstreamAccountSyncMetadata() && strings.TrimSpace(account.Models) == "" {
 		return nil, fmt.Errorf("指定的上游密钥未配置可路由模型")

@@ -645,14 +645,25 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 		var account *model.ChannelAccount
 		var err error
 		if requestedChannelAccountID > 0 {
-			account, err = service.SelectSpecificChannelAccount(
-				c,
-				channel,
-				modelName,
-				usingGroup,
-				requestedChannelAccountID,
-				c.GetInt("relay_mode"),
-			)
+			if common.GetContextKeyBool(c, constant.ContextKeyAllowDisabledChannelAccountTest) {
+				account, err = service.SelectSpecificChannelAccountForTest(
+					c,
+					channel,
+					modelName,
+					usingGroup,
+					requestedChannelAccountID,
+					c.GetInt("relay_mode"),
+				)
+			} else {
+				account, err = service.SelectSpecificChannelAccount(
+					c,
+					channel,
+					modelName,
+					usingGroup,
+					requestedChannelAccountID,
+					c.GetInt("relay_mode"),
+				)
+			}
 		} else {
 			account, err = service.SelectChannelAccount(c, channel, modelName, usingGroup, c.GetInt("relay_mode"))
 		}

@@ -103,6 +103,10 @@ const (
 	// 与输出用的 ContextKeyChannelAccountId 分离，避免 Relay 失败重试时误把上一次
 	// 已选中的账号再次当成管理员的固定选择。
 	ContextKeyRequestedChannelAccountId ContextKey = "requested_channel_account_id"
+	// ContextKeyAllowDisabledChannelAccountTest 表示当前请求是管理员手动指定同步密钥的连接测试。
+	// 只有该测试路径可以临时绕过账号的禁用/冷却状态，用目标 key 真实探测上游；
+	// 普通 Relay 选号仍必须排除禁用和冷却账号，避免异常 key 进入生产流量。
+	ContextKeyAllowDisabledChannelAccountTest ContextKey = "allow_disabled_channel_account_test"
 	// ContextKeyChannelAccountName 渠道账号名称
 	ContextKeyChannelAccountName ContextKey = "channel_account_name"
 	// ContextKeyChannelAccountExcludedIds 渠道账号排除 ID 列表

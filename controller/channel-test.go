@@ -67,6 +67,23 @@ type testResult struct {
 	autoCheckFailureCount   int                  // 指定同步密钥连续失败次数
 	autoCheckDisabled       bool                 // 本次测试是否触发自动禁用
 	autoCheckFailureCounted bool                 // 本次测试是否已写入自动检查失败计数
+	recovery                channelTestRecovery  // 指定同步密钥测试成功后的恢复结果
+}
+
+// channelTestRecovery 描述管理员手动测试成功后恢复同步密钥和渠道的结果。
+//
+// 字段会同时写入接口响应和模型测试日志。旧前端可以忽略这些字段，新前端据此刷新列表
+// 并给出“密钥已恢复/渠道已恢复”的提示。状态值沿用 common.ChannelStatus* 常量。
+type channelTestRecovery struct {
+	SelectedAccountID   int
+	FailureCount        int
+	Updated             bool
+	AccountRecovered    bool
+	ChannelRecovered    bool
+	AccountStatusBefore int
+	AccountStatusAfter  int
+	ChannelStatusBefore int
+	ChannelStatusAfter  int
 }
 
 func normalizeChannelTestEndpoint(channel *model.Channel, modelName, endpointType string) string {
@@ -218,6 +235,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	c.Set("group", group)
 	if selectedAccountID > 0 {
 		common.SetContextKey(c, constant.ContextKeyRequestedChannelAccountId, selectedAccountID)
+		common.SetContextKey(c, constant.ContextKeyAllowDisabledChannelAccountTest, true)
 	}
 
 	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, testModel)
@@ -550,7 +568,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	milliseconds := tok.Sub(tik).Milliseconds()
 	consumedTime := float64(milliseconds) / 1000.0
 	other := buildTestLogOther(c, info, priceData, usage, tieredResult)
-	failureCount, countedSuccess := applyManualChannelAccountTestSuccess(channel.Id, selectedAccountID)
+	recovery := applyManualChannelAccountTestSuccess(channel.Id, selectedAccountID)
 	attachChannelTestLogMetadata(other, channelTestLogMetadata{
 		Status:                 "success",
 		Model:                  info.OriginModelName,
@@ -559,8 +577,9 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		SelectedAccountID:      common.GetContextKeyInt(c, constant.ContextKeyChannelAccountId),
 		SelectedAccountName:    common.GetContextKeyString(c, constant.ContextKeyChannelAccountName),
 		CountedForAutoDisable:  false,
-		AutoCheckFailureCount:  failureCount,
-		AutoCheckResultUpdated: countedSuccess,
+		AutoCheckFailureCount:  recovery.FailureCount,
+		AutoCheckResultUpdated: recovery.Updated,
+		Recovery:               recovery,
 	})
 	model.RecordConsumeLog(c, testUserID, model.RecordConsumeLogParams{
 		ChannelId:        channel.Id,
@@ -580,6 +599,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		context:     c,
 		localErr:    nil,
 		newAPIError: nil,
+		recovery:    recovery,
 	}
 }
 
@@ -655,6 +675,7 @@ type channelTestLogMetadata struct {
 	AutoCheckFailureCount  int
 	AutoCheckDisabled      bool
 	AutoCheckResultUpdated bool
+	Recovery               channelTestRecovery
 }
 
 // attachChannelTestLogMetadata 将模型测试结果写入消费日志的结构化字段。
@@ -688,7 +709,34 @@ func attachChannelTestLogMetadata(other map[string]interface{}, metadata channel
 	if metadata.Error != "" {
 		payload["error"] = metadata.Error
 	}
+	if metadata.Recovery.SelectedAccountID > 0 {
+		payload["recovery"] = buildChannelTestRecoveryResponse(metadata.Recovery)
+	}
 	other["channel_test"] = payload
+}
+
+func buildChannelTestRecoveryResponse(recovery channelTestRecovery) gin.H {
+	return gin.H{
+		"selected_account_id":      recovery.SelectedAccountID,
+		"account_recovered":        recovery.AccountRecovered,
+		"channel_recovered":        recovery.ChannelRecovered,
+		"account_status_before":    recovery.AccountStatusBefore,
+		"account_status_after":     recovery.AccountStatusAfter,
+		"channel_status_before":    recovery.ChannelStatusBefore,
+		"channel_status_after":     recovery.ChannelStatusAfter,
+		"auto_check_updated":       recovery.Updated,
+		"auto_check_failure_count": recovery.FailureCount,
+	}
+}
+
+func attachChannelTestRecoveryResponse(resp gin.H, recovery channelTestRecovery) {
+	if recovery.SelectedAccountID <= 0 {
+		return
+	}
+	recoveryResp := buildChannelTestRecoveryResponse(recovery)
+	for key, value := range recoveryResp {
+		resp[key] = value
+	}
 }
 
 func channelTestErrorText(result testResult) string {
@@ -745,24 +793,58 @@ func sanitizeChannelTestLogError(errText string, account *model.ChannelAccount) 
 	return errText
 }
 
-func applyManualChannelAccountTestSuccess(channelID int, selectedAccountID int) (failureCount int, updated bool) {
+func applyManualChannelAccountTestSuccess(channelID int, selectedAccountID int) channelTestRecovery {
+	recovery := channelTestRecovery{SelectedAccountID: selectedAccountID}
 	if channelID <= 0 || selectedAccountID <= 0 {
-		return 0, false
+		return recovery
 	}
 	account, err := model.GetChannelAccountById(channelID, selectedAccountID)
 	if err != nil || account == nil || !upstreamaccount.HasAccountSyncMetadata(account.OtherSettings) {
-		return 0, false
+		return recovery
 	}
-	setting := operation_setting.GetUpstreamAccountKeyCheckSetting()
-	recovered, _, err := applyUpstreamAccountKeyCheckSuccess(setting, account)
-	if err != nil {
+	recovery.AccountStatusBefore = account.Status
+	recovery.AccountStatusAfter = account.Status
+	accountHadRuntimeBlock := account.Status != common.ChannelStatusEnabled ||
+		account.IsCoolingDown(common.GetTimestamp()) ||
+		strings.TrimSpace(account.DisabledReason) != "" ||
+		strings.TrimSpace(account.LastError) != ""
+	recovery.ChannelStatusBefore = common.ChannelStatusEnabled
+	recovery.ChannelStatusAfter = common.ChannelStatusEnabled
+	settings := upstreamaccount.ApplyAccountAutoCheckSuccess(account.OtherSettings)
+	updates := map[string]any{
+		"settings":            settings,
+		"status":              common.ChannelStatusEnabled,
+		"disabled_reason":     "",
+		"last_error":          "",
+		"rate_limited_until":  0,
+		"overload_until":      0,
+		"temp_disabled_until": 0,
+	}
+	if err := model.DB.Model(&model.ChannelAccount{}).Where("channel_id = ? AND id = ?", channelID, selectedAccountID).Updates(updates).Error; err != nil {
 		common.SysLog(fmt.Sprintf("failed to mark channel account model test success: channel_id=%d account_id=%d error=%v", channelID, selectedAccountID, err))
-		return upstreamaccount.ReadAccountAutoCheckMetadata(account.OtherSettings).FailureCount, false
+		recovery.FailureCount = upstreamaccount.ReadAccountAutoCheckMetadata(account.OtherSettings).FailureCount
+		return recovery
 	}
-	if recovered {
-		_ = refreshChangedAccountChannels(map[int]struct{}{channelID: {}})
+	account.OtherSettings = settings
+	account.Status = common.ChannelStatusEnabled
+	recovery.FailureCount = upstreamaccount.ReadAccountAutoCheckMetadata(settings).FailureCount
+	recovery.Updated = true
+	recovery.AccountStatusAfter = common.ChannelStatusEnabled
+	recovery.AccountRecovered = accountHadRuntimeBlock
+
+	if channel, err := model.GetChannelById(channelID, true); err == nil && channel != nil {
+		recovery.ChannelStatusBefore = channel.Status
+		recovery.ChannelStatusAfter = channel.Status
+		if channel.Status != common.ChannelStatusEnabled {
+			service.EnableChannel(channelID, "", channel.Name)
+			recovery.ChannelRecovered = true
+			recovery.ChannelStatusAfter = common.ChannelStatusEnabled
+		}
 	}
-	return upstreamaccount.ReadAccountAutoCheckMetadata(account.OtherSettings).FailureCount, true
+	if refreshErr := refreshChangedAccountChannels(map[int]struct{}{channelID: {}}); refreshErr != nil {
+		common.SysLog(fmt.Sprintf("failed to refresh channel account capabilities after model test success: channel_id=%d account_id=%d error=%v", channelID, selectedAccountID, refreshErr))
+	}
+	return recovery
 }
 
 func applyManualChannelAccountTestFailure(channelID int, selectedAccountID int, errText string, countFailure bool) (failureCount int, counted bool, disabled bool) {
@@ -774,7 +856,17 @@ func applyManualChannelAccountTestFailure(channelID int, selectedAccountID int, 
 		return 0, false, false
 	}
 	if account.Status != common.ChannelStatusEnabled {
-		return upstreamaccount.ReadAccountAutoCheckMetadata(account.OtherSettings).FailureCount, false, false
+		metadata := upstreamaccount.ReadAccountAutoCheckMetadata(account.OtherSettings)
+		settings := upstreamaccount.ApplyAccountAutoCheckFailure(account.OtherSettings, metadata.FailureCount, errText, metadata.DisabledByAutoCheck)
+		updates := map[string]any{
+			"settings":   settings,
+			"last_error": errText,
+		}
+		if err := model.DB.Model(&model.ChannelAccount{}).Where("id = ?", account.Id).Updates(updates).Error; err != nil {
+			common.SysLog(fmt.Sprintf("failed to mark disabled channel account model test failure: channel_id=%d account_id=%d error=%v", channelID, selectedAccountID, err))
+			return metadata.FailureCount, false, false
+		}
+		return metadata.FailureCount, false, false
 	}
 	before := upstreamaccount.ReadAccountAutoCheckMetadata(account.OtherSettings).FailureCount
 	setting := operation_setting.GetUpstreamAccountKeyCheckSetting()
@@ -1292,11 +1384,13 @@ func TestChannel(c *gin.Context) {
 		})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"success": true,
 		"message": "",
 		"time":    consumedTime,
-	})
+	}
+	attachChannelTestRecoveryResponse(resp, result.recovery)
+	c.JSON(http.StatusOK, resp)
 }
 
 // channelTestSummary 记录一次批量渠道测试的结果，作为 SystemTask 历史结果保存。
