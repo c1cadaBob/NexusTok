@@ -314,6 +314,7 @@ func buildAccounts(snapshot *Snapshot, req CreateRequest, defaultModels string, 
 			StatusCodeMapping:  config.StatusCodeMapping,
 			MaxConcurrency:     config.MaxConcurrency,
 		}
+		applySyncedKeyModelFailureFallback(&account, key)
 		if err := validateEnabledSyncedAccountCapability(account); err != nil {
 			return nil, err
 		}
@@ -323,6 +324,29 @@ func buildAccounts(snapshot *Snapshot, req CreateRequest, defaultModels string, 
 		return nil, fmt.Errorf("没有可创建的同步密钥")
 	}
 	return accounts, nil
+}
+
+// applySyncedKeyModelFailureFallback 将“模型同步失败且模型为空”的同步密钥降级为禁用保存。
+//
+// 生产上游经常会因为余额不足、权限不足或模型接口差异导致单把 key 拉不到模型。
+// 如果继续让启用态校验报错，整次账号同步都会失败，管理员也看不到其它成功 key。
+// 因此只有在已经有明确 key_models_sync_error 且最终模型仍为空时，才把该 key 标记为
+// 手动禁用并写入脱敏原因；普通启用 key 没配置模型时仍由后续校验阻止保存。
+func applySyncedKeyModelFailureFallback(account *model.ChannelAccount, key SyncedKey) {
+	if account == nil || account.Status != common.ChannelStatusEnabled || strings.TrimSpace(account.Models) != "" {
+		return
+	}
+	errText := strings.TrimSpace(common.MaskSensitiveInfo(key.KeyModelSyncError))
+	if errText == "" {
+		return
+	}
+	if key := strings.TrimSpace(key.Key); key != "" {
+		errText = strings.ReplaceAll(errText, key, "[redacted-key]")
+	}
+	reason := "同步密钥模型列表获取失败：" + errText
+	account.Status = common.ChannelStatusManuallyDisabled
+	account.DisabledReason = reason
+	account.LastError = reason
 }
 
 // validateEnabledSyncedAccountCapability 校验启用中的同步密钥是否具备可路由能力。

@@ -59,6 +59,43 @@ type sub2APIKeyList struct {
 	Total int          `json:"total"`
 }
 
+// UnmarshalJSON 兼容 sub2api 不同版本的密钥列表 envelope。
+//
+// 生产站点里常见的形态包括 `items/total`、`data/total`、`list/count`，
+// 也有接口直接把 data 返回成数组。这里统一归一化，避免分页字段差异导致同步不到 key。
+func (l *sub2APIKeyList) UnmarshalJSON(data []byte) error {
+	var direct []sub2APIKey
+	if err := common.Unmarshal(data, &direct); err == nil {
+		l.Items = direct
+		l.Total = len(direct)
+		return nil
+	}
+	var raw map[string]any
+	if err := common.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	for _, field := range []string{"items", "data", "list", "records", "rows"} {
+		value, ok := raw[field]
+		if !ok {
+			continue
+		}
+		payload, err := common.Marshal(value)
+		if err != nil {
+			return err
+		}
+		var items []sub2APIKey
+		if err := common.Unmarshal(payload, &items); err == nil {
+			l.Items = items
+			break
+		}
+	}
+	l.Total = intValueFromRaw(raw, "total", "count", "total_count", "totalCount")
+	if l.Total <= 0 {
+		l.Total = len(l.Items)
+	}
+	return nil
+}
+
 type sub2APIKey struct {
 	ID        any              `json:"id"`
 	Name      string           `json:"name"`
@@ -69,6 +106,38 @@ type sub2APIKey struct {
 	Models    []string         `json:"models"`
 	Quota     float64          `json:"quota"`
 	QuotaUsed float64          `json:"quota_used"`
+}
+
+// UnmarshalJSON 兼容 sub2api 的 models 数组、字符串或空值三种形态。
+func (k *sub2APIKey) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		ID        any              `json:"id"`
+		Name      string           `json:"name"`
+		Key       string           `json:"key"`
+		Status    sub2APIKeyStatus `json:"status"`
+		GroupID   any              `json:"group_id"`
+		Group     sub2APIGroup     `json:"group"`
+		Models    any              `json:"models"`
+		Quota     float64          `json:"quota"`
+		QuotaUsed float64          `json:"quota_used"`
+	}
+	if err := common.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*k = sub2APIKey{
+		ID:        raw.ID,
+		Name:      raw.Name,
+		Key:       raw.Key,
+		Status:    raw.Status,
+		GroupID:   raw.GroupID,
+		Group:     raw.Group,
+		Quota:     raw.Quota,
+		QuotaUsed: raw.QuotaUsed,
+	}
+	if raw.Models != nil {
+		k.Models = splitStringValues([]string{modelsValueToCSV(raw.Models)})
+	}
+	return nil
 }
 
 // sub2APIKeyStatus 兼容 sub2api 不同版本的 API Key 状态字段。
@@ -583,25 +652,47 @@ func friendlySub2APIEndpointError(err error) error {
 
 func (c *Sub2APIClient) login(ctx context.Context, api *httpClient, credential Credential) (*sub2APILoginResponse, error) {
 	email := strings.TrimSpace(credential.Email)
-	if email == "" {
-		email = strings.TrimSpace(credential.Username)
+	username := strings.TrimSpace(credential.Username)
+	if email == "" && strings.Contains(username, "@") {
+		email = username
 	}
-	if email == "" || strings.TrimSpace(credential.Password) == "" {
+	identity := firstNonEmpty(email, username)
+	if identity == "" || strings.TrimSpace(credential.Password) == "" {
 		return nil, fmt.Errorf("sub2api 邮箱和密码不能为空")
 	}
-	var envelope sub2APIEnvelope[sub2APILoginResponse]
-	body := map[string]string{
-		"email":    email,
-		"password": credential.Password,
+	bodies := uniqueStringMaps([]map[string]string{
+		{
+			"email":    firstNonEmpty(email, identity),
+			"password": credential.Password,
+		},
+		{
+			"username": firstNonEmpty(username, identity),
+			"password": credential.Password,
+		},
+		{
+			"email":    firstNonEmpty(email, identity),
+			"username": firstNonEmpty(username, identity),
+			"password": credential.Password,
+		},
+	})
+	var lastErr error
+	for _, body := range bodies {
+		var envelope sub2APIEnvelope[sub2APILoginResponse]
+		if err := api.postJSON(ctx, "/api/v1/auth/login", nil, body, &envelope); err != nil {
+			lastErr = err
+			continue
+		}
+		login, err := unwrapSub2API(envelope)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		return &login, nil
 	}
-	if err := api.postJSON(ctx, "/api/v1/auth/login", nil, body, &envelope); err != nil {
-		return nil, err
+	if lastErr == nil {
+		lastErr = fmt.Errorf("sub2api 登录失败")
 	}
-	login, err := unwrapSub2API(envelope)
-	if err != nil {
-		return nil, err
-	}
-	return &login, nil
+	return nil, lastErr
 }
 
 func (c *Sub2APIClient) fetchMe(ctx context.Context, api *httpClient, headers http.Header) (sub2APIUser, error) {

@@ -419,6 +419,66 @@ func TestCreateFromPreviewRejectsEnabledSyncedAccountWithoutModels(t *testing.T)
 	require.Equal(t, int64(0), accountCount)
 }
 
+func TestCreateFromPreviewDisablesSyncedAccountWhenKeyModelSyncFails(t *testing.T) {
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ChannelAccount{}))
+	model.DB = db
+	model.LOG_DB = db
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+
+	previewID := "create-preview-model-sync-failure"
+	snapshot := &Snapshot{
+		Platform: PlatformSub2API,
+		BaseURL:  "https://sub2api.example/",
+		Keys: []SyncedKey{
+			{
+				ExternalID:         "balance-empty-models",
+				Name:               "Balance Empty Models",
+				Key:                "sk-secret-model-fetch",
+				MaskedKey:          "sk-sec...etch",
+				GroupName:          "vip",
+				KeyModelSyncSource: keyModelSyncSourceFetchModels,
+				KeyModelSyncError:  "status code: 403, body: Insufficient account balance for sk-secret-model-fetch",
+			},
+		},
+	}
+	require.NoError(t, previewCache.SetWithTTL(previewID, PreviewRecord{
+		ID:        previewID,
+		ExpiresAt: time.Now().Add(time.Minute).Unix(),
+		Snapshot:  snapshot,
+	}, time.Minute))
+
+	result, err := CreateFromPreview(CreateRequest{
+		PreviewID: previewID,
+		Channel: ChannelCreateConfig{
+			Name: "model-sync-failure-channel",
+			Type: constant.ChannelTypeOpenAI,
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, 1, result.Created)
+
+	var account model.ChannelAccount
+	require.NoError(t, db.First(&account).Error)
+	require.Equal(t, common.ChannelStatusManuallyDisabled, account.Status)
+	require.Empty(t, account.Models)
+	require.Contains(t, account.DisabledReason, "同步密钥模型列表获取失败")
+	require.NotContains(t, account.DisabledReason, "sk-secret-model-fetch")
+	require.Equal(t, account.DisabledReason, account.LastError)
+}
+
 func TestCreateFromPreviewRejectsEnabledSyncedAccountWithoutAccessGroups(t *testing.T) {
 	oldDB := model.DB
 	oldLogDB := model.LOG_DB

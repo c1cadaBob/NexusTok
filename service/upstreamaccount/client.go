@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -206,6 +207,111 @@ func stringValue(value any) string {
 	default:
 		return ""
 	}
+}
+
+func intValueFromRaw(raw map[string]any, fields ...string) int {
+	for _, field := range fields {
+		value, ok := raw[field]
+		if !ok {
+			continue
+		}
+		switch v := value.(type) {
+		case int:
+			return v
+		case int64:
+			return int(v)
+		case float64:
+			return int(v)
+		case string:
+			parsed, err := strconv.Atoi(strings.TrimSpace(v))
+			if err == nil {
+				return parsed
+			}
+		}
+	}
+	return 0
+}
+
+func modelsValueToCSV(value any) string {
+	switch v := value.(type) {
+	case string:
+		return strings.Join(splitModels(v), ",")
+	case []string:
+		return strings.Join(splitStringValues(v), ",")
+	case []any:
+		models := make([]string, 0, len(v))
+		for _, item := range v {
+			if modelName := stringValue(item); modelName != "" {
+				models = append(models, modelName)
+			}
+		}
+		return strings.Join(splitStringValues(models), ",")
+	default:
+		payload, err := common.Marshal(value)
+		if err != nil {
+			return ""
+		}
+		var models []string
+		if err := common.Unmarshal(payload, &models); err == nil {
+			return strings.Join(splitStringValues(models), ",")
+		}
+		return ""
+	}
+}
+
+func splitStringValues(values []string) []string {
+	seen := map[string]struct{}{}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		for _, part := range strings.Split(value, ",") {
+			item := strings.TrimSpace(part)
+			if item == "" {
+				continue
+			}
+			if _, exists := seen[item]; exists {
+				continue
+			}
+			seen[item] = struct{}{}
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+func uniqueStringMaps(items []map[string]string) []map[string]string {
+	result := make([]map[string]string, 0, len(items))
+	seen := map[string]struct{}{}
+	for _, item := range items {
+		if len(item) == 0 {
+			continue
+		}
+		keys := make([]string, 0, len(item))
+		for key := range item {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		var signature strings.Builder
+		for _, key := range keys {
+			value := strings.TrimSpace(item[key])
+			if value == "" {
+				continue
+			}
+			signature.WriteString(key)
+			signature.WriteByte('=')
+			signature.WriteString(value)
+			signature.WriteByte(';')
+		}
+		if signature.Len() == 0 {
+			continue
+		}
+		sig := signature.String()
+		if _, exists := seen[sig]; exists {
+			continue
+		}
+		seen[sig] = struct{}{}
+		result = append(result, item)
+	}
+	return result
 }
 
 func floatPtr(value float64) *float64 {

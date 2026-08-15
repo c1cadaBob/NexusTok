@@ -28,6 +28,78 @@ type openAIModelsResponse struct {
 	Data []openAIModel `json:"data"`
 }
 
+// UnmarshalJSON 兼容 OpenAI 兼容模型接口的常见返回形态。
+//
+// 标准接口返回 `{data:[{id:"..."}]}`；部分代理站返回 `{models:[...]}`，
+// 或直接返回字符串/对象数组。这里只提取模型 ID/名称，不读取也不保存任何凭据。
+func (r *openAIModelsResponse) UnmarshalJSON(data []byte) error {
+	var direct []any
+	if err := common.Unmarshal(data, &direct); err == nil {
+		r.Data = normalizeOpenAIModelItems(direct)
+		return nil
+	}
+	var raw map[string]any
+	if err := common.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	for _, field := range []string{"data", "models", "items", "list"} {
+		value, ok := raw[field]
+		if !ok {
+			continue
+		}
+		payload, err := common.Marshal(value)
+		if err != nil {
+			return err
+		}
+		var items []any
+		if err := common.Unmarshal(payload, &items); err == nil {
+			r.Data = normalizeOpenAIModelItems(items)
+			return nil
+		}
+	}
+	return nil
+}
+
+func normalizeOpenAIModelItems(items []any) []openAIModel {
+	models := make([]openAIModel, 0, len(items))
+	for _, item := range items {
+		switch value := item.(type) {
+		case string:
+			if id := strings.TrimSpace(value); id != "" {
+				models = append(models, openAIModel{ID: id})
+			}
+		case map[string]any:
+			id := firstStringField(value, "id", "name", "model")
+			if id != "" {
+				models = append(models, openAIModel{ID: id})
+			}
+		default:
+			payload, err := common.Marshal(value)
+			if err != nil {
+				continue
+			}
+			var model openAIModel
+			if err := common.Unmarshal(payload, &model); err == nil && strings.TrimSpace(model.ID) != "" {
+				models = append(models, model)
+			}
+		}
+	}
+	return models
+}
+
+func firstStringField(raw map[string]any, fields ...string) string {
+	for _, field := range fields {
+		value, ok := raw[field]
+		if !ok {
+			continue
+		}
+		if str, ok := value.(string); ok && strings.TrimSpace(str) != "" {
+			return strings.TrimSpace(str)
+		}
+	}
+	return ""
+}
+
 // ChannelWithAccountCredential 构造仅用于一次上游请求的渠道副本。
 //
 // 账号池账号允许覆盖渠道的连接参数。模型获取和密钥自动测试必须按目标账号执行，
@@ -113,7 +185,6 @@ func FetchChannelModelIDs(channel *model.Channel) ([]string, error) {
 		return NormalizeModelNames(models), nil
 	}
 
-	url := fetchModelsURL(channel.Type, baseURL)
 	key, _, apiErr := channel.GetNextEnabledKey()
 	if apiErr != nil {
 		return nil, fmt.Errorf("获取渠道密钥失败: %w", apiErr)
@@ -125,7 +196,7 @@ func FetchChannelModelIDs(channel *model.Channel) ([]string, error) {
 		return nil, err
 	}
 
-	body, err := getResponseBody(http.MethodGet, url, channel, headers)
+	body, err := fetchModelsResponseBody(channel.Type, baseURL, channel, headers)
 	if err != nil {
 		return nil, err
 	}
@@ -140,6 +211,51 @@ func FetchChannelModelIDs(channel *model.Channel) ([]string, error) {
 		ids = append(ids, item.ID)
 	}
 	return NormalizeModelNames(ids), nil
+}
+
+func fetchModelsResponseBody(channelType int, baseURL string, channel *model.Channel, headers http.Header) ([]byte, error) {
+	urls := fetchModelsCandidateURLs(channelType, baseURL)
+	var lastErr error
+	for _, url := range urls {
+		body, err := getResponseBody(http.MethodGet, url, channel, headers)
+		if err == nil {
+			return body, nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("模型列表地址为空")
+	}
+	return nil, lastErr
+}
+
+func fetchModelsCandidateURLs(channelType int, baseURL string) []string {
+	primary := fetchModelsURL(channelType, baseURL)
+	candidates := []string{primary}
+	switch channelType {
+	case constant.ChannelTypeAli, constant.ChannelTypeZhipu_v4, constant.ChannelTypeVolcEngine, constant.ChannelTypeMoonshot:
+		candidates = append(candidates, fmt.Sprintf("%s/v1/models", baseURL), fmt.Sprintf("%s/models", baseURL))
+	default:
+		candidates = append(candidates, fmt.Sprintf("%s/models", baseURL))
+	}
+	return uniqueStrings(candidates)
+}
+
+func uniqueStrings(values []string) []string {
+	seen := map[string]struct{}{}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }
 
 func fetchModelsURL(channelType int, baseURL string) string {

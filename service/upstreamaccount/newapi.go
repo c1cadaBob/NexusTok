@@ -45,6 +45,44 @@ type newAPITokenList struct {
 	Total int           `json:"total"`
 }
 
+// UnmarshalJSON 兼容 new-api 及其分支在 token 列表接口上的分页字段差异。
+//
+// 官方接口通常返回 `data.items` 和 `data.total`，部分兼容站点会把列表放在
+// `data.data`、`data.list`、`data.records`，甚至直接让 `data` 成为数组。这里在
+// 解析层统一成 Items/Total，避免同步流程把字段名差异误判成“没有密钥”。
+func (l *newAPITokenList) UnmarshalJSON(data []byte) error {
+	var direct []newAPIToken
+	if err := common.Unmarshal(data, &direct); err == nil {
+		l.Items = direct
+		l.Total = len(direct)
+		return nil
+	}
+	var raw map[string]any
+	if err := common.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	for _, field := range []string{"items", "data", "list", "records", "rows"} {
+		value, ok := raw[field]
+		if !ok {
+			continue
+		}
+		payload, err := common.Marshal(value)
+		if err != nil {
+			return err
+		}
+		var items []newAPIToken
+		if err := common.Unmarshal(payload, &items); err == nil {
+			l.Items = items
+			break
+		}
+	}
+	l.Total = intValueFromRaw(raw, "total", "count", "total_count", "totalCount")
+	if l.Total <= 0 {
+		l.Total = len(l.Items)
+	}
+	return nil
+}
+
 type newAPIToken struct {
 	ID             any     `json:"id"`
 	Name           string  `json:"name"`
@@ -55,6 +93,26 @@ type newAPIToken struct {
 	RemainQuota    float64 `json:"remain_quota"`
 	UsedQuota      float64 `json:"used_quota"`
 	UnlimitedQuota bool    `json:"unlimited_quota"`
+}
+
+// UnmarshalJSON 兼容 token 模型字段的数组和字符串两种返回形态。
+//
+// new-api 主线使用 model_limits 字符串；一些二开站点会返回 models 数组或逗号分隔
+// 字符串。这里仍落到 ModelLimits，后续沿用 splitModels 去重和清理空白。
+func (t *newAPIToken) UnmarshalJSON(data []byte) error {
+	type alias newAPIToken
+	var raw struct {
+		alias
+		Models any `json:"models"`
+	}
+	if err := common.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*t = newAPIToken(raw.alias)
+	if strings.TrimSpace(t.ModelLimits) == "" && raw.Models != nil {
+		t.ModelLimits = modelsValueToCSV(raw.Models)
+	}
+	return nil
 }
 
 type newAPIRatioConfig struct {
@@ -126,11 +184,14 @@ func (c *NewAPIClient) BeginPreview(ctx context.Context, credential Credential) 
 	if err != nil {
 		return nil, nil, err
 	}
-	if snapshot, ok := c.fetchSnapshotWithSavedSession(ctx, api, status.QuotaPerUnit, credential.Session); ok {
-		return snapshot, nil, nil
+	if snapshot, ok, sessionErr := c.fetchSnapshotWithSavedSession(ctx, api, status.QuotaPerUnit, credential.Session); ok || sessionErr != nil {
+		return snapshot, nil, sessionErr
 	}
 	if credentialRequiresImportedSession(credential, AuthModeSessionCookie) {
 		return nil, nil, fmt.Errorf("new-api Cookie 登录态不可用：请确认 Cookie 未过期；如果目标站要求 New-Api-User 头，请填写 user_id / New-Api-User 后重试")
+	}
+	if credentialRequiresImportedSession(credential, AuthModeAccessToken) {
+		return nil, nil, fmt.Errorf("new-api Access Token 登录态不可用：请确认 token 未过期，并且同时填写 user_id / New-Api-User 后重试")
 	}
 	user, headers, needs2FA, err := c.login(ctx, api, credential)
 	if err != nil {
@@ -187,15 +248,15 @@ func (c *NewAPIClient) Complete2FA(ctx context.Context, record AuthChallengeReco
 	return c.fetchSnapshotWithAuthenticatedSession(ctx, api, quotaPerUnit, &user, headers)
 }
 
-func (c *NewAPIClient) fetchSnapshotWithSavedSession(ctx context.Context, api *httpClient, quotaPerUnit float64, session *AuthenticatedSession) (*Snapshot, bool) {
+func (c *NewAPIClient) fetchSnapshotWithSavedSession(ctx context.Context, api *httpClient, quotaPerUnit float64, session *AuthenticatedSession) (*Snapshot, bool, error) {
 	if api == nil || !authSessionMatches(session, PlatformNewAPI, api.baseURL) || session.NewAPI == nil {
-		return nil, false
+		return nil, false, nil
 	}
 	userID := strings.TrimSpace(session.NewAPI.UserID)
 	accessToken := normalizeImportedBearerToken(session.NewAPI.AccessToken)
 	if accessToken != "" {
 		if userID == "" {
-			return nil, false
+			return nil, true, fmt.Errorf("new-api Access Token 登录态缺少 user_id / New-Api-User，无法读取账号快照")
 		}
 		headers := http.Header{}
 		headers.Set("Authorization", accessToken)
@@ -203,7 +264,7 @@ func (c *NewAPIClient) fetchSnapshotWithSavedSession(ctx context.Context, api *h
 		user := &newAPIUser{ID: userID}
 		snapshot, err := c.fetchSnapshotWithAuthenticatedSession(ctx, api, quotaPerUnit, user, headers)
 		if err != nil {
-			return nil, false
+			return nil, true, fmt.Errorf("new-api Access Token 登录态不可用：%w", err)
 		}
 		snapshot.AuthSession = &AuthenticatedSession{
 			Platform:   PlatformNewAPI,
@@ -216,28 +277,28 @@ func (c *NewAPIClient) fetchSnapshotWithSavedSession(ctx context.Context, api *h
 				AccessToken: accessToken,
 			},
 		}
-		return snapshot, true
+		return snapshot, true, nil
 	}
 	if err := restoreCookiesToJar(api, session.NewAPI.Cookies); err != nil {
-		return nil, false
+		return nil, true, fmt.Errorf("new-api Cookie 登录态恢复失败：%w", err)
 	}
 	user := &newAPIUser{ID: userID}
 	if userID == "" {
 		self, err := c.fetchSelf(ctx, api, http.Header{})
 		if err != nil || stringValue(self.ID) == "" {
-			return nil, false
+			return nil, true, fmt.Errorf("new-api Cookie 登录态不可用，无法读取当前用户：%w", err)
 		}
 		user = &self
 	}
 	snapshot, err := c.fetchSnapshotWithAuthenticatedSession(ctx, api, quotaPerUnit, user, http.Header{})
 	if err != nil {
-		return nil, false
+		return nil, true, fmt.Errorf("new-api Cookie 登录态不可用：%w", err)
 	}
 	if snapshot.AuthSession != nil {
 		snapshot.AuthSession.AuthMode = NormalizeAuthMode(firstNonEmpty(session.AuthMode, AuthModeSessionCookie))
 		snapshot.AuthSession.ImportedAt = session.ImportedAt
 	}
-	return snapshot, true
+	return snapshot, true, nil
 }
 
 func (c *NewAPIClient) fetchSnapshotWithAuthenticatedSession(ctx context.Context, api *httpClient, quotaPerUnit float64, user *newAPIUser, headers http.Header) (*Snapshot, error) {
@@ -257,10 +318,11 @@ func (c *NewAPIClient) fetchSnapshotWithAuthenticatedSession(ctx context.Context
 		return nil, err
 	}
 	rates, warnings := c.fetchRatioConfig(ctx, api)
-	keys, err := c.fetchTokens(ctx, api, headers, quotaPerUnit, groupRates, rates)
+	keys, tokenWarnings, err := c.fetchTokens(ctx, api, headers, quotaPerUnit, groupRates, rates)
 	if err != nil {
 		return nil, err
 	}
+	warnings = append(warnings, tokenWarnings...)
 
 	snapshot := &Snapshot{
 		Platform: PlatformNewAPI,
@@ -323,29 +385,51 @@ func (c *NewAPIClient) fetchStatus(ctx context.Context, api *httpClient) (*newAP
 
 func (c *NewAPIClient) login(ctx context.Context, api *httpClient, credential Credential) (*newAPIUser, http.Header, bool, error) {
 	username := strings.TrimSpace(credential.Username)
-	if username == "" {
-		username = strings.TrimSpace(credential.Email)
+	email := strings.TrimSpace(credential.Email)
+	if email == "" && strings.Contains(username, "@") {
+		email = username
 	}
-	if username == "" || strings.TrimSpace(credential.Password) == "" {
+	identity := firstNonEmpty(username, email)
+	if identity == "" || strings.TrimSpace(credential.Password) == "" {
 		return nil, nil, false, fmt.Errorf("new-api 账号和密码不能为空")
 	}
-	body := map[string]string{
-		"username": username,
-		"password": credential.Password,
+	bodies := uniqueStringMaps([]map[string]string{
+		{
+			"username": identity,
+			"password": credential.Password,
+		},
+		{
+			"email":    firstNonEmpty(email, identity),
+			"password": credential.Password,
+		},
+		{
+			"username": identity,
+			"email":    firstNonEmpty(email, identity),
+			"password": credential.Password,
+		},
+	})
+	var lastErr error
+	for _, body := range bodies {
+		var envelope newAPIEnvelope[newAPIUser]
+		if err := api.postJSON(ctx, "/api/user/login?turnstile=", nil, body, &envelope); err != nil {
+			lastErr = err
+			continue
+		}
+		user, err := unwrapNewAPI(envelope)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if user.Require2FA {
+			return &user, nil, true, nil
+		}
+		headers := http.Header{}
+		return &user, headers, false, nil
 	}
-	var envelope newAPIEnvelope[newAPIUser]
-	if err := api.postJSON(ctx, "/api/user/login?turnstile=", nil, body, &envelope); err != nil {
-		return nil, nil, false, err
+	if lastErr == nil {
+		lastErr = fmt.Errorf("new-api 登录失败")
 	}
-	user, err := unwrapNewAPI(envelope)
-	if err != nil {
-		return nil, nil, false, err
-	}
-	if user.Require2FA {
-		return &user, nil, true, nil
-	}
-	headers := http.Header{}
-	return &user, headers, false, nil
+	return nil, nil, false, lastErr
 }
 
 func (c *NewAPIClient) fetchSelf(ctx context.Context, api *httpClient, headers http.Header) (newAPIUser, error) {
@@ -403,7 +487,7 @@ func (c *NewAPIClient) fetchRatioConfig(ctx context.Context, api *httpClient) (*
 	}, nil
 }
 
-func (c *NewAPIClient) fetchTokens(ctx context.Context, api *httpClient, headers http.Header, quotaPerUnit float64, groupRates map[string]float64, rates *RateSnapshot) ([]SyncedKey, error) {
+func (c *NewAPIClient) fetchTokens(ctx context.Context, api *httpClient, headers http.Header, quotaPerUnit float64, groupRates map[string]float64, rates *RateSnapshot) ([]SyncedKey, []string, error) {
 	var tokens []newAPIToken
 	for page := 1; page <= 1000; page++ {
 		path := "/api/token/?" + url.Values{
@@ -412,11 +496,11 @@ func (c *NewAPIClient) fetchTokens(ctx context.Context, api *httpClient, headers
 		}.Encode()
 		var envelope newAPIEnvelope[newAPITokenList]
 		if err := api.getJSON(ctx, path, headers, &envelope); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		pageData, err := unwrapNewAPI(envelope)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		tokens = append(tokens, pageData.Items...)
 		if len(pageData.Items) == 0 || len(tokens) >= pageData.Total {
@@ -424,12 +508,10 @@ func (c *NewAPIClient) fetchTokens(ctx context.Context, api *httpClient, headers
 		}
 	}
 	if len(tokens) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
-	fullKeys, err := c.fetchTokenKeys(ctx, api, headers, tokens)
-	if err != nil {
-		return nil, err
-	}
+	fullKeys, revealFailures := c.fetchTokenKeys(ctx, api, headers, tokens)
+	warnings := make([]string, 0, len(revealFailures))
 	result := make([]SyncedKey, 0, len(tokens))
 	for _, token := range tokens {
 		externalID := stringValue(token.ID)
@@ -438,7 +520,13 @@ func (c *NewAPIClient) fetchTokens(ctx context.Context, api *httpClient, headers
 			key = strings.TrimSpace(token.Key)
 		}
 		if key == "" {
-			return nil, fmt.Errorf("new-api 密钥 %s 缺少完整 key，请稍后重试或检查目标平台完整 Key 读取权限", firstNonEmpty(token.Name, externalID))
+			name := firstNonEmpty(token.Name, externalID, token.Key)
+			if failure := revealFailures[externalID]; failure != nil {
+				warnings = append(warnings, fmt.Sprintf("new-api 密钥 %s 完整 Key 读取失败，已跳过该密钥：%s", name, common.MaskSensitiveInfo(failure.Error())))
+			} else {
+				warnings = append(warnings, fmt.Sprintf("new-api 密钥 %s 缺少完整 key，已跳过该密钥", name))
+			}
+			continue
 		}
 		groupRatio, hasGroupRatio := groupRates[token.Group]
 		synced := SyncedKey{
@@ -469,10 +557,13 @@ func (c *NewAPIClient) fetchTokens(ctx context.Context, api *httpClient, headers
 		}
 		result = append(result, synced)
 	}
-	return result, nil
+	if len(result) == 0 {
+		return nil, warnings, fmt.Errorf("读取 new-api 完整 Key 失败：未读取到任何可同步的完整 Key，请检查目标平台完整 Key 读取权限")
+	}
+	return result, warnings, nil
 }
 
-func (c *NewAPIClient) fetchTokenKeys(ctx context.Context, api *httpClient, headers http.Header, tokens []newAPIToken) (map[string]string, error) {
+func (c *NewAPIClient) fetchTokenKeys(ctx context.Context, api *httpClient, headers http.Header, tokens []newAPIToken) (map[string]string, map[string]error) {
 	ids := make([]any, 0, len(tokens))
 	for _, token := range tokens {
 		// new-api 有些兼容版本会在列表接口直接返回完整 Key；只有列表 Key 为空或
@@ -485,6 +576,7 @@ func (c *NewAPIClient) fetchTokenKeys(ctx context.Context, api *httpClient, head
 		return nil, nil
 	}
 	normalized := map[string]string{}
+	failures := map[string]error{}
 	var batchErr error
 	var envelope newAPIEnvelope[newAPITokenKeysResponse]
 	if err := api.postJSON(ctx, "/api/token/batch/keys", headers, map[string]any{"ids": ids}, &envelope); err != nil {
@@ -509,6 +601,7 @@ func (c *NewAPIClient) fetchTokenKeys(ctx context.Context, api *httpClient, head
 		key, err := c.fetchTokenKey(ctx, api, headers, externalID)
 		if err != nil {
 			fallbackErr = err
+			failures[externalID] = err
 			continue
 		}
 		normalized[externalID] = key
@@ -519,30 +612,31 @@ func (c *NewAPIClient) fetchTokenKeys(ctx context.Context, api *httpClient, head
 			continue
 		}
 		if fallbackErr != nil {
-			return nil, fmt.Errorf("读取 new-api 完整 Key 失败：%w", fallbackErr)
+			failures[externalID] = fmt.Errorf("读取 new-api 完整 Key 失败：%w", fallbackErr)
+			continue
 		}
 		if batchErr != nil {
-			return nil, fmt.Errorf("读取 new-api 完整 Key 失败：%w", batchErr)
+			failures[externalID] = fmt.Errorf("读取 new-api 完整 Key 失败：%w", batchErr)
+			continue
 		}
-		return nil, fmt.Errorf("读取 new-api 完整 Key 失败：token %s 未返回完整 key", externalID)
+		failures[externalID] = fmt.Errorf("读取 new-api 完整 Key 失败：token %s 未返回完整 key", externalID)
 	}
-	if len(normalized) == 0 {
-		if fallbackErr != nil {
-			return nil, fmt.Errorf("读取 new-api 完整 Key 失败：%w", fallbackErr)
-		}
-		if batchErr != nil {
-			return nil, fmt.Errorf("读取 new-api 完整 Key 失败：%w", batchErr)
-		}
-	}
-	return normalized, nil
+	return normalized, failures
 }
 
 func (c *NewAPIClient) fetchTokenKey(ctx context.Context, api *httpClient, headers http.Header, externalID string) (string, error) {
 	var envelope newAPIEnvelope[struct {
 		Key string `json:"key"`
 	}]
-	if err := api.postJSON(ctx, "/api/token/"+url.PathEscape(externalID)+"/key", headers, nil, &envelope); err != nil {
-		return "", err
+	path := "/api/token/" + url.PathEscape(externalID) + "/key"
+	if err := api.postJSON(ctx, path, headers, nil, &envelope); err != nil {
+		var getEnvelope newAPIEnvelope[struct {
+			Key string `json:"key"`
+		}]
+		if getErr := api.getJSON(ctx, path, headers, &getEnvelope); getErr != nil {
+			return "", err
+		}
+		envelope = getEnvelope
 	}
 	data, err := unwrapNewAPI(envelope)
 	if err != nil {

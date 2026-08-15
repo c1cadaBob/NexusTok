@@ -438,7 +438,7 @@ func buildAccountFromSyncedKey(snapshot *Snapshot, key SyncedKey, config Account
 	if !hasGroup {
 		group = firstNonEmpty(key.GroupName, key.GroupID, defaultGroup)
 	}
-	return model.ChannelAccount{
+	account := model.ChannelAccount{
 		Name:               name,
 		Key:                key.Key,
 		Status:             status,
@@ -459,6 +459,8 @@ func buildAccountFromSyncedKey(snapshot *Snapshot, key SyncedKey, config Account
 		StatusCodeMapping:  config.StatusCodeMapping,
 		MaxConcurrency:     config.MaxConcurrency,
 	}
+	applySyncedKeyModelFailureFallback(&account, key)
+	return account
 }
 
 func buildAccountRefreshUpdates(existing *model.ChannelAccount, snapshot *Snapshot, key SyncedKey, config AccountCreateConfig, applySuggested bool, defaultModels string, defaultGroup string) (map[string]any, error) {
@@ -494,9 +496,12 @@ func buildAccountRefreshUpdates(existing *model.ChannelAccount, snapshot *Snapsh
 	if config.Enabled != nil && !*config.Enabled {
 		account.Status = common.ChannelStatusManuallyDisabled
 	}
+	applySyncedKeyModelFailureFallback(&account, key)
 	if err := validateEnabledSyncedAccountCapability(account); err != nil {
 		return nil, err
 	}
+	disabledReason := account.DisabledReason
+	lastError := account.LastError
 	updates := map[string]any{
 		"name":                account.Name,
 		"key":                 account.Key,
@@ -508,11 +513,11 @@ func buildAccountRefreshUpdates(existing *model.ChannelAccount, snapshot *Snapsh
 		"weight":              account.Weight,
 		"used_quota":          account.UsedQuota,
 		"settings":            settings,
-		"disabled_reason":     "",
+		"disabled_reason":     disabledReason,
 		"rate_limited_until":  0,
 		"overload_until":      0,
 		"temp_disabled_until": 0,
-		"last_error":          "",
+		"last_error":          lastError,
 	}
 	// 已有账号可能被管理员在 NexusTok 中做过本地覆盖。刷新默认只更新上游同步字段；
 	// 只有请求显式传入覆盖配置时才写入这些字段，避免一次刷新清空手工配置。
