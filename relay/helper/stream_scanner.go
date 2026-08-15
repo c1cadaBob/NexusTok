@@ -339,6 +339,10 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 
 	if info.StreamStatus.IsNormalEnd() && !info.StreamStatus.HasErrors() {
 		logger.LogInfo(c, fmt.Sprintf("stream ended: %s", info.StreamStatus.Summary()))
+	} else if info.StreamStatus.IsClientGone() {
+		// 客户端主动取消流式请求属于可预期的下游行为，但仍保留非正常结束
+		// 状态，确保计费、性能统计和退款逻辑不把它当作完整成功。
+		logger.LogWarn(c, fmt.Sprintf("stream ended with expected client interruption: %s, received=%d", info.StreamStatus.Summary(), info.ReceivedResponseCount))
 	} else {
 		logger.LogError(c, fmt.Sprintf("stream ended: %s, received=%d", info.StreamStatus.Summary(), info.ReceivedResponseCount))
 	}

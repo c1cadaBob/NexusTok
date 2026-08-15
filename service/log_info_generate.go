@@ -299,13 +299,15 @@ func appendStreamStatus(relayInfo *relaycommon.RelayInfo, other map[string]inter
 		return
 	}
 	ss := relayInfo.StreamStatus
-	// 判断流式状态：正常结束且无错误为 "ok"，否则为 "error"
+	// status 保持历史接口语义：正常结束且无软错误为 "ok"，否则为 "error"。
+	// severity 是新增的诊断维度，用于把客户端主动中断与真实故障区分开。
 	status := "ok"
 	if !ss.IsNormalEnd() || ss.HasErrors() {
 		status = "error"
 	}
 	streamInfo := map[string]interface{}{
 		"status":     status,
+		"severity":   string(ss.Severity()),
 		"end_reason": string(ss.EndReason),
 	}
 	if ss.EndError != nil {

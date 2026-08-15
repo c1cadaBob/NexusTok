@@ -172,6 +172,35 @@ func TestStreamStatus_IsNormalEnd_NilSafe(t *testing.T) {
 	assert.True(t, s.IsNormalEnd())
 }
 
+// TestStreamStatus_SeverityDistinguishesClientInterruption 测试客户端中断与真实错误
+// 的展示级别不同，同时确认 client_gone 不会改变 IsNormalEnd 的历史语义。
+func TestStreamStatus_SeverityDistinguishesClientInterruption(t *testing.T) {
+	t.Parallel()
+
+	clientGone := NewStreamStatus()
+	clientGone.SetEndReason(StreamEndReasonClientGone, fmt.Errorf("context canceled"))
+	assert.False(t, clientGone.IsNormalEnd())
+	assert.True(t, clientGone.IsClientGone())
+	assert.Equal(t, StreamSeverityWarning, clientGone.Severity())
+
+	timeout := NewStreamStatus()
+	timeout.SetEndReason(StreamEndReasonTimeout, fmt.Errorf("read timeout"))
+	assert.False(t, timeout.IsClientGone())
+	assert.Equal(t, StreamSeverityError, timeout.Severity())
+
+	success := NewStreamStatus()
+	success.SetEndReason(StreamEndReasonDone, nil)
+	assert.Equal(t, StreamSeverityOK, success.Severity())
+}
+
+// TestStreamStatus_SeverityNilSafe 测试空状态的严重级别回退。
+func TestStreamStatus_SeverityNilSafe(t *testing.T) {
+	t.Parallel()
+	var s *StreamStatus
+	assert.Equal(t, StreamSeverityOK, s.Severity())
+	assert.False(t, s.IsClientGone())
+}
+
 // TestStreamStatus_Summary 测试状态摘要的生成格式。
 func TestStreamStatus_Summary(t *testing.T) {
 	t.Parallel()

@@ -18,7 +18,7 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { renderAuditContent } from './format'
+import { getStreamSeverity, renderAuditContent } from './format'
 import type { LogOtherData } from '../types'
 
 const t = (key: string, opts?: Record<string, unknown>) =>
@@ -26,6 +26,39 @@ const t = (key: string, opts?: Record<string, unknown>) =>
     const value = opts?.[name]
     return value == null ? '' : String(value)
   })
+
+describe('getStreamSeverity', () => {
+  test('优先使用后端写入的 warning 严重级别', () => {
+    assert.equal(
+      getStreamSeverity({
+        status: 'error',
+        severity: 'warning',
+        end_reason: 'client_gone',
+      }),
+      'warning'
+    )
+  })
+
+  test('旧日志中的 client_gone 会回退为 warning', () => {
+    assert.equal(
+      getStreamSeverity({
+        status: 'error',
+        end_reason: 'client_gone',
+      }),
+      'warning'
+    )
+  })
+
+  test('旧错误日志仍然保持 error', () => {
+    assert.equal(
+      getStreamSeverity({
+        status: 'error',
+        end_reason: 'timeout',
+      }),
+      'error'
+    )
+  })
+})
 
 describe('renderAuditContent', () => {
   test('登录日志会使用结构化 method 渲染摘要', () => {

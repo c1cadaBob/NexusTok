@@ -54,6 +54,7 @@ import {
   getParamOverrideActionLabel,
   parseAuditLine,
   decodeBillingExprB64,
+  getStreamSeverity,
   getTieredBillingSummary,
   hasAnyCacheTokens,
   isViolationFeeLog,
@@ -1135,14 +1136,24 @@ export function DetailsDialog(props: DetailsDialogProps) {
             {/* Stream status details (admin only) */}
             {props.isAdmin &&
               other?.stream_status &&
-              other.stream_status.status !== 'ok' && (
+              getStreamSeverity(other.stream_status) !== 'ok' && (
                 <DetailSection label={t('Stream Status')}>
                   <DetailRow
                     label={t('Status')}
                     value={
                       <StatusBadge
-                        label={other.stream_status.status || t('Error')}
-                        variant='red'
+                        label={
+                          getStreamSeverity(other.stream_status) === 'warning'
+                            ? other.stream_status.end_reason === 'client_gone'
+                              ? t('Client disconnected')
+                              : t('Warning')
+                            : t('Error')
+                        }
+                        variant={
+                          getStreamSeverity(other.stream_status) === 'warning'
+                            ? 'warning'
+                            : 'red'
+                        }
                         size='sm'
                         copyable={false}
                       />

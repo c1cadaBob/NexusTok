@@ -28,6 +28,29 @@ import type { LogOtherData } from '../types'
 
 export { normalizeTierLabel }
 
+export type StreamSeverity = 'ok' | 'warning' | 'error'
+
+/**
+ * 解析流状态严重级别，兼容新旧消费日志。
+ *
+ * 新日志优先使用后端写入的 severity；旧日志没有该字段时，仅将明确的
+ * client_gone 推断为 warning，其余仍沿用 status 的 ok/error 语义。
+ */
+export function getStreamSeverity(
+  streamStatus: LogOtherData['stream_status'] | null | undefined
+): StreamSeverity {
+  if (!streamStatus) return 'ok'
+  if (
+    streamStatus.severity === 'ok' ||
+    streamStatus.severity === 'warning' ||
+    streamStatus.severity === 'error'
+  ) {
+    return streamStatus.severity
+  }
+  if (streamStatus.end_reason === 'client_gone') return 'warning'
+  return streamStatus.status === 'ok' ? 'ok' : 'error'
+}
+
 const PARAM_OVERRIDE_ACTION_MAP: Record<string, string> = {
   set: 'Set',
   delete: 'Delete',

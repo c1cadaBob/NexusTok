@@ -48,6 +48,7 @@ import {
   formatModelName,
   getFirstResponseTimeColor,
   getResponseTimeColor,
+  getStreamSeverity,
   getTieredBillingSummary,
   hasAnyCacheTokens,
   parseLogOther,
@@ -699,16 +700,33 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
               </span>
               {log.is_stream &&
                 other?.stream_status &&
-                other.stream_status.status !== 'ok' && (
+                getStreamSeverity(other.stream_status) !== 'ok' && (
                   <TooltipProvider>
                     <Tooltip>
                       <TooltipTrigger
-                        render={<CircleAlert className='size-3 text-red-500' />}
+                        render={
+                          <CircleAlert
+                            className={cn(
+                              'size-3',
+                              getStreamSeverity(other.stream_status) ===
+                                'warning'
+                                ? 'text-warning'
+                                : 'text-red-500'
+                            )}
+                          />
+                        }
                       ></TooltipTrigger>
                       <TooltipContent>
                         <div className='space-y-0.5 text-xs'>
                           <p>
-                            {t('Stream Status')}: {t('Error')}
+                            {t('Stream Status')}:{' '}
+                            {getStreamSeverity(other.stream_status) ===
+                            'warning'
+                              ? other.stream_status.end_reason ===
+                                'client_gone'
+                                ? t('Client disconnected')
+                                : t('Warning')
+                              : t('Error')}
                           </p>
                           <p>{other.stream_status.end_reason || 'unknown'}</p>
                           {(other.stream_status.error_count ?? 0) > 0 && (

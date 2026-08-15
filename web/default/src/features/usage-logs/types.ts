@@ -217,6 +217,7 @@ export interface LogOtherData {
   group?: string
   stream_status?: {
     status?: string
+    severity?: 'ok' | 'warning' | 'error' | string
     end_reason?: string
     error_count?: number
     end_error?: string

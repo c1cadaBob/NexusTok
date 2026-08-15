@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"math"
 	"testing"
 
@@ -80,6 +81,30 @@ func TestGenerateTextOtherInfoIncludesUpstreamRatioConversion(t *testing.T) {
 	adminInfo, ok := other["admin_info"].(map[string]interface{})
 	require.True(t, ok)
 	require.InDelta(t, 0.35, adminInfo["ratio_conversion"], 0.000001)
+}
+
+func TestGenerateTextOtherInfoIncludesClientGoneWarningSeverity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(nil)
+
+	relayInfo := &relaycommon.RelayInfo{
+		IsStream:     true,
+		StreamStatus: relaycommon.NewStreamStatus(),
+		ChannelMeta:  &relaycommon.ChannelMeta{},
+	}
+	relayInfo.StreamStatus.SetEndReason(
+		relaycommon.StreamEndReasonClientGone,
+		fmt.Errorf("context canceled"),
+	)
+
+	other := GenerateTextOtherInfo(ctx, relayInfo, 1, 1, 1, 0, 0, 0, 1)
+
+	streamInfo, ok := other["stream_status"].(map[string]interface{})
+	require.True(t, ok)
+	require.Equal(t, "error", streamInfo["status"])
+	require.Equal(t, "warning", streamInfo["severity"])
+	require.Equal(t, "client_gone", streamInfo["end_reason"])
+	require.Equal(t, "context canceled", streamInfo["end_error"])
 }
 
 func TestAttachStandardBillingQuotaNestsUnderAdminInfo(t *testing.T) {

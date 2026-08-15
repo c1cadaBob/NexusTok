@@ -14,15 +14,27 @@ import (
 type StreamEndReason string
 
 const (
-	StreamEndReasonNone        StreamEndReason = ""             // 未设置结束原因
-	StreamEndReasonDone        StreamEndReason = "done"         // 正常完成（收到 [DONE] 标记）
-	StreamEndReasonTimeout     StreamEndReason = "timeout"      // 读取超时
-	StreamEndReasonClientGone  StreamEndReason = "client_gone"  // 客户端断开连接
+	StreamEndReasonNone        StreamEndReason = ""              // 未设置结束原因
+	StreamEndReasonDone        StreamEndReason = "done"          // 正常完成（收到 [DONE] 标记）
+	StreamEndReasonTimeout     StreamEndReason = "timeout"       // 读取超时
+	StreamEndReasonClientGone  StreamEndReason = "client_gone"   // 客户端断开连接
 	StreamEndReasonScannerErr  StreamEndReason = "scanner_error" // 扫描器读取错误
 	StreamEndReasonHandlerStop StreamEndReason = "handler_stop"  // 处理器主动停止
 	StreamEndReasonEOF         StreamEndReason = "eof"           // 流正常结束（EOF）
 	StreamEndReasonPanic       StreamEndReason = "panic"         // 处理过程中发生 panic
 	StreamEndReasonPingFail    StreamEndReason = "ping_fail"     // 心跳 ping 发送失败
+)
+
+// StreamSeverity 表示流式请求结束时对运维人员的诊断严重级别。
+//
+// client_gone 仍然属于非完整正常结束，不能改变计费、性能统计或退款判断；
+// 但它通常表示下游主动取消请求，因此只作为可预期警告展示，避免与上游故障混淆。
+type StreamSeverity string
+
+const (
+	StreamSeverityOK      StreamSeverity = "ok"
+	StreamSeverityWarning StreamSeverity = "warning"
+	StreamSeverityError   StreamSeverity = "error"
 )
 
 // maxStreamErrorEntries 是 StreamStatus 中存储的错误条目最大数量。
@@ -124,6 +136,28 @@ func (s *StreamStatus) IsNormalEnd() bool {
 	return s.EndReason == StreamEndReasonDone ||
 		s.EndReason == StreamEndReasonEOF ||
 		s.EndReason == StreamEndReasonHandlerStop
+}
+
+// IsClientGone 判断流是否因为下游请求上下文被取消而中断。
+//
+// 该判断只认明确的 client_gone 结束原因，不根据错误文本猜测，避免把上游
+// connection reset、超时或其他扫描器错误错误地降级为普通警告。
+func (s *StreamStatus) IsClientGone() bool {
+	return s != nil && s.EndReason == StreamEndReasonClientGone
+}
+
+// Severity 返回流状态用于日志和前端展示的严重级别。
+//
+// status 字段仍由消费日志按旧规则写入 error/ok；本方法只提供额外的诊断
+// 维度，确保历史消费者不受影响。
+func (s *StreamStatus) Severity() StreamSeverity {
+	if s == nil || (s.IsNormalEnd() && !s.HasErrors()) {
+		return StreamSeverityOK
+	}
+	if s.IsClientGone() {
+		return StreamSeverityWarning
+	}
+	return StreamSeverityError
 }
 
 // Summary 生成流状态的摘要字符串，包含结束原因、错误信息和软错误计数。
