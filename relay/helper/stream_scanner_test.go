@@ -4,22 +4,23 @@
 package helper
 
 import (
-	"fmt"      // 格式化输出
-	"io"       // IO 操作
-	"net/http" // HTTP 客户端
+	"context"           // 上下文取消测试
+	"fmt"               // 格式化输出
+	"io"                // IO 操作
+	"net/http"          // HTTP 客户端
 	"net/http/httptest" // HTTP 测试工具
-	"strings"  // 字符串操作
-	"sync"     // 同步原语
-	"sync/atomic" // 原子操作
-	"testing"  // 测试框架
-	"time"     // 时间处理
+	"strings"           // 字符串操作
+	"sync"              // 同步原语
+	"sync/atomic"       // 原子操作
+	"testing"           // 测试框架
+	"time"              // 时间处理
 
-	"github.com/c1cada/NexusTok/constant"                              // 常量定义
-	relaycommon "github.com/c1cada/NexusTok/relay/common"              // 中继通用类型
-	"github.com/c1cada/NexusTok/setting/operation_setting"             // 运营配置
-	"github.com/gin-gonic/gin"                                         // Gin Web 框架
-	"github.com/stretchr/testify/assert"                               // 测试断言（非致命）
-	"github.com/stretchr/testify/require"                              // 测试断言（致命）
+	"github.com/c1cada/NexusTok/constant"                  // 常量定义
+	relaycommon "github.com/c1cada/NexusTok/relay/common"  // 中继通用类型
+	"github.com/c1cada/NexusTok/setting/operation_setting" // 运营配置
+	"github.com/gin-gonic/gin"                             // Gin Web 框架
+	"github.com/stretchr/testify/assert"                   // 测试断言（非致命）
+	"github.com/stretchr/testify/require"                  // 测试断言（致命）
 )
 
 // init 初始化测试环境
@@ -99,6 +100,23 @@ func (s *slowReader) Read(p []byte) (int, error) {
 	return s.r.Read(p)
 }
 
+// cancellationReader 在请求上下文取消后返回 context.Canceled，
+// 用于复现响应体先于主循环报告读取错误的竞态。
+type cancellationReader struct {
+	started chan<- struct{}
+	done    <-chan struct{}
+}
+
+// Read 等待请求取消后返回 context.Canceled，模拟底层 HTTP 响应体的行为。
+func (r *cancellationReader) Read(_ []byte) (int, error) {
+	select {
+	case r.started <- struct{}{}:
+	default:
+	}
+	<-r.done
+	return 0, context.Canceled
+}
+
 // ---------- 基本正确性测试 ----------
 
 // TestStreamScannerHandler_NilInputs 测试空输入处理
@@ -147,7 +165,7 @@ func TestStreamScannerHandler_1000Chunks(t *testing.T) {
 		count.Add(1)
 	})
 
-	assert.Equal(t, int64(numChunks), count.Load()) // 应处理所有 chunk
+	assert.Equal(t, int64(numChunks), count.Load())        // 应处理所有 chunk
 	assert.Equal(t, numChunks, info.ReceivedResponseCount) // 计数器应正确
 }
 
@@ -245,10 +263,10 @@ func TestStreamScannerHandler_SkipsNonDataLines(t *testing.T) {
 	t.Parallel()
 
 	var b strings.Builder
-	b.WriteString(": comment line\n")     // 注释行
-	b.WriteString("event: message\n")    // 事件行
-	b.WriteString("id: 12345\n")         // ID 行
-	b.WriteString("retry: 5000\n")       // 重试行
+	b.WriteString(": comment line\n") // 注释行
+	b.WriteString("event: message\n") // 事件行
+	b.WriteString("id: 12345\n")      // ID 行
+	b.WriteString("retry: 5000\n")    // 重试行
 	for i := 0; i < 100; i++ {
 		fmt.Fprintf(&b, "data: payload_%d\n", i) // 数据行
 		b.WriteString(": interleaved comment\n") // 交错的注释行
@@ -289,8 +307,8 @@ func TestStreamScannerHandler_ScannerDecoupledFromSlowHandler(t *testing.T) {
 	t.Parallel()
 
 	const numChunks = 50
-	const upstreamDelay = 10 * time.Millisecond  // 上游延迟
-	const handlerDelay = 20 * time.Millisecond   // 处理函数延迟（比上游慢）
+	const upstreamDelay = 10 * time.Millisecond // 上游延迟
+	const handlerDelay = 20 * time.Millisecond  // 处理函数延迟（比上游慢）
 
 	// 创建管道，模拟慢速上游
 	pr, pw := io.Pipe()
@@ -523,9 +541,9 @@ func TestStreamScannerHandler_StreamStatus_DoneReason(t *testing.T) {
 
 	require.NotNil(t, info.StreamStatus)
 	assert.Equal(t, relaycommon.StreamEndReasonDone, info.StreamStatus.EndReason) // 正常完成
-	assert.Nil(t, info.StreamStatus.EndError)   // 无错误
-	assert.True(t, info.StreamStatus.IsNormalEnd())  // 是正常结束
-	assert.False(t, info.StreamStatus.HasErrors())   // 无错误
+	assert.Nil(t, info.StreamStatus.EndError)                                     // 无错误
+	assert.True(t, info.StreamStatus.IsNormalEnd())                               // 是正常结束
+	assert.False(t, info.StreamStatus.HasErrors())                                // 无错误
 }
 
 // TestStreamScannerHandler_StreamStatus_EOFWithoutDone 测试无 [DONE] 标记的 EOF 结束
@@ -544,7 +562,7 @@ func TestStreamScannerHandler_StreamStatus_EOFWithoutDone(t *testing.T) {
 
 	require.NotNil(t, info.StreamStatus)
 	assert.Equal(t, relaycommon.StreamEndReasonEOF, info.StreamStatus.EndReason) // EOF 结束
-	assert.True(t, info.StreamStatus.IsNormalEnd()) // EOF 也算正常结束
+	assert.True(t, info.StreamStatus.IsNormalEnd())                              // EOF 也算正常结束
 }
 
 // TestStreamScannerHandler_StreamStatus_HandlerStop 测试 Handler 主动停止的流状态
@@ -565,7 +583,7 @@ func TestStreamScannerHandler_StreamStatus_HandlerStop(t *testing.T) {
 
 	require.NotNil(t, info.StreamStatus)
 	assert.Equal(t, relaycommon.StreamEndReasonHandlerStop, info.StreamStatus.EndReason) // Handler 停止
-	assert.True(t, info.StreamStatus.HasErrors()) // Stop 包含错误
+	assert.True(t, info.StreamStatus.HasErrors())                                        // Stop 包含错误
 }
 
 // TestStreamScannerHandler_StreamStatus_HandlerDone 测试 Handler 主动完成的流状态
@@ -587,7 +605,7 @@ func TestStreamScannerHandler_StreamStatus_HandlerDone(t *testing.T) {
 	assert.Equal(t, int64(5), count.Load()) // 应只处理 5 个 chunk
 	require.NotNil(t, info.StreamStatus)
 	assert.Equal(t, relaycommon.StreamEndReasonDone, info.StreamStatus.EndReason) // Done 完成
-	assert.False(t, info.StreamStatus.HasErrors()) // Done 无错误
+	assert.False(t, info.StreamStatus.HasErrors())                                // Done 无错误
 }
 
 // TestStreamScannerHandler_StreamStatus_Timeout 测试超时的流状态
@@ -627,7 +645,54 @@ func TestStreamScannerHandler_StreamStatus_Timeout(t *testing.T) {
 
 	require.NotNil(t, info.StreamStatus)
 	assert.Equal(t, relaycommon.StreamEndReasonTimeout, info.StreamStatus.EndReason) // 超时结束
-	assert.False(t, info.StreamStatus.IsNormalEnd()) // 超时不是正常结束
+	assert.False(t, info.StreamStatus.IsNormalEnd())                                 // 超时不是正常结束
+}
+
+// TestStreamScannerHandler_StreamStatus_ClientGoneScannerError 测试客户端取消先触发
+// 响应体读取错误时仍然归类为 client_gone，而不是 scanner_error。
+func TestStreamScannerHandler_StreamStatus_ClientGoneScannerError(t *testing.T) {
+	t.Parallel()
+
+	requestContext, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).
+		WithContext(requestContext)
+
+	readStarted := make(chan struct{}, 1)
+	resp := &http.Response{
+		Body: io.NopCloser(&cancellationReader{
+			started: readStarted,
+			done:    requestContext.Done(),
+		}),
+	}
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}}
+
+	finished := make(chan struct{})
+	go func() {
+		StreamScannerHandler(c, resp, info, func(data string, sr *StreamResult) {})
+		close(finished)
+	}()
+
+	select {
+	case <-readStarted:
+		cancel()
+	case <-time.After(2 * time.Second):
+		t.Fatal("扫描器未开始读取响应体")
+	}
+
+	select {
+	case <-finished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("客户端取消后的流处理未结束")
+	}
+
+	require.NotNil(t, info.StreamStatus)
+	assert.Equal(t, relaycommon.StreamEndReasonClientGone, info.StreamStatus.EndReason)
+	assert.Equal(t, context.Canceled, info.StreamStatus.EndError)
+	assert.Equal(t, relaycommon.StreamSeverityWarning, info.StreamStatus.Severity())
 }
 
 // TestStreamScannerHandler_StreamStatus_SoftErrors 测试软错误的流状态
@@ -644,8 +709,8 @@ func TestStreamScannerHandler_StreamStatus_SoftErrors(t *testing.T) {
 
 	require.NotNil(t, info.StreamStatus)
 	assert.Equal(t, relaycommon.StreamEndReasonDone, info.StreamStatus.EndReason) // 仍然正常完成
-	assert.True(t, info.StreamStatus.HasErrors()) // 有错误
-	assert.Equal(t, 10, info.StreamStatus.TotalErrorCount()) // 每个 chunk 1 个错误，共 10 个
+	assert.True(t, info.StreamStatus.HasErrors())                                 // 有错误
+	assert.Equal(t, 10, info.StreamStatus.TotalErrorCount())                      // 每个 chunk 1 个错误，共 10 个
 }
 
 // TestStreamScannerHandler_StreamStatus_MultipleErrorsPerChunk 测试每个 chunk 多个错误
@@ -681,14 +746,14 @@ func TestStreamScannerHandler_StreamStatus_ErrorThenStop(t *testing.T) {
 	var count atomic.Int64
 	StreamScannerHandler(c, resp, info, func(data string, sr *StreamResult) {
 		count.Add(1)
-		sr.Error(fmt.Errorf("软错误"))  // 报告软错误
+		sr.Error(fmt.Errorf("软错误")) // 报告软错误
 		sr.Stop(fmt.Errorf("致命错误")) // 立即停止
 	})
 
 	assert.Equal(t, int64(1), count.Load()) // 只处理了 1 个 chunk
 	require.NotNil(t, info.StreamStatus)
 	assert.Equal(t, relaycommon.StreamEndReasonHandlerStop, info.StreamStatus.EndReason) // 停止原因为 HandlerStop
-	assert.Equal(t, 2, info.StreamStatus.TotalErrorCount()) // 1 个软错误 + 1 个致命错误 = 2
+	assert.Equal(t, 2, info.StreamStatus.TotalErrorCount())                              // 1 个软错误 + 1 个致命错误 = 2
 }
 
 // TestStreamScannerHandler_StreamStatus_InitializedIfNil 测试 StreamStatus 自动初始化
@@ -721,7 +786,7 @@ func TestStreamScannerHandler_StreamStatus_PreInitialized(t *testing.T) {
 	StreamScannerHandler(c, resp, info, func(data string, sr *StreamResult) {})
 
 	assert.Equal(t, relaycommon.StreamEndReasonDone, info.StreamStatus.EndReason) // 正常完成
-	assert.Equal(t, 1, info.StreamStatus.TotalErrorCount()) // 预存错误应被保留
+	assert.Equal(t, 1, info.StreamStatus.TotalErrorCount())                       // 预存错误应被保留
 }
 
 // TestStreamScannerHandler_PingInterleavesWithSlowUpstream 测试 Ping 与慢速上游交错

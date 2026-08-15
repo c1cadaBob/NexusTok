@@ -320,9 +320,21 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 
 		if err := scanner.Err(); err != nil {
 			if err != io.EOF {
+				// 请求上下文取消时，底层响应体可能先以 context canceled 返回；
+				// 这属于客户端中断，不应被误记为上游扫描故障。
+				if clientErr := c.Request.Context().Err(); clientErr != nil {
+					info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, clientErr)
+					return
+				}
 				logger.LogError(c, "scanner error: "+err.Error())
 				info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonScannerErr, err)
 			}
+		}
+		// 某些响应体在请求取消后会返回 EOF，而不是 context canceled；
+		// 在写入正常 EOF 前再次检查请求上下文，避免把客户端中断当成正常结束。
+		if clientErr := c.Request.Context().Err(); clientErr != nil {
+			info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, clientErr)
+			return
 		}
 		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonEOF, nil)
 	})
