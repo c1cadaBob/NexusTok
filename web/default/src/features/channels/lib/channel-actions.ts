@@ -42,6 +42,7 @@ import { CHANNEL_STATUS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import type {
   Channel,
   ChannelBalanceResponse,
+  ChannelTestResponse,
   CopyChannelParams,
   GetChannelResponse,
   GetChannelsResponse,
@@ -377,9 +378,11 @@ export async function handleTestChannel(
     success: boolean,
     responseTime?: number,
     error?: string,
-    errorCode?: string
-  ) => void
-): Promise<void> {
+    errorCode?: string,
+    response?: ChannelTestResponse
+  ) => void,
+  queryClient?: QueryClient
+): Promise<ChannelTestResponse | undefined> {
   const payload = buildChannelTestParams(options)
 
   try {
@@ -389,19 +392,44 @@ export async function handleTestChannel(
         ? Math.round(response.time * 1000)
         : response.data?.response_time
     if (response.success) {
-      toast.success(i18next.t(SUCCESS_MESSAGES.TESTED))
-      onTestComplete?.(true, responseTime)
+      const recoveredMessage = getChannelTestRecoveryMessage(response)
+      toast.success(i18next.t(recoveredMessage))
+      if (response.account_recovered || response.channel_recovered) {
+        queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.all })
+      }
+      onTestComplete?.(true, responseTime, undefined, undefined, response)
     } else {
       toast.error(response.message || i18next.t(ERROR_MESSAGES.TEST_FAILED))
-      onTestComplete?.(false, undefined, response.message, response.error_code)
+      onTestComplete?.(
+        false,
+        undefined,
+        response.message,
+        response.error_code,
+        response
+      )
     }
+    return response
   } catch (_error: unknown) {
     const err = _error as { response?: { data?: { message?: string } } }
     const errorMsg =
       err?.response?.data?.message || i18next.t(ERROR_MESSAGES.TEST_FAILED)
     toast.error(errorMsg)
     onTestComplete?.(false, undefined, errorMsg)
+    return undefined
   }
+}
+
+function getChannelTestRecoveryMessage(response: ChannelTestResponse): string {
+  if (response.account_recovered && response.channel_recovered) {
+    return 'Upstream key and channel recovered'
+  }
+  if (response.account_recovered) {
+    return 'Upstream key recovered'
+  }
+  if (response.channel_recovered) {
+    return 'Channel recovered'
+  }
+  return SUCCESS_MESSAGES.TESTED
 }
 
 /**

@@ -36,9 +36,8 @@ import {
   Search,
   Settings,
 } from 'lucide-react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -147,7 +146,6 @@ type FailureDetailsState = {
 }
 
 type AccountAvailability = {
-  unavailable: boolean
   label: string
   reason?: string
   variant: 'success' | 'warning' | 'danger' | 'neutral'
@@ -217,10 +215,9 @@ function getAccountAvailability(
   if (account.status !== CHANNEL_STATUS.ENABLED) {
     const label =
       account.status === CHANNEL_STATUS.AUTO_DISABLED
-        ? t('Auto Disabled')
-        : t('Disabled')
+        ? t('Auto disabled, test to recover')
+        : t('Disabled, test to recover')
     return {
-      unavailable: true,
       label,
       reason: account.disabled_reason || account.last_error || label,
       variant:
@@ -235,15 +232,17 @@ function getAccountAvailability(
   )
   if (cooldownUntil > nowSeconds) {
     return {
-      unavailable: true,
-      label: t('Cooling down'),
-      reason: account.disabled_reason || t('Cooling down'),
+      label: t('Cooling down, test to recover'),
+      reason:
+        account.disabled_reason ||
+        t(
+          'This upstream key is temporarily unavailable. Run a manual test to recover it when the upstream request succeeds.'
+        ),
       variant: 'warning',
     }
   }
 
   return {
-    unavailable: false,
     label: t('Available'),
     variant: 'success',
   }
@@ -254,6 +253,7 @@ export function ChannelTestDialog({
   onOpenChange,
 }: ChannelTestDialogProps) {
   const { t } = useTranslation()
+  const queryClient = useQueryClient()
   const { currentRow } = useChannels()
   const [endpointType, setEndpointType] = useState('auto')
   const [selectedAccountId, setSelectedAccountId] = useState('auto')
@@ -309,7 +309,11 @@ export function ChannelTestDialog({
     Boolean(currentRow?.channel_info?.credential_mode === 'account_pool') &&
     isUpstreamAccountSyncChannel(currentRow)
 
-  const channelAccountsQuery = useQuery({
+  const {
+    data: channelAccountsData,
+    isFetching: isFetchingChannelAccounts,
+    refetch: refetchChannelAccounts,
+  } = useQuery({
     queryKey: ['channel-test-accounts', currentRow?.id],
     queryFn: () =>
       getChannelAccounts(currentRow!.id, {
@@ -321,8 +325,8 @@ export function ChannelTestDialog({
   })
 
   const testAccounts = useMemo(
-    () => channelAccountsQuery.data?.data?.accounts.items ?? [],
-    [channelAccountsQuery.data?.data?.accounts.items]
+    () => channelAccountsData?.data?.accounts.items ?? [],
+    [channelAccountsData?.data?.accounts.items]
   )
 
   const selectedAccount =
@@ -431,14 +435,24 @@ export function ChannelTestDialog({
                 ? undefined
                 : Number(selectedAccountId),
           },
-          (success, responseTime, error, errorCode) => {
+          (success, responseTime, error, errorCode, response) => {
             updateTestResult(model, {
               status: success ? 'success' : 'error',
               responseTime,
               error,
               errorCode,
             })
-          }
+            if (
+              success &&
+              (response?.account_recovered || response?.channel_recovered)
+            ) {
+              void queryClient.invalidateQueries({
+                queryKey: ['channel-test-accounts', currentRow.id],
+              })
+              void refetchChannelAccounts()
+            }
+          },
+          queryClient
         )
       } catch (error: unknown) {
         updateTestResult(model, {
@@ -456,6 +470,8 @@ export function ChannelTestDialog({
       markModelTesting,
       noPermissionMessage,
       permissions.canOperate,
+      queryClient,
+      refetchChannelAccounts,
       selectedAccountId,
       updateTestResult,
     ]
@@ -658,7 +674,7 @@ export function ChannelTestDialog({
                     searchValue={accountSearch}
                     onSearchValueChange={setAccountSearch}
                     onValueChange={handleSelectedAccountChange}
-                    loading={channelAccountsQuery.isFetching}
+                    loading={isFetchingChannelAccounts}
                     nowSeconds={accountStatusNow}
                   />
                   <p className='text-muted-foreground text-xs'>
@@ -1125,23 +1141,15 @@ function UpstreamAccountSelectorTable({
                 return (
                   <TableRow
                     key={account.id}
-                    className={cn(
-                      !availability.unavailable && 'cursor-pointer',
-                      availability.unavailable &&
-                        'cursor-not-allowed opacity-60'
-                    )}
+                    className='cursor-pointer'
                     data-state={selected ? 'selected' : undefined}
-                    tabIndex={availability.unavailable ? -1 : 0}
-                    aria-disabled={availability.unavailable}
+                    tabIndex={0}
                     title={availability.reason}
                     onClick={() => {
-                      if (!availability.unavailable) {
-                        onValueChange(String(account.id))
-                      }
+                      onValueChange(String(account.id))
                     }}
                     onKeyDown={(event) => {
                       if (
-                        !availability.unavailable &&
                         (event.key === 'Enter' || event.key === ' ')
                       ) {
                         event.preventDefault()

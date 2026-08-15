@@ -199,6 +199,15 @@ export interface ChannelTestResponse {
   message?: string
   error_code?: string
   time?: number
+  selected_account_id?: number
+  account_recovered?: boolean
+  channel_recovered?: boolean
+  account_status_before?: number
+  account_status_after?: number
+  channel_status_before?: number
+  channel_status_after?: number
+  auto_check_updated?: boolean
+  auto_check_failure_count?: number
   data?: {
     response_time?: number
     error?: string
