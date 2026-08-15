@@ -32,6 +32,7 @@ const (
 	SystemTaskTypeSubscriptionMaintenance = "subscription_maintenance"
 	SystemTaskTypeModelsDevSync           = "models_dev_sync"
 	SystemTaskTypeUpstreamAccountSync     = "upstream_account_sync"
+	SystemTaskTypeUpstreamAccountKeyCheck = "upstream_account_key_check"
 	SystemTaskTypeSystemUpdate            = "system_update"
 	SystemTaskTypeSystemRollback          = "system_rollback"
 )

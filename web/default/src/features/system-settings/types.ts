@@ -472,6 +472,13 @@ export type OperationsSettings = {
     | 'hour'
     | 'minute'
     | 'second'
+  'upstream_account_sync.sync_key_models_enabled': boolean
+  'upstream_account_sync.key_model_sync_overwrite_manual_enabled': boolean
+  'upstream_account_key_check.enabled': boolean
+  'upstream_account_key_check.interval_minutes': number
+  'upstream_account_key_check.ratio_threshold': number
+  'upstream_account_key_check.failure_threshold': number
+  'upstream_account_key_check.auto_recover_enabled': boolean
   'system_task_setting.async_task_poll_enabled': boolean
   'system_task_setting.midjourney_poll_enabled': boolean
   'system_task_setting.subscription_maintenance_enabled': boolean

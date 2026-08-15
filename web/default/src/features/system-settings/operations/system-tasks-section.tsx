@@ -64,6 +64,23 @@ function createSystemTasksSchema(t: (key: string) => string) {
         .int()
         .min(1, t('Sync interval must be at least 1')),
       unit: z.enum(UPSTREAM_ACCOUNT_SYNC_UNITS),
+      sync_key_models_enabled: z.boolean(),
+      key_model_sync_overwrite_manual_enabled: z.boolean(),
+    }),
+    upstream_account_key_check: z.object({
+      enabled: z.boolean(),
+      interval_minutes: z.coerce
+        .number()
+        .int()
+        .min(1, t('Check interval must be at least 1 minute')),
+      ratio_threshold: z.coerce
+        .number()
+        .min(0, t('Ratio threshold cannot be negative')),
+      failure_threshold: z.coerce
+        .number()
+        .int()
+        .min(1, t('Failure threshold must be at least 1')),
+      auto_recover_enabled: z.boolean(),
     }),
     system_task_setting: z.object({
       async_task_poll_enabled: z.boolean(),
@@ -87,6 +104,13 @@ type SystemTasksSectionProps = {
     'upstream_account_sync.enabled': boolean
     'upstream_account_sync.interval': number
     'upstream_account_sync.unit': string
+    'upstream_account_sync.sync_key_models_enabled': boolean
+    'upstream_account_sync.key_model_sync_overwrite_manual_enabled': boolean
+    'upstream_account_key_check.enabled': boolean
+    'upstream_account_key_check.interval_minutes': number
+    'upstream_account_key_check.ratio_threshold': number
+    'upstream_account_key_check.failure_threshold': number
+    'upstream_account_key_check.auto_recover_enabled': boolean
     'system_task_setting.async_task_poll_enabled': boolean
     'system_task_setting.midjourney_poll_enabled': boolean
     'system_task_setting.subscription_maintenance_enabled': boolean
@@ -99,6 +123,13 @@ type NormalizedSystemTaskValues = {
   'upstream_account_sync.enabled': boolean
   'upstream_account_sync.interval': number
   'upstream_account_sync.unit': string
+  'upstream_account_sync.sync_key_models_enabled': boolean
+  'upstream_account_sync.key_model_sync_overwrite_manual_enabled': boolean
+  'upstream_account_key_check.enabled': boolean
+  'upstream_account_key_check.interval_minutes': number
+  'upstream_account_key_check.ratio_threshold': number
+  'upstream_account_key_check.failure_threshold': number
+  'upstream_account_key_check.auto_recover_enabled': boolean
   'system_task_setting.async_task_poll_enabled': boolean
   'system_task_setting.midjourney_poll_enabled': boolean
   'system_task_setting.subscription_maintenance_enabled': boolean
@@ -114,7 +145,24 @@ function buildFormDefaults(
       enabled: defaults['upstream_account_sync.enabled'],
       interval: defaults['upstream_account_sync.interval'],
       unit: defaults['upstream_account_sync.unit'],
+      syncKeyModelsEnabled:
+        defaults['upstream_account_sync.sync_key_models_enabled'],
+      keyModelSyncOverwriteManualEnabled:
+        defaults[
+          'upstream_account_sync.key_model_sync_overwrite_manual_enabled'
+        ],
     }),
+    upstream_account_key_check: {
+      enabled: defaults['upstream_account_key_check.enabled'],
+      interval_minutes:
+        defaults['upstream_account_key_check.interval_minutes'] || 30,
+      ratio_threshold:
+        defaults['upstream_account_key_check.ratio_threshold'] || 0,
+      failure_threshold:
+        defaults['upstream_account_key_check.failure_threshold'] || 2,
+      auto_recover_enabled:
+        defaults['upstream_account_key_check.auto_recover_enabled'],
+    },
     system_task_setting: {
       async_task_poll_enabled:
         defaults['system_task_setting.async_task_poll_enabled'],
@@ -137,12 +185,30 @@ function normalizeDefaults(
     enabled: defaults['upstream_account_sync.enabled'],
     interval: defaults['upstream_account_sync.interval'],
     unit: defaults['upstream_account_sync.unit'],
+    syncKeyModelsEnabled:
+      defaults['upstream_account_sync.sync_key_models_enabled'],
+    keyModelSyncOverwriteManualEnabled:
+      defaults['upstream_account_sync.key_model_sync_overwrite_manual_enabled'],
   })
 
   return {
     'upstream_account_sync.enabled': upstream.enabled,
     'upstream_account_sync.interval': upstream.interval,
     'upstream_account_sync.unit': upstream.unit,
+    'upstream_account_sync.sync_key_models_enabled':
+      upstream.syncKeyModelsEnabled,
+    'upstream_account_sync.key_model_sync_overwrite_manual_enabled':
+      upstream.keyModelSyncOverwriteManualEnabled,
+    'upstream_account_key_check.enabled':
+      defaults['upstream_account_key_check.enabled'],
+    'upstream_account_key_check.interval_minutes':
+      defaults['upstream_account_key_check.interval_minutes'] || 30,
+    'upstream_account_key_check.ratio_threshold':
+      defaults['upstream_account_key_check.ratio_threshold'] || 0,
+    'upstream_account_key_check.failure_threshold':
+      defaults['upstream_account_key_check.failure_threshold'] || 2,
+    'upstream_account_key_check.auto_recover_enabled':
+      defaults['upstream_account_key_check.auto_recover_enabled'],
     'system_task_setting.async_task_poll_enabled':
       defaults['system_task_setting.async_task_poll_enabled'],
     'system_task_setting.midjourney_poll_enabled':
@@ -164,6 +230,20 @@ function normalizeFormValues(
     'upstream_account_sync.enabled': values.upstream_account_sync.enabled,
     'upstream_account_sync.interval': values.upstream_account_sync.interval,
     'upstream_account_sync.unit': values.upstream_account_sync.unit,
+    'upstream_account_sync.sync_key_models_enabled':
+      values.upstream_account_sync.sync_key_models_enabled,
+    'upstream_account_sync.key_model_sync_overwrite_manual_enabled':
+      values.upstream_account_sync.key_model_sync_overwrite_manual_enabled,
+    'upstream_account_key_check.enabled':
+      values.upstream_account_key_check.enabled,
+    'upstream_account_key_check.interval_minutes':
+      values.upstream_account_key_check.interval_minutes,
+    'upstream_account_key_check.ratio_threshold':
+      values.upstream_account_key_check.ratio_threshold,
+    'upstream_account_key_check.failure_threshold':
+      values.upstream_account_key_check.failure_threshold,
+    'upstream_account_key_check.auto_recover_enabled':
+      values.upstream_account_key_check.auto_recover_enabled,
     'system_task_setting.async_task_poll_enabled':
       values.system_task_setting.async_task_poll_enabled,
     'system_task_setting.midjourney_poll_enabled':
@@ -203,6 +283,9 @@ export function SystemTasksSection({ defaultValues }: SystemTasksSectionProps) {
     'upstream_account_sync.interval'
   )
   const upstreamAccountSyncUnit = form.watch('upstream_account_sync.unit')
+  const upstreamAccountKeyCheckEnabled = form.watch(
+    'upstream_account_key_check.enabled'
+  )
   const upstreamAccountSyncDescriptionInterval =
     normalizeUpstreamAccountSyncInterval(Number(upstreamAccountSyncInterval))
   const upstreamAccountSyncDescriptionUnit = normalizeUpstreamAccountSyncUnit(
@@ -465,6 +548,180 @@ export function SystemTasksSection({ defaultValues }: SystemTasksSectionProps) {
                 )}
               />
             </div>
+
+            <div className='grid gap-3 md:grid-cols-2'>
+              <FormField
+                control={form.control}
+                name='upstream_account_sync.sync_key_models_enabled'
+                render={({ field }) => (
+                  <FormItem className='flex flex-row items-center justify-between rounded-lg border p-3'>
+                    <div className='flex min-w-0 flex-col gap-1 pr-3'>
+                      <FormLabel>{t('Sync upstream key models')}</FormLabel>
+                      <FormDescription>
+                        {t(
+                          'Update each synced key model list after upstream account sync.'
+                        )}
+                      </FormDescription>
+                    </div>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                      />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name='upstream_account_sync.key_model_sync_overwrite_manual_enabled'
+                render={({ field }) => (
+                  <FormItem className='flex flex-row items-center justify-between rounded-lg border p-3'>
+                    <div className='flex min-w-0 flex-col gap-1 pr-3'>
+                      <FormLabel>
+                        {t('Overwrite manually edited key models')}
+                      </FormLabel>
+                      <FormDescription>
+                        {t(
+                          'Allow upstream sync to replace local key model allowlists.'
+                        )}
+                      </FormDescription>
+                    </div>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                      />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+            </div>
+          </div>
+
+          <div className='flex flex-col gap-4 rounded-lg border p-4'>
+            <FormField
+              control={form.control}
+              name='upstream_account_key_check.enabled'
+              render={({ field }) => (
+                <FormItem className='flex flex-row items-center justify-between'>
+                  <div className='flex min-w-0 flex-col gap-1 pr-3'>
+                    <FormLabel className='text-base'>
+                      {t('Synced key connection checks')}
+                    </FormLabel>
+                    <FormDescription>
+                      {t(
+                        'Automatically test synced upstream keys in the background.'
+                      )}
+                    </FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+
+            <div className='grid gap-4 md:grid-cols-3'>
+              <FormField
+                control={form.control}
+                name='upstream_account_key_check.interval_minutes'
+                render={({ field }) => (
+                  <FormItem data-disabled={!upstreamAccountKeyCheckEnabled}>
+                    <FormLabel>{t('Check interval minutes')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        min={1}
+                        step={1}
+                        disabled={!upstreamAccountKeyCheckEnabled}
+                        {...safeNumberFieldProps(field)}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t('How often synced keys are tested.')}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name='upstream_account_key_check.ratio_threshold'
+                render={({ field }) => (
+                  <FormItem data-disabled={!upstreamAccountKeyCheckEnabled}>
+                    <FormLabel>{t('Ratio threshold')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        min={0}
+                        step='0.01'
+                        disabled={!upstreamAccountKeyCheckEnabled}
+                        {...safeNumberFieldProps(field)}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'Only test keys whose converted ratio is lower than this value. Leave 0 to test all eligible synced keys.'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name='upstream_account_key_check.failure_threshold'
+                render={({ field }) => (
+                  <FormItem data-disabled={!upstreamAccountKeyCheckEnabled}>
+                    <FormLabel>{t('Failure threshold')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        min={1}
+                        step={1}
+                        disabled={!upstreamAccountKeyCheckEnabled}
+                        {...safeNumberFieldProps(field)}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t('Disable a synced key after this many failures.')}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
+            <FormField
+              control={form.control}
+              name='upstream_account_key_check.auto_recover_enabled'
+              render={({ field }) => (
+                <FormItem
+                  data-disabled={!upstreamAccountKeyCheckEnabled}
+                  className='flex flex-row items-center justify-between rounded-lg border p-3'
+                >
+                  <div className='flex min-w-0 flex-col gap-1 pr-3'>
+                    <FormLabel>{t('Auto recover synced keys')}</FormLabel>
+                    <FormDescription>
+                      {t(
+                        'Restore keys disabled by automatic checks after a successful test.'
+                      )}
+                    </FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                      disabled={!upstreamAccountKeyCheckEnabled}
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
           </div>
 
           <Button

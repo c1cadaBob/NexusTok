@@ -78,6 +78,22 @@ const OPERATIONS_SECTIONS = [
           'upstream_account_sync.interval':
             settings['upstream_account_sync.interval'],
           'upstream_account_sync.unit': settings['upstream_account_sync.unit'],
+          'upstream_account_sync.sync_key_models_enabled':
+            settings['upstream_account_sync.sync_key_models_enabled'],
+          'upstream_account_sync.key_model_sync_overwrite_manual_enabled':
+            settings[
+              'upstream_account_sync.key_model_sync_overwrite_manual_enabled'
+            ],
+          'upstream_account_key_check.enabled':
+            settings['upstream_account_key_check.enabled'],
+          'upstream_account_key_check.interval_minutes':
+            settings['upstream_account_key_check.interval_minutes'],
+          'upstream_account_key_check.ratio_threshold':
+            settings['upstream_account_key_check.ratio_threshold'],
+          'upstream_account_key_check.failure_threshold':
+            settings['upstream_account_key_check.failure_threshold'],
+          'upstream_account_key_check.auto_recover_enabled':
+            settings['upstream_account_key_check.auto_recover_enabled'],
           'system_task_setting.async_task_poll_enabled':
             settings['system_task_setting.async_task_poll_enabled'],
           'system_task_setting.midjourney_poll_enabled':

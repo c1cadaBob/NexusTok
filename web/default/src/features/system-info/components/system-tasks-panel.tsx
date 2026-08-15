@@ -81,6 +81,7 @@ const TYPE_LABEL: Record<string, string> = {
   subscription_maintenance: 'Subscription maintenance',
   models_dev_sync: 'Models.dev model sync',
   upstream_account_sync: 'Upstream Account Sync',
+  upstream_account_key_check: 'Synced key connection checks',
   system_update: 'System update',
   system_rollback: 'System rollback',
 }

@@ -59,6 +59,19 @@ type AccountSyncDisplayMetadata struct {
 	RatioConversionConfig *RatioConversionSnapshot `json:"ratio_conversion_config,omitempty"`
 }
 
+// AccountAutoCheckMetadata 是同步密钥自动连接测试需要读取的非敏感运行状态。
+type AccountAutoCheckMetadata struct {
+	RatioConversion     float64 `json:"ratio_conversion,omitempty"`
+	EffectiveRatio      float64 `json:"effective_ratio,omitempty"`
+	FailureCount        int     `json:"failure_count,omitempty"`
+	LastCheckedAt       int64   `json:"last_checked_at,omitempty"`
+	LastSuccessAt       int64   `json:"last_success_at,omitempty"`
+	LastError           string  `json:"last_error,omitempty"`
+	LastStatus          string  `json:"last_status,omitempty"`
+	DisabledByAutoCheck bool    `json:"disabled_by_auto_check,omitempty"`
+	DisabledAt          int64   `json:"disabled_at,omitempty"`
+}
+
 // AccountBalanceSnapshot 是渠道 settings 中保存的上游账号级余额快照。
 //
 // Channel.balance 只保存当前余额，无法表达上游账号总用量、数据是否部分缺失、
@@ -546,6 +559,68 @@ func MarkAccountKeyModelsManualOverride(settings string) string {
 // AccountKeyModelsManualOverride 判断账号模型白名单是否被管理员手动覆盖过。
 func AccountKeyModelsManualOverride(settings string) bool {
 	return readAccountSyncMetadata(settings).KeyModelsManualOverride
+}
+
+// ReadAccountAutoCheckMetadata 读取同步密钥自动连接测试状态和倍率信息。
+func ReadAccountAutoCheckMetadata(settings string) AccountAutoCheckMetadata {
+	metadata := readAccountSyncMetadata(settings)
+	return AccountAutoCheckMetadata{
+		RatioConversion:     metadata.RatioConversion,
+		EffectiveRatio:      metadata.EffectiveRatio,
+		FailureCount:        metadata.AutoCheckFailureCount,
+		LastCheckedAt:       metadata.AutoCheckLastCheckedAt,
+		LastSuccessAt:       metadata.AutoCheckLastSuccessAt,
+		LastError:           metadata.AutoCheckLastError,
+		LastStatus:          metadata.AutoCheckLastStatus,
+		DisabledByAutoCheck: metadata.AutoCheckDisabledByAutoCheck,
+		DisabledAt:          metadata.AutoCheckDisabledAt,
+	}
+}
+
+// ApplyAccountAutoCheckSuccess 写入同步密钥自动连接测试成功状态。
+func ApplyAccountAutoCheckSuccess(settings string) string {
+	now := common.GetTimestamp()
+	return mutateAccountSyncMetadata(settings, func(metadata map[string]any) {
+		metadata["auto_check_last_checked_at"] = now
+		metadata["auto_check_last_success_at"] = now
+		metadata["auto_check_failure_count"] = 0
+		metadata["auto_check_last_error"] = ""
+		metadata["auto_check_last_status"] = "success"
+		metadata["auto_check_disabled_by_auto_check"] = false
+		metadata["auto_check_disabled_at"] = 0
+	})
+}
+
+// ApplyAccountAutoCheckFailure 写入同步密钥自动连接测试失败状态。
+func ApplyAccountAutoCheckFailure(settings string, failureCount int, errorText string, disabledByAutoCheck bool) string {
+	now := common.GetTimestamp()
+	errorText = sanitizeUpstreamAccountSyncTaskLogText(common.MaskSensitiveInfo(errorText), upstreamAccountSyncTaskLogErrorMaxRunes)
+	return mutateAccountSyncMetadata(settings, func(metadata map[string]any) {
+		metadata["auto_check_last_checked_at"] = now
+		metadata["auto_check_failure_count"] = failureCount
+		metadata["auto_check_last_error"] = errorText
+		metadata["auto_check_last_status"] = "failed"
+		if disabledByAutoCheck {
+			metadata["auto_check_disabled_by_auto_check"] = true
+			if stringFromMetadata(metadata, "auto_check_disabled_at") == "" || fmt.Sprint(metadata["auto_check_disabled_at"]) == "0" {
+				metadata["auto_check_disabled_at"] = now
+			}
+		}
+	})
+}
+
+// ClearAccountAutoCheckDisableMarker 清除“由自动检测禁用”的恢复标记。
+//
+// 管理员手动启用或手动禁用密钥时调用该函数，避免后续自动检测把人工状态误当成
+// 可自动恢复的状态。
+func ClearAccountAutoCheckDisableMarker(settings string) string {
+	return mutateAccountSyncMetadata(settings, func(metadata map[string]any) {
+		metadata["auto_check_failure_count"] = 0
+		metadata["auto_check_last_error"] = ""
+		metadata["auto_check_last_status"] = "manual"
+		metadata["auto_check_disabled_by_auto_check"] = false
+		metadata["auto_check_disabled_at"] = 0
+	})
 }
 
 func applyAccountKeyModelsSyncMetadata(settings string, key SyncedKey, manualOverride bool, usedModels string) string {

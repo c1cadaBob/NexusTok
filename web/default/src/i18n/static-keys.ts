@@ -716,6 +716,7 @@ export const STATIC_I18N_KEYS = [
   'Async task polling',
   'Account pool check',
   'Subscription maintenance',
+  'Synced key connection checks',
   'We could not load system tasks.',
   'No system tasks yet.',
   'Tasks will appear after maintenance actions are scheduled.',

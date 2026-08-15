@@ -33,12 +33,16 @@ export type UpstreamAccountSyncSettingsInput = {
   enabled: boolean
   interval: number
   unit: string
+  syncKeyModelsEnabled?: boolean
+  keyModelSyncOverwriteManualEnabled?: boolean
 }
 
 export type UpstreamAccountSyncSettingsValue = {
   enabled: boolean
   interval: number
   unit: UpstreamAccountSyncUnit
+  sync_key_models_enabled: boolean
+  key_model_sync_overwrite_manual_enabled: boolean
 }
 
 export const UPSTREAM_ACCOUNT_SYNC_UNIT_LABEL_KEYS: Record<
@@ -73,16 +77,25 @@ export function buildUpstreamAccountSyncFormDefaults(
     enabled: defaults.enabled,
     interval: normalizeUpstreamAccountSyncInterval(defaults.interval),
     unit: normalizeUpstreamAccountSyncUnit(defaults.unit),
+    sync_key_models_enabled: defaults.syncKeyModelsEnabled ?? true,
+    key_model_sync_overwrite_manual_enabled:
+      defaults.keyModelSyncOverwriteManualEnabled ?? false,
   }
 }
 
 export function buildUpstreamAccountSyncPersistedDefaults(
   defaults: UpstreamAccountSyncSettingsInput
-): UpstreamAccountSyncSettingsInput {
+): UpstreamAccountSyncSettingsInput & {
+  syncKeyModelsEnabled: boolean
+  keyModelSyncOverwriteManualEnabled: boolean
+} {
   return {
     enabled: defaults.enabled,
     interval: defaults.interval,
     unit: defaults.unit,
+    syncKeyModelsEnabled: defaults.syncKeyModelsEnabled ?? true,
+    keyModelSyncOverwriteManualEnabled:
+      defaults.keyModelSyncOverwriteManualEnabled ?? false,
   }
 }
 

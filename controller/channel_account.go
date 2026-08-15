@@ -347,6 +347,16 @@ func UpdateChannelAccountStatus(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if req.Status != common.ChannelStatusAutoDisabled {
+		account, err := model.GetChannelAccountById(channelID, accountID)
+		if err == nil && upstreamaccount.HasAccountSyncMetadata(account.OtherSettings) {
+			settings := upstreamaccount.ClearAccountAutoCheckDisableMarker(account.OtherSettings)
+			if err := model.DB.Model(account).Update("settings", settings).Error; err != nil {
+				common.ApiError(c, err)
+				return
+			}
+		}
+	}
 	if req.ClearCooldown {
 		_ = model.UpdateChannelAccountErrorState(channelID, accountID, map[string]interface{}{
 			"rate_limited_until":  0,
