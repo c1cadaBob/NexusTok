@@ -333,7 +333,7 @@ func StartSystemUpdateTask(ctx context.Context) (*model.SystemTask, error) {
 		payload.AssetName = info.MatchedAsset.Name
 	}
 
-	task, err := model.CreateSystemTaskWithActiveKey(model.SystemTaskTypeSystemUpdate, systemUpdateActiveKey, payload, SystemUpdateTaskState{
+	task, created, err := model.CreateSystemTaskWithActiveKeyIfAbsent(model.SystemTaskTypeSystemUpdate, systemUpdateActiveKey, payload, SystemUpdateTaskState{
 		Phase:         SystemUpdatePhaseChecking,
 		Progress:      0,
 		TargetVersion: payload.TargetVersion,
@@ -342,13 +342,11 @@ func StartSystemUpdateTask(ctx context.Context) (*model.SystemTask, error) {
 		TargetImage:   payload.TargetImage,
 	})
 	if err != nil {
-		activeTask, activeErr := model.GetActiveSystemTaskByActiveKey(systemUpdateActiveKey)
-		if activeErr == nil && activeTask != nil {
-			return activeTask, nil
-		}
 		return nil, err
 	}
-	notifySystemTaskRunner()
+	if created {
+		notifySystemTaskRunner()
+	}
 	return task, nil
 }
 
@@ -364,18 +362,16 @@ func StartSystemRollbackTask() (*model.SystemTask, error) {
 	if !defaultSystemUpdateService.RollbackAvailable() {
 		return nil, ErrSystemRollbackDisabled
 	}
-	task, err := model.CreateSystemTaskWithActiveKey(model.SystemTaskTypeSystemRollback, systemUpdateActiveKey, nil, SystemUpdateTaskState{
+	task, created, err := model.CreateSystemTaskWithActiveKeyIfAbsent(model.SystemTaskTypeSystemRollback, systemUpdateActiveKey, nil, SystemUpdateTaskState{
 		Phase:    SystemUpdatePhaseRollingBack,
 		Progress: 0,
 	})
 	if err != nil {
-		activeTask, activeErr := model.GetActiveSystemTaskByActiveKey(systemUpdateActiveKey)
-		if activeErr == nil && activeTask != nil {
-			return activeTask, nil
-		}
 		return nil, err
 	}
-	notifySystemTaskRunner()
+	if created {
+		notifySystemTaskRunner()
+	}
 	return task, nil
 }
 

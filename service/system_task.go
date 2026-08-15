@@ -125,24 +125,14 @@ func StartSystemTaskRunner() {
 //
 // 返回 created=false 表示同类型任务已有 pending/running 记录，此时直接返回现有任务。
 func EnqueueSystemTask(taskType string, payload any) (*model.SystemTask, bool, error) {
-	activeTask, err := model.GetActiveSystemTask(taskType)
+	task, created, err := model.CreateSystemTaskIfAbsent(taskType, payload, nil)
 	if err != nil {
 		return nil, false, err
 	}
-	if activeTask != nil {
-		return activeTask, false, nil
+	if created {
+		notifySystemTaskRunner()
 	}
-
-	task, err := model.CreateSystemTask(taskType, payload, nil)
-	if err != nil {
-		activeTask, activeErr := model.GetActiveSystemTask(taskType)
-		if activeErr == nil && activeTask != nil {
-			return activeTask, false, nil
-		}
-		return nil, false, err
-	}
-	notifySystemTaskRunner()
-	return task, true, nil
+	return task, created, nil
 }
 
 func notifySystemTaskRunner() {
@@ -217,14 +207,7 @@ func runSystemTaskScheduler() {
 				continue
 			}
 		}
-		if _, err := model.CreateSystemTask(scheduled.Type(), scheduled.NewPayload(), nil); err != nil {
-			activeTask, activeErr := model.GetActiveSystemTask(scheduled.Type())
-			if activeErr == nil && activeTask != nil {
-				continue
-			}
-			if activeErr != nil {
-				logger.LogWarn(context.Background(), fmt.Sprintf("system task scheduler active lookup failed: type=%s err=%v", scheduled.Type(), activeErr))
-			}
+		if _, _, err := model.CreateSystemTaskIfAbsent(scheduled.Type(), scheduled.NewPayload(), nil); err != nil {
 			logger.LogWarn(context.Background(), fmt.Sprintf("system task scheduler create failed: type=%s err=%v", scheduled.Type(), err))
 		}
 	}
@@ -305,25 +288,16 @@ func StartLogCleanupTask(targetTimestamp int64) (*model.SystemTask, error) {
 	if targetTimestamp <= 0 {
 		return nil, errors.New("target timestamp is required")
 	}
-	activeTask, err := model.GetActiveSystemTask(model.SystemTaskTypeLogCleanup)
-	if err != nil {
-		return nil, err
-	}
-	if activeTask != nil {
-		return activeTask, nil
-	}
-	task, err := model.CreateSystemTask(model.SystemTaskTypeLogCleanup, LogCleanupPayload{
+	task, created, err := model.CreateSystemTaskIfAbsent(model.SystemTaskTypeLogCleanup, LogCleanupPayload{
 		TargetTimestamp: targetTimestamp,
 		BatchSize:       logCleanupBatchSize,
 	}, LogCleanupState{})
 	if err != nil {
-		activeTask, activeErr := model.GetActiveSystemTask(model.SystemTaskTypeLogCleanup)
-		if activeErr == nil && activeTask != nil {
-			return activeTask, nil
-		}
 		return nil, err
 	}
-	notifySystemTaskRunner()
+	if created {
+		notifySystemTaskRunner()
+	}
 	return task, nil
 }
 

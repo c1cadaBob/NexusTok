@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/c1cada/NexusTok/common"
@@ -24,11 +25,17 @@ type testSystemTaskState struct {
 func setupSystemTaskTestDB(t *testing.T) {
 	t.Helper()
 	originDB := DB
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open("file:system_task_test_"+common.GetUUID()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&SystemTask{}, &SystemTaskLock{}))
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(4)
 	DB = db
-	t.Cleanup(func() { DB = originDB })
+	t.Cleanup(func() {
+		_ = sqlDB.Close()
+		DB = originDB
+	})
 }
 
 func createLegacyPendingSystemTask(t *testing.T, taskType string) *SystemTask {
@@ -130,6 +137,107 @@ func TestSystemTaskCustomActiveKeyAllowsSameTypeQueue(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, claimed)
 	require.Equal(t, second.TaskID, claimedSecond.TaskID)
+}
+
+func TestSystemTaskCreateIfAbsentReusesActiveTask(t *testing.T) {
+	setupSystemTaskTestDB(t)
+
+	first, created, err := CreateSystemTaskIfAbsent(SystemTaskTypeAsyncTaskPoll, nil, nil)
+	require.NoError(t, err)
+	require.True(t, created)
+
+	second, created, err := CreateSystemTaskIfAbsent(SystemTaskTypeAsyncTaskPoll, nil, nil)
+	require.NoError(t, err)
+	require.False(t, created)
+	require.Equal(t, first.TaskID, second.TaskID)
+
+	var count int64
+	require.NoError(t, DB.Model(&SystemTask{}).
+		Where("active_key = ?", SystemTaskTypeAsyncTaskPoll).
+		Count(&count).Error)
+	require.Equal(t, int64(1), count)
+}
+
+func TestSystemTaskCreateIfAbsentAllowsRecreateAfterFinish(t *testing.T) {
+	setupSystemTaskTestDB(t)
+
+	first, created, err := CreateSystemTaskIfAbsent(SystemTaskTypeSubscriptionMaintenance, nil, nil)
+	require.NoError(t, err)
+	require.True(t, created)
+	_, claimed, err := ClaimSystemTask(first.ID, first.Type, "runner-a", common.GetTimestamp()+60)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.NoError(t, FinishSystemTask(first.TaskID, "runner-a", SystemTaskStatusSucceeded, nil, ""))
+
+	second, created, err := CreateSystemTaskIfAbsent(SystemTaskTypeSubscriptionMaintenance, nil, nil)
+	require.NoError(t, err)
+	require.True(t, created)
+	require.NotEqual(t, first.TaskID, second.TaskID)
+}
+
+func TestSystemTaskCreateWithActiveKeyIfAbsentConcurrentCallsShareTask(t *testing.T) {
+	setupSystemTaskTestDB(t)
+
+	type result struct {
+		task    *SystemTask
+		created bool
+		err     error
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	var waitGroup sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			<-start
+			task, created, err := CreateSystemTaskWithActiveKeyIfAbsent(
+				SystemTaskTypeAccountPoolCheck,
+				"account_pool_check:concurrent",
+				nil,
+				nil,
+			)
+			results <- result{task: task, created: created, err: err}
+		}()
+	}
+	close(start)
+	waitGroup.Wait()
+	close(results)
+
+	var (
+		createdCount int
+		taskID       string
+	)
+	for item := range results {
+		require.NoError(t, item.err)
+		require.NotNil(t, item.task)
+		if item.created {
+			createdCount++
+		}
+		if taskID == "" {
+			taskID = item.task.TaskID
+		}
+		require.Equal(t, taskID, item.task.TaskID)
+	}
+	require.Equal(t, 1, createdCount)
+
+	var count int64
+	require.NoError(t, DB.Model(&SystemTask{}).
+		Where("active_key = ?", "account_pool_check:concurrent").
+		Count(&count).Error)
+	require.Equal(t, int64(1), count)
+}
+
+func TestSystemTaskActiveKeyConflictDetectionDoesNotSwallowOtherUniqueKeys(t *testing.T) {
+	setupSystemTaskTestDB(t)
+
+	require.True(t, isSystemTaskActiveKeyConflict(errors.New(
+		"constraint failed: UNIQUE constraint failed: system_tasks.active_key (2067)",
+	)))
+	require.False(t, isSystemTaskActiveKeyConflict(errors.New(
+		"constraint failed: UNIQUE constraint failed: system_tasks.task_id (2067)",
+	)))
+	require.False(t, isSystemTaskActiveKeyConflict(errors.New("database is locked")))
 }
 
 func TestSystemTaskExpiredLockCanBeReclaimed(t *testing.T) {

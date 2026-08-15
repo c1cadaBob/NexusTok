@@ -6,10 +6,12 @@ package model
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/c1cada/NexusTok/common"
 
 	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 // SystemTaskStatus 表示系统后台任务的生命周期状态。
@@ -129,12 +131,25 @@ func CreateSystemTask(taskType string, payload any, state any) (*SystemTask, err
 	return CreateSystemTaskWithActiveKey(taskType, taskType, payload, state)
 }
 
+// CreateSystemTaskIfAbsent 创建一条 pending 系统任务，并把同类型活动任务视为已存在。
+//
+// 该入口把“查询后创建”窗口收敛到数据库唯一索引：并发调用只有一个调用方真正
+// 创建记录，其余调用方返回同一条 pending/running 任务。底层 CreateSystemTask
+// 保持原有语义，调用方如果需要观察所有数据库错误，仍可继续直接使用底层函数。
+func CreateSystemTaskIfAbsent(taskType string, payload any, state any) (*SystemTask, bool, error) {
+	return CreateSystemTaskWithActiveKeyIfAbsent(taskType, taskType, payload, state)
+}
+
 // CreateSystemTaskWithActiveKey 创建一条 pending 系统任务，并使用调用方指定的 ActiveKey。
 //
 // ActiveKey 只负责 pending/running 阶段的去重范围；任务执行租约仍按 Type 维度获取。
 // 这让账号池检测这类“允许多条同类型任务排队、但同一时刻只能执行一条”的场景可以
 // 为每个业务任务使用独立 ActiveKey，同时继续复用 SystemTaskLock 的跨节点互斥能力。
 func CreateSystemTaskWithActiveKey(taskType string, activeKey string, payload any, state any) (*SystemTask, error) {
+	return createSystemTaskWithActiveKey(DB, taskType, activeKey, payload, state)
+}
+
+func createSystemTaskWithActiveKey(db *gorm.DB, taskType string, activeKey string, payload any, state any) (*SystemTask, error) {
 	if taskType == "" {
 		return nil, errSystemTaskTypeRequired
 	}
@@ -165,10 +180,48 @@ func CreateSystemTaskWithActiveKey(taskType string, activeKey string, payload an
 		Payload:   payloadText,
 		State:     stateText,
 	}
-	if err := DB.Create(task).Error; err != nil {
+	if err := db.Create(task).Error; err != nil {
 		return nil, err
 	}
 	return task, nil
+}
+
+// CreateSystemTaskWithActiveKeyIfAbsent 创建一条带自定义 ActiveKey 的幂等系统任务。
+//
+// 返回值中的 created 表示当前调用是否插入了新记录。只有明确属于
+// idx_system_tasks_active_key 的唯一键竞争才会进入复用流程；任务 ID 冲突、连接失败、
+// 迁移错误以及其他数据库错误都会原样返回。竞争方如果已经完成并释放 ActiveKey，
+// 本函数会有限次重试，避免把短暂的释放窗口误报为创建失败。
+func CreateSystemTaskWithActiveKeyIfAbsent(taskType string, activeKey string, payload any, state any) (*SystemTask, bool, error) {
+	const maxAttempts = 3
+
+	if activeKey == "" {
+		activeKey = taskType
+	}
+	// 唯一键竞争是幂等流程的正常分支，不能让 GORM 先按数据库错误级别输出；
+	// 其他错误仍通过返回值交给调用方处理，不在这里静默吞掉。
+	quietDB := DB.Session(&gorm.Session{Logger: gormlogger.Discard})
+	var lastConflict error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		task, err := createSystemTaskWithActiveKey(quietDB, taskType, activeKey, payload, state)
+		if err == nil {
+			return task, true, nil
+		}
+		if !isSystemTaskActiveKeyConflict(err) {
+			return nil, false, err
+		}
+		lastConflict = err
+
+		activeTask, queryErr := getActiveSystemTaskByActiveKey(quietDB, activeKey)
+		if queryErr != nil {
+			return nil, false, queryErr
+		}
+		if activeTask != nil {
+			return activeTask, false, nil
+		}
+	}
+
+	return nil, false, lastConflict
 }
 
 // GetSystemTaskByTaskID 根据外部任务 ID 查询任务，不存在时返回 nil。
@@ -203,11 +256,15 @@ func GetActiveSystemTask(taskType string) (*SystemTask, error) {
 // 该入口用于业务任务和 SystemTask 之间的一对一绑定，例如账号池检测任务重启恢复时，
 // 如果旧的系统任务记录仍处于活动状态，就直接复用它而不是创建重复执行入口。
 func GetActiveSystemTaskByActiveKey(activeKey string) (*SystemTask, error) {
+	return getActiveSystemTaskByActiveKey(DB, activeKey)
+}
+
+func getActiveSystemTaskByActiveKey(db *gorm.DB, activeKey string) (*SystemTask, error) {
 	if activeKey == "" {
 		return nil, nil
 	}
 	var task SystemTask
-	err := DB.Where("active_key = ? AND status IN ?", activeKey, activeSystemTaskStatuses()).
+	err := db.Where("active_key = ? AND status IN ?", activeKey, activeSystemTaskStatuses()).
 		Order("id desc").
 		First(&task).Error
 	if err != nil {
@@ -587,6 +644,41 @@ func acquireSystemTaskLock(taskType string, taskID string, lockedBy string, now 
 
 func activeSystemTaskStatuses() []string {
 	return []string{string(SystemTaskStatusPending), string(SystemTaskStatusRunning)}
+}
+
+// isSystemTaskActiveKeyConflict 只识别 system_tasks.active_key 的唯一键竞争。
+//
+// 不同数据库对唯一约束错误的文本不同：PostgreSQL 和 MySQL 通常包含索引名，
+// SQLite 通常只报告表名和列名。索引名、列名和唯一约束关键词必须同时满足相应
+// 方言条件，避免把 task_id 等其他唯一键冲突错误地当成正常去重。
+func isSystemTaskActiveKeyConflict(err error) bool {
+	if err == nil || DB == nil || DB.Dialector == nil {
+		return false
+	}
+
+	message := strings.ToLower(err.Error())
+	if !strings.Contains(message, "unique") &&
+		!strings.Contains(message, "duplicate") &&
+		!strings.Contains(message, "constraint") {
+		return false
+	}
+
+	switch DB.Dialector.Name() {
+	case "postgres":
+		return strings.Contains(message, "idx_system_tasks_active_key") &&
+			(strings.Contains(message, "duplicate key") || strings.Contains(message, "unique constraint"))
+	case "mysql":
+		return strings.Contains(message, "idx_system_tasks_active_key") &&
+			(strings.Contains(message, "duplicate entry") || strings.Contains(message, "duplicate key"))
+	case "sqlite":
+		return strings.Contains(message, "unique constraint failed") &&
+			(strings.Contains(message, "system_tasks.active_key") ||
+				strings.Contains(message, "system_tasks\".\"active_key") ||
+				strings.Contains(message, "system_tasks.`active_key`"))
+	default:
+		return strings.Contains(message, "idx_system_tasks_active_key") &&
+			strings.Contains(message, "active_key")
+	}
 }
 
 func marshalSystemTaskJSON(v any) (string, error) {

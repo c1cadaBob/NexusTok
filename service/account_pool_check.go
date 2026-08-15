@@ -589,7 +589,7 @@ func ensurePoolAccountCheckSystemTask(taskID int) (*model.SystemTask, bool, erro
 	if err != nil {
 		return nil, false, err
 	}
-	task, err := model.CreateSystemTaskWithActiveKey(
+	task, created, err := model.CreateSystemTaskWithActiveKeyIfAbsent(
 		model.SystemTaskTypeAccountPoolCheck,
 		activeKey,
 		AccountPoolCheckSystemTaskPayload{CheckTaskID: taskID},
@@ -600,14 +600,12 @@ func ensurePoolAccountCheckSystemTask(taskID int) (*model.SystemTask, bool, erro
 		},
 	)
 	if err != nil {
-		activeTask, activeErr := model.GetActiveSystemTaskByActiveKey(activeKey)
-		if activeErr == nil && activeTask != nil {
-			return activeTask, false, nil
-		}
 		return nil, false, err
 	}
-	notifySystemTaskRunner()
-	return task, true, nil
+	if created {
+		notifySystemTaskRunner()
+	}
+	return task, created, nil
 }
 
 func poolAccountCheckSystemTaskActiveKey(taskID int) string {

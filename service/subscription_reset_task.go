@@ -156,16 +156,14 @@ func enqueueSubscriptionMaintenanceSystemTask() (*model.SystemTask, bool, error)
 		return latestTask, false, nil
 	}
 
-	task, err := model.CreateSystemTask(model.SystemTaskTypeSubscriptionMaintenance, nil, nil)
+	task, created, err := model.CreateSystemTaskIfAbsent(model.SystemTaskTypeSubscriptionMaintenance, nil, nil)
 	if err != nil {
-		activeTask, activeErr := model.GetActiveSystemTask(model.SystemTaskTypeSubscriptionMaintenance)
-		if activeErr == nil && activeTask != nil {
-			return activeTask, false, nil
-		}
 		return nil, false, err
 	}
-	notifySystemTaskRunner()
-	return task, true, nil
+	if created {
+		notifySystemTaskRunner()
+	}
+	return task, created, nil
 }
 
 // RunSubscriptionMaintenanceOnce 执行一次订阅配额维护。
