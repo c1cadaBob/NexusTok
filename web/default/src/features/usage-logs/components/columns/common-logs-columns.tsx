@@ -46,6 +46,9 @@ import type { UsageLog } from '../../data/schema'
 import { getUsageLogChannelMarkers } from '../../lib/channel-markers'
 import {
   formatModelName,
+  getChannelTestAccountLabel,
+  getChannelTestState,
+  getChannelTestTitle,
   getFirstResponseTimeColor,
   getResponseTimeColor,
   getStreamSeverity,
@@ -146,6 +149,29 @@ function buildTypeDetailSegments(
   }
 
   if (!other) return []
+
+  const channelTestTitle = getChannelTestTitle(other, t)
+  if (channelTestTitle) {
+    const channelTest = other.channel_test
+    const state = getChannelTestState(other)
+    const segments: DetailSegment[] = [
+      { text: channelTestTitle, danger: state === 'failed' },
+    ]
+    if (channelTest?.model) {
+      segments.push({ text: channelTest.model, muted: true })
+    }
+    const accountLabel = getChannelTestAccountLabel(other)
+    if (accountLabel) {
+      segments.push({
+        text: `${t('Selected upstream key')}: ${accountLabel}`,
+        muted: true,
+      })
+    }
+    if (state === 'failed' && channelTest?.error) {
+      segments.push({ text: channelTest.error, danger: true })
+    }
+    return segments
+  }
 
   const segments: DetailSegment[] = []
 

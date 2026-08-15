@@ -35,7 +35,13 @@ import {
   type StatusVariant,
 } from '@/components/status-badge'
 import { LOG_TYPE_ENUM } from '../constants'
-import { getStreamSeverity, parseLogOther } from '../lib/format'
+import {
+  getChannelTestAccountLabel,
+  getChannelTestState,
+  getChannelTestTitle,
+  getStreamSeverity,
+  parseLogOther,
+} from '../lib/format'
 import { getLogTypeConfig } from '../lib/utils'
 import type { LogCategory, LogOtherData } from '../types'
 
@@ -214,6 +220,9 @@ function CommonLogsCard<TData>({
   const other = parseLogOther(
     typeof rowData?.other === 'string' ? rowData.other : ''
   )
+  const channelTestTitle = getChannelTestTitle(other, t)
+  const channelTestState = getChannelTestState(other)
+  const channelTestAccount = getChannelTestAccountLabel(other)
 
   return (
     <div className='flex min-w-0 flex-col gap-2.5'>
@@ -241,6 +250,32 @@ function CommonLogsCard<TData>({
           cell={cells.get('channel')}
           valueClassName='[&_.flex-col]:max-w-none'
         />
+        {channelTestTitle && (
+          <div
+            className={cn(
+              'bg-muted/25 col-span-2 flex min-w-0 flex-col gap-1 rounded-md px-2 py-1.5',
+              channelTestState === 'failed' &&
+                'bg-destructive/5 text-destructive'
+            )}
+          >
+            <div className='text-muted-foreground text-[11px] leading-none font-medium select-none'>
+              {t('Channel test')}
+            </div>
+            <div className='flex min-w-0 flex-wrap items-center gap-1.5 text-xs leading-tight'>
+              <span className='font-medium'>{channelTestTitle}</span>
+              {other?.channel_test?.model && (
+                <span className='text-muted-foreground font-mono'>
+                  {other.channel_test.model}
+                </span>
+              )}
+              {channelTestAccount && (
+                <span className='text-muted-foreground truncate'>
+                  {channelTestAccount}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
         <SummaryField
           label={t('Upstream Cost')}
           cell={cells.get('upstream_cost')}

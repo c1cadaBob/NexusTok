@@ -93,6 +93,20 @@ export interface ChannelAffinityInfo {
 }
 
 export interface LogOtherData {
+  channel_test?: {
+    status?: 'success' | 'failed' | 'error' | string
+    model?: string
+    endpoint_type?: string
+    stream?: boolean
+    selected_account_id?: number | string
+    selected_account_name?: string
+    error_code?: string
+    error?: string
+    counted_for_auto_disable?: boolean
+    failure_count?: number
+    auto_disabled?: boolean
+    auto_check_result_updated?: boolean
+  }
   admin_info?: {
     is_multi_key?: boolean
     multi_key_index?: number

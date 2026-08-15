@@ -51,6 +51,9 @@ import { DynamicPricingBreakdown } from '@/features/pricing/components/dynamic-p
 import type { UsageLog } from '../../data/schema'
 import {
   parseLogOther,
+  getChannelTestAccountLabel,
+  getChannelTestState,
+  getChannelTestTitle,
   getParamOverrideActionLabel,
   parseAuditLine,
   decodeBillingExprB64,
@@ -460,6 +463,10 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const isManage = props.log.type === 3
   const isLogin = props.log.type === 7
   const isSubscription = other?.billing_source === 'subscription'
+  const channelTest = other?.channel_test
+  const channelTestState = getChannelTestState(other)
+  const channelTestTitle = getChannelTestTitle(other, t)
+  const channelTestAccount = getChannelTestAccountLabel(other)
   const isTieredBilling =
     isConsume &&
     !isViolation &&
@@ -1081,6 +1088,88 @@ export function DetailsDialog(props: DetailsDialogProps) {
                   value={other.upstream_model_name}
                   mono
                 />
+              </DetailSection>
+            )}
+
+            {/* 模型测试结果。手动渠道测试会把成功与失败都写入消费日志，
+                这里展示结构化字段，便于关联指定账号、失败计数和自动禁用。 */}
+            {channelTest && channelTestTitle && (
+              <DetailSection
+                icon={<Info className='size-3.5' aria-hidden='true' />}
+                label={t('Channel test')}
+                variant={channelTestState === 'failed' ? 'danger' : 'default'}
+              >
+                <DetailRow
+                  label={t('Status')}
+                  value={
+                    <StatusBadge
+                      label={channelTestTitle}
+                      variant={
+                        channelTestState === 'success' ? 'success' : 'danger'
+                      }
+                      size='sm'
+                      copyable={false}
+                    />
+                  }
+                />
+                {channelTest.model && (
+                  <DetailRow
+                    label={t('Model')}
+                    value={channelTest.model}
+                    mono
+                  />
+                )}
+                {channelTest.endpoint_type && (
+                  <DetailRow
+                    label={t('Endpoint Type')}
+                    value={channelTest.endpoint_type}
+                    mono
+                  />
+                )}
+                {typeof channelTest.stream === 'boolean' && (
+                  <DetailRow
+                    label={t('Stream Mode')}
+                    value={channelTest.stream ? t('Enabled') : t('Disabled')}
+                  />
+                )}
+                {channelTestAccount && (
+                  <DetailRow
+                    label={t('Selected upstream key')}
+                    value={channelTestAccount}
+                    mono
+                  />
+                )}
+                {channelTest.error_code && (
+                  <DetailRow
+                    label={t('Error Code')}
+                    value={channelTest.error_code}
+                    mono
+                  />
+                )}
+                {typeof channelTest.counted_for_auto_disable === 'boolean' && (
+                  <DetailRow
+                    label={t('Counted toward auto-disable')}
+                    value={
+                      channelTest.counted_for_auto_disable ? t('Yes') : t('No')
+                    }
+                  />
+                )}
+                {channelTest.failure_count != null && (
+                  <DetailRow
+                    label={t('Failure count')}
+                    value={String(channelTest.failure_count)}
+                    mono
+                  />
+                )}
+                {typeof channelTest.auto_disabled === 'boolean' && (
+                  <DetailRow
+                    label={t('Auto-disabled this key')}
+                    value={channelTest.auto_disabled ? t('Yes') : t('No')}
+                  />
+                )}
+                {channelTest.error && (
+                  <DetailRow label={t('Error')} value={channelTest.error} />
+                )}
               </DetailSection>
             )}
 

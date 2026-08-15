@@ -51,6 +51,43 @@ export function getStreamSeverity(
   return streamStatus.status === 'ok' ? 'ok' : 'error'
 }
 
+export type ChannelTestState = 'success' | 'failed'
+
+export function getChannelTestState(
+  other: LogOtherData | null | undefined
+): ChannelTestState | null {
+  const status = String(other?.channel_test?.status || '')
+    .trim()
+    .toLowerCase()
+  if (!status) return null
+  if (status === 'success' || status === 'ok') return 'success'
+  return 'failed'
+}
+
+export function getChannelTestTitle(
+  other: LogOtherData | null | undefined,
+  t: (key: string) => string
+): string | null {
+  const state = getChannelTestState(other)
+  if (!state) return null
+  return state === 'success'
+    ? t('Model test succeeded')
+    : t('Model test failed')
+}
+
+export function getChannelTestAccountLabel(
+  other: LogOtherData | null | undefined
+): string {
+  const channelTest = other?.channel_test
+  if (!channelTest) return ''
+  const name = String(channelTest.selected_account_name || '').trim()
+  const id = channelTest.selected_account_id
+  const idValue = id != null ? String(id).trim() : ''
+  const idText = idValue !== '' && idValue !== '0' ? `#${idValue}` : ''
+  if (name && idText) return `${name} ${idText}`
+  return name || idText
+}
+
 const PARAM_OVERRIDE_ACTION_MAP: Record<string, string> = {
   set: 'Set',
   delete: 'Delete',
