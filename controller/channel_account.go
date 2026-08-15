@@ -25,6 +25,7 @@ import (
 	"github.com/c1cada/NexusTok/service"
 	"github.com/c1cada/NexusTok/service/authz"
 	"github.com/c1cada/NexusTok/service/upstreamaccount"
+	"github.com/c1cada/NexusTok/service/upstreammodel"
 
 	"github.com/gin-gonic/gin"
 )
@@ -451,41 +452,7 @@ func ensureChannelExists(c *gin.Context, channelID int) (*model.Channel, bool) {
 // 看到另一个密钥的可用模型并把错误能力写回当前账号。这里不修改原 channel/account，也
 // 不保存副本；副本只在本次 HTTP 请求中携带账号级 key 和可选覆盖项。
 func channelWithAccountCredential(channel *model.Channel, account *model.ChannelAccount) *model.Channel {
-	if channel == nil || account == nil {
-		return channel
-	}
-
-	cloned := *channel
-	cloned.Key = strings.TrimSpace(account.Key)
-	cloned.OpenAIOrganization = account.OpenAIOrganization
-	if strings.TrimSpace(account.Other) != "" {
-		cloned.Other = account.Other
-	}
-	if otherSettings := strings.TrimSpace(account.GetOtherSettings(channel.OtherSettings)); otherSettings != "" {
-		cloned.OtherSettings = otherSettings
-	}
-
-	if baseURL := strings.TrimSpace(account.GetBaseURL(channel.GetBaseURL())); baseURL != "" {
-		cloned.BaseURL = common.GetPointer(baseURL)
-	}
-
-	defaultSetting := ""
-	if channel.Setting != nil {
-		defaultSetting = *channel.Setting
-	}
-	if setting := strings.TrimSpace(account.GetSetting(defaultSetting)); setting != "" {
-		cloned.Setting = common.GetPointer(setting)
-	}
-
-	if headerOverride := account.GetHeaderOverride(channel.HeaderOverride); headerOverride != nil {
-		if trimmed := strings.TrimSpace(*headerOverride); trimmed != "" {
-			cloned.HeaderOverride = common.GetPointer(trimmed)
-		} else {
-			cloned.HeaderOverride = nil
-		}
-	}
-
-	return &cloned
+	return upstreammodel.ChannelWithAccountCredential(channel, account)
 }
 
 // ensureManualChannelAccountMutationAllowed 限制上游同步渠道的账号池手动写入口。
@@ -742,6 +709,13 @@ func channelAccountUpdateMap(account *model.ChannelAccount, req channelAccountUp
 	}
 	if _, ok := requestData["max_concurrency"]; ok && req.MaxConcurrency != nil {
 		updates["max_concurrency"] = *req.MaxConcurrency
+	}
+	if _, ok := requestData["models"]; ok && account != nil && upstreamaccount.HasAccountSyncMetadata(account.OtherSettings) {
+		settings := account.OtherSettings
+		if value, hasSettings := updates["settings"].(string); hasSettings {
+			settings = value
+		}
+		updates["settings"] = upstreamaccount.MarkAccountKeyModelsManualOverride(settings)
 	}
 	return updates
 }

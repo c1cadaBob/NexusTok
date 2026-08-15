@@ -12,25 +12,36 @@ import (
 const upstreamAccountSyncMetadataKey = "upstream_account_sync"
 
 type syncMetadata struct {
-	Platform              string                   `json:"platform,omitempty"`
-	BaseURL               string                   `json:"base_url,omitempty"`
-	ManagementBaseURL     string                   `json:"management_base_url,omitempty"`
-	RelayBaseURL          string                   `json:"relay_base_url,omitempty"`
-	Credentials           *StoredCredential        `json:"credentials,omitempty"`
-	ExternalID            string                   `json:"external_id,omitempty"`
-	KeyDigest             string                   `json:"key_digest,omitempty"`
-	SyncedAt              int64                    `json:"synced_at,omitempty"`
-	GroupID               string                   `json:"group_id,omitempty"`
-	GroupName             string                   `json:"group_name,omitempty"`
-	GroupRatio            *float64                 `json:"group_ratio,omitempty"`
-	ModelRatios           map[string]float64       `json:"model_ratios,omitempty"`
-	EffectiveRatio        float64                  `json:"effective_ratio,omitempty"`
-	RatioConversion       float64                  `json:"ratio_conversion,omitempty"`
-	RatioConversionConfig *RatioConversionSnapshot `json:"ratio_conversion_config,omitempty"`
-	QuotaLimitUSD         *float64                 `json:"quota_limit_usd,omitempty"`
-	QuotaUsedUSD          *float64                 `json:"quota_used_usd,omitempty"`
-	QuotaRemainingUSD     *float64                 `json:"quota_remaining_usd,omitempty"`
-	BalanceSnapshot       *AccountBalanceSnapshot  `json:"balance_snapshot,omitempty"`
+	Platform                     string                   `json:"platform,omitempty"`
+	BaseURL                      string                   `json:"base_url,omitempty"`
+	ManagementBaseURL            string                   `json:"management_base_url,omitempty"`
+	RelayBaseURL                 string                   `json:"relay_base_url,omitempty"`
+	Credentials                  *StoredCredential        `json:"credentials,omitempty"`
+	ExternalID                   string                   `json:"external_id,omitempty"`
+	KeyDigest                    string                   `json:"key_digest,omitempty"`
+	SyncedAt                     int64                    `json:"synced_at,omitempty"`
+	GroupID                      string                   `json:"group_id,omitempty"`
+	GroupName                    string                   `json:"group_name,omitempty"`
+	GroupRatio                   *float64                 `json:"group_ratio,omitempty"`
+	ModelRatios                  map[string]float64       `json:"model_ratios,omitempty"`
+	EffectiveRatio               float64                  `json:"effective_ratio,omitempty"`
+	RatioConversion              float64                  `json:"ratio_conversion,omitempty"`
+	RatioConversionConfig        *RatioConversionSnapshot `json:"ratio_conversion_config,omitempty"`
+	QuotaLimitUSD                *float64                 `json:"quota_limit_usd,omitempty"`
+	QuotaUsedUSD                 *float64                 `json:"quota_used_usd,omitempty"`
+	QuotaRemainingUSD            *float64                 `json:"quota_remaining_usd,omitempty"`
+	BalanceSnapshot              *AccountBalanceSnapshot  `json:"balance_snapshot,omitempty"`
+	KeyModelsSyncedAt            int64                    `json:"key_models_synced_at,omitempty"`
+	KeyModelsSyncSource          string                   `json:"key_models_sync_source,omitempty"`
+	KeyModelsSyncError           string                   `json:"key_models_sync_error,omitempty"`
+	KeyModelsManualOverride      bool                     `json:"key_models_manual_override,omitempty"`
+	AutoCheckLastCheckedAt       int64                    `json:"auto_check_last_checked_at,omitempty"`
+	AutoCheckLastSuccessAt       int64                    `json:"auto_check_last_success_at,omitempty"`
+	AutoCheckFailureCount        int                      `json:"auto_check_failure_count,omitempty"`
+	AutoCheckLastError           string                   `json:"auto_check_last_error,omitempty"`
+	AutoCheckLastStatus          string                   `json:"auto_check_last_status,omitempty"`
+	AutoCheckDisabledByAutoCheck bool                     `json:"auto_check_disabled_by_auto_check,omitempty"`
+	AutoCheckDisabledAt          int64                    `json:"auto_check_disabled_at,omitempty"`
 }
 
 // AccountSyncDisplayMetadata 是可返回给前端展示的同步账号元数据。
@@ -168,24 +179,36 @@ func mergeAccountSyncMetadata(existing string, snapshot *Snapshot, key SyncedKey
 	if data == nil {
 		data = map[string]any{}
 	}
+	existingMetadata := readAccountSyncMetadata(existing)
 	data[upstreamAccountSyncMetadataKey] = syncMetadata{
-		Platform:              snapshot.Platform,
-		BaseURL:               snapshotSyncMetadataBaseURL(snapshot),
-		ManagementBaseURL:     snapshotManagementBaseURL(snapshot),
-		RelayBaseURL:          snapshotRelayBaseURL(snapshot),
-		ExternalID:            key.ExternalID,
-		KeyDigest:             keyDigest(key.Key),
-		SyncedAt:              common.GetTimestamp(),
-		GroupID:               strings.TrimSpace(key.GroupID),
-		GroupName:             strings.TrimSpace(key.GroupName),
-		GroupRatio:            key.GroupRatio,
-		ModelRatios:           cloneModelRatios(key.ModelRatios),
-		EffectiveRatio:        EffectiveKeyRatio(key),
-		RatioConversion:       ConvertedKeyRatio(key),
-		RatioConversionConfig: snapshot.RatioConversion,
-		QuotaLimitUSD:         finiteFloatPointer(key.QuotaLimitUSD),
-		QuotaUsedUSD:          finiteFloatPointer(key.QuotaUsedUSD),
-		QuotaRemainingUSD:     finiteFloatPointer(key.QuotaRemainingUSD),
+		Platform:                     snapshot.Platform,
+		BaseURL:                      snapshotSyncMetadataBaseURL(snapshot),
+		ManagementBaseURL:            snapshotManagementBaseURL(snapshot),
+		RelayBaseURL:                 snapshotRelayBaseURL(snapshot),
+		ExternalID:                   key.ExternalID,
+		KeyDigest:                    keyDigest(key.Key),
+		SyncedAt:                     common.GetTimestamp(),
+		GroupID:                      strings.TrimSpace(key.GroupID),
+		GroupName:                    strings.TrimSpace(key.GroupName),
+		GroupRatio:                   key.GroupRatio,
+		ModelRatios:                  cloneModelRatios(key.ModelRatios),
+		EffectiveRatio:               EffectiveKeyRatio(key),
+		RatioConversion:              ConvertedKeyRatio(key),
+		RatioConversionConfig:        snapshot.RatioConversion,
+		QuotaLimitUSD:                finiteFloatPointer(key.QuotaLimitUSD),
+		QuotaUsedUSD:                 finiteFloatPointer(key.QuotaUsedUSD),
+		QuotaRemainingUSD:            finiteFloatPointer(key.QuotaRemainingUSD),
+		KeyModelsSyncedAt:            existingMetadata.KeyModelsSyncedAt,
+		KeyModelsSyncSource:          existingMetadata.KeyModelsSyncSource,
+		KeyModelsSyncError:           existingMetadata.KeyModelsSyncError,
+		KeyModelsManualOverride:      existingMetadata.KeyModelsManualOverride,
+		AutoCheckLastCheckedAt:       existingMetadata.AutoCheckLastCheckedAt,
+		AutoCheckLastSuccessAt:       existingMetadata.AutoCheckLastSuccessAt,
+		AutoCheckFailureCount:        existingMetadata.AutoCheckFailureCount,
+		AutoCheckLastError:           existingMetadata.AutoCheckLastError,
+		AutoCheckLastStatus:          existingMetadata.AutoCheckLastStatus,
+		AutoCheckDisabledByAutoCheck: existingMetadata.AutoCheckDisabledByAutoCheck,
+		AutoCheckDisabledAt:          existingMetadata.AutoCheckDisabledAt,
 	}
 	bytes, err := common.Marshal(data)
 	if err != nil {
@@ -506,6 +529,78 @@ func PreserveAccountSyncMetadata(existing string, next string) string {
 		return next
 	}
 	return string(bytes)
+}
+
+// MarkAccountKeyModelsManualOverride 标记同步账号的模型白名单已由管理员手动编辑。
+//
+// 默认自动同步不会覆盖带有该标记的 ChannelAccount.models。该函数只改写
+// settings.upstream_account_sync 中的非敏感状态，不接触明文 key、token 或 Cookie。
+func MarkAccountKeyModelsManualOverride(settings string) string {
+	return mutateAccountSyncMetadata(settings, func(metadata map[string]any) {
+		metadata["key_models_manual_override"] = true
+		metadata["key_models_sync_source"] = "manual"
+		metadata["key_models_sync_error"] = ""
+	})
+}
+
+// AccountKeyModelsManualOverride 判断账号模型白名单是否被管理员手动覆盖过。
+func AccountKeyModelsManualOverride(settings string) bool {
+	return readAccountSyncMetadata(settings).KeyModelsManualOverride
+}
+
+func applyAccountKeyModelsSyncMetadata(settings string, key SyncedKey, manualOverride bool, usedModels string) string {
+	if manualOverride {
+		return MarkAccountKeyModelsManualOverride(settings)
+	}
+	source := strings.TrimSpace(key.KeyModelSyncSource)
+	if source == "" && len(key.Models) > 0 {
+		source = "snapshot"
+	}
+	errText := sanitizeUpstreamAccountSyncTaskLogText(common.MaskSensitiveInfo(key.KeyModelSyncError), upstreamAccountSyncTaskLogErrorMaxRunes)
+	if source == "" && errText == "" {
+		return settings
+	}
+	return mutateAccountSyncMetadata(settings, func(metadata map[string]any) {
+		if source != "" && strings.TrimSpace(usedModels) != "" {
+			metadata["key_models_synced_at"] = common.GetTimestamp()
+			metadata["key_models_sync_source"] = source
+			metadata["key_models_manual_override"] = false
+		}
+		if errText != "" {
+			metadata["key_models_sync_error"] = errText
+			if source != "" {
+				metadata["key_models_sync_source"] = source
+			}
+		} else {
+			metadata["key_models_sync_error"] = ""
+		}
+	})
+}
+
+func mutateAccountSyncMetadata(settings string, mutate func(map[string]any)) string {
+	if mutate == nil {
+		return settings
+	}
+	var data map[string]any
+	if strings.TrimSpace(settings) != "" {
+		if err := common.UnmarshalJsonStr(settings, &data); err != nil {
+			return settings
+		}
+	}
+	if data == nil {
+		data = map[string]any{}
+	}
+	raw, ok := data[upstreamAccountSyncMetadataKey]
+	if !ok {
+		return settings
+	}
+	metadata, ok := syncMetadataMap(raw)
+	if !ok {
+		return settings
+	}
+	mutate(metadata)
+	data[upstreamAccountSyncMetadataKey] = metadata
+	return marshalSettingsOrFallback(data, settings)
 }
 
 func readAccountSyncMetadata(settings string) syncMetadata {

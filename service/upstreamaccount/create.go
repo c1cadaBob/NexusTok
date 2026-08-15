@@ -277,6 +277,8 @@ func buildAccounts(snapshot *Snapshot, req CreateRequest, defaultModels string, 
 		if !hasGroup {
 			group = firstNonEmpty(key.GroupName, key.GroupID, defaultGroup)
 		}
+		settings := mergeAccountSyncMetadata(config.OtherSettings, snapshot, key)
+		settings = applyAccountKeyModelsSyncMetadata(settings, key, config.Models != nil, models)
 		priority := int64(0)
 		if req.ApplySuggested {
 			priority = key.SuggestedPriority
@@ -305,7 +307,7 @@ func buildAccounts(snapshot *Snapshot, req CreateRequest, defaultModels string, 
 			OpenAIOrganization: config.OpenAIOrganization,
 			Other:              config.Other,
 			Setting:            config.Setting,
-			OtherSettings:      mergeAccountSyncMetadata(config.OtherSettings, snapshot, key),
+			OtherSettings:      settings,
 			ModelMapping:       config.ModelMapping,
 			ParamOverride:      config.ParamOverride,
 			HeaderOverride:     config.HeaderOverride,

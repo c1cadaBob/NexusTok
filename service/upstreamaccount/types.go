@@ -176,26 +176,28 @@ type SyncedGroup struct {
 
 // SyncedKey 表示目标平台中的一个 API Key。
 type SyncedKey struct {
-	SyncID            string             `json:"sync_id,omitempty"`
-	ExternalID        string             `json:"external_id,omitempty"`
-	Name              string             `json:"name,omitempty"`
-	Key               string             `json:"-"`
-	MaskedKey         string             `json:"masked_key,omitempty"`
-	Status            int                `json:"status,omitempty"`
-	GroupID           string             `json:"group_id,omitempty"`
-	GroupName         string             `json:"group_name,omitempty"`
-	Models            []string           `json:"models,omitempty"`
-	ModelRatios       map[string]float64 `json:"model_ratios,omitempty"`
-	GroupRatio        *float64           `json:"group_ratio,omitempty"`
-	EffectiveRatio    float64            `json:"effective_ratio,omitempty"`
-	RatioConversion   float64            `json:"ratio_conversion,omitempty"`
-	QuotaLimitUSD     *float64           `json:"quota_limit_usd,omitempty"`
-	QuotaUsedUSD      *float64           `json:"quota_used_usd,omitempty"`
-	QuotaRemainingUSD *float64           `json:"quota_remaining_usd,omitempty"`
-	Unlimited         bool               `json:"unlimited,omitempty"`
-	SuggestedPriority int64              `json:"suggested_priority"`
-	SuggestedWeight   int                `json:"suggested_weight"`
-	Raw               map[string]any     `json:"raw,omitempty"`
+	SyncID             string             `json:"sync_id,omitempty"`
+	ExternalID         string             `json:"external_id,omitempty"`
+	Name               string             `json:"name,omitempty"`
+	Key                string             `json:"-"`
+	MaskedKey          string             `json:"masked_key,omitempty"`
+	Status             int                `json:"status,omitempty"`
+	GroupID            string             `json:"group_id,omitempty"`
+	GroupName          string             `json:"group_name,omitempty"`
+	Models             []string           `json:"models,omitempty"`
+	ModelRatios        map[string]float64 `json:"model_ratios,omitempty"`
+	KeyModelSyncSource string             `json:"-"`
+	KeyModelSyncError  string             `json:"-"`
+	GroupRatio         *float64           `json:"group_ratio,omitempty"`
+	EffectiveRatio     float64            `json:"effective_ratio,omitempty"`
+	RatioConversion    float64            `json:"ratio_conversion,omitempty"`
+	QuotaLimitUSD      *float64           `json:"quota_limit_usd,omitempty"`
+	QuotaUsedUSD       *float64           `json:"quota_used_usd,omitempty"`
+	QuotaRemainingUSD  *float64           `json:"quota_remaining_usd,omitempty"`
+	Unlimited          bool               `json:"unlimited,omitempty"`
+	SuggestedPriority  int64              `json:"suggested_priority"`
+	SuggestedWeight    int                `json:"suggested_weight"`
+	Raw                map[string]any     `json:"raw,omitempty"`
 }
 
 // RateSnapshot 表示模型、缓存、分组等倍率配置。

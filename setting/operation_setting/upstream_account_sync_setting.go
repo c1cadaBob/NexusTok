@@ -32,12 +32,25 @@ type UpstreamAccountSyncSetting struct {
 	Interval int64 `json:"interval"`
 	// Unit 是 month/week/day/hour/minute/second 之一。
 	Unit string `json:"unit"`
+	// SyncKeyModelsEnabled 控制账号同步后是否继续维护每个同步密钥的模型列表。
+	//
+	// 该开关只影响由上游账号同步流程维护的 ChannelAccount.models；普通账号池和渠道
+	// 顶层模型列表仍按原有配置保存。默认开启，让最低倍率的模型候选能够跟随上游密钥
+	// 能力更新；关闭时刷新会尽量保留已有本地模型白名单。
+	SyncKeyModelsEnabled bool `json:"sync_key_models_enabled"`
+	// KeyModelSyncOverwriteManualEnabled 控制模型同步是否覆盖管理员手动编辑过的白名单。
+	//
+	// 默认关闭。同步账号 settings 会记录模型白名单是否被人工编辑过；关闭时后台同步
+	// 只更新未人工覆盖的账号，避免上游平台模型列表把本地治理白名单直接冲掉。
+	KeyModelSyncOverwriteManualEnabled bool `json:"key_model_sync_overwrite_manual_enabled"`
 }
 
 var upstreamAccountSyncSetting = UpstreamAccountSyncSetting{
-	Enabled:  false,
-	Interval: 1,
-	Unit:     UpstreamAccountSyncUnitHour,
+	Enabled:                            false,
+	Interval:                           1,
+	Unit:                               UpstreamAccountSyncUnitHour,
+	SyncKeyModelsEnabled:               true,
+	KeyModelSyncOverwriteManualEnabled: false,
 }
 
 // init 将配置注册到全局配置管理器，继续复用 Option 键值表持久化。

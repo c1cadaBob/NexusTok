@@ -8,6 +8,7 @@ import (
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/constant"
 	"github.com/c1cada/NexusTok/model"
+	"github.com/c1cada/NexusTok/setting/operation_setting"
 	"gorm.io/gorm"
 )
 
@@ -47,6 +48,7 @@ func RefreshChannelFromCredential(ctx context.Context, req RefreshRequest) (*Ref
 			return nil, fmt.Errorf("预览快照为空，请重新同步")
 		}
 		applySnapshotRatioConversionForRequest(record.Snapshot, req.RatioConversion)
+		syncSnapshotKeyModels(ctx, req.ChannelID, record.Snapshot, req.Accounts)
 		return RefreshChannelFromSnapshot(req.ChannelID, record.Snapshot, req)
 	}
 	req.AuthMode = NormalizeAuthMode(req.AuthMode)
@@ -94,6 +96,7 @@ func RefreshChannelFromCredential(ctx context.Context, req RefreshRequest) (*Ref
 	ApplyRatioConversion(snapshot, req.RatioConversion)
 	ApplySuggestions(snapshot)
 	attachStoredCredential(snapshot, req.Credential)
+	syncSnapshotKeyModels(ctx, req.ChannelID, snapshot, req.Accounts)
 	return RefreshChannelFromSnapshot(req.ChannelID, snapshot, req)
 }
 
@@ -429,6 +432,8 @@ func buildAccountFromSyncedKey(snapshot *Snapshot, key SyncedKey, config Account
 		name = key.MaskedKey
 	}
 	models := syncedAccountModelsValue(config.Models, key.Models, defaultModels)
+	settings := mergeAccountSyncMetadata(config.OtherSettings, snapshot, key)
+	settings = applyAccountKeyModelsSyncMetadata(settings, key, config.Models != nil, models)
 	group, hasGroup := explicitSyncValue(config.Group)
 	if !hasGroup {
 		group = firstNonEmpty(key.GroupName, key.GroupID, defaultGroup)
@@ -447,7 +452,7 @@ func buildAccountFromSyncedKey(snapshot *Snapshot, key SyncedKey, config Account
 		OpenAIOrganization: config.OpenAIOrganization,
 		Other:              config.Other,
 		Setting:            config.Setting,
-		OtherSettings:      mergeAccountSyncMetadata(config.OtherSettings, snapshot, key),
+		OtherSettings:      settings,
 		ModelMapping:       config.ModelMapping,
 		ParamOverride:      config.ParamOverride,
 		HeaderOverride:     config.HeaderOverride,
@@ -470,8 +475,10 @@ func buildAccountRefreshUpdates(existing *model.ChannelAccount, snapshot *Snapsh
 		if config.Enabled == nil {
 			account.Status = existing.Status
 		}
-		if config.Models == nil && strings.TrimSpace(existing.Models) != "" {
+		modelsManuallyOverridden := config.Models != nil
+		if config.Models == nil && shouldPreserveExistingAccountModels(existing) {
 			account.Models = existing.Models
+			modelsManuallyOverridden = true
 		}
 		if strings.TrimSpace(config.Group) == "" && strings.TrimSpace(existing.Group) != "" {
 			account.Group = existing.Group
@@ -479,6 +486,8 @@ func buildAccountRefreshUpdates(existing *model.ChannelAccount, snapshot *Snapsh
 		if config.AccessGroups == nil {
 			account.AccessGroups = existing.AccessGroups
 		}
+		settings = applyAccountKeyModelsSyncMetadata(settings, key, modelsManuallyOverridden, account.Models)
+		account.OtherSettings = settings
 	}
 	// 显式关闭的同步 key 可以保留空模型或空访问组作为草稿；这里先写入最终状态，
 	// 再执行启用态校验，避免刷新禁用 key 时被误判为能力缺失。
@@ -541,6 +550,27 @@ func buildAccountRefreshUpdates(existing *model.ChannelAccount, snapshot *Snapsh
 		updates["status_code_mapping"] = account.StatusCodeMapping
 	}
 	return updates, nil
+}
+
+func shouldPreserveExistingAccountModels(existing *model.ChannelAccount) bool {
+	if existing == nil || strings.TrimSpace(existing.Models) == "" {
+		return false
+	}
+	setting := operation_setting.GetUpstreamAccountSyncSetting()
+	if setting == nil || !setting.SyncKeyModelsEnabled {
+		return true
+	}
+	if setting.KeyModelSyncOverwriteManualEnabled {
+		return false
+	}
+	metadata := readAccountSyncMetadata(existing.OtherSettings)
+	if metadata.KeyModelsManualOverride {
+		return true
+	}
+	// 旧同步账号没有 key_models_synced_at/source，无法可靠区分“上游同步写入”和
+	// “管理员本地编辑”。默认不覆盖这类历史白名单，避免升级后第一次后台同步把本地
+	// 治理模型冲掉；需要强制跟随上游时可打开覆盖开关。
+	return metadata.KeyModelsSyncedAt <= 0 && strings.TrimSpace(metadata.KeyModelsSyncSource) == ""
 }
 
 func sameSyncSource(metadata syncMetadata, snapshot *Snapshot) bool {

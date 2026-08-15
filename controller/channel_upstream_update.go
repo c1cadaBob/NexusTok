@@ -27,12 +27,10 @@ import (
 	"time"
 
 	"github.com/c1cada/NexusTok/common"
-	"github.com/c1cada/NexusTok/constant"
 	"github.com/c1cada/NexusTok/dto"
 	"github.com/c1cada/NexusTok/model"
-	"github.com/c1cada/NexusTok/relay/channel/gemini"
-	"github.com/c1cada/NexusTok/relay/channel/ollama"
 	"github.com/c1cada/NexusTok/service"
+	"github.com/c1cada/NexusTok/service/upstreammodel"
 
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
@@ -321,90 +319,7 @@ func getUpstreamModelUpdateMinCheckIntervalSeconds() int64 {
 // - Gemini: 使用专用 API
 // - 其他: 使用 OpenAI 兼容的 /v1/models API
 func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
-	baseURL := constant.ChannelBaseURLs[channel.Type]
-	if channel.GetBaseURL() != "" {
-		baseURL = channel.GetBaseURL()
-	}
-
-	if channel.Type == constant.ChannelTypeOllama {
-		key := strings.TrimSpace(strings.Split(channel.Key, "\n")[0])
-		models, err := ollama.FetchOllamaModels(baseURL, key)
-		if err != nil {
-			return nil, err
-		}
-		return normalizeModelNames(lo.Map(models, func(item ollama.OllamaModel, _ int) string {
-			return item.Name
-		})), nil
-	}
-
-	if channel.Type == constant.ChannelTypeGemini {
-		key, _, apiErr := channel.GetNextEnabledKey()
-		if apiErr != nil {
-			return nil, fmt.Errorf("获取渠道密钥失败: %w", apiErr)
-		}
-		key = strings.TrimSpace(key)
-		models, err := gemini.FetchGeminiModels(baseURL, key, channel.GetSetting().Proxy)
-		if err != nil {
-			return nil, err
-		}
-		return normalizeModelNames(models), nil
-	}
-
-	var url string
-	switch channel.Type {
-	case constant.ChannelTypeAli:
-		url = fmt.Sprintf("%s/compatible-mode/v1/models", baseURL)
-	case constant.ChannelTypeZhipu_v4:
-		if plan, ok := constant.ChannelSpecialBases[baseURL]; ok && plan.OpenAIBaseURL != "" {
-			url = fmt.Sprintf("%s/models", plan.OpenAIBaseURL)
-		} else {
-			url = fmt.Sprintf("%s/api/paas/v4/models", baseURL)
-		}
-	case constant.ChannelTypeVolcEngine:
-		if plan, ok := constant.ChannelSpecialBases[baseURL]; ok && plan.OpenAIBaseURL != "" {
-			url = fmt.Sprintf("%s/v1/models", plan.OpenAIBaseURL)
-		} else {
-			url = fmt.Sprintf("%s/v1/models", baseURL)
-		}
-	case constant.ChannelTypeMoonshot:
-		if plan, ok := constant.ChannelSpecialBases[baseURL]; ok && plan.OpenAIBaseURL != "" {
-			url = fmt.Sprintf("%s/models", plan.OpenAIBaseURL)
-		} else {
-			url = fmt.Sprintf("%s/v1/models", baseURL)
-		}
-	default:
-		url = fmt.Sprintf("%s/v1/models", baseURL)
-	}
-
-	key, _, apiErr := channel.GetNextEnabledKey()
-	if apiErr != nil {
-		return nil, fmt.Errorf("获取渠道密钥失败: %w", apiErr)
-	}
-	key = strings.TrimSpace(key)
-
-	headers, err := buildFetchModelsHeaders(channel, key)
-	if err != nil {
-		return nil, err
-	}
-
-	body, err := GetResponseBody(http.MethodGet, url, channel, headers)
-	if err != nil {
-		return nil, err
-	}
-
-	var result OpenAIModelsResponse
-	if err := common.Unmarshal(body, &result); err != nil {
-		return nil, err
-	}
-
-	ids := lo.Map(result.Data, func(item OpenAIModel, _ int) string {
-		if channel.Type == constant.ChannelTypeGemini {
-			return strings.TrimPrefix(item.ID, "models/")
-		}
-		return item.ID
-	})
-
-	return normalizeModelNames(ids), nil
+	return upstreammodel.FetchChannelModelIDs(channel)
 }
 
 // updateChannelUpstreamModelSettings 更新渠道上游模型设置

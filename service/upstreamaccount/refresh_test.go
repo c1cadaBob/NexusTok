@@ -13,6 +13,7 @@ import (
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/constant"
 	"github.com/c1cada/NexusTok/model"
+	"github.com/c1cada/NexusTok/setting/operation_setting"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -1240,6 +1241,145 @@ func TestRefreshChannelFromSnapshotAppliesExplicitLocalModelsAndGroup(t *testing
 	require.NoError(t, db.First(&refreshed, existing.Id).Error)
 	require.Equal(t, "gpt-local", refreshed.Models)
 	require.Equal(t, "local-vip", refreshed.Group)
+}
+
+func TestRefreshChannelFromSnapshotPreservesManualKeyModelsByDefault(t *testing.T) {
+	db := setupRefreshChannelTestDB(t)
+	withUpstreamAccountSyncModelSetting(t, true, false)
+
+	channel := createRefreshTestSyncedChannel(t, db, "manual-model-channel", "")
+	oldKey := SyncedKey{
+		ExternalID: "manual-model",
+		Name:       "Manual Model",
+		Key:        "sk-manual-model-old",
+		Models:     []string{"gpt-old"},
+	}
+	existingSettings := mergeAccountSyncMetadata("", &Snapshot{Platform: PlatformNewAPI, BaseURL: "https://newapi.example"}, oldKey)
+	existingSettings = MarkAccountKeyModelsManualOverride(existingSettings)
+	existing := model.ChannelAccount{
+		ChannelId:     channel.Id,
+		Name:          "Manual Model",
+		Key:           "sk-manual-model-old",
+		Status:        common.ChannelStatusEnabled,
+		Models:        "local-allowlist",
+		Group:         "default",
+		AccessGroups:  "default",
+		OtherSettings: existingSettings,
+	}
+	require.NoError(t, db.Create(&existing).Error)
+
+	_, err := RefreshChannelFromSnapshot(channel.Id, &Snapshot{
+		Platform: PlatformNewAPI,
+		BaseURL:  "https://newapi.example",
+		Keys: []SyncedKey{{
+			ExternalID: "manual-model",
+			Name:       "Manual Model Refreshed",
+			Key:        "sk-manual-model-new",
+			Models:     []string{"upstream-model"},
+			GroupName:  "default",
+		}},
+	}, RefreshRequest{ChannelID: channel.Id})
+
+	require.NoError(t, err)
+	var refreshed model.ChannelAccount
+	require.NoError(t, db.First(&refreshed, existing.Id).Error)
+	require.Equal(t, "local-allowlist", refreshed.Models)
+	require.True(t, AccountKeyModelsManualOverride(refreshed.OtherSettings))
+}
+
+func TestRefreshChannelFromSnapshotOverwritesManualKeyModelsWhenEnabled(t *testing.T) {
+	db := setupRefreshChannelTestDB(t)
+	withUpstreamAccountSyncModelSetting(t, true, true)
+
+	channel := createRefreshTestSyncedChannel(t, db, "overwrite-model-channel", "")
+	oldKey := SyncedKey{
+		ExternalID: "overwrite-model",
+		Name:       "Overwrite Model",
+		Key:        "sk-overwrite-model-old",
+		Models:     []string{"gpt-old"},
+	}
+	existingSettings := mergeAccountSyncMetadata("", &Snapshot{Platform: PlatformNewAPI, BaseURL: "https://newapi.example"}, oldKey)
+	existingSettings = MarkAccountKeyModelsManualOverride(existingSettings)
+	existing := model.ChannelAccount{
+		ChannelId:     channel.Id,
+		Name:          "Overwrite Model",
+		Key:           "sk-overwrite-model-old",
+		Status:        common.ChannelStatusEnabled,
+		Models:        "local-allowlist",
+		Group:         "default",
+		AccessGroups:  "default",
+		OtherSettings: existingSettings,
+	}
+	require.NoError(t, db.Create(&existing).Error)
+
+	_, err := RefreshChannelFromSnapshot(channel.Id, &Snapshot{
+		Platform: PlatformNewAPI,
+		BaseURL:  "https://newapi.example",
+		Keys: []SyncedKey{{
+			ExternalID: "overwrite-model",
+			Name:       "Overwrite Model Refreshed",
+			Key:        "sk-overwrite-model-new",
+			Models:     []string{"upstream-model"},
+			GroupName:  "default",
+		}},
+	}, RefreshRequest{ChannelID: channel.Id})
+
+	require.NoError(t, err)
+	var refreshed model.ChannelAccount
+	require.NoError(t, db.First(&refreshed, existing.Id).Error)
+	require.Equal(t, "upstream-model", refreshed.Models)
+	metadata := readAccountSyncMetadata(refreshed.OtherSettings)
+	require.False(t, metadata.KeyModelsManualOverride)
+	require.Equal(t, keyModelSyncSourceSnapshot, metadata.KeyModelsSyncSource)
+	require.NotZero(t, metadata.KeyModelsSyncedAt)
+}
+
+func TestSyncSnapshotKeyModelsFetchesMissingModelsWithTargetKey(t *testing.T) {
+	db := setupRefreshChannelTestDB(t)
+	withUpstreamAccountSyncModelSetting(t, true, true)
+	var seenAuthorization string
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/models", r.URL.Path)
+		seenAuthorization = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"fetched-a"},{"id":"fetched-b"}]}`))
+	}))
+	defer upstream.Close()
+
+	channel := createRefreshTestSyncedChannel(t, db, "fetch-missing-model-channel", "")
+	channel.BaseURL = &upstream.URL
+	require.NoError(t, db.Save(&channel).Error)
+	snapshot := &Snapshot{
+		Platform: PlatformNewAPI,
+		BaseURL:  upstream.URL,
+		Keys: []SyncedKey{{
+			ExternalID: "fetch-key",
+			Name:       "Fetch Key",
+			Key:        "sk-target-fetch",
+			GroupName:  "default",
+		}},
+	}
+
+	syncSnapshotKeyModels(context.Background(), channel.Id, snapshot, nil)
+
+	require.Equal(t, []string{"fetched-a", "fetched-b"}, snapshot.Keys[0].Models)
+	require.Equal(t, keyModelSyncSourceFetchModels, snapshot.Keys[0].KeyModelSyncSource)
+	require.Empty(t, snapshot.Keys[0].KeyModelSyncError)
+	require.Equal(t, "Bearer sk-target-fetch", seenAuthorization)
+}
+
+func withUpstreamAccountSyncModelSetting(t *testing.T, enabled bool, overwriteManual bool) {
+	t.Helper()
+	setting := operation_setting.GetUpstreamAccountSyncSetting()
+	oldEnabled := setting.SyncKeyModelsEnabled
+	oldOverwrite := setting.KeyModelSyncOverwriteManualEnabled
+	setting.SyncKeyModelsEnabled = enabled
+	setting.KeyModelSyncOverwriteManualEnabled = overwriteManual
+	t.Cleanup(func() {
+		setting.SyncKeyModelsEnabled = oldEnabled
+		setting.KeyModelSyncOverwriteManualEnabled = oldOverwrite
+	})
 }
 
 func TestRefreshChannelFromSnapshotKeepsManualSchedulingWhenSuggestionsDisabled(t *testing.T) {

@@ -463,15 +463,18 @@ func automaticAccountConfigs(channelID int) ([]AccountCreateConfig, error) {
 		}
 		priority := account.Priority
 		weight := account.Weight
-		models := account.Models
-		configs = append(configs, AccountCreateConfig{
+		config := AccountCreateConfig{
 			SyncID:     syncID,
 			ExternalID: strings.TrimSpace(metadata.ExternalID),
-			Models:     &models,
 			Group:      account.Group,
 			Priority:   &priority,
 			Weight:     &weight,
-		})
+		}
+		if shouldPreserveExistingAccountModels(account) {
+			models := account.Models
+			config.Models = &models
+		}
+		configs = append(configs, config)
 	}
 	return configs, nil
 }
