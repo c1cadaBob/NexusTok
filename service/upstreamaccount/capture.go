@@ -18,7 +18,7 @@ import (
 const (
 	captureCacheNamespace = "upstream-account-capture"
 	captureTTL            = 10 * time.Minute
-	captureHelperVersion  = "1.4.0"
+	captureHelperVersion  = "1.5.0"
 	captureHandoffParam   = "nexustok_capture"
 
 	captureStatusPending   = "pending"
@@ -741,6 +741,34 @@ func RenderCaptureHelperUserscript(nexusBaseURL string) (string, error) {
     return normalizeTokenCandidate(directStorageValue(keys), names);
   }
 
+  function jwtPayload(token) {
+    const parts = text(token).split('.');
+    if (parts.length < 2) return {};
+    return parseJSON(decodeBase64URL(parts[1])) || {};
+  }
+
+  function newAPIUserIDFromJWT(token) {
+    const payload = jwtPayload(token);
+    return normalizeNewAPIUserID(findValueDeep(payload, ['sub', 'id', 'userid', 'user_id', 'uid', 'userid'], 0));
+  }
+
+  function readNewAPIAccessToken() {
+    return normalizeTokenCandidate(
+      tokenFromHashParam('access_token', 'auth_token', 'token') ||
+      directStorageToken(
+        ['new_api_access_token', 'new-api-access-token', 'auth_token', 'access_token', 'token', 'jwt'],
+        ['access_token', 'auth_token', 'token', 'jwt']
+      ) ||
+      deepStorageValue(
+        ['auth', 'auth_user', 'token_info', 'tokenInfo', 'session', 'user'],
+        ['access_token', 'auth_token', 'token', 'jwt'],
+        /auth|token|session|user/i
+      ) ||
+      pageStateValue(['access_token', 'auth_token', 'token', 'jwt']),
+      ['access_token', 'auth_token', 'token', 'jwt']
+    );
+  }
+
   function storageKeyNames(storage) {
     const keys = [];
     try {
@@ -1118,11 +1146,13 @@ func RenderCaptureHelperUserscript(nexusBaseURL string) (string, error) {
     const directUID = text(directStorageValue(['uid', 'new-api-user', 'New-Api-User'])).trim();
     if (isNumericUserID(directUID)) return directUID;
     const storedUserID = deepStorageValue(['user', 'user_info', 'userInfo', 'auth', 'auth_user'], ['id', 'userid', 'user_id'], /user|auth|profile|self/i);
-    return normalizeNewAPIUserID(storedUserID);
+    return normalizeNewAPIUserID(storedUserID) || newAPIUserIDFromJWT(readNewAPIAccessToken());
   }
 
-  function newAPIHeaders(userID) {
+  function newAPIHeaders(userID, accessToken) {
     const headers = {};
+    const token = normalizeTokenCandidate(accessToken, ['access_token', 'auth_token', 'token', 'jwt']);
+    if (token) headers.Authorization = 'Bearer ' + token;
     const normalized = normalizeNewAPIUserID(userID);
     if (normalized) headers['New-Api-User'] = normalized;
     return headers;
@@ -1130,31 +1160,34 @@ func RenderCaptureHelperUserscript(nexusBaseURL string) (string, error) {
 
   async function captureNewAPI() {
     let userID = guessNewAPIUserID();
+    let accessToken = readNewAPIAccessToken();
     let selfResult;
     try {
-      selfResult = await readFirstJSON(['/api/user/self', '/api/user/me', '/api/user/profile', '/api/user/info'], { headers: newAPIHeaders(userID) }, 'new-api user profile endpoint');
+      selfResult = await readFirstJSON(['/api/user/self', '/api/user/me', '/api/user/profile', '/api/user/info'], { headers: newAPIHeaders(userID, accessToken) }, 'new-api user profile endpoint');
     } catch (error) {
       if (!userID) {
         const prompted = window.prompt(tr('newAPIUserIDPrompt'));
         userID = normalizeNewAPIUserID(prompted);
         if (!userID) throw new Error('New-Api-User must be a numeric target-site user ID.');
-        selfResult = await readFirstJSON(['/api/user/self', '/api/user/me', '/api/user/profile', '/api/user/info'], { headers: newAPIHeaders(userID) }, 'new-api user profile endpoint');
+        selfResult = await readFirstJSON(['/api/user/self', '/api/user/me', '/api/user/profile', '/api/user/info'], { headers: newAPIHeaders(userID, accessToken) }, 'new-api user profile endpoint');
       } else {
         throw error;
       }
     }
     const self = selfResult.data || {};
-    const finalUserID = normalizeNewAPIUserID(self.id || self.user_id || userID);
+    const finalUserID = normalizeNewAPIUserID(self.id || self.user_id || findValueDeep(self, ['id', 'userid', 'user_id', 'uid', 'userid'], 0) || userID);
     if (!finalUserID) throw new Error('New-Api-User must be a numeric target-site user ID.');
-    const tokenResult = await readFirstJSON(['/api/user/token', '/api/user/access_token', '/api/user/access-token'], { headers: newAPIHeaders(finalUserID) }, 'new-api access token endpoint');
-    const token = tokenResult.data;
-    const accessToken = typeof token === 'string' ? token : text(token.access_token || token.token || '');
+    if (!accessToken) {
+      const tokenResult = await readFirstJSON(['/api/user/token', '/api/user/access_token', '/api/user/access-token'], { headers: newAPIHeaders(finalUserID, '') }, 'new-api access token endpoint');
+      const token = tokenResult.data;
+      accessToken = typeof token === 'string' ? token : text(token.access_token || token.token || '');
+    }
     if (!accessToken) throw new Error('new-api /api/user/token did not return access_token');
     return {
       platform: 'new-api',
       auth_mode: 'access_token',
       user_id: finalUserID,
-      username: text(self.username || ''),
+      username: text(self.username || self.display_name || ''),
       email: text(self.email || ''),
       access_token: accessToken,
       auth_user: self,
@@ -1451,6 +1484,16 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
     }
   }
 
+  function decodeBase64URL(value) {
+    const normalized = text(value).replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized + '='.repeat((4 - normalized.length %% 4) %% 4);
+    try {
+      return decodeURIComponent(escape(atob(padded)));
+    } catch (_) {
+      try { return atob(padded); } catch (__) { return ''; }
+    }
+  }
+
   function normalizeExpiresAt(value) {
     const parsed = Number.parseInt(text(value), 10);
     if (!Number.isFinite(parsed) || parsed <= 0) return 0;
@@ -1546,6 +1589,34 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
 
   function directStorageToken(keys, names) {
     return normalizeTokenCandidate(directStorageValue(keys), names);
+  }
+
+  function jwtPayload(token) {
+    const parts = text(token).split('.');
+    if (parts.length < 2) return {};
+    return parseJSON(decodeBase64URL(parts[1])) || {};
+  }
+
+  function newAPIUserIDFromJWT(token) {
+    const payload = jwtPayload(token);
+    return normalizeNewAPIUserID(findValueDeep(payload, ['sub', 'id', 'userid', 'user_id', 'uid', 'userid'], 0));
+  }
+
+  function readNewAPIAccessToken() {
+    return normalizeTokenCandidate(
+      tokenFromHashParam('access_token', 'auth_token', 'token') ||
+      directStorageToken(
+        ['new_api_access_token', 'new-api-access-token', 'auth_token', 'access_token', 'token', 'jwt'],
+        ['access_token', 'auth_token', 'token', 'jwt']
+      ) ||
+      deepStorageValue(
+        ['auth', 'auth_user', 'token_info', 'tokenInfo', 'session', 'user'],
+        ['access_token', 'auth_token', 'token', 'jwt'],
+        /auth|token|session|user/i
+      ) ||
+      pageStateValue(['access_token', 'auth_token', 'token', 'jwt']),
+      ['access_token', 'auth_token', 'token', 'jwt']
+    );
   }
 
   function storageKeyNames(storage) {
@@ -1735,7 +1806,7 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
         if (normalizedFound) return normalizedFound;
       }
     }
-    return '';
+    return newAPIUserIDFromJWT(readNewAPIAccessToken());
   }
 
   function promptForNewAPIUserID(reason) {
@@ -1991,14 +2062,17 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
     return /New-Api-User|user id|user_id|用户\s*ID|用户ID|未提供|not provided|mismatch/i.test(message);
   }
 
-  function newAPIHeaders(userID) {
+  function newAPIHeaders(userID, accessToken) {
     const headers = {};
+    const token = normalizeTokenCandidate(accessToken, ['access_token', 'auth_token', 'token', 'jwt']);
+    if (token) headers.Authorization = 'Bearer ' + token;
     const normalized = normalizeNewAPIUserID(userID);
     if (normalized) headers['New-Api-User'] = normalized;
     return headers;
   }
 
   async function pageLooksLikeNewAPI() {
+    if (readNewAPIAccessToken()) return true;
     if (normalizeNewAPIUserID(directStorageValue(['uid', 'new-api-user', 'New-Api-User']))) {
       return true;
     }
@@ -2088,13 +2162,14 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
 
   async function captureNewAPI() {
     let userID = guessNewAPIUserID();
+    let accessToken = readNewAPIAccessToken();
     const selfPaths = ['/api/user/self', '/api/user/me', '/api/user/profile', '/api/user/info'];
     const tokenPaths = ['/api/user/token', '/api/user/access_token', '/api/user/access-token'];
     let selfResult;
     try {
       selfResult = await readFirstJSON(
         selfPaths,
-        { headers: newAPIHeaders(userID) },
+        { headers: newAPIHeaders(userID, accessToken) },
         'new-api user profile endpoint',
         'self'
       );
@@ -2103,7 +2178,7 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
         userID = promptForNewAPIUserID(error && error.message ? error.message : '');
         selfResult = await readFirstJSON(
           selfPaths,
-          { headers: newAPIHeaders(userID) },
+          { headers: newAPIHeaders(userID, accessToken) },
           'new-api user profile endpoint',
           'self'
         );
@@ -2112,26 +2187,28 @@ func renderCaptureUserscript(record CaptureSessionRecord, nexusBaseURL string) (
       }
     }
     const self = selfResult.data || {};
-    const resolvedUserID = normalizeNewAPIUserID(self.id || self.user_id || userID);
+    const resolvedUserID = normalizeNewAPIUserID(self.id || self.user_id || findValueDeep(self, ['id', 'userid', 'user_id', 'uid', 'userid'], 0) || userID);
     if (!resolvedUserID) {
       userID = promptForNewAPIUserID('The target site did not return a numeric user ID from ' + selfResult.path + '.');
     }
     const finalUserID = normalizeNewAPIUserID(resolvedUserID || userID);
     if (!finalUserID) throw new Error('New-Api-User must be a numeric target-site user ID.');
-    const tokenResult = await readFirstJSON(
-      tokenPaths,
-      { headers: newAPIHeaders(finalUserID) },
-      'new-api access token endpoint',
-      'token'
-    );
-    const token = tokenResult.data;
-    const accessToken = typeof token === 'string' ? token : text(token.access_token || token.token || '');
+    if (!accessToken) {
+      const tokenResult = await readFirstJSON(
+        tokenPaths,
+        { headers: newAPIHeaders(finalUserID, '') },
+        'new-api access token endpoint',
+        'token'
+      );
+      const token = tokenResult.data;
+      accessToken = typeof token === 'string' ? token : text(token.access_token || token.token || '');
+    }
     if (!accessToken) throw new Error('new-api /api/user/token did not return access_token');
     return {
       platform: 'new-api',
       auth_mode: 'access_token',
       user_id: finalUserID,
-      username: text(self.username || ''),
+      username: text(self.username || self.display_name || ''),
       email: text(self.email || ''),
       access_token: accessToken,
       auth_user: self,
@@ -2644,8 +2721,11 @@ func buildCredentialFromCapture(record CaptureSessionRecord, req CaptureSessionC
 	}
 	switch record.Platform {
 	case PlatformNewAPI:
-		userID := strings.TrimSpace(firstNonEmpty(req.UserID, valueFromAny(req.AuthUser, "id"), valueFromAny(req.AuthUser, "user_id")))
 		accessToken := normalizeImportedBearerToken(req.AccessToken)
+		userID, invalidUserID := normalizeNewAPIUserIDFromCapture(req.UserID, req.AuthUser, accessToken)
+		if invalidUserID {
+			return Credential{}, nil, fmt.Errorf("new-api New-Api-User 必须是目标站数字用户 ID，不能使用用户名或邮箱")
+		}
 		if userID == "" {
 			return Credential{}, nil, fmt.Errorf("new-api 采集结果缺少 New-Api-User / User ID")
 		}
@@ -2848,6 +2928,56 @@ func valueFromAny(values map[string]any, key string) string {
 			if found := valueFromAny(nested, key); found != "" {
 				return found
 			}
+		}
+	}
+	return ""
+}
+
+func normalizeNewAPIUserIDFromCapture(rawUserID string, authUser map[string]any, accessToken string) (string, bool) {
+	hasExplicitUserID := false
+	for _, candidate := range []string{
+		rawUserID,
+		valueFromAny(authUser, "id"),
+		valueFromAny(authUser, "user_id"),
+		valueFromAny(authUser, "userid"),
+		valueFromAny(authUser, "uid"),
+		valueFromAny(authUser, "userId"),
+		valueFromAny(authUser, "sub"),
+	} {
+		candidate = strings.TrimSpace(candidate)
+		if candidate != "" {
+			hasExplicitUserID = true
+		}
+		if isNumericNewAPIUserID(candidate) {
+			return candidate, false
+		}
+	}
+	if jwtUserID := newAPIUserIDFromJWT(accessToken); jwtUserID != "" {
+		return jwtUserID, false
+	}
+	return "", hasExplicitUserID
+}
+
+func newAPIUserIDFromJWT(accessToken string) string {
+	token := normalizeImportedBearerToken(accessToken)
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return ""
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		if payload, err = base64.URLEncoding.DecodeString(parts[1]); err != nil {
+			return ""
+		}
+	}
+	var claims map[string]any
+	if err := common.Unmarshal(payload, &claims); err != nil {
+		return ""
+	}
+	for _, field := range []string{"sub", "user_id", "userid", "uid", "id", "userId"} {
+		candidate := valueFromAny(claims, field)
+		if isNumericNewAPIUserID(candidate) {
+			return candidate
 		}
 	}
 	return ""

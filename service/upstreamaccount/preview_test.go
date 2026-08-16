@@ -79,6 +79,96 @@ func TestNewAPIPreviewFetchesKeysRatesAndBalance(t *testing.T) {
 	require.NotEmpty(t, authSession.NewAPI.Cookies)
 }
 
+func TestNewAPIPreviewAcceptsNestedUserAndAccessTokenLogin(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/status":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"quota_per_unit":100}}`))
+		case "/api/user/login":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"access_token":"nested-access-token","token_type":"Bearer","user":{"id":5,"display_name":"c1cada","group":"default"}}}`))
+		case "/api/user/self":
+			require.Equal(t, "Bearer nested-access-token", r.Header.Get("Authorization"))
+			require.Equal(t, "5", r.Header.Get("New-Api-User"))
+			_, _ = w.Write([]byte(`{"success":true,"data":{"id":5,"display_name":"c1cada","group":"default","quota":300,"used_quota":50}}`))
+		case "/api/user/self/groups":
+			require.Equal(t, "Bearer nested-access-token", r.Header.Get("Authorization"))
+			require.Equal(t, "5", r.Header.Get("New-Api-User"))
+			_, _ = w.Write([]byte(`{"success":true,"data":{"default":{"ratio":1,"desc":"Default"}}}`))
+		case "/api/ratio_config":
+			_, _ = w.Write([]byte(`{"success":false,"message":"hidden"}`))
+		case "/api/token/":
+			require.Equal(t, "Bearer nested-access-token", r.Header.Get("Authorization"))
+			require.Equal(t, "5", r.Header.Get("New-Api-User"))
+			_, _ = w.Write([]byte(`{"success":true,"data":{"items":[{"id":272,"name":"key-a","key":"sk-***abcd","group":"default","status":1,"model_limits":"gpt-4o","remain_quota":120,"used_quota":30}],"total":1}}`))
+		case "/api/token/batch/keys":
+			require.Equal(t, "Bearer nested-access-token", r.Header.Get("Authorization"))
+			require.Equal(t, "5", r.Header.Get("New-Api-User"))
+			_, _ = w.Write([]byte(`{"success":true,"data":{"keys":{"272":"sk-nested-full-key"}}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	result, err := Preview(context.Background(), PreviewRequest{Credential: Credential{
+		Platform: PlatformNewAPI,
+		BaseURL:  server.URL,
+		Username: "c1cada",
+		Password: "secret",
+	}})
+
+	require.NoError(t, err)
+	require.Len(t, result.Snapshot.Keys, 1)
+	require.Equal(t, "5", result.Snapshot.User.ID)
+	require.Equal(t, "c1cada", result.Snapshot.User.Username)
+
+	record, err := GetPreviewRecord(result.PreviewID)
+	require.NoError(t, err)
+	require.Equal(t, "sk-nested-full-key", record.Snapshot.Keys[0].Key)
+	authSession, err := decryptAuthenticatedSession(record.Snapshot.StoredCredential.Session)
+	require.NoError(t, err)
+	require.Equal(t, "5", authSession.NewAPI.UserID)
+	require.Equal(t, "nested-access-token", authSession.NewAPI.AccessToken)
+}
+
+func TestNewAPIPreviewContinuesWhenStatusEndpointFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/status":
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"success":false,"message":"status upstream timeout"}`))
+		case "/api/user/login":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"id":7,"username":"alice","group":"default"}}`))
+		case "/api/user/self":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"id":7,"username":"alice","group":"default","quota":500000,"used_quota":0}}`))
+		case "/api/user/self/groups":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"default":{"ratio":1,"desc":"Default"}}}`))
+		case "/api/ratio_config":
+			_, _ = w.Write([]byte(`{"success":false,"message":"hidden"}`))
+		case "/api/token/":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"items":[{"id":11,"name":"key-a","key":"sk-status-full-key","group":"default","status":1,"model_limits":"gpt-4o","remain_quota":0,"used_quota":0}],"total":1}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	result, err := Preview(context.Background(), PreviewRequest{Credential: Credential{
+		Platform: PlatformNewAPI,
+		BaseURL:  server.URL,
+		Username: "alice",
+		Password: "secret",
+	}})
+
+	require.NoError(t, err)
+	require.Len(t, result.Snapshot.Keys, 1)
+	require.NotEmpty(t, result.Snapshot.Warnings)
+	require.Contains(t, strings.Join(result.Snapshot.Warnings, "\n"), "/api/status 不可用")
+	require.Equal(t, float64(1), *result.Snapshot.Balance.BalanceUSD)
+}
+
 func TestNewAPIPreviewFallsBackToSingleKeyReveal(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -420,7 +510,7 @@ func TestNewAPIPreviewImportsAccessTokenFromUserscript(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path != "/api/status" && r.URL.Path != "/api/ratio_config" {
-			require.Equal(t, "newapi-access-token", r.Header.Get("Authorization"))
+			require.Equal(t, "Bearer newapi-access-token", r.Header.Get("Authorization"))
 			require.Equal(t, "7", r.Header.Get("New-Api-User"))
 		}
 		switch r.URL.Path {

@@ -321,6 +321,65 @@ func TestCaptureSessionCompletesNewAPIAccessTokenPayloadAndRendersScript(t *test
 	require.Equal(t, "new-api-access-token", credential.Session.NewAPI.AccessToken)
 }
 
+func TestCaptureSessionCompletesNewAPIFromNestedAuthUser(t *testing.T) {
+	start, err := StartCaptureSession(31, CaptureSessionStartRequest{
+		Platform: PlatformNewAPI,
+		BaseURL:  "https://new.example.com",
+	}, "https://nexus.example.com")
+	require.NoError(t, err)
+	record, found, err := captureSessionCache.Get(start.CaptureID)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	result, err := CompleteCaptureSession(start.CaptureID, CaptureSessionCompleteRequest{
+		CaptureSecret: record.Secret,
+		Origin:        "https://new.example.com",
+		AccessToken:   "nested-new-api-token",
+		AuthUser: map[string]any{
+			"user": map[string]any{
+				"id":           42,
+				"display_name": "nested-user",
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, captureStatusCompleted, result.Status)
+	require.Equal(t, "42", result.Summary.UserID)
+
+	credential, err := ResolveCaptureCredential(31, start.CaptureID)
+	require.NoError(t, err)
+	require.NotNil(t, credential.Session.NewAPI)
+	require.Equal(t, "42", credential.Session.NewAPI.UserID)
+	require.Equal(t, "nested-new-api-token", credential.Session.NewAPI.AccessToken)
+}
+
+func TestCaptureSessionCompletesNewAPIUserIDFromJWTSubject(t *testing.T) {
+	start, err := StartCaptureSession(32, CaptureSessionStartRequest{
+		Platform: PlatformNewAPI,
+		BaseURL:  "https://new.example.com",
+	}, "https://nexus.example.com")
+	require.NoError(t, err)
+	record, found, err := captureSessionCache.Get(start.CaptureID)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	token := "header.eyJzdWIiOiI0MyJ9.signature"
+	result, err := CompleteCaptureSession(start.CaptureID, CaptureSessionCompleteRequest{
+		CaptureSecret: record.Secret,
+		Origin:        "https://new.example.com",
+		AccessToken:   token,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "43", result.Summary.UserID)
+
+	credential, err := ResolveCaptureCredential(32, start.CaptureID)
+	require.NoError(t, err)
+	require.Equal(t, "43", credential.Session.NewAPI.UserID)
+	require.Equal(t, token, credential.Session.NewAPI.AccessToken)
+}
+
 func TestCaptureSessionStoresOnlySafeDiagnostics(t *testing.T) {
 	start, err := StartCaptureSession(13, CaptureSessionStartRequest{
 		Platform: PlatformSub2API,

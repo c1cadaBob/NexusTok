@@ -16,6 +16,8 @@ type NewAPIClient struct {
 	httpClient *http.Client
 }
 
+const defaultNewAPIQuotaPerUnit = 500000
+
 // NewNewAPIClient 创建 new-api 客户端。
 func NewNewAPIClient(client *http.Client) *NewAPIClient {
 	return &NewAPIClient{httpClient: client}
@@ -26,13 +28,47 @@ type newAPIStatus struct {
 }
 
 type newAPIUser struct {
-	ID         any     `json:"id"`
-	Username   string  `json:"username"`
-	Email      string  `json:"email"`
-	Group      string  `json:"group"`
-	Quota      float64 `json:"quota"`
-	UsedQuota  float64 `json:"used_quota"`
-	Require2FA bool    `json:"require_2fa"`
+	ID          any     `json:"id"`
+	Username    string  `json:"username"`
+	Email       string  `json:"email"`
+	Group       string  `json:"group"`
+	Quota       float64 `json:"quota"`
+	UsedQuota   float64 `json:"used_quota"`
+	Require2FA  bool    `json:"require_2fa"`
+	AccessToken string  `json:"access_token"`
+	Token       string  `json:"token"`
+}
+
+// UnmarshalJSON 兼容 new-api 及其二开站点的登录/用户响应结构。
+//
+// 主线 new-api 通常把用户字段直接放在 `data.id`、`data.username` 等位置；部分站点
+// 会返回 `data.user.id`，同时把浏览器 access token 放在同一层。同步流程必须先拿到
+// 目标站数字用户 ID 才能设置 `New-Api-User`，因此这里在解析层统一拉平这些常见变体。
+func (u *newAPIUser) UnmarshalJSON(data []byte) error {
+	type alias newAPIUser
+	var raw struct {
+		alias
+		User        *alias `json:"user"`
+		UserID      any    `json:"user_id"`
+		UID         any    `json:"uid"`
+		UserIDCamel any    `json:"userId"`
+		DisplayName string `json:"display_name"`
+		TokenType   string `json:"token_type"`
+	}
+	if err := common.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*u = newAPIUser(raw.alias)
+	if raw.User != nil {
+		mergeNewAPIUser(u, newAPIUser(*raw.User))
+	}
+	if u.ID == nil {
+		u.ID = firstNonNil(raw.UserID, raw.UID, raw.UserIDCamel)
+	}
+	if strings.TrimSpace(u.Username) == "" {
+		u.Username = strings.TrimSpace(raw.DisplayName)
+	}
+	return nil
 }
 
 type newAPIGroup struct {
@@ -180,11 +216,9 @@ func (c *NewAPIClient) BeginPreview(ctx context.Context, credential Credential) 
 	if err != nil {
 		return nil, nil, err
 	}
-	status, err := c.fetchStatus(ctx, api)
-	if err != nil {
-		return nil, nil, err
-	}
-	if snapshot, ok, sessionErr := c.fetchSnapshotWithSavedSession(ctx, api, status.QuotaPerUnit, credential.Session); ok || sessionErr != nil {
+	quotaPerUnit, statusWarnings := c.fetchStatusBestEffort(ctx, api)
+	if snapshot, ok, sessionErr := c.fetchSnapshotWithSavedSession(ctx, api, quotaPerUnit, credential.Session); ok || sessionErr != nil {
+		appendSnapshotWarnings(snapshot, statusWarnings...)
 		return snapshot, nil, sessionErr
 	}
 	if credentialRequiresImportedSession(credential, AuthModeSessionCookie) {
@@ -203,12 +237,13 @@ func (c *NewAPIClient) BeginPreview(ctx context.Context, credential Credential) 
 			BaseURL:  api.baseURL,
 			Username: strings.TrimSpace(firstNonEmpty(credential.Username, credential.Email)),
 			NewAPI: &NewAPIChallengeData{
-				QuotaPerUnit: status.QuotaPerUnit,
+				QuotaPerUnit: quotaPerUnit,
 				Cookies:      storeCookiesFromJar(api),
 			},
 		}, nil
 	}
-	snapshot, err := c.fetchSnapshotWithAuthenticatedSession(ctx, api, status.QuotaPerUnit, user, headers)
+	snapshot, err := c.fetchSnapshotWithAuthenticatedSession(ctx, api, quotaPerUnit, user, headers)
+	appendSnapshotWarnings(snapshot, statusWarnings...)
 	return snapshot, nil, err
 }
 
@@ -229,12 +264,9 @@ func (c *NewAPIClient) Complete2FA(ctx context.Context, record AuthChallengeReco
 		return nil, err
 	}
 	quotaPerUnit := record.NewAPI.QuotaPerUnit
+	var statusWarnings []string
 	if quotaPerUnit <= 0 {
-		status, err := c.fetchStatus(ctx, api)
-		if err != nil {
-			return nil, err
-		}
-		quotaPerUnit = status.QuotaPerUnit
+		quotaPerUnit, statusWarnings = c.fetchStatusBestEffort(ctx, api)
 	}
 	var envelope newAPIEnvelope[newAPIUser]
 	if err := api.postJSON(ctx, "/api/user/login/2fa", nil, map[string]string{"code": code}, &envelope); err != nil {
@@ -245,7 +277,9 @@ func (c *NewAPIClient) Complete2FA(ctx context.Context, record AuthChallengeReco
 		return nil, fmt.Errorf("new-api 2FA 验证失败：%w", err)
 	}
 	headers := http.Header{}
-	return c.fetchSnapshotWithAuthenticatedSession(ctx, api, quotaPerUnit, &user, headers)
+	snapshot, err := c.fetchSnapshotWithAuthenticatedSession(ctx, api, quotaPerUnit, &user, headers)
+	appendSnapshotWarnings(snapshot, statusWarnings...)
+	return snapshot, err
 }
 
 func (c *NewAPIClient) fetchSnapshotWithSavedSession(ctx context.Context, api *httpClient, quotaPerUnit float64, session *AuthenticatedSession) (*Snapshot, bool, error) {
@@ -259,9 +293,9 @@ func (c *NewAPIClient) fetchSnapshotWithSavedSession(ctx context.Context, api *h
 			return nil, true, fmt.Errorf("new-api Access Token 登录态缺少 user_id / New-Api-User，无法读取账号快照")
 		}
 		headers := http.Header{}
-		headers.Set("Authorization", accessToken)
+		headers.Set("Authorization", newAPIAuthorizationHeader(accessToken))
 		headers.Set("New-Api-User", userID)
-		user := &newAPIUser{ID: userID}
+		user := &newAPIUser{ID: userID, AccessToken: accessToken}
 		snapshot, err := c.fetchSnapshotWithAuthenticatedSession(ctx, api, quotaPerUnit, user, headers)
 		if err != nil {
 			return nil, true, fmt.Errorf("new-api Access Token 登录态不可用：%w", err)
@@ -302,22 +336,38 @@ func (c *NewAPIClient) fetchSnapshotWithSavedSession(ctx context.Context, api *h
 }
 
 func (c *NewAPIClient) fetchSnapshotWithAuthenticatedSession(ctx context.Context, api *httpClient, quotaPerUnit float64, user *newAPIUser, headers http.Header) (*Snapshot, error) {
-	if user.ID == nil {
-		return nil, fmt.Errorf("new-api 登录响应缺少用户 ID")
+	if headers == nil {
+		headers = http.Header{}
 	}
-	headers.Set("New-Api-User", stringValue(user.ID))
+	if user == nil {
+		user = &newAPIUser{}
+	}
+	if auth := newAPIAuthorizationHeader(user.accessToken()); auth != "" && strings.TrimSpace(headers.Get("Authorization")) == "" {
+		headers.Set("Authorization", auth)
+	}
+	if userID := stringValue(user.ID); userID != "" {
+		headers.Set("New-Api-User", userID)
+	}
 
 	self, err := c.fetchSelf(ctx, api, headers)
 	if err == nil {
+		mergeNewAPIUser(&self, *user)
 		*user = self
+		if userID := stringValue(user.ID); userID != "" {
+			headers.Set("New-Api-User", userID)
+		}
+	} else if stringValue(user.ID) == "" {
+		return nil, fmt.Errorf("new-api 登录响应缺少用户 ID，且读取当前用户失败：%w", err)
 	} else if strings.TrimSpace(user.Group) == "" {
 		return nil, err
 	}
-	groups, groupRates, err := c.fetchGroups(ctx, api, headers)
-	if err != nil {
-		return nil, err
+	if userID := stringValue(user.ID); userID == "" {
+		return nil, fmt.Errorf("new-api 登录响应和当前用户响应均缺少用户 ID")
 	}
-	rates, warnings := c.fetchRatioConfig(ctx, api)
+	groups, groupRates, groupWarnings := c.fetchGroupsBestEffort(ctx, api, headers)
+	warnings := append([]string{}, groupWarnings...)
+	rates, ratioWarnings := c.fetchRatioConfig(ctx, api)
+	warnings = append(warnings, ratioWarnings...)
 	keys, tokenWarnings, err := c.fetchTokens(ctx, api, headers, quotaPerUnit, groupRates, rates)
 	if err != nil {
 		return nil, err
@@ -340,6 +390,23 @@ func (c *NewAPIClient) fetchSnapshotWithAuthenticatedSession(ctx context.Context
 		Warnings: warnings,
 	}
 	snapshot.AuthSession = buildNewAPIAuthenticatedSession(api, snapshot)
+	if token := user.accessToken(); token != "" {
+		if snapshot.AuthSession == nil {
+			snapshot.AuthSession = &AuthenticatedSession{
+				Platform:  PlatformNewAPI,
+				BaseURL:   api.baseURL,
+				AuthMode:  AuthModePassword,
+				UpdatedAt: common.GetTimestamp(),
+				NewAPI: &NewAPISessionData{
+					UserID: stringValue(user.ID),
+				},
+			}
+		}
+		if snapshot.AuthSession.NewAPI == nil {
+			snapshot.AuthSession.NewAPI = &NewAPISessionData{UserID: stringValue(user.ID)}
+		}
+		snapshot.AuthSession.NewAPI.AccessToken = normalizeImportedBearerToken(token)
+	}
 	ApplySuggestions(snapshot)
 	return snapshot, nil
 }
@@ -378,9 +445,19 @@ func (c *NewAPIClient) fetchStatus(ctx context.Context, api *httpClient) (*newAP
 		return nil, err
 	}
 	if status.QuotaPerUnit <= 0 {
-		status.QuotaPerUnit = 500000
+		status.QuotaPerUnit = defaultNewAPIQuotaPerUnit
 	}
 	return &status, nil
+}
+
+func (c *NewAPIClient) fetchStatusBestEffort(ctx context.Context, api *httpClient) (float64, []string) {
+	status, err := c.fetchStatus(ctx, api)
+	if err != nil {
+		return defaultNewAPIQuotaPerUnit, []string{
+			"new-api /api/status 不可用，已使用默认额度换算：" + common.MaskSensitiveInfo(err.Error()),
+		}
+	}
+	return status.QuotaPerUnit, nil
 }
 
 func (c *NewAPIClient) login(ctx context.Context, api *httpClient, credential Credential) (*newAPIUser, http.Header, bool, error) {
@@ -424,6 +501,9 @@ func (c *NewAPIClient) login(ctx context.Context, api *httpClient, credential Cr
 			return &user, nil, true, nil
 		}
 		headers := http.Header{}
+		if auth := newAPIAuthorizationHeader(user.accessToken()); auth != "" {
+			headers.Set("Authorization", auth)
+		}
 		return &user, headers, false, nil
 	}
 	if lastErr == nil {
@@ -433,37 +513,69 @@ func (c *NewAPIClient) login(ctx context.Context, api *httpClient, credential Cr
 }
 
 func (c *NewAPIClient) fetchSelf(ctx context.Context, api *httpClient, headers http.Header) (newAPIUser, error) {
-	var envelope newAPIEnvelope[newAPIUser]
-	if err := api.getJSON(ctx, "/api/user/self", headers, &envelope); err != nil {
-		return newAPIUser{}, err
+	var lastErr error
+	for _, path := range []string{"/api/user/self", "/api/user/me", "/api/user/profile", "/api/user/info"} {
+		var envelope newAPIEnvelope[newAPIUser]
+		if err := api.getJSON(ctx, path, headers, &envelope); err != nil {
+			lastErr = err
+			continue
+		}
+		user, err := unwrapNewAPI(envelope)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		return user, nil
 	}
-	return unwrapNewAPI(envelope)
+	if lastErr == nil {
+		lastErr = fmt.Errorf("new-api 当前用户接口不可用")
+	}
+	return newAPIUser{}, lastErr
 }
 
 func (c *NewAPIClient) fetchGroups(ctx context.Context, api *httpClient, headers http.Header) ([]SyncedGroup, map[string]float64, error) {
 	var envelope newAPIEnvelope[map[string]newAPIGroup]
-	if err := api.getJSON(ctx, "/api/user/self/groups", headers, &envelope); err != nil {
-		return nil, nil, err
-	}
-	rawGroups, err := unwrapNewAPI(envelope)
-	if err != nil {
-		return nil, nil, err
-	}
-	groups := make([]SyncedGroup, 0, len(rawGroups))
-	groupRates := make(map[string]float64, len(rawGroups))
-	for name, group := range rawGroups {
-		name = strings.TrimSpace(name)
-		if name == "" {
+	var lastErr error
+	for _, path := range []string{"/api/user/self/groups", "/api/user/groups"} {
+		if err := api.getJSON(ctx, path, headers, &envelope); err != nil {
+			lastErr = err
 			continue
 		}
-		ratio := group.Ratio
-		groupRates[name] = ratio
-		groups = append(groups, SyncedGroup{
-			ID:          name,
-			Name:        name,
-			Ratio:       floatPtr(ratio),
-			Description: group.Desc,
-		})
+		rawGroups, err := unwrapNewAPI(envelope)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		groups := make([]SyncedGroup, 0, len(rawGroups))
+		groupRates := make(map[string]float64, len(rawGroups))
+		for name, group := range rawGroups {
+			name = strings.TrimSpace(name)
+			if name == "" {
+				continue
+			}
+			ratio := group.Ratio
+			groupRates[name] = ratio
+			groups = append(groups, SyncedGroup{
+				ID:          name,
+				Name:        name,
+				Ratio:       floatPtr(ratio),
+				Description: group.Desc,
+			})
+		}
+		return groups, groupRates, nil
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("new-api 分组接口不可用")
+	}
+	return nil, nil, lastErr
+}
+
+func (c *NewAPIClient) fetchGroupsBestEffort(ctx context.Context, api *httpClient, headers http.Header) ([]SyncedGroup, map[string]float64, []string) {
+	groups, groupRates, err := c.fetchGroups(ctx, api, headers)
+	if err != nil {
+		return nil, map[string]float64{}, []string{
+			"new-api 分组接口不可用，已仅按密钥自身分组信息导入：" + common.MaskSensitiveInfo(err.Error()),
+		}
 	}
 	return groups, groupRates, nil
 }
@@ -490,15 +602,11 @@ func (c *NewAPIClient) fetchRatioConfig(ctx context.Context, api *httpClient) (*
 func (c *NewAPIClient) fetchTokens(ctx context.Context, api *httpClient, headers http.Header, quotaPerUnit float64, groupRates map[string]float64, rates *RateSnapshot) ([]SyncedKey, []string, error) {
 	var tokens []newAPIToken
 	for page := 1; page <= 1000; page++ {
-		path := "/api/token/?" + url.Values{
+		query := url.Values{
 			"p":         {strconv.Itoa(page)},
 			"page_size": {"100"},
 		}.Encode()
-		var envelope newAPIEnvelope[newAPITokenList]
-		if err := api.getJSON(ctx, path, headers, &envelope); err != nil {
-			return nil, nil, err
-		}
-		pageData, err := unwrapNewAPI(envelope)
+		pageData, err := c.fetchTokenPage(ctx, api, headers, query)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -561,6 +669,28 @@ func (c *NewAPIClient) fetchTokens(ctx context.Context, api *httpClient, headers
 		return nil, warnings, fmt.Errorf("读取 new-api 完整 Key 失败：未读取到任何可同步的完整 Key，请检查目标平台完整 Key 读取权限")
 	}
 	return result, warnings, nil
+}
+
+func (c *NewAPIClient) fetchTokenPage(ctx context.Context, api *httpClient, headers http.Header, query string) (newAPITokenList, error) {
+	var lastErr error
+	for _, basePath := range []string{"/api/token/", "/api/token", "/api/tokens"} {
+		path := appendQueryString(basePath, query)
+		var envelope newAPIEnvelope[newAPITokenList]
+		if err := api.getJSON(ctx, path, headers, &envelope); err != nil {
+			lastErr = err
+			continue
+		}
+		pageData, err := unwrapNewAPI(envelope)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		return pageData, nil
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("new-api 密钥列表接口不可用")
+	}
+	return newAPITokenList{}, lastErr
 }
 
 func (c *NewAPIClient) fetchTokenKeys(ctx context.Context, api *httpClient, headers http.Header, tokens []newAPIToken) (map[string]string, map[string]error) {
@@ -682,6 +812,40 @@ func filterModelRatios(ratios map[string]float64, models []string) map[string]fl
 	return filtered
 }
 
+func mergeNewAPIUser(target *newAPIUser, fallback newAPIUser) {
+	if target == nil {
+		return
+	}
+	if target.ID == nil {
+		target.ID = fallback.ID
+	}
+	if strings.TrimSpace(target.Username) == "" {
+		target.Username = fallback.Username
+	}
+	if strings.TrimSpace(target.Email) == "" {
+		target.Email = fallback.Email
+	}
+	if strings.TrimSpace(target.Group) == "" {
+		target.Group = fallback.Group
+	}
+	if target.Quota == 0 {
+		target.Quota = fallback.Quota
+	}
+	if target.UsedQuota == 0 {
+		target.UsedQuota = fallback.UsedQuota
+	}
+	if strings.TrimSpace(target.AccessToken) == "" {
+		target.AccessToken = fallback.AccessToken
+	}
+	if strings.TrimSpace(target.Token) == "" {
+		target.Token = fallback.Token
+	}
+}
+
+func (u newAPIUser) accessToken() string {
+	return firstNonEmpty(u.AccessToken, u.Token)
+}
+
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
@@ -689,4 +853,46 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func firstNonNil(values ...any) any {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+	return nil
+}
+
+func newAPIAuthorizationHeader(raw string) string {
+	token := normalizeImportedBearerToken(raw)
+	if token == "" {
+		return ""
+	}
+	return "Bearer " + token
+}
+
+func appendSnapshotWarnings(snapshot *Snapshot, warnings ...string) {
+	if snapshot == nil || len(warnings) == 0 {
+		return
+	}
+	for _, warning := range warnings {
+		warning = strings.TrimSpace(warning)
+		if warning == "" {
+			continue
+		}
+		snapshot.Warnings = append(snapshot.Warnings, warning)
+	}
+}
+
+func appendQueryString(path string, query string) string {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return path
+	}
+	separator := "?"
+	if strings.Contains(path, "?") {
+		separator = "&"
+	}
+	return path + separator + query
 }
