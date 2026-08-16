@@ -34,6 +34,19 @@ func CreateLogCleanupSystemTask(c *gin.Context) {
 	common.ApiSuccess(c, task.ToResponse())
 }
 
+// CreateUpstreamAccountScheduleRefreshSystemTask 创建同步密钥调度建议统一刷新任务。
+//
+// 该任务不会在服务启动时自动修改数据，必须由 Root 管理员显式触发。执行时只扫描
+// upstream_account_sync 同步密钥，将 priority 统一为 0，并按元数据倍率重算 weight。
+func CreateUpstreamAccountScheduleRefreshSystemTask(c *gin.Context) {
+	task, _, err := service.EnqueueSystemTask(model.SystemTaskTypeUpstreamAccountScheduleRefresh, nil)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, task.ToResponse())
+}
+
 // GetCurrentSystemTask 返回指定类型当前活跃的系统任务。
 func GetCurrentSystemTask(c *gin.Context) {
 	taskType := c.Query("type")

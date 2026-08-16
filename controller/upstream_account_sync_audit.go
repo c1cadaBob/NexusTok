@@ -12,10 +12,11 @@ import (
 )
 
 const (
-	upstreamAccountSyncAuditAction           = "channel.upstream_account_sync_refresh"
-	systemTaskUpstreamAccountSyncAuditAction = "system_task.upstream_account_sync"
-	upstreamAccountSyncAuditErrorMaxRunes    = 512
-	upstreamAccountSyncAuditFailureLimit     = 5
+	upstreamAccountSyncAuditAction                      = "channel.upstream_account_sync_refresh"
+	systemTaskUpstreamAccountSyncAuditAction            = "system_task.upstream_account_sync"
+	systemTaskUpstreamAccountScheduleRefreshAuditAction = "system_task.upstream_account_schedule_refresh"
+	upstreamAccountSyncAuditErrorMaxRunes               = 512
+	upstreamAccountSyncAuditFailureLimit                = 5
 )
 
 var upstreamAccountSyncAuditSecretPatterns = []*regexp.Regexp{
@@ -63,6 +64,27 @@ func recordSystemUpstreamAccountSyncAudit(task *model.SystemTask, runnerID strin
 			"node_name":      common.NodeName,
 		},
 		AuditInfo: upstreamAccountSyncAuditInfoFromParams(params),
+	})
+}
+
+// recordSystemUpstreamAccountScheduleRefreshAudit 记录同步密钥调度建议统一刷新的审计摘要。
+//
+// 维护任务只写入扫描数量、更新数量和受影响渠道 ID，不记录账号 key、digest 或上游登录凭据。
+func recordSystemUpstreamAccountScheduleRefreshAudit(task *model.SystemTask, runnerID string, summary *upstreamaccount.ScheduleRefreshSummary, runErr error) {
+	params := systemUpstreamAccountScheduleRefreshAuditParams(task, runnerID, summary, runErr)
+	model.RecordOperationAuditLog(model.OperationAuditLogParams{
+		UserId:   0,
+		Username: "system",
+		Content:  auditContentEN(systemTaskUpstreamAccountScheduleRefreshAuditAction, params),
+		Ip:       common.GetIp(),
+		Action:   systemTaskUpstreamAccountScheduleRefreshAuditAction,
+		Params:   params,
+		AdminInfo: map[string]interface{}{
+			"admin_username": "system",
+			"auth_method":    "system_task",
+			"node_name":      common.NodeName,
+		},
+		AuditInfo: upstreamAccountScheduleRefreshAuditInfoFromParams(params),
 	})
 }
 
@@ -121,6 +143,26 @@ func systemUpstreamAccountSyncAuditParams(task *model.SystemTask, runnerID strin
 	return params
 }
 
+func systemUpstreamAccountScheduleRefreshAuditParams(task *model.SystemTask, runnerID string, summary *upstreamaccount.ScheduleRefreshSummary, runErr error) map[string]interface{} {
+	params := map[string]interface{}{
+		"source":    "system_task",
+		"task_id":   taskIDForAudit(task),
+		"runner_id": runnerID,
+		"success":   runErr == nil,
+	}
+	if summary != nil {
+		params["scanned_accounts"] = summary.ScannedAccounts
+		params["updated_accounts"] = summary.UpdatedAccounts
+		params["affected_channels"] = summary.AffectedChannels
+		params["skipped_accounts"] = summary.SkippedAccounts
+		params["channel_ids"] = summary.ChannelIDs
+	}
+	if runErr != nil {
+		params["error"] = sanitizeUpstreamAccountSyncAuditText(runErr.Error(), upstreamAccountSyncAuditErrorMaxRunes)
+	}
+	return params
+}
+
 // upstreamAccountSyncAuditInfoFromParams 复用已脱敏 params 生成 audit_info。
 //
 // 前端详情弹窗会同时展示 op.params 和 audit_info；这里仅复制白名单字段，保持两个
@@ -146,6 +188,27 @@ func upstreamAccountSyncAuditInfoFromParams(params map[string]interface{}) map[s
 		"task_skipped",
 		"skip_reason",
 		"failures",
+		"error",
+	} {
+		if value, ok := params[key]; ok {
+			info[key] = value
+		}
+	}
+	return info
+}
+
+func upstreamAccountScheduleRefreshAuditInfoFromParams(params map[string]interface{}) map[string]interface{} {
+	info := map[string]interface{}{}
+	for _, key := range []string{
+		"source",
+		"task_id",
+		"runner_id",
+		"success",
+		"scanned_accounts",
+		"updated_accounts",
+		"affected_channels",
+		"skipped_accounts",
+		"channel_ids",
 		"error",
 	} {
 		if value, ok := params[key]; ok {

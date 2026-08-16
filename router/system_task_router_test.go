@@ -23,6 +23,7 @@ func TestRegisterSystemTaskRoutesKeepsHandlers(t *testing.T) {
 	registerSystemTaskRoutes(api)
 
 	assertRouteHandler(t, engine, http.MethodPost, "/api/system-task/log-cleanup", controller.CreateLogCleanupSystemTask)
+	assertRouteHandler(t, engine, http.MethodPost, "/api/system-task/upstream-account-schedule-refresh", controller.CreateUpstreamAccountScheduleRefreshSystemTask)
 	assertRouteHandler(t, engine, http.MethodGet, "/api/system-task/list", controller.ListSystemTasks)
 	assertRouteHandler(t, engine, http.MethodGet, "/api/system-task/current", controller.GetCurrentSystemTask)
 	assertRouteHandler(t, engine, http.MethodGet, "/api/system-task/:task_id", controller.GetSystemTask)
@@ -46,6 +47,7 @@ func TestSystemTaskPermissionRoutesClassifyCoreActions(t *testing.T) {
 	logCleanupRoute := assertSystemTaskPermissionRoute(t, http.MethodPost, "/log-cleanup", authz.SystemSettingSensitiveWrite)
 	require.Len(t, logCleanupRoute.after, 1)
 
+	assertSystemTaskPermissionRoute(t, http.MethodPost, "/upstream-account-schedule-refresh", authz.SystemSettingSensitiveWrite)
 	assertSystemTaskPermissionRoute(t, http.MethodGet, "/list", authz.SystemSettingRead)
 	assertSystemTaskPermissionRoute(t, http.MethodGet, "/current", authz.SystemSettingRead)
 	assertSystemTaskPermissionRoute(t, http.MethodGet, "/:task_id", authz.SystemSettingRead)

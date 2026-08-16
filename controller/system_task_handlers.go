@@ -22,6 +22,7 @@ func init() {
 	service.RegisterSystemTaskHandler(modelUpdateHandler{})
 	service.RegisterSystemTaskHandler(accountPoolCheckHandler{})
 	service.RegisterSystemTaskHandler(upstreamAccountSyncHandler{})
+	service.RegisterSystemTaskHandler(upstreamAccountScheduleRefreshHandler{})
 }
 
 // channelTestHandler 执行批量渠道测试任务。
@@ -229,6 +230,33 @@ func (upstreamAccountSyncHandler) Run(ctx context.Context, task *model.SystemTas
 	}
 	finishSystemTaskHandler(task, runnerID, status, summary, runErr)
 	recordSystemUpstreamAccountSyncAudit(task, runnerID, summary, runErr)
+}
+
+// upstreamAccountScheduleRefreshHandler 执行一次性同步密钥调度建议刷新。
+//
+// 该任务没有 Enabled/Interval，不会被调度器自动创建；只能由 Root 管理员通过维护接口
+// 显式触发。这样发版后不会在服务启动或节点切换时自动修改生产历史账号数据。
+type upstreamAccountScheduleRefreshHandler struct{}
+
+func (upstreamAccountScheduleRefreshHandler) Type() string {
+	return model.SystemTaskTypeUpstreamAccountScheduleRefresh
+}
+
+func (upstreamAccountScheduleRefreshHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	summary, affectedChannels, err := upstreamaccount.RefreshSyncedAccountSchedulingSuggestions(
+		ctx,
+		service.NewSystemTaskProgressReporter(task, runnerID),
+	)
+	if err == nil {
+		err = refreshChangedAccountChannels(affectedChannels)
+	}
+	if err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, summary, err)
+		recordSystemUpstreamAccountScheduleRefreshAudit(task, runnerID, summary, err)
+		return
+	}
+	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, summary, nil)
+	recordSystemUpstreamAccountScheduleRefreshAudit(task, runnerID, summary, nil)
 }
 
 func finishSystemTaskHandler(task *model.SystemTask, runnerID string, status model.SystemTaskStatus, result any, runErr error) {

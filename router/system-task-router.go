@@ -33,6 +33,12 @@ var systemTaskPermissionRoutes = []permissionRoute{
 		after:      []gin.HandlerFunc{middleware.RequirePermission(authz.UsageLogSensitiveWrite)},
 		handler:    controller.CreateLogCleanupSystemTask,
 	},
+	{
+		method:     http.MethodPost,
+		path:       "/upstream-account-schedule-refresh",
+		permission: authz.SystemSettingSensitiveWrite,
+		handler:    controller.CreateUpstreamAccountScheduleRefreshSystemTask,
+	},
 
 	// 系统任务观测会暴露任务 payload、进度、结果和错误，只按只读接口开放。
 	{method: http.MethodGet, path: "/list", permission: authz.SystemSettingRead, handler: controller.ListSystemTasks},
