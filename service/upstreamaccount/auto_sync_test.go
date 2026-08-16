@@ -65,8 +65,7 @@ func TestAutomaticAccountConfigsPreserveLocalSettings(t *testing.T) {
 	require.Equal(t, account.Group, configs[0].Group)
 	require.NotNil(t, configs[0].Priority)
 	require.Equal(t, account.Priority, *configs[0].Priority)
-	require.NotNil(t, configs[0].Weight)
-	require.Equal(t, account.Weight, *configs[0].Weight)
+	require.Nil(t, configs[0].Weight)
 	require.Nil(t, configs[0].Enabled)
 }
 

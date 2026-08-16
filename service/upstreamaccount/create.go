@@ -280,19 +280,10 @@ func buildAccounts(snapshot *Snapshot, req CreateRequest, defaultModels string, 
 		settings := mergeAccountSyncMetadata(config.OtherSettings, snapshot, key)
 		settings = applyAccountKeyModelsSyncMetadata(settings, key, config.Models != nil, models)
 		priority := int64(0)
-		if req.ApplySuggested {
-			priority = key.SuggestedPriority
-		}
 		if config.Priority != nil {
 			priority = *config.Priority
 		}
-		weight := 0
-		if req.ApplySuggested {
-			weight = key.SuggestedWeight
-		}
-		if config.Weight != nil {
-			weight = *config.Weight
-		}
+		weight := ManagedWeightForSyncedKey(key)
 		account := model.ChannelAccount{
 			Name:               name,
 			Key:                key.Key,

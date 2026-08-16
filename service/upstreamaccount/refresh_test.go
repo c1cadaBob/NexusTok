@@ -756,8 +756,8 @@ func TestRefreshChannelFromSnapshotUpsertsAccountsAndDisablesMissing(t *testing.
 	require.Equal(t, "Old Key Renamed", accounts[0].Name)
 	require.Equal(t, "sk-old-rotated", accounts[0].Key)
 	require.Equal(t, "default", accounts[0].Group)
-	require.Equal(t, int64(3), accounts[0].Priority)
-	require.Equal(t, 90, accounts[0].Weight)
+	require.Equal(t, int64(0), accounts[0].Priority)
+	require.Equal(t, 100, accounts[0].Weight)
 	require.Equal(t, upstreamLargeUsedQuota, accounts[0].UsedQuota)
 	require.NotEqual(t, int64(common.MaxQuota), accounts[0].UsedQuota)
 	require.Equal(t, common.ChannelStatusManuallyDisabled, accounts[1].Status)
@@ -969,8 +969,8 @@ func TestRefreshChannelFromSnapshotPreservesLocalAccountOverrides(t *testing.T) 
 	require.Equal(t, "sk-new-local", refreshed.Key)
 	require.Equal(t, "gpt-old", refreshed.Models)
 	require.Equal(t, "default", refreshed.Group)
-	require.Equal(t, int64(8), refreshed.Priority)
-	require.Equal(t, 66, refreshed.Weight)
+	require.Equal(t, int64(11), refreshed.Priority)
+	require.Equal(t, 100, refreshed.Weight)
 	require.Equal(t, localBaseURL, *refreshed.BaseURL)
 	require.Equal(t, localOrg, *refreshed.OpenAIOrganization)
 	require.Equal(t, "local-other", refreshed.Other)
@@ -1466,7 +1466,7 @@ func TestRefreshChannelFromSnapshotKeepsManualSchedulingWhenSuggestionsDisabled(
 	require.Equal(t, "Manual Key Refreshed", refreshed.Name)
 	require.Equal(t, "sk-manual-new", refreshed.Key)
 	require.Equal(t, int64(33), refreshed.Priority)
-	require.Equal(t, 44, refreshed.Weight)
+	require.Equal(t, 100, refreshed.Weight)
 	require.Equal(t, common.ChannelStatusManuallyDisabled, refreshed.Status)
 }
 
@@ -1532,7 +1532,7 @@ func TestRefreshChannelFromSnapshotAppliesConfigBySyncIDWhenExternalIDMissing(t 
 	var account model.ChannelAccount
 	require.NoError(t, db.First(&account).Error)
 	require.Equal(t, int64(12), account.Priority)
-	require.Equal(t, 34, account.Weight)
+	require.Equal(t, 100, account.Weight)
 }
 
 func TestRefreshChannelFromSnapshotRejectsEnabledSyncedAccountWithoutModels(t *testing.T) {

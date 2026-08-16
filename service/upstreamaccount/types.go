@@ -262,10 +262,10 @@ func NormalizePlatform(platform string) string {
 
 // ApplySuggestions 根据倍率为同步密钥生成默认调度建议。
 //
-// 同步密钥的优先级统一固定为 1，避免不同上游平台的倍率差异直接改变优先级层级；
-// 权重则按倍率相对 1 的偏移微调：低于 1 的 key 每便宜 0.01 权重加 1，高于 1 的
-// key 每贵 0.01 权重减 1。不足 0.01 也按一步计算，保证 0.999/1.001 这类轻微差异
-// 在加权随机或轮询时仍能体现。
+// priority 是管理员自管字段，同步流程只给新密钥提供 0 作为默认值，后续刷新不会
+// 自动覆盖已有 priority。weight 是同步托管字段，每次同步都会按倍率重新计算：低于
+// 1 的 key 每便宜 0.01 权重加 1，高于 1 的 key 每贵 0.01 权重减 1。不足 0.01 也按
+// 一步计算，保证 0.999/1.001 这类轻微差异在加权随机或轮询时仍能体现。
 func ApplySuggestions(snapshot *Snapshot) {
 	if snapshot == nil || len(snapshot.Keys) == 0 {
 		return
@@ -274,7 +274,7 @@ func ApplySuggestions(snapshot *Snapshot) {
 	ApplyExistingRatioConversion(snapshot)
 	for i := range snapshot.Keys {
 		ratio := ConvertedKeyRatio(snapshot.Keys[i])
-		snapshot.Keys[i].SuggestedPriority = 1
+		snapshot.Keys[i].SuggestedPriority = 0
 		snapshot.Keys[i].SuggestedWeight = SuggestedWeightForRatio(ratio)
 	}
 }
@@ -295,6 +295,14 @@ func SuggestedWeightForRatio(ratio float64) int {
 		return weight
 	}
 	return 100
+}
+
+// ManagedWeightForSyncedKey 返回同步流程应写入 ChannelAccount.Weight 的托管权重。
+//
+// 即使旧前端仍提交 apply_suggested=false 或单 key weight，本函数也会按当前快照倍率
+// 重新计算，确保上游成本变化在下一次同步后反映到账号池调度权重。
+func ManagedWeightForSyncedKey(key SyncedKey) int {
+	return SuggestedWeightForRatio(ConvertedKeyRatio(key))
 }
 
 // ApplySyncIDs 为每个同步密钥生成前后端一致的配置标识。

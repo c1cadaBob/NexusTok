@@ -407,19 +407,10 @@ func indexExistingAccounts(accounts []model.ChannelAccount) (map[string]*model.C
 
 func buildAccountFromSyncedKey(snapshot *Snapshot, key SyncedKey, config AccountCreateConfig, applySuggested bool, defaultModels string, defaultGroup string) model.ChannelAccount {
 	priority := int64(0)
-	if applySuggested {
-		priority = key.SuggestedPriority
-	}
 	if config.Priority != nil {
 		priority = *config.Priority
 	}
-	weight := 0
-	if applySuggested {
-		weight = key.SuggestedWeight
-	}
-	if config.Weight != nil {
-		weight = *config.Weight
-	}
+	weight := ManagedWeightForSyncedKey(key)
 	status := common.ChannelStatusEnabled
 	if key.Status > 0 && key.Status != common.ChannelStatusEnabled {
 		status = key.Status
@@ -468,11 +459,8 @@ func buildAccountRefreshUpdates(existing *model.ChannelAccount, snapshot *Snapsh
 	settings := account.OtherSettings
 	if existing != nil {
 		settings = mergeAccountSyncMetadata(existing.OtherSettings, snapshot, key)
-		if !applySuggested && config.Priority == nil {
+		if config.Priority == nil {
 			account.Priority = existing.Priority
-		}
-		if !applySuggested && config.Weight == nil {
-			account.Weight = existing.Weight
 		}
 		if config.Enabled == nil {
 			account.Status = existing.Status

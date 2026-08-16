@@ -29,7 +29,7 @@ func TestSuggestedWeightForRatioBoundaries(t *testing.T) {
 	}
 }
 
-func TestApplySuggestionsUsesUnifiedPriority(t *testing.T) {
+func TestApplySuggestionsUsesAdminManagedPriorityDefault(t *testing.T) {
 	cheapRatio := 0.8
 	expensiveRatio := 1.2
 	snapshot := &Snapshot{
@@ -41,8 +41,8 @@ func TestApplySuggestionsUsesUnifiedPriority(t *testing.T) {
 
 	ApplySuggestions(snapshot)
 
-	require.EqualValues(t, 1, snapshot.Keys[0].SuggestedPriority)
-	require.EqualValues(t, 1, snapshot.Keys[1].SuggestedPriority)
+	require.EqualValues(t, 0, snapshot.Keys[0].SuggestedPriority)
+	require.EqualValues(t, 0, snapshot.Keys[1].SuggestedPriority)
 	require.Equal(t, 120, snapshot.Keys[0].SuggestedWeight)
 	require.Equal(t, 80, snapshot.Keys[1].SuggestedWeight)
 }

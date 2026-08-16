@@ -440,11 +440,12 @@ func sanitizeUpstreamAccountSyncTaskLogText(value string, maxRunes int) string {
 	return string(runes[:maxRunes]) + "..."
 }
 
-// automaticAccountConfigs 读取当前账号池的本地配置，供刷新时覆盖上游建议值。
+// automaticAccountConfigs 读取当前账号池的本地配置，供刷新时保留管理员自管字段。
 //
 // 不传 Enabled 指针是有意为之：RefreshChannelFromSnapshot 在没有显式状态时会
-// 保留账号当前的完整状态，包括手动禁用、冷却和其他运行态；priority、weight、
-// model、group 则通过非 nil 配置指针明确保留本地管理员设置。
+// 保留账号当前的完整状态，包括手动禁用、冷却和其他运行态；priority、model、group
+// 则通过非 nil 配置指针明确保留本地管理员设置。weight 是同步托管字段，每轮同步
+// 都按倍率换算重新计算，因此不能再把旧值作为本地配置传回刷新流程。
 func automaticAccountConfigs(channelID int) ([]AccountCreateConfig, error) {
 	var accounts []model.ChannelAccount
 	if err := model.DB.Where("channel_id = ?", channelID).Find(&accounts).Error; err != nil {
@@ -462,13 +463,11 @@ func automaticAccountConfigs(channelID int) ([]AccountCreateConfig, error) {
 			syncID = strings.TrimSpace(maskKey(account.Key))
 		}
 		priority := account.Priority
-		weight := account.Weight
 		config := AccountCreateConfig{
 			SyncID:     syncID,
 			ExternalID: strings.TrimSpace(metadata.ExternalID),
 			Group:      account.Group,
 			Priority:   &priority,
-			Weight:     &weight,
 		}
 		if shouldPreserveExistingAccountModels(account) {
 			models := account.Models

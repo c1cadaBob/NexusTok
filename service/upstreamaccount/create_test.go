@@ -133,14 +133,14 @@ func TestCreateFromPreviewCreatesChannelAndAccounts(t *testing.T) {
 	accountB := accountsByKey["sk-b"]
 	require.Empty(t, stringPtrValue(accountA.BaseURL))
 	require.Equal(t, "vip", accountA.Group)
-	require.Equal(t, int64(2), accountA.Priority)
+	require.Equal(t, int64(0), accountA.Priority)
 	require.Equal(t, 100, accountA.Weight)
 	require.Equal(t, int64(common.QuotaPerUnit), accountA.UsedQuota)
 	require.NotNil(t, accountB.BaseURL)
 	require.Equal(t, "default", accountB.Group)
 	require.Equal(t, "https://account.example", *accountB.BaseURL)
 	require.Equal(t, int64(9), accountB.Priority)
-	require.Equal(t, 7, accountB.Weight)
+	require.Equal(t, 100, accountB.Weight)
 
 	var abilityCount int64
 	require.NoError(t, db.Model(&model.Ability{}).Count(&abilityCount).Error)
