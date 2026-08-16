@@ -10,6 +10,7 @@ import (
 	"github.com/c1cada/NexusTok/constant"
 	"github.com/c1cada/NexusTok/model"
 	relaycommon "github.com/c1cada/NexusTok/relay/common"
+	"github.com/c1cada/NexusTok/setting/model_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
@@ -41,6 +42,26 @@ func TestPrepareEndpointAutoConversionCanBeDisabled(t *testing.T) {
 
 	c, _ := endpointAutoConversionTestContext("/v1/chat/completions", `{"model":"responses-only-disabled","messages":[]}`)
 	c.Request.Header.Set(endpointAutoConvertDisableHeader, "true")
+	modelRequest, _, err := getModelRequest(c)
+	require.NoError(t, err)
+
+	require.True(t, prepareEndpointAutoConversion(c, modelRequest))
+	_, ok := relaycommon.GetEndpointAutoConversion(c)
+	require.False(t, ok)
+	require.Equal(t, "/v1/chat/completions", relaycommon.EffectiveRequestPath(c))
+}
+
+func TestPrepareEndpointAutoConversionCanBeDisabledByGlobalSetting(t *testing.T) {
+	setupEndpointAutoConversionTestDB(t, "responses-only-global-disabled", map[constant.EndpointType]string{
+		constant.EndpointTypeOpenAIResponse: "/v1/responses",
+	})
+	oldEnabled := model_setting.GetGlobalSettings().EndpointAutoConversionEnabled
+	model_setting.GetGlobalSettings().EndpointAutoConversionEnabled = false
+	t.Cleanup(func() {
+		model_setting.GetGlobalSettings().EndpointAutoConversionEnabled = oldEnabled
+	})
+
+	c, _ := endpointAutoConversionTestContext("/v1/chat/completions", `{"model":"responses-only-global-disabled","messages":[]}`)
 	modelRequest, _, err := getModelRequest(c)
 	require.NoError(t, err)
 

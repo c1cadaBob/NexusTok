@@ -9,6 +9,7 @@ import (
 	"github.com/c1cada/NexusTok/constant"
 	"github.com/c1cada/NexusTok/model"
 	relaycommon "github.com/c1cada/NexusTok/relay/common"
+	"github.com/c1cada/NexusTok/setting/model_setting"
 	"github.com/c1cada/NexusTok/setting/ratio_setting"
 	"github.com/c1cada/NexusTok/types"
 
@@ -25,6 +26,9 @@ const endpointAutoConvertDisableHeader = "NexusTok-Disable-Endpoint-Auto-Convert
 // 影响“应该用哪个上游端点选路和转发”。
 func prepareEndpointAutoConversion(c *gin.Context, modelRequest *ModelRequest) bool {
 	if c == nil || c.Request == nil || c.Request.URL == nil || modelRequest == nil {
+		return true
+	}
+	if !model_setting.GetGlobalSettings().EndpointAutoConversionEnabled {
 		return true
 	}
 	if endpointAutoConvertDisabled(c) {

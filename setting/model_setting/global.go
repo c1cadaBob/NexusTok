@@ -43,14 +43,16 @@ func (p ChatCompletionsToResponsesPolicy) IsChannelEnabled(channelID int, channe
 
 // GlobalSettings 定义全局模型配置结构体，包含跨模型的通用设置。
 type GlobalSettings struct {
-	PassThroughRequestEnabled        bool                             `json:"pass_through_request_enabled"`        // 是否启用请求透传模式
-	ThinkingModelBlacklist           []string                         `json:"thinking_model_blacklist"`            // 需保留 thinking/-nothinking 等后缀的模型黑名单
+	PassThroughRequestEnabled        bool                             `json:"pass_through_request_enabled"`         // 是否启用请求透传模式
+	EndpointAutoConversionEnabled    bool                             `json:"endpoint_auto_conversion_enabled"`     // 是否启用模型端点路径安全纠错
+	ThinkingModelBlacklist           []string                         `json:"thinking_model_blacklist"`             // 需保留 thinking/-nothinking 等后缀的模型黑名单
 	ChatCompletionsToResponsesPolicy ChatCompletionsToResponsesPolicy `json:"chat_completions_to_responses_policy"` // ChatCompletions 转 Responses API 的策略
 }
 
 // 默认配置
 var defaultOpenaiSettings = GlobalSettings{
-	PassThroughRequestEnabled: false,
+	PassThroughRequestEnabled:     false,
+	EndpointAutoConversionEnabled: true,
 	ThinkingModelBlacklist: []string{
 		"moonshotai/kimi-k2-thinking",
 		"kimi-k2-thinking",

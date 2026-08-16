@@ -82,6 +82,7 @@ const jsonString = z.string().refine((value) => {
 const schema = z.object({
   global: z.object({
     pass_through_request_enabled: z.boolean(),
+    endpoint_auto_conversion_enabled: z.boolean(),
     thinking_model_blacklist: jsonString,
     chat_completions_to_responses_policy: jsonString,
   }),
@@ -96,6 +97,7 @@ type GlobalModelSettingsFormInput = z.input<typeof schema>
 
 type FlatGlobalModelSettings = {
   'global.pass_through_request_enabled': boolean
+  'global.endpoint_auto_conversion_enabled': boolean
   'global.thinking_model_blacklist': string
   'global.chat_completions_to_responses_policy': string
   'general_setting.ping_interval_enabled': boolean
@@ -107,6 +109,8 @@ const flattenGlobalValues = (
 ): FlatGlobalModelSettings => ({
   'global.pass_through_request_enabled':
     values.global.pass_through_request_enabled,
+  'global.endpoint_auto_conversion_enabled':
+    values.global.endpoint_auto_conversion_enabled,
   'global.thinking_model_blacklist': normalizeJsonText(
     values.global.thinking_model_blacklist,
     '[]'
@@ -203,14 +207,44 @@ export function GlobalSettingsCard({ defaultValues }: GlobalSettingsCardProps) {
             control={form.control}
             name='global.pass_through_request_enabled'
             render={({ field }) => (
-              <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
-                <div className='space-y-0.5'>
+              <FormItem className='flex flex-col gap-4 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between'>
+                <div className='flex flex-col gap-1'>
                   <FormLabel className='text-base'>
                     {t('Enable Request Passthrough')}
                   </FormLabel>
                   <FormDescription>
                     {t(
                       'Forward requests directly to upstream providers without any post-processing.'
+                    )}
+                  </FormDescription>
+                </div>
+                <FormControl>
+                  <Switch
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                  />
+                </FormControl>
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='global.endpoint_auto_conversion_enabled'
+            render={({ field }) => (
+              <FormItem className='flex flex-col gap-4 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between'>
+                <div className='flex flex-col gap-1'>
+                  <FormLabel className='text-base'>
+                    {t('Enable endpoint auto-correction')}
+                  </FormLabel>
+                  <FormDescription>
+                    {t(
+                      'Automatically route Chat Completions requests to Responses-only models, or Responses requests to Chat-only models, when a safe OpenAI-compatible conversion exists.'
+                    )}
+                  </FormDescription>
+                  <FormDescription>
+                    {t(
+                      'Turn this off globally if clients should receive the original endpoint mismatch error and choose the correct request path themselves.'
                     )}
                   </FormDescription>
                 </div>
@@ -354,8 +388,8 @@ export function GlobalSettingsCard({ defaultValues }: GlobalSettingsCardProps) {
             control={form.control}
             name='general_setting.ping_interval_enabled'
             render={({ field }) => (
-              <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
-                <div className='space-y-0.5'>
+              <FormItem className='flex flex-col gap-4 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between'>
+                <div className='flex flex-col gap-1'>
                   <FormLabel className='text-base'>
                     {t('Keep-alive Ping')}
                   </FormLabel>
