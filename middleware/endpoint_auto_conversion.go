@@ -18,57 +18,160 @@ import (
 
 const endpointAutoConvertDisableHeader = "NexusTok-Disable-Endpoint-Auto-Convert"
 
-// prepareEndpointAutoConversion 在渠道选择前判断是否需要启用端点安全纠错。
+// prepareEndpointAutoConversion 保留在分发前调用，但不再提前启用端点安全纠错。
 //
-// 这里刻意只读取已由 getModelRequest 解析出的 model 与当前 path，不做完整请求体验证：
-// 完整验证仍由 Relay handler 按客户端原始路径负责。这样 Chat 请求仍按 Chat 结构校验并
-// 返回 Chat 响应，Responses 请求仍按 Responses 结构校验并返回 Responses 响应；本函数只
-// 影响“应该用哪个上游端点选路和转发”。
+// 端点纠错必须先让用户原始 path 真实请求一次；只有上游明确返回端点/路径不匹配
+// 时，Relay 重试层才会调用 TryPrepareEndpointAutoConversionAfterFailure 设置兼容
+// 目标 path。这里返回 true 是为了保留调用点和旧测试入口，避免再次引入预选路改写。
 func prepareEndpointAutoConversion(c *gin.Context, modelRequest *ModelRequest) bool {
-	if c == nil || c.Request == nil || c.Request.URL == nil || modelRequest == nil {
-		return true
-	}
-	if !model_setting.GetGlobalSettings().EndpointAutoConversionEnabled {
-		return true
-	}
-	if endpointAutoConvertDisabled(c) {
-		return true
-	}
+	_ = c
+	_ = modelRequest
+	return true
+}
 
+// TryPrepareEndpointAutoConversionAfterFailure 在原始请求 path 失败后尝试启用安全兼容回退。
+//
+// 返回 true 表示本次请求已经挂上 EndpointAutoConversion，调用方应当把本次错误当作
+// “可回退的端点不匹配”处理：不累计密钥失败、不禁用渠道，并立即使用兼容 path 重试。
+// 它只覆盖 OpenAI Chat Completions ↔ OpenAI Responses，且必须同时满足：
+//   - 全局和请求级开关均允许自动纠错；
+//   - 当前请求尚未做过端点回退；
+//   - 上游错误明确像端点/路径不匹配；
+//   - 模型能力中存在对应的安全目标端点。
+func TryPrepareEndpointAutoConversionAfterFailure(c *gin.Context, modelName string, err *types.NexusTokError) bool {
+	if c == nil || c.Request == nil || c.Request.URL == nil || err == nil {
+		return false
+	}
+	if !model_setting.GetGlobalSettings().EndpointAutoConversionEnabled || endpointAutoConvertDisabled(c) {
+		return false
+	}
+	if _, exists := relaycommon.GetEndpointAutoConversion(c); exists {
+		return false
+	}
+	if !isEndpointMismatchError(err) {
+		return false
+	}
 	requestPath := c.Request.URL.Path
 	currentEndpoint, ok := endpointTypeFromRequestPath(requestPath)
 	if !ok {
-		return true
+		return false
 	}
 
-	modelName := strings.TrimSpace(modelRequest.Model)
+	modelName = strings.TrimSpace(modelName)
 	if modelName == "" {
-		return true
+		return false
 	}
 
 	supported := model.GetModelSupportEndpointTypes(modelName)
 	if len(supported) == 0 && strings.HasSuffix(modelName, ratio_setting.CompactModelSuffix) {
 		supported = model.GetModelSupportEndpointTypes(strings.TrimSuffix(modelName, ratio_setting.CompactModelSuffix))
 	}
-	if len(supported) == 0 || endpointSupportedForRequestPath(currentEndpoint, requestPath, supported) {
-		return true
+	if len(supported) == 0 {
+		return false
 	}
 
 	switch {
 	case currentEndpoint == constant.EndpointTypeOpenAI && supportsEndpoint(supported, constant.EndpointTypeOpenAIResponse):
-		setEndpointAutoConversion(c, modelName, currentEndpoint, constant.EndpointTypeOpenAIResponse, requestPath, "/v1/responses")
+		setEndpointAutoConversionAfterFailure(c, modelName, currentEndpoint, constant.EndpointTypeOpenAIResponse, requestPath, "/v1/responses", err)
 		return true
 	case currentEndpoint == constant.EndpointTypeOpenAIResponse && supportsEndpoint(supported, constant.EndpointTypeOpenAI):
-		setEndpointAutoConversion(c, modelName, currentEndpoint, constant.EndpointTypeOpenAI, requestPath, "/v1/chat/completions")
+		setEndpointAutoConversionAfterFailure(c, modelName, currentEndpoint, constant.EndpointTypeOpenAI, requestPath, "/v1/chat/completions", err)
 		return true
 	default:
-		abortWithOpenAiMessage(
-			c,
-			http.StatusBadRequest,
-			endpointMismatchMessage(modelName, requestPath, currentEndpoint, supported),
-			types.ErrorCodeInvalidRequest,
-		)
 		return false
+	}
+}
+
+func isEndpointMismatchError(err *types.NexusTokError) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(strings.TrimSpace(err.Error() + " " + string(err.GetErrorCode())))
+	if text == "" {
+		return false
+	}
+	strongKeywords := []string{
+		"unsupported endpoint",
+		"unsupported_endpoint",
+		"endpoint_not_allowed",
+		"endpoint not allowed",
+		"invalid endpoint",
+		"wrong endpoint",
+		"endpoint mismatch",
+		"unsupported path",
+		"unsupported route",
+		"route not found",
+		"no route",
+		"path not found",
+		"model not support",
+		"model does not support",
+		"model is not supported on this endpoint",
+		"model is not supported by this endpoint",
+		"not support this endpoint",
+		"does not support this endpoint",
+		"/v1/chat/completions",
+		"/v1/responses",
+		"端点",
+		"端點",
+		"路径",
+		"路徑",
+		"路由",
+		"不支持",
+	}
+	if containsEndpointAutoConversionKeyword(text, strongKeywords) {
+		return true
+	}
+
+	// 部分 OpenAI 兼容上游只返回 404/405 或 model_not_found，不包含明确 path
+	// 文案。只有这些更窄的状态/错误码才允许兜底判断，避免余额、鉴权、限流等
+	// 与端点无关的问题触发二次请求。
+	if err.StatusCode == http.StatusNotFound || err.StatusCode == http.StatusMethodNotAllowed {
+		return !containsEndpointAutoConversionKeyword(text, endpointAutoConversionNonMismatchKeywords())
+	}
+	if err.StatusCode == http.StatusBadRequest && err.GetErrorCode() == types.ErrorCodeModelNotFound {
+		return !containsEndpointAutoConversionKeyword(text, endpointAutoConversionNonMismatchKeywords())
+	}
+	return false
+}
+
+func containsEndpointAutoConversionKeyword(text string, keywords []string) bool {
+	for _, keyword := range keywords {
+		if strings.Contains(text, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+func endpointAutoConversionNonMismatchKeywords() []string {
+	return []string{
+		"unauthorized",
+		"forbidden",
+		"invalid key",
+		"invalid_key",
+		"incorrect api key",
+		"authentication",
+		"permission",
+		"quota",
+		"insufficient",
+		"balance",
+		"billing",
+		"rate limit",
+		"rate_limit",
+		"too many requests",
+		"overload",
+		"timeout",
+		"timed out",
+		"connection refused",
+		"connection reset",
+		"network",
+		"余额",
+		"配额",
+		"额度",
+		"鉴权",
+		"认证",
+		"权限",
+		"限流",
 	}
 }
 
@@ -88,6 +191,28 @@ func setEndpointAutoConversion(c *gin.Context, modelName string, from constant.E
 		ToEndpoint:   to,
 		FromPath:     fromPath,
 		ToPath:       toPath,
+	})
+}
+
+func setEndpointAutoConversionAfterFailure(c *gin.Context, modelName string, from constant.EndpointType, to constant.EndpointType, fromPath string, toPath string, err *types.NexusTokError) {
+	summary := ""
+	code := ""
+	if err != nil {
+		code = string(err.GetErrorCode())
+		summary = common.MaskSensitiveInfo(err.Error())
+		if len([]rune(summary)) > 240 {
+			summary = string([]rune(summary)[:240]) + "..."
+		}
+	}
+	common.SetContextKey(c, constant.ContextKeyEndpointAutoConversion, &relaycommon.EndpointAutoConversion{
+		Model:                 modelName,
+		FromEndpoint:          from,
+		ToEndpoint:            to,
+		FromPath:              fromPath,
+		ToPath:                toPath,
+		TriggeredAfterFailure: true,
+		OriginalErrorCode:     code,
+		OriginalErrorSummary:  summary,
 	})
 }
 

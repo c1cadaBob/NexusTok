@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/c1cada/NexusTok/constant"
 	relaycommon "github.com/c1cada/NexusTok/relay/common"
 	"github.com/c1cada/NexusTok/types"
 )
@@ -18,17 +17,7 @@ func endpointAutoConversionChannelAllowed(info *relaycommon.RelayInfo) bool {
 	if info == nil || info.ChannelMeta == nil {
 		return false
 	}
-	switch info.ChannelType {
-	case constant.ChannelTypeOpenAI,
-		constant.ChannelTypeOpenAIMax,
-		constant.ChannelTypeAzure,
-		constant.ChannelTypeXai,
-		constant.ChannelTypeCodex,
-		constant.ChannelTypeAdvancedCustom:
-		return true
-	default:
-		return false
-	}
+	return relaycommon.EndpointAutoConversionChannelTypeAllowed(info.ChannelType)
 }
 
 func endpointAutoConversionUnsupportedError(info *relaycommon.RelayInfo) *types.NexusTokError {

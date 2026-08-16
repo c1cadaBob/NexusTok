@@ -331,6 +331,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		// 请求成功，退出重试循环
 		if newAPIError == nil {
+			service.MarkSelectedChannelAccountRequestSuccess(c)
 			// 释放选中的账号
 			service.ReleaseSelectedChannelAccount(c)
 			service.ReleaseSelectedPoolAccount(c)
@@ -342,6 +343,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
 
+		if tryPrepareEndpointAutoConversionRetry(c, relayInfo, retryParam, newAPIError) {
+			service.ReleaseSelectedChannelAccount(c)
+			service.ReleaseSelectedPoolAccount(c)
+			newAPIError = nil
+			continue
+		}
+
 		// 处理渠道错误（禁用渠道、记录日志等）
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
 		service.RecordChannelRoutingFailureIfEligible(c, channel, relayInfo.OriginModelName, newAPIError)
@@ -351,6 +359,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		// 错误处理需要读取账号池上下文；处理完成后再释放并发槽位。
 		service.ReleaseSelectedChannelAccount(c)
 		service.ReleaseSelectedPoolAccount(c)
+
+		if tryPrepareSyncedChannelAccountAutoDisabledRetry(c, retryParam) {
+			continue
+		}
 
 		// 判断是否应该重试
 		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
@@ -430,6 +442,45 @@ func fastTokenCountMetaForPricing(request dto.Request) *types.TokenCountMeta {
 	return meta
 }
 
+func tryPrepareEndpointAutoConversionRetry(c *gin.Context, relayInfo *relaycommon.RelayInfo, retryParam *service.RetryParam, err *types.NexusTokError) bool {
+	if c == nil || relayInfo == nil || retryParam == nil || err == nil {
+		return false
+	}
+	if c.Writer != nil && c.Writer.Written() {
+		return false
+	}
+	if !middleware.TryPrepareEndpointAutoConversionAfterFailure(c, relayInfo.OriginModelName, err) {
+		return false
+	}
+	conversion, ok := relaycommon.GetEndpointAutoConversion(c)
+	if !ok || conversion == nil {
+		return false
+	}
+	relayInfo.EndpointAutoConversion = conversion
+	retryParam.RequestPath = relaycommon.EffectiveRequestPath(c)
+	retryParam.ResetRetryNextTry()
+	service.ClearCurrentChannelAffinityCache(c)
+	return true
+}
+
+func tryPrepareSyncedChannelAccountAutoDisabledRetry(c *gin.Context, retryParam *service.RetryParam) bool {
+	if c == nil || retryParam == nil {
+		return false
+	}
+	if common.GetContextKeyInt(c, constant.ContextKeyRequestedChannelAccountId) > 0 {
+		_ = service.ConsumeSyncedChannelAccountAutoDisabledRetrySignal(c)
+		return false
+	}
+	if !service.ConsumeSyncedChannelAccountAutoDisabledRetrySignal(c) {
+		return false
+	}
+	if common.GetContextKeyInt(c, constant.ContextKeyChannelAccountRetryChannelId) <= 0 {
+		return false
+	}
+	retryParam.ResetRetryNextTry()
+	return true
+}
+
 func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam) (*model.Channel, *types.NexusTokError) {
 	if info.ChannelMeta == nil {
 		autoBan := c.GetBool("auto_ban")
@@ -438,7 +489,7 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 			autoBanInt = 0
 		}
 		info.InitChannelMeta(c)
-		return &model.Channel{
+		channel := &model.Channel{
 			Id:   c.GetInt("channel_id"),
 			Type: c.GetInt("channel_type"),
 			Name: c.GetString("channel_name"),
@@ -446,7 +497,11 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 				IsMultiKey: common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey),
 			},
 			AutoBan: &autoBanInt,
-		}, nil
+		}
+		if !channelAllowedForEndpointAutoConversion(c, channel) {
+			return nil, endpointAutoConversionNoCompatibleChannelError(info)
+		}
+		return channel, nil
 	}
 	if channel, setupErr, ok := trySetupAccountPoolRetryChannel(c, info); ok {
 		return channel, setupErr
@@ -471,11 +526,20 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 			}
 			return nil, newAPIError
 		}
+		if !channelAllowedForEndpointAutoConversion(c, channel) {
+			service.ReleaseSelectedChannelAccount(c)
+			service.ReleaseSelectedPoolAccount(c)
+			service.AddExcludedChannelId(c, channel.Id)
+			continue
+		}
 		info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
 		info.InitChannelMeta(c)
 		return channel, nil
 	}
 
+	if _, ok := relaycommon.GetEndpointAutoConversion(c); ok {
+		return nil, endpointAutoConversionNoCompatibleChannelError(info)
+	}
 	return nil, types.NewError(fmt.Errorf("分组 %s 下模型 %s 的候选渠道均不可用（retry）", retryParam.TokenGroup, info.OriginModelName), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 }
 
@@ -532,6 +596,13 @@ func trySetupAccountPoolRetryChannel(c *gin.Context, info *relaycommon.RelayInfo
 		}
 		return nil, setupErr, true
 	}
+	if !channelAllowedForEndpointAutoConversion(c, channel) {
+		service.ReleaseSelectedChannelAccount(c)
+		service.ReleaseSelectedPoolAccount(c)
+		common.SetContextKey(c, constant.ContextKeyChannelAccountRetryChannelId, 0)
+		service.AddExcludedChannelId(c, retryChannelID)
+		return nil, nil, false
+	}
 	// 账号池账号失败后的第一次重试，应优先在同一渠道内切换账号。
 	info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
 	info.InitChannelMeta(c)
@@ -550,6 +621,40 @@ func getAccountPoolRetryGroup(c *gin.Context, info *relaycommon.RelayInfo) strin
 		return info.UsingGroup
 	}
 	return ""
+}
+
+func channelAllowedForEndpointAutoConversion(c *gin.Context, channel *model.Channel) bool {
+	if channel == nil {
+		return false
+	}
+	if _, ok := relaycommon.GetEndpointAutoConversion(c); !ok {
+		return true
+	}
+	return relaycommon.EndpointAutoConversionChannelTypeAllowed(channel.Type)
+}
+
+func endpointAutoConversionNoCompatibleChannelError(info *relaycommon.RelayInfo) *types.NexusTokError {
+	modelName := ""
+	fromPath := ""
+	toPath := ""
+	originalErr := ""
+	if info != nil {
+		modelName = info.OriginModelName
+		if info.EndpointAutoConversion != nil {
+			fromPath = info.EndpointAutoConversion.FromPath
+			toPath = info.EndpointAutoConversion.ToPath
+			originalErr = info.EndpointAutoConversion.OriginalErrorSummary
+		}
+	}
+	if originalErr == "" {
+		originalErr = "原始路径返回端点不匹配错误"
+	}
+	return types.NewErrorWithStatusCode(
+		fmt.Errorf("模型 %s 的请求路径 %s 失败后需要回退到 %s，但没有可用的 OpenAI 兼容渠道支持安全的 Chat ↔ Responses 包装转换；原始错误：%s", modelName, fromPath, toPath, originalErr),
+		types.ErrorCodeInvalidRequest,
+		http.StatusBadRequest,
+		types.ErrOptionWithSkipRetry(),
+	)
 }
 
 func shouldRetry(c *gin.Context, openaiErr *types.NexusTokError, retryTimes int) bool {

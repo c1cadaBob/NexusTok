@@ -66,8 +66,12 @@ func SelectChannelAccount(c *gin.Context, channel *model.Channel, modelName stri
 	}
 
 	candidates := make([]*model.ChannelAccount, 0, len(accounts))
+	isUpstreamSyncChannel := channel.HasUpstreamAccountSyncMetadata()
 	for _, account := range accounts {
 		if account == nil {
+			continue
+		}
+		if isUpstreamSyncChannel && !channelAccountHasUpstreamSyncMetadata(account.OtherSettings) {
 			continue
 		}
 		if excluded[account.Id] {
@@ -85,6 +89,29 @@ func SelectChannelAccount(c *gin.Context, channel *model.Channel, modelName stri
 		candidates = append(candidates, account)
 	}
 	if len(candidates) == 0 {
+		return nil, ErrNoAvailableChannelAccount
+	}
+
+	if isUpstreamSyncChannel {
+		// 上游同步密钥的 weight 由倍率换算自动维护：同一密钥优先级下，weight
+		// 越高表示转换倍率越低、成本越便宜。正常流量应先尝试最便宜的可用密钥；
+		// 如果该密钥并发已满或本请求已失败排除，再按顺序切到下一个候选。
+		sort.SliceStable(candidates, func(i, j int) bool {
+			if candidates[i].Priority != candidates[j].Priority {
+				return candidates[i].Priority > candidates[j].Priority
+			}
+			if candidates[i].GetWeight() != candidates[j].GetWeight() {
+				return candidates[i].GetWeight() > candidates[j].GetWeight()
+			}
+			return candidates[i].Id < candidates[j].Id
+		})
+		for _, account := range candidates {
+			if ReserveChannelAccount(c, account) {
+				model.TouchChannelAccount(account.Id)
+				return account, nil
+			}
+			ExcludeChannelAccountForRequest(c, account.Id)
+		}
 		return nil, ErrNoAvailableChannelAccount
 	}
 

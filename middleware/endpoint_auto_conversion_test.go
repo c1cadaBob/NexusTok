@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,13 +12,14 @@ import (
 	"github.com/c1cada/NexusTok/model"
 	relaycommon "github.com/c1cada/NexusTok/relay/common"
 	"github.com/c1cada/NexusTok/setting/model_setting"
+	"github.com/c1cada/NexusTok/types"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
 
-func TestPrepareEndpointAutoConversionChatToResponses(t *testing.T) {
+func TestPrepareEndpointAutoConversionDoesNotPreconvert(t *testing.T) {
 	setupEndpointAutoConversionTestDB(t, "responses-only", map[constant.EndpointType]string{
 		constant.EndpointTypeOpenAIResponse: "/v1/responses",
 	})
@@ -28,11 +30,80 @@ func TestPrepareEndpointAutoConversionChatToResponses(t *testing.T) {
 	require.True(t, shouldSelect)
 
 	require.True(t, prepareEndpointAutoConversion(c, modelRequest))
+	_, ok := relaycommon.GetEndpointAutoConversion(c)
+	require.False(t, ok)
+	require.Equal(t, "/v1/chat/completions", relaycommon.EffectiveRequestPath(c))
+}
+
+func TestTryPrepareEndpointAutoConversionAfterFailure(t *testing.T) {
+	setupEndpointAutoConversionTestDB(t, "responses-only-after-failure", map[constant.EndpointType]string{
+		constant.EndpointTypeOpenAIResponse: "/v1/responses",
+	})
+
+	c, _ := endpointAutoConversionTestContext("/v1/chat/completions", `{"model":"responses-only-after-failure","messages":[]}`)
+	upstreamErr := types.NewOpenAIError(errors.New("unsupported endpoint, use /v1/responses"), types.ErrorCodeBadResponse, http.StatusBadRequest)
+
+	require.True(t, TryPrepareEndpointAutoConversionAfterFailure(c, "responses-only-after-failure", upstreamErr))
 	conversion, ok := relaycommon.GetEndpointAutoConversion(c)
 	require.True(t, ok)
 	require.Equal(t, constant.EndpointTypeOpenAI, conversion.FromEndpoint)
 	require.Equal(t, constant.EndpointTypeOpenAIResponse, conversion.ToEndpoint)
+	require.True(t, conversion.TriggeredAfterFailure)
+	require.Equal(t, string(types.ErrorCodeBadResponse), conversion.OriginalErrorCode)
 	require.Equal(t, "/v1/responses", relaycommon.EffectiveRequestPath(c))
+}
+
+func TestTryPrepareEndpointAutoConversionAfterWrappedEndpointMismatch(t *testing.T) {
+	setupEndpointAutoConversionTestDB(t, "responses-only-wrapped-failure", map[constant.EndpointType]string{
+		constant.EndpointTypeOpenAIResponse: "/v1/responses",
+	})
+
+	c, _ := endpointAutoConversionTestContext("/v1/chat/completions", `{"model":"responses-only-wrapped-failure","messages":[]}`)
+	upstreamErr := types.NewOpenAIError(
+		errors.New("upstream status 400: model does not support this endpoint, use /v1/responses"),
+		types.ErrorCodeBadResponse,
+		http.StatusInternalServerError,
+	)
+
+	require.True(t, TryPrepareEndpointAutoConversionAfterFailure(c, "responses-only-wrapped-failure", upstreamErr))
+	conversion, ok := relaycommon.GetEndpointAutoConversion(c)
+	require.True(t, ok)
+	require.True(t, conversion.TriggeredAfterFailure)
+	require.Equal(t, "/v1/chat/completions", conversion.FromPath)
+	require.Equal(t, "/v1/responses", conversion.ToPath)
+}
+
+func TestTryPrepareEndpointAutoConversionDoesNotFallbackForNonEndpointFailures(t *testing.T) {
+	setupEndpointAutoConversionTestDB(t, "responses-only-non-endpoint-failure", map[constant.EndpointType]string{
+		constant.EndpointTypeOpenAIResponse: "/v1/responses",
+	})
+
+	cases := []struct {
+		name string
+		err  *types.NexusTokError
+	}{
+		{
+			name: "auth",
+			err:  types.NewOpenAIError(errors.New("invalid key or unauthorized"), types.ErrorCodeChannelInvalidKey, http.StatusUnauthorized),
+		},
+		{
+			name: "rate_limit",
+			err:  types.NewOpenAIError(errors.New("rate limit exceeded"), types.ErrorCodeBadResponseStatusCode, http.StatusTooManyRequests),
+		},
+		{
+			name: "plain_5xx",
+			err:  types.NewOpenAIError(errors.New("upstream temporarily unavailable"), types.ErrorCodeBadResponse, http.StatusBadGateway),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := endpointAutoConversionTestContext("/v1/chat/completions", `{"model":"responses-only-non-endpoint-failure","messages":[]}`)
+			require.False(t, TryPrepareEndpointAutoConversionAfterFailure(c, "responses-only-non-endpoint-failure", tc.err))
+			_, ok := relaycommon.GetEndpointAutoConversion(c)
+			require.False(t, ok)
+		})
+	}
 }
 
 func TestPrepareEndpointAutoConversionCanBeDisabled(t *testing.T) {
@@ -42,10 +113,9 @@ func TestPrepareEndpointAutoConversionCanBeDisabled(t *testing.T) {
 
 	c, _ := endpointAutoConversionTestContext("/v1/chat/completions", `{"model":"responses-only-disabled","messages":[]}`)
 	c.Request.Header.Set(endpointAutoConvertDisableHeader, "true")
-	modelRequest, _, err := getModelRequest(c)
-	require.NoError(t, err)
+	upstreamErr := types.NewOpenAIError(errors.New("unsupported endpoint"), types.ErrorCodeBadResponse, http.StatusBadRequest)
 
-	require.True(t, prepareEndpointAutoConversion(c, modelRequest))
+	require.False(t, TryPrepareEndpointAutoConversionAfterFailure(c, "responses-only-disabled", upstreamErr))
 	_, ok := relaycommon.GetEndpointAutoConversion(c)
 	require.False(t, ok)
 	require.Equal(t, "/v1/chat/completions", relaycommon.EffectiveRequestPath(c))
@@ -62,27 +132,25 @@ func TestPrepareEndpointAutoConversionCanBeDisabledByGlobalSetting(t *testing.T)
 	})
 
 	c, _ := endpointAutoConversionTestContext("/v1/chat/completions", `{"model":"responses-only-global-disabled","messages":[]}`)
-	modelRequest, _, err := getModelRequest(c)
-	require.NoError(t, err)
+	upstreamErr := types.NewOpenAIError(errors.New("unsupported endpoint"), types.ErrorCodeBadResponse, http.StatusBadRequest)
 
-	require.True(t, prepareEndpointAutoConversion(c, modelRequest))
+	require.False(t, TryPrepareEndpointAutoConversionAfterFailure(c, "responses-only-global-disabled", upstreamErr))
 	_, ok := relaycommon.GetEndpointAutoConversion(c)
 	require.False(t, ok)
 	require.Equal(t, "/v1/chat/completions", relaycommon.EffectiveRequestPath(c))
 }
 
-func TestPrepareEndpointAutoConversionRejectsUnsafeEndpointMismatch(t *testing.T) {
+func TestTryPrepareEndpointAutoConversionRejectsUnsafeEndpointMismatch(t *testing.T) {
 	setupEndpointAutoConversionTestDB(t, "image-only", map[constant.EndpointType]string{
 		constant.EndpointTypeImageGeneration: "/v1/images/generations",
 	})
 
-	c, recorder := endpointAutoConversionTestContext("/v1/chat/completions", `{"model":"image-only","messages":[]}`)
-	modelRequest, _, err := getModelRequest(c)
-	require.NoError(t, err)
+	c, _ := endpointAutoConversionTestContext("/v1/chat/completions", `{"model":"image-only","messages":[]}`)
+	upstreamErr := types.NewOpenAIError(errors.New("unsupported endpoint"), types.ErrorCodeBadResponse, http.StatusBadRequest)
 
-	require.False(t, prepareEndpointAutoConversion(c, modelRequest))
-	require.Equal(t, http.StatusBadRequest, recorder.Code)
-	require.Contains(t, recorder.Body.String(), "/v1/images/generations")
+	require.False(t, TryPrepareEndpointAutoConversionAfterFailure(c, "image-only", upstreamErr))
+	_, ok := relaycommon.GetEndpointAutoConversion(c)
+	require.False(t, ok)
 }
 
 func setupEndpointAutoConversionTestDB(t *testing.T, modelName string, endpoints map[constant.EndpointType]string) {

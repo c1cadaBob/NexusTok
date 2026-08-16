@@ -133,6 +133,30 @@ func resolveChannelTestUserID(c *gin.Context) (int, error) {
 }
 
 func testChannel(ctx context.Context, channel *model.Channel, testUserID int, testModel string, endpointType string, isStream bool, selectedAccountID int) testResult {
+	result := testChannelOnce(ctx, channel, testUserID, testModel, endpointType, isStream, selectedAccountID, nil)
+	if result.newAPIError == nil || result.context == nil {
+		return result
+	}
+	modelName := strings.TrimSpace(testModel)
+	if modelName == "" && result.context != nil {
+		modelName = strings.TrimSpace(result.context.GetString("original_model"))
+	}
+	if !middleware.TryPrepareEndpointAutoConversionAfterFailure(result.context, modelName, result.newAPIError) {
+		return result
+	}
+	conversion, ok := relaycommon.GetEndpointAutoConversion(result.context)
+	if !ok || conversion == nil {
+		return result
+	}
+	fallbackEndpoint := string(conversion.ToEndpoint)
+	fallback := testChannelOnce(ctx, channel, testUserID, testModel, fallbackEndpoint, isStream, selectedAccountID, conversion)
+	if fallback.context != nil {
+		common.SetContextKey(fallback.context, constant.ContextKeyEndpointAutoConversion, conversion)
+	}
+	return fallback
+}
+
+func testChannelOnce(ctx context.Context, channel *model.Channel, testUserID int, testModel string, endpointType string, isStream bool, selectedAccountID int, presetConversion *relaycommon.EndpointAutoConversion) testResult {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -216,6 +240,9 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	}
 
 	c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, requestPath, nil)
+	if presetConversion != nil {
+		common.SetContextKey(c, constant.ContextKeyEndpointAutoConversion, presetConversion)
+	}
 
 	cache, err := model.GetUserCache(testUserID)
 	if err != nil {
@@ -520,7 +547,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 			return testResult{
 				context:             c,
 				localErr:            err,
-				newAPIError:         types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError),
+				newAPIError:         types.NewOpenAIError(err, types.ErrorCodeBadResponse, httpResp.StatusCode),
 				countForAutoDisable: true,
 			}
 		}
@@ -915,6 +942,9 @@ func buildChannelTestFailureLogOther(ctx *gin.Context) map[string]interface{} {
 	}
 	if ctx.Request != nil && ctx.Request.URL != nil {
 		other["request_path"] = ctx.Request.URL.Path
+	}
+	if conversion, ok := relaycommon.GetEndpointAutoConversion(ctx); ok && conversion != nil {
+		other["endpoint_auto_conversion"] = conversion.AuditMap()
 	}
 	service.AttachUpstreamRatioConversionToOther(ctx, other)
 	return other

@@ -20,6 +20,7 @@ import (
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/constant"
 	"github.com/c1cada/NexusTok/model"
+	"github.com/c1cada/NexusTok/setting/operation_setting"
 	"github.com/c1cada/NexusTok/types"
 
 	// 第三方库：Gin Web 框架
@@ -52,6 +53,9 @@ func ProcessChannelAccountError(c *gin.Context, channelError types.ChannelError,
 	common.SetContextKey(c, constant.ContextKeyChannelAccountRetryChannelId, channelError.ChannelId)
 
 	reason := err.ErrorWithStatusCode()
+	if processSyncedChannelAccountError(c, channelError, err, reason) {
+		return
+	}
 	updates := map[string]interface{}{
 		"last_error": reason, // 记录最后一次错误信息
 	}
@@ -86,6 +90,151 @@ func ProcessChannelAccountError(c *gin.Context, channelError types.ChannelError,
 		model.InitChannelCache()
 		ResetProxyClientCache()
 	}
+}
+
+// MarkSelectedChannelAccountRequestSuccess 在同步密钥真实请求成功后清理连续失败状态。
+//
+// 普通账号池账号不使用 upstream_account_sync 元数据，保持旧行为不写库。同步密钥只有在
+// 之前存在失败计数、错误或自动禁用标记时才更新，避免每次成功请求都产生额外数据库写入。
+func MarkSelectedChannelAccountRequestSuccess(c *gin.Context) {
+	if c == nil || !common.GetContextKeyBool(c, constant.ContextKeyChannelAccountPool) {
+		return
+	}
+	channelID := common.GetContextKeyInt(c, constant.ContextKeyChannelId)
+	accountID := common.GetContextKeyInt(c, constant.ContextKeyChannelAccountId)
+	if channelID <= 0 || accountID <= 0 {
+		return
+	}
+	account, err := model.GetChannelAccountById(channelID, accountID)
+	if err != nil || account == nil || !channelAccountHasUpstreamSyncMetadata(account.OtherSettings) {
+		return
+	}
+	metadata := readSyncedChannelAccountAutoCheckMetadata(account.OtherSettings)
+	if metadata.FailureCount <= 0 &&
+		strings.TrimSpace(metadata.LastError) == "" &&
+		strings.TrimSpace(account.LastError) == "" &&
+		metadata.LastStatus != "failed" &&
+		!metadata.DisabledByAutoCheck {
+		return
+	}
+	settings := applySyncedChannelAccountAutoCheckSuccess(account.OtherSettings)
+	updates := map[string]interface{}{
+		"settings":   settings,
+		"last_error": "",
+	}
+	if err := model.DB.Model(&model.ChannelAccount{}).Where("channel_id = ? AND id = ?", channelID, accountID).Updates(updates).Error; err != nil {
+		common.SysLog("failed to mark synced channel account request success: " + err.Error())
+	}
+}
+
+func processSyncedChannelAccountError(c *gin.Context, channelError types.ChannelError, err *types.NexusTokError, reason string) bool {
+	account, loadErr := model.GetChannelAccountById(channelError.ChannelId, channelError.ChannelAccountId)
+	if loadErr != nil || account == nil || !channelAccountHasUpstreamSyncMetadata(account.OtherSettings) {
+		return false
+	}
+	errText := sanitizeSyncedChannelAccountError(reason, account)
+	if !shouldCountSyncedChannelAccountFailure(err) {
+		updates := map[string]interface{}{"last_error": errText}
+		if updateErr := model.DB.Model(&model.ChannelAccount{}).Where("channel_id = ? AND id = ?", channelError.ChannelId, channelError.ChannelAccountId).Updates(updates).Error; updateErr != nil {
+			common.SysLog("failed to update synced channel account non-countable error: " + updateErr.Error())
+		}
+		return true
+	}
+
+	metadata := readSyncedChannelAccountAutoCheckMetadata(account.OtherSettings)
+	failureCount := metadata.FailureCount + 1
+	threshold := operation_setting.GetUpstreamAccountKeyCheckSetting().NormalizedFailureThreshold()
+	shouldDisable := account.Status == common.ChannelStatusEnabled && failureCount >= threshold
+	disabledByAutoCheck := metadata.DisabledByAutoCheck || shouldDisable
+	settings := applySyncedChannelAccountAutoCheckFailure(account.OtherSettings, failureCount, errText, disabledByAutoCheck)
+	updates := map[string]interface{}{
+		"settings":   settings,
+		"last_error": errText,
+	}
+	if shouldDisable {
+		updates["status"] = common.ChannelStatusAutoDisabled
+		updates["disabled_reason"] = errText
+		updates["temp_disabled_until"] = 0
+		updates["rate_limited_until"] = 0
+		updates["overload_until"] = 0
+	}
+	if updateErr := model.DB.Model(&model.ChannelAccount{}).Where("channel_id = ? AND id = ?", channelError.ChannelId, channelError.ChannelAccountId).Updates(updates).Error; updateErr != nil {
+		common.SysLog("failed to update synced channel account failure state: " + updateErr.Error())
+		return true
+	}
+	if shouldDisable {
+		common.SetContextKey(c, constant.ContextKeySyncedChannelAccountAutoDisabledRetry, true)
+	}
+	if channelAccountErrorUpdatesAffectCapabilities(updates) {
+		if syncErr := model.SyncChannelAccountPoolCapabilities(channelError.ChannelId, nil); syncErr != nil {
+			common.SysLog("failed to sync channel account capabilities after synced key failure: " + syncErr.Error())
+			return true
+		}
+		model.InitChannelCache()
+		ResetProxyClientCache()
+	}
+	return true
+}
+
+// ConsumeSyncedChannelAccountAutoDisabledRetrySignal 消费同步密钥自动禁用后的额外重试信号。
+//
+// 全局 RetryTimes 默认为 0，但同步密钥达到连续失败阈值时，当前请求应该继续尝试
+// 同渠道内下一个启用密钥。该信号只在 ProcessChannelAccountError 判定真实上游失败
+// 并自动禁用同步密钥时写入；消费后立即清空，保证额外重试机会是一次性的。
+func ConsumeSyncedChannelAccountAutoDisabledRetrySignal(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	if !common.GetContextKeyBool(c, constant.ContextKeySyncedChannelAccountAutoDisabledRetry) {
+		return false
+	}
+	common.SetContextKey(c, constant.ContextKeySyncedChannelAccountAutoDisabledRetry, false)
+	return true
+}
+
+func shouldCountSyncedChannelAccountFailure(err *types.NexusTokError) bool {
+	if err == nil {
+		return false
+	}
+	lowerMessage := strings.ToLower(err.Error())
+	if strings.Contains(lowerMessage, "client_gone") ||
+		strings.Contains(lowerMessage, "client disconnected") ||
+		strings.Contains(lowerMessage, "context canceled") ||
+		strings.Contains(lowerMessage, "request canceled") {
+		return false
+	}
+	switch err.GetErrorCode() {
+	case types.ErrorCodeDoRequestFailed,
+		types.ErrorCodeBadResponseStatusCode,
+		types.ErrorCodeBadResponse,
+		types.ErrorCodeReadResponseBodyFailed,
+		types.ErrorCodeBadResponseBody,
+		types.ErrorCodeEmptyResponse,
+		types.ErrorCodeAwsInvokeError,
+		types.ErrorCodeModelNotFound,
+		types.ErrorCodeChannelInvalidKey,
+		types.ErrorCodeChannelResponseTimeExceeded:
+		return true
+	default:
+		return false
+	}
+}
+
+func sanitizeSyncedChannelAccountError(errText string, account *model.ChannelAccount) string {
+	errText = strings.TrimSpace(errText)
+	if errText == "" {
+		errText = "同步密钥请求失败"
+	}
+	errText = common.MaskSensitiveInfo(errText)
+	if account != nil {
+		if key := strings.TrimSpace(account.Key); key != "" {
+			errText = strings.ReplaceAll(errText, key, "[redacted-key]")
+		}
+	}
+	if len([]rune(errText)) > 240 {
+		errText = string([]rune(errText)[:240]) + "..."
+	}
+	return errText
 }
 
 // channelAccountErrorUpdatesAffectCapabilities 判断账号错误状态是否会影响渠道可用能力。

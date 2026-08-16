@@ -118,6 +118,11 @@ const (
 	ContextKeyChannelAccountReserved ContextKey = "channel_account_reserved"
 	// ContextKeyChannelAccountRetryChannelId 渠道账号重试渠道 ID
 	ContextKeyChannelAccountRetryChannelId ContextKey = "channel_account_retry_channel_id"
+	// ContextKeySyncedChannelAccountAutoDisabledRetry 表示同步密钥在本次真实请求失败后
+	// 已达到连续失败阈值并被自动禁用。Relay 层消费该一次性信号后，即使全局重试次数
+	// 为 0，也允许在同一请求内重新选一个启用的同步密钥，避免用户请求因为单个低价
+	// 密钥刚好被禁用而直接失败。
+	ContextKeySyncedChannelAccountAutoDisabledRetry ContextKey = "synced_channel_account_auto_disabled_retry"
 	// ContextKeyUpstreamRatioConversion 本次请求命中的上游账号成本换算倍率。
 	// 该值来自同步账号元数据，仅用于管理员消费日志展示上游成本，不参与实际扣费。
 	ContextKeyUpstreamRatioConversion ContextKey = "upstream_ratio_conversion"
