@@ -526,13 +526,47 @@ export function upstreamAccountModelsArrayValue(
   )
 }
 
+export function hasUpstreamKeyModelSyncFailure(key: UpstreamAccountKey) {
+  return (
+    upstreamAccountModelsArrayValue(key, undefined).length === 0 &&
+    Boolean(key.key_models_sync_error?.trim())
+  )
+}
+
+export function shouldEnableUpstreamAccountKeyByDefault(
+  key: UpstreamAccountKey
+) {
+  if (typeof key.status === 'number' && key.status !== CHANNEL_STATUS.ENABLED) {
+    return false
+  }
+  if (hasUpstreamKeyModelSyncFailure(key)) {
+    return false
+  }
+  return true
+}
+
+export function getUpstreamKeyModelSyncSourceLabel(
+  source: string | undefined
+) {
+  switch (source?.trim()) {
+    case 'snapshot':
+      return 'Upstream snapshot'
+    case 'fetch_models':
+      return 'Fetched from upstream key'
+    case 'manual':
+      return 'Manual model list'
+    default:
+      return source?.trim() || ''
+  }
+}
+
 export function buildUpstreamAccountConfigDraft(
   key: UpstreamAccountKey,
   previous: UpstreamAccountConfigDraft | undefined,
   overrides: Partial<UpstreamAccountConfigDraft> = {}
 ): UpstreamAccountConfigDraft {
   return {
-    enabled: previous?.enabled ?? true,
+    enabled: previous?.enabled ?? shouldEnableUpstreamAccountKeyByDefault(key),
     priority: previous?.priority ?? key.suggested_priority ?? 0,
     weight: previous?.weight ?? key.suggested_weight ?? 0,
     models: previous?.models ?? key.models?.join(',') ?? '',
@@ -644,7 +678,8 @@ export function buildUpstreamAccountConfigsFromSnapshotKeys(
     configs[configId] = {
       priority: previousConfig?.priority ?? key.suggested_priority,
       weight: previousConfig?.weight ?? key.suggested_weight,
-      enabled: previousConfig?.enabled ?? true,
+      enabled:
+        previousConfig?.enabled ?? shouldEnableUpstreamAccountKeyByDefault(key),
       models: previousConfig?.models ?? key.models?.join(',') ?? '',
       group: previousConfig?.group ?? key.group_name ?? key.group_id ?? '',
       access_groups:
@@ -797,7 +832,7 @@ export function buildUpstreamAccountPayloads(
       sync_id: key.sync_id,
       external_id: key.external_id,
       name: key.name || key.masked_key,
-      enabled: config?.enabled ?? true,
+      enabled: config?.enabled ?? shouldEnableUpstreamAccountKeyByDefault(key),
       models: upstreamAccountModelsValue(key, config),
       group: upstreamAccountGroupValue(key, config),
       access_groups: upstreamAccountAccessGroupsValue(key, config),
@@ -833,14 +868,16 @@ export function buildUpstreamAccountRefreshPayload({
 export function upstreamAccountFromChannelAccount(
   account: ChannelAccount
 ): UpstreamAccountKey {
-  const syncMetadata = parseSettingsRecord(account.settings)[
+  const syncMetadataRaw = parseSettingsRecord(account.settings)[
     UPSTREAM_ACCOUNT_SYNC_SETTINGS_KEY
   ]
+  const syncMetadata =
+    syncMetadataRaw && typeof syncMetadataRaw === 'object'
+      ? (syncMetadataRaw as Record<string, unknown>)
+      : undefined
   const upstreamExternalId =
-    syncMetadata && typeof syncMetadata === 'object'
-      ? String(
-          (syncMetadata as Record<string, unknown>).external_id || ''
-        ).trim()
+    syncMetadata
+      ? String(syncMetadata.external_id || '').trim()
       : ''
   const upstreamConfigId =
     upstreamExternalId || account.key || String(account.id)
@@ -855,6 +892,14 @@ export function upstreamAccountFromChannelAccount(
     group_id: account.key_group_id || account.group,
     access_groups: account.access_groups,
     models: parseModelsString(account.models || ''),
+    key_models_sync_source: syncMetadata
+      ? String(syncMetadata.key_models_sync_source || '').trim()
+      : '',
+    key_models_sync_error: syncMetadata
+      ? String(syncMetadata.key_models_sync_error || '').trim()
+      : '',
+    disabled_reason: account.disabled_reason,
+    last_error: account.last_error,
     model_ratios: account.model_ratios,
     group_ratio: account.group_ratio ?? undefined,
     effective_ratio: account.effective_ratio,

@@ -291,6 +291,10 @@ export interface UpstreamAccountKey {
   group_name?: string
   access_groups?: string
   models?: string[]
+  key_models_sync_source?: string
+  key_models_sync_error?: string
+  disabled_reason?: string
+  last_error?: string
   model_ratios?: Record<string, number>
   group_ratio?: number
   effective_ratio?: number

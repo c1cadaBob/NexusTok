@@ -80,10 +80,12 @@ import {
   getUpstreamRatioDisplayValue,
   getUpstreamSyncBaseUrlFromSettings,
   getUpstreamSyncPlatformFromSettings,
+  hasUpstreamKeyModelSyncFailure,
   hasUpstreamPreviewSnapshot,
   hasUpstreamSyncSavedCredential,
   isUpstreamPreviewExpiredError,
   normalizeUpstreamChannelBaseUrl,
+  shouldEnableUpstreamAccountKeyByDefault,
   summarizeUpstreamAccountCapabilities,
   upstreamAccountKeyConfigId,
   upstreamAccountModelsArrayValue,
@@ -102,6 +104,7 @@ import {
   UpstreamAccountCapturePanel,
   type UpstreamAccountCapturePanelHandle,
 } from './upstream-account-capture-panel'
+import { UpstreamKeyModelDiagnostics } from './upstream-key-model-diagnostics'
 import { UpstreamModelActions } from './upstream-model-actions'
 
 const PREVIEW_UPSTREAM_AMOUNT_FORMAT = {
@@ -851,6 +854,9 @@ export function UpstreamAccountRefreshPanel({
         snapshot.keys,
         upstreamAccountConfigs
       )
+      const hasModelSyncFailures = snapshot.keys.some(
+        hasUpstreamKeyModelSyncFailure
+      )
       const upstreamBalanceDisplay = getUpstreamPreviewBalanceDisplay(
         snapshot.balance,
         buildUpstreamRatioConversionPayload(
@@ -943,7 +949,11 @@ export function UpstreamAccountRefreshPanel({
                 <Alert>
                   <AlertCircle aria-hidden='true' />
                   <AlertDescription>
-                    {t('This key will not route any model.')}
+                    {hasModelSyncFailures
+                      ? t(
+                          'Synced keys were imported, but their models could not be fetched. They will be saved disabled until models are fixed or a test succeeds.'
+                        )
+                      : t('This key will not route any model.')}
                   </AlertDescription>
                 </Alert>
               )}
@@ -1044,7 +1054,9 @@ export function UpstreamAccountRefreshPanel({
                   const currentAccessGroupsArrayValue = parseGroups(
                     currentAccessGroupsValue
                   )
-                  const currentEnabledValue = config?.enabled ?? true
+                  const currentEnabledValue =
+                    config?.enabled ??
+                    shouldEnableUpstreamAccountKeyByDefault(key)
                   const accessGroupOptions = mergeGroupOptionsWithSelected(
                     groupOptions,
                     currentAccessGroupsArrayValue
@@ -1133,6 +1145,11 @@ export function UpstreamAccountRefreshPanel({
                               : t('This key will not route any model.')}
                           </span>
                         ) : null}
+                        <UpstreamKeyModelDiagnostics
+                          accountKey={key}
+                          modelCount={currentModelsArrayValue.length}
+                          enabled={currentEnabledValue}
+                        />
                       </div>
                       <div className='flex min-w-0 flex-col gap-1'>
                         <Input

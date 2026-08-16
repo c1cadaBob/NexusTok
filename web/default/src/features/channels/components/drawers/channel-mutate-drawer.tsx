@@ -24,7 +24,7 @@ import {
   useCallback,
   useRef,
 } from 'react'
-import { z } from 'zod'
+import type { z } from 'zod'
 import { type SubmitErrorHandler, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -199,6 +199,8 @@ import {
   getUpstreamRatioDisplayValue,
   getUpstreamPreviewBalanceDisplay,
   collectUpstreamAccountCapabilityValidationErrors,
+  hasUpstreamKeyModelSyncFailure,
+  shouldEnableUpstreamAccountKeyByDefault,
   summarizeUpstreamAccountCapabilities,
 } from '../../lib/upstream-sync'
 import type {
@@ -231,6 +233,7 @@ import {
   UpstreamAccountCapturePanel,
   type UpstreamAccountCapturePanelHandle,
 } from '../upstream-account-capture-panel'
+import { UpstreamKeyModelDiagnostics } from '../upstream-key-model-diagnostics'
 import { UpstreamModelActions } from '../upstream-model-actions'
 import {
   ChannelAdvancedSection,
@@ -462,7 +465,8 @@ export function buildUpstreamAccountConfigsFromSnapshotKeys(
     configs[configId] = {
       priority: previousConfig?.priority ?? key.suggested_priority,
       weight: previousConfig?.weight ?? key.suggested_weight,
-      enabled: previousConfig?.enabled ?? true,
+      enabled:
+        previousConfig?.enabled ?? shouldEnableUpstreamAccountKeyByDefault(key),
       models: previousConfig?.models ?? key.models?.join(',') ?? '',
       group: previousConfig?.group ?? key.group_name ?? key.group_id ?? '',
       access_groups:
@@ -658,7 +662,7 @@ function buildUpstreamAccountPayloads(
       sync_id: key.sync_id,
       external_id: key.external_id,
       name: key.name || key.masked_key,
-      enabled: config?.enabled ?? true,
+      enabled: config?.enabled ?? shouldEnableUpstreamAccountKeyByDefault(key),
       models: upstreamAccountModelsValue(key, config, fallbackModels),
       group: upstreamAccountGroupValue(key, config, fallbackGroup),
       access_groups: config?.access_groups ?? key.access_groups ?? 'default',
@@ -671,14 +675,16 @@ function buildUpstreamAccountPayloads(
 export function upstreamAccountFromChannelAccount(
   account: ChannelAccount
 ): UpstreamEditableAccount {
-  const syncMetadata = parseSettingsRecord(account.settings)[
+  const syncMetadataRaw = parseSettingsRecord(account.settings)[
     UPSTREAM_ACCOUNT_SYNC_SETTINGS_KEY
   ]
+  const syncMetadata =
+    syncMetadataRaw && typeof syncMetadataRaw === 'object'
+      ? (syncMetadataRaw as Record<string, unknown>)
+      : undefined
   const upstreamExternalId =
-    syncMetadata && typeof syncMetadata === 'object'
-      ? String(
-          (syncMetadata as Record<string, unknown>).external_id || ''
-        ).trim()
+    syncMetadata
+      ? String(syncMetadata.external_id || '').trim()
       : ''
   const upstreamConfigId =
     upstreamExternalId || account.key || String(account.id)
@@ -695,6 +701,14 @@ export function upstreamAccountFromChannelAccount(
     group_id: account.key_group_id || account.group,
     access_groups: account.access_groups,
     models: parseModelsString(account.models || ''),
+    key_models_sync_source: syncMetadata
+      ? String(syncMetadata.key_models_sync_source || '').trim()
+      : '',
+    key_models_sync_error: syncMetadata
+      ? String(syncMetadata.key_models_sync_error || '').trim()
+      : '',
+    disabled_reason: account.disabled_reason,
+    last_error: account.last_error,
     model_ratios: account.model_ratios,
     group_ratio: account.group_ratio ?? undefined,
     effective_ratio: account.effective_ratio,
@@ -1859,6 +1873,9 @@ export function ChannelMutateDrawer({
         snapshot.keys,
         upstreamAccountConfigs
       )
+      const hasModelSyncFailures = snapshot.keys.some(
+        hasUpstreamKeyModelSyncFailure
+      )
       const upstreamBalanceDisplay = getUpstreamPreviewBalanceDisplay(
         snapshot.balance,
         upstreamRatioConversion
@@ -1969,9 +1986,13 @@ export function ChannelMutateDrawer({
                 <Alert>
                   <AlertCircle aria-hidden='true' />
                   <AlertDescription>
-                    {t(
-                      'No models were returned by the upstream account. Add models manually after creation so this channel can receive routed requests.'
-                    )}
+                    {hasModelSyncFailures
+                      ? t(
+                          'Synced keys were imported, but their models could not be fetched. They will be saved disabled until models are fixed or a test succeeds.'
+                        )
+                      : t(
+                          'No models were returned by the upstream account. Add models manually after creation so this channel can receive routed requests.'
+                        )}
                   </AlertDescription>
                 </Alert>
               )}
@@ -2097,7 +2118,9 @@ export function ChannelMutateDrawer({
                   const currentAccessGroupsArrayValue = parseGroups(
                     currentAccessGroupsValue
                   )
-                  const currentEnabledValue = config?.enabled ?? true
+                  const currentEnabledValue =
+                    config?.enabled ??
+                    shouldEnableUpstreamAccountKeyByDefault(key)
                   const accessGroupOptions = mergeGroupOptionsWithSelected(
                     groupOptions,
                     currentAccessGroupsArrayValue
@@ -2198,6 +2221,11 @@ export function ChannelMutateDrawer({
                               : t('This key will not route any model.')}
                           </span>
                         ) : null}
+                        <UpstreamKeyModelDiagnostics
+                          accountKey={key}
+                          modelCount={currentModelsArrayValue.length}
+                          enabled={currentEnabledValue}
+                        />
                       </div>
                       <div className='flex min-w-0 flex-col gap-1'>
                         <Input

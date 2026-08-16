@@ -21,12 +21,14 @@ import { describe, test } from 'node:test'
 import type { Channel, ChannelAccount, UpstreamAccountKey } from '../types'
 import {
   buildUpstreamAccountConfigDraft,
+  buildUpstreamAccountConfigsFromSnapshotKeys,
   buildUpstreamAccountPreviewRequest,
   buildUpstreamAccountRefreshPayload,
   collectUpstreamAccountCapabilityValidationErrors,
   getChannelAccountAssetDisplaySource,
   getChannelBalanceDisplaySource,
   getUpstreamPreviewBalanceDisplay,
+  shouldEnableUpstreamAccountKeyByDefault,
   summarizeUpstreamAccountCapabilities,
   upstreamAssetConversionFactor,
 } from './upstream-sync'
@@ -380,6 +382,33 @@ describe('上游账号刷新共享 payload', () => {
     )
 
     assert.deepEqual(errors, [])
+  })
+
+  test('模型同步失败的空模型密钥默认禁用并允许导入', () => {
+    const key = makeSnapshotKey({
+      models: [],
+      key_models_sync_source: 'fetch_models',
+      key_models_sync_error: 'stage=fetch_models: INSUFFICIENT_BALANCE',
+    })
+
+    assert.equal(shouldEnableUpstreamAccountKeyByDefault(key), false)
+
+    const configs = buildUpstreamAccountConfigsFromSnapshotKeys([key])
+    assert.equal(configs['sync-1']?.enabled, false)
+
+    const errors = collectUpstreamAccountCapabilityValidationErrors(
+      [key],
+      configs
+    )
+    assert.deepEqual(errors, [])
+
+    const payload = buildUpstreamAccountRefreshPayload({
+      previewId: 'preview-model-sync-failure',
+      keys: [key],
+      configs,
+      applySuggested: true,
+    })
+    assert.equal(payload.accounts?.[0]?.enabled, false)
   })
 
   test('自定义模型会原样进入同步密钥 payload', () => {
