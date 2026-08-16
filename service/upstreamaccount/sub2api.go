@@ -109,6 +109,10 @@ type sub2APIKey struct {
 }
 
 // UnmarshalJSON 兼容 sub2api 的 models 数组、字符串或空值三种形态。
+//
+// 真实 sub2api 分支会把密钥可用模型放在不同字段里，例如 model_limits、
+// allowed_models 或 model_ids。同步导入必须只读取上游明确返回的模型字段，
+// 不能从 key 名称或备注猜测模型，否则会把未知能力误暴露到 Relay 调度。
 func (k *sub2APIKey) UnmarshalJSON(data []byte) error {
 	var raw struct {
 		ID        any              `json:"id"`
@@ -136,6 +140,38 @@ func (k *sub2APIKey) UnmarshalJSON(data []byte) error {
 	}
 	if raw.Models != nil {
 		k.Models = splitStringValues([]string{modelsValueToCSV(raw.Models)})
+	}
+	if len(k.Models) == 0 {
+		k.Models = sub2APIKeyModelsFromAliases(data)
+	}
+	return nil
+}
+
+func sub2APIKeyModelsFromAliases(data []byte) []string {
+	var raw map[string]any
+	if err := common.Unmarshal(data, &raw); err != nil {
+		return nil
+	}
+	for _, field := range []string{
+		"model_limits",
+		"modelLimits",
+		"model_limit",
+		"modelLimit",
+		"allowed_models",
+		"allowedModels",
+		"model_ids",
+		"modelIds",
+		"model_names",
+		"modelNames",
+	} {
+		value, ok := raw[field]
+		if !ok {
+			continue
+		}
+		models := splitStringValues([]string{modelsValueToCSV(value)})
+		if len(models) > 0 {
+			return models
+		}
 	}
 	return nil
 }

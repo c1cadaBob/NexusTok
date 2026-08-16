@@ -1345,6 +1345,127 @@ func TestSub2APIKeyStatusAcceptsStringEnums(t *testing.T) {
 	require.Equal(t, common.ChannelStatusEnabled, numeric.Status.value)
 }
 
+func TestSub2APIKeyModelsAcceptsAliases(t *testing.T) {
+	tests := []struct {
+		name     string
+		payload  string
+		expected []string
+	}{
+		{
+			name:     "model_limits string",
+			payload:  `{"model_limits":"gpt-4o, claude-3-5-sonnet"}`,
+			expected: []string{"gpt-4o", "claude-3-5-sonnet"},
+		},
+		{
+			name:     "allowed_models array",
+			payload:  `{"allowed_models":["gpt-5","gpt-5-mini"]}`,
+			expected: []string{"gpt-5", "gpt-5-mini"},
+		},
+		{
+			name:     "modelIds array",
+			payload:  `{"models":"","modelIds":["gemini-2.5-pro"]}`,
+			expected: []string{"gemini-2.5-pro"},
+		},
+		{
+			name:     "modelNames string",
+			payload:  `{"modelNames":"deepseek-chat"}`,
+			expected: []string{"deepseek-chat"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var key sub2APIKey
+			require.NoError(t, common.Unmarshal([]byte(tt.payload), &key))
+			require.Equal(t, tt.expected, key.Models)
+		})
+	}
+}
+
+func TestSub2APIPreviewImportsKeyAsDisabledWhenModelFetchFails(t *testing.T) {
+	withUpstreamAccountSyncModelSetting(t, true, false)
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ChannelAccount{}))
+	model.DB = db
+	model.LOG_DB = db
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+
+	const fullKey = "sk-sub2-balance-failed-full-key"
+	var seenModelFetchAuthorization string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"access_token":"sub2-token","user":{"id":5,"email":"alice@example.com","balance":10}}}`))
+		case "/api/v1/auth/me":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":10}}`))
+		case "/api/v1/user/profile":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":5,"email":"alice@example.com","balance":12.5}}`))
+		case "/api/v1/groups/available":
+			_, _ = w.Write([]byte(`{"code":0,"data":[{"id":3,"name":"vip","platform":"openai","rate_multiplier":0.25}]}`))
+		case "/api/v1/groups/rates":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"3":0.25}}`))
+		case "/api/v1/usage/dashboard/stats":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"total_actual_cost":4.75}}`))
+		case "/api/v1/keys":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"items":[{"id":9,"name":"empty-model-key","key":"` + fullKey + `","status":"active","group_id":3,"group":{"id":3,"name":"vip"},"quota":20,"quota_used":3}],"total":1}}`))
+		case "/v1/models":
+			seenModelFetchAuthorization = r.Header.Get("Authorization")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"code":"INSUFFICIENT_BALANCE","message":"Insufficient account balance for ` + fullKey + `"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	result, err := Preview(context.Background(), PreviewRequest{Credential: Credential{
+		Platform: PlatformSub2API,
+		BaseURL:  server.URL,
+		Email:    "alice@example.com",
+		Password: "secret",
+	}})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, result.PreviewID)
+	require.Len(t, result.Snapshot.Keys, 1)
+	require.Empty(t, result.Snapshot.Keys[0].Key)
+	require.Empty(t, result.Snapshot.Keys[0].Models)
+	require.Equal(t, keyModelSyncSourceFetchModels, result.Snapshot.Keys[0].KeyModelSyncSource)
+	require.Contains(t, result.Snapshot.Keys[0].KeyModelSyncError, "stage=fetch_models")
+	require.Contains(t, result.Snapshot.Keys[0].KeyModelSyncError, "INSUFFICIENT_BALANCE")
+	require.NotContains(t, result.Snapshot.Keys[0].KeyModelSyncError, fullKey)
+	require.Equal(t, "Bearer "+fullKey, seenModelFetchAuthorization)
+
+	createResult, err := CreateFromPreview(CreateRequest{
+		PreviewID: result.PreviewID,
+		Channel: ChannelCreateConfig{
+			Name: "sub2api-empty-model-channel",
+			Type: constant.ChannelTypeSub2API,
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, createResult.Created)
+	var account model.ChannelAccount
+	require.NoError(t, db.First(&account).Error)
+	require.Equal(t, common.ChannelStatusManuallyDisabled, account.Status)
+	require.Empty(t, account.Models)
+	require.Contains(t, account.DisabledReason, "同步密钥模型列表获取失败")
+	require.Contains(t, account.DisabledReason, "INSUFFICIENT_BALANCE")
+	require.NotContains(t, account.DisabledReason, fullKey)
+}
+
 func TestNewAPITokenKeysResponseAcceptsWrappedAndDirectMaps(t *testing.T) {
 	var wrapped newAPITokenKeysResponse
 	require.NoError(t, common.Unmarshal([]byte(`{"keys":{"50":"sk-wrapped-key"}}`), &wrapped))

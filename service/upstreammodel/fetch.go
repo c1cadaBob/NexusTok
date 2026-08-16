@@ -239,7 +239,8 @@ func shouldTryNextModelsURL(err error) bool {
 	message := err.Error()
 	return strings.Contains(message, "status code: 404") ||
 		strings.Contains(message, "status code: 405") ||
-		strings.Contains(message, "status code: 410")
+		strings.Contains(message, "status code: 410") ||
+		strings.Contains(strings.ToUpper(message), "ENDPOINT_NOT_ALLOWED")
 }
 
 func fetchModelsCandidateURLs(channelType int, baseURL string) []string {

@@ -34,16 +34,19 @@ func syncSnapshotKeyModels(ctx context.Context, channelID int, snapshot *Snapsho
 		}
 	}
 
-	channel, err := model.GetChannelById(channelID, true)
-	if err != nil {
-		markMissingSnapshotKeyModelSyncError(snapshot, fmt.Errorf("读取同步渠道失败：%w", err))
-		return
-	}
-
 	var existing []model.ChannelAccount
-	if err := model.DB.Where("channel_id = ?", channelID).Find(&existing).Error; err != nil {
-		markMissingSnapshotKeyModelSyncError(snapshot, fmt.Errorf("读取同步密钥失败：%w", err))
-		return
+	var channel *model.Channel
+	if channelID > 0 {
+		var err error
+		channel, err = model.GetChannelById(channelID, true)
+		if err != nil {
+			markMissingSnapshotKeyModelSyncError(snapshot, fmt.Errorf("读取同步渠道失败：%w", err))
+			return
+		}
+		if err := model.DB.Where("channel_id = ?", channelID).Find(&existing).Error; err != nil {
+			markMissingSnapshotKeyModelSyncError(snapshot, fmt.Errorf("读取同步密钥失败：%w", err))
+			return
+		}
 	}
 	byIdentity, byDigest := indexExistingAccounts(existing)
 	configsByID := accountConfigBySyncID(configs)
@@ -74,12 +77,44 @@ func syncSnapshotKeyModels(ctx context.Context, channelID int, snapshot *Snapsho
 		models, fetchErr := upstreammodel.FetchChannelModelIDs(tempChannel)
 		key.KeyModelSyncSource = keyModelSyncSourceFetchModels
 		if fetchErr != nil {
-			key.KeyModelSyncError = common.MaskSensitiveInfo(fetchErr.Error())
+			key.KeyModelSyncError = formatSnapshotKeyModelSyncError(snapshot, *key, fetchErr)
 			continue
 		}
 		key.Models = models
 		key.KeyModelSyncError = ""
 	}
+}
+
+func formatSnapshotKeyModelSyncError(snapshot *Snapshot, key SyncedKey, err error) string {
+	if err == nil {
+		return ""
+	}
+	errText := common.MaskSensitiveInfo(err.Error())
+	if fullKey := strings.TrimSpace(key.Key); fullKey != "" {
+		errText = strings.ReplaceAll(errText, fullKey, "[redacted-key]")
+	}
+	parts := []string{"stage=fetch_models"}
+	if snapshot != nil {
+		if platform := strings.TrimSpace(snapshot.Platform); platform != "" {
+			parts = append(parts, "platform="+platform)
+		}
+		if baseURL := strings.TrimSpace(firstNonEmpty(snapshotRelayBaseURL(snapshot), snapshot.BaseURL)); baseURL != "" {
+			parts = append(parts, "base_url="+baseURL)
+		}
+	}
+	if externalID := strings.TrimSpace(key.ExternalID); externalID != "" {
+		parts = append(parts, "external_id="+externalID)
+	}
+	if name := strings.TrimSpace(key.Name); name != "" {
+		parts = append(parts, "name="+name)
+	}
+	if maskedKey := strings.TrimSpace(key.MaskedKey); maskedKey != "" {
+		parts = append(parts, "key="+maskedKey)
+	}
+	return sanitizeUpstreamAccountSyncTaskLogText(
+		strings.Join(parts, ", ")+": "+errText,
+		upstreamAccountSyncTaskLogErrorMaxRunes,
+	)
 }
 
 func markMissingSnapshotKeyModelSyncError(snapshot *Snapshot, err error) {

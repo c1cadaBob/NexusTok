@@ -186,8 +186,8 @@ type SyncedKey struct {
 	GroupName          string             `json:"group_name,omitempty"`
 	Models             []string           `json:"models,omitempty"`
 	ModelRatios        map[string]float64 `json:"model_ratios,omitempty"`
-	KeyModelSyncSource string             `json:"-"`
-	KeyModelSyncError  string             `json:"-"`
+	KeyModelSyncSource string             `json:"key_models_sync_source,omitempty"`
+	KeyModelSyncError  string             `json:"key_models_sync_error,omitempty"`
 	GroupRatio         *float64           `json:"group_ratio,omitempty"`
 	EffectiveRatio     float64            `json:"effective_ratio,omitempty"`
 	RatioConversion    float64            `json:"ratio_conversion,omitempty"`

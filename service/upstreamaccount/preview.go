@@ -92,6 +92,7 @@ func Preview(ctx context.Context, req PreviewRequest) (*PreviewResult, error) {
 			}, nil
 		}
 		ApplyRatioConversion(snapshot, req.RatioConversion)
+		syncSnapshotKeyModels(ctx, req.ChannelID, snapshot, nil)
 		ApplySuggestions(snapshot)
 		attachStoredCredential(snapshot, req.Credential)
 		return SavePreviewSnapshot(snapshot)
@@ -113,6 +114,7 @@ func Preview(ctx context.Context, req PreviewRequest) (*PreviewResult, error) {
 			}, nil
 		}
 		ApplyRatioConversion(snapshot, req.RatioConversion)
+		syncSnapshotKeyModels(ctx, req.ChannelID, snapshot, nil)
 		ApplySuggestions(snapshot)
 		attachStoredCredential(snapshot, req.Credential)
 		return SavePreviewSnapshot(snapshot)
@@ -147,6 +149,7 @@ func CompletePreview2FA(ctx context.Context, req Preview2FARequest) (*PreviewRes
 			return nil, err
 		}
 		ApplyRatioConversion(snapshot, req.RatioConversion)
+		syncSnapshotKeyModels(ctx, 0, snapshot, nil)
 		ApplySuggestions(snapshot)
 		attachStoredCredentialFromChallenge(snapshot, record)
 		return SavePreviewSnapshot(snapshot)
@@ -157,6 +160,7 @@ func CompletePreview2FA(ctx context.Context, req Preview2FARequest) (*PreviewRes
 			return nil, err
 		}
 		ApplyRatioConversion(snapshot, req.RatioConversion)
+		syncSnapshotKeyModels(ctx, 0, snapshot, nil)
 		ApplySuggestions(snapshot)
 		attachStoredCredentialFromChallenge(snapshot, record)
 		return SavePreviewSnapshot(snapshot)
