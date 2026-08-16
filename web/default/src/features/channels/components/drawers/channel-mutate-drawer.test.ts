@@ -93,7 +93,7 @@ describe('上游同步渠道本地配置索引', () => {
     assert.equal(editable.group_name, 'upstream-key-group-name')
   })
 
-  test('刷新快照复用已保存账号配置而不是覆盖回上游建议值', () => {
+  test('刷新快照保留管理员配置并更新同步托管 weight', () => {
     const existingConfigs = buildUpstreamAccountConfigsFromChannelAccounts([
       makeChannelAccount(),
     ])
@@ -112,7 +112,7 @@ describe('上游同步渠道本地配置索引', () => {
 
     assert.deepEqual(config, {
       priority: 3,
-      weight: 40,
+      weight: 10,
       enabled: true,
       models: 'gpt-local',
       group: 'local-group',

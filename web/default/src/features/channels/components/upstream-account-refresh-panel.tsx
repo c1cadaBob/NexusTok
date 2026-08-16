@@ -237,7 +237,6 @@ export function UpstreamAccountRefreshPanel({
   const [upstreamPreviewNowMs, setUpstreamPreviewNowMs] = useState(() =>
     Date.now()
   )
-  const [upstreamApplySuggested, setUpstreamApplySuggested] = useState(true)
   const [upstreamAccountConfigs, setUpstreamAccountConfigs] = useState<
     Record<string, UpstreamAccountConfigDraft>
   >({})
@@ -346,9 +345,6 @@ export function UpstreamAccountRefreshPanel({
     setUpstreamRefreshSnapshot(null)
     setUpstreamRefreshTwoFactorChallenge(null)
     setUpstreamRefreshTwoFactorCode('')
-    // 刷新已有渠道时默认保留本地密钥优先级/权重，管理员可通过开关主动应用
-    // 上游建议值；这样普通刷新不会覆盖账号池中的手工调度配置。
-    setUpstreamApplySuggested(false)
     setUpstreamAccountConfigs({})
     autoPreviewTriggeredRef.current = false
     ratioConfigLoadedRef.current = false
@@ -916,24 +912,25 @@ export function UpstreamAccountRefreshPanel({
             </div>
           </div>
 
-          <div className='flex items-center justify-between gap-3'>
+          <div className='rounded-md border p-3'>
             <div className='flex flex-col gap-1'>
               <span className='text-sm font-medium'>
-                {t(
-                  'Use upstream suggestions to overwrite key priority and weight'
-                )}
+                {t('Scheduling rules')}
               </span>
               <span className='text-muted-foreground text-xs'>
                 {t(
-                  'Lower ratio conversion gets higher key priority and weight by default.'
+                  'Key priority is managed by admins and will not be overwritten by upstream sync.'
+                )}
+              </span>
+              <span className='text-muted-foreground text-xs'>
+                {t('New synced keys default to priority 0.')}
+              </span>
+              <span className='text-muted-foreground text-xs'>
+                {t(
+                  'Key weight is recalculated from ratio conversion on every upstream sync.'
                 )}
               </span>
             </div>
-            <Switch
-              checked={upstreamApplySuggested}
-              disabled={snapshot.keys.length === 0}
-              onCheckedChange={setUpstreamApplySuggested}
-            />
           </div>
 
           {snapshot.keys.length === 0 ? (
@@ -1062,9 +1059,9 @@ export function UpstreamAccountRefreshPanel({
                     currentAccessGroupsArrayValue
                   )
                   const currentPriorityValue =
-                    config?.priority ?? key.suggested_priority ?? 0
+                    config?.priority ?? 0
                   const currentWeightValue =
-                    config?.weight ?? key.suggested_weight ?? 0
+                    config?.weight ?? key.suggested_weight ?? 100
                   const currentKeyGroupLabel = getUpstreamKeyGroupLabel(key)
                   const keyRatioValue = getUpstreamKeyRatioDisplayValue(key)
                   const displayedRatioValue = getUpstreamRatioDisplayValue(key)
@@ -1228,7 +1225,6 @@ export function UpstreamAccountRefreshPanel({
                       <Input
                         type='number'
                         value={currentPriorityValue}
-                        disabled={upstreamApplySuggested}
                         onChange={(event) =>
                           setConfigValue({
                             priority: Number(event.target.value),
@@ -1239,12 +1235,8 @@ export function UpstreamAccountRefreshPanel({
                       <Input
                         type='number'
                         value={currentWeightValue}
-                        disabled={upstreamApplySuggested}
-                        onChange={(event) =>
-                          setConfigValue({
-                            weight: Number(event.target.value),
-                          })
-                        }
+                        disabled
+                        title={t('Sync-managed weight')}
                         className='h-8 px-2 text-xs'
                       />
                       <Switch
@@ -1263,11 +1255,12 @@ export function UpstreamAccountRefreshPanel({
       )
     },
     [
+      groupOptions,
       t,
       upstreamAccountConfigs,
-      upstreamApplySuggested,
       upstreamPaidCny,
       upstreamPlatformUsdCredit,
+      upstreamRefreshPreviewId,
     ]
   )
 
@@ -1527,7 +1520,7 @@ export function UpstreamAccountRefreshPanel({
                 previewId: upstreamRefreshPreviewId,
                 keys: upstreamRefreshSnapshot.keys,
                 configs: upstreamAccountConfigs,
-                applySuggested: upstreamApplySuggested,
+                applySuggested: false,
                 ratioConversion: buildUpstreamRatioConversionPayload(
                   upstreamPaidCny,
                   upstreamPlatformUsdCredit

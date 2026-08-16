@@ -463,8 +463,8 @@ export function buildUpstreamAccountConfigsFromSnapshotKeys(
     const configId = upstreamKeyConfigId(key, index)
     const previousConfig = getUpstreamAccountConfig(previousConfigs, key, index)
     configs[configId] = {
-      priority: previousConfig?.priority ?? key.suggested_priority,
-      weight: previousConfig?.weight ?? key.suggested_weight,
+      priority: previousConfig?.priority ?? 0,
+      weight: key.suggested_weight ?? previousConfig?.weight ?? 100,
       enabled:
         previousConfig?.enabled ?? shouldEnableUpstreamAccountKeyByDefault(key),
       models: previousConfig?.models ?? key.models?.join(',') ?? '',
@@ -610,17 +610,9 @@ function upstreamAccountGroupValue(
 }
 
 function upstreamAccountPriorityValue(
-  config: UpstreamAccountConfigDraft | undefined,
-  applySuggested: boolean
+  config: UpstreamAccountConfigDraft | undefined
 ) {
-  return applySuggested ? undefined : config?.priority
-}
-
-function upstreamAccountWeightValue(
-  config: UpstreamAccountConfigDraft | undefined,
-  applySuggested: boolean
-) {
-  return applySuggested ? undefined : config?.weight
+  return config?.priority ?? 0
 }
 
 export function upstreamAccountValuesToString(
@@ -652,7 +644,7 @@ export function upstreamAccountValuesToString(
 function buildUpstreamAccountPayloads(
   keys: UpstreamAccountKey[],
   configs: Record<string, UpstreamAccountConfigDraft>,
-  applySuggested: boolean,
+  _applySuggested: boolean,
   fallbackModels = '',
   fallbackGroup = ''
 ) {
@@ -666,8 +658,7 @@ function buildUpstreamAccountPayloads(
       models: upstreamAccountModelsValue(key, config, fallbackModels),
       group: upstreamAccountGroupValue(key, config, fallbackGroup),
       access_groups: config?.access_groups ?? key.access_groups ?? 'default',
-      priority: upstreamAccountPriorityValue(config, applySuggested),
-      weight: upstreamAccountWeightValue(config, applySuggested),
+      priority: upstreamAccountPriorityValue(config),
     }
   })
 }
@@ -713,8 +704,8 @@ export function upstreamAccountFromChannelAccount(
     group_ratio: account.group_ratio ?? undefined,
     effective_ratio: account.effective_ratio,
     ratio_conversion: account.ratio_conversion,
-    suggested_priority: account.priority || 0,
-    suggested_weight: account.weight || 0,
+    suggested_priority: account.priority ?? 0,
+    suggested_weight: account.weight ?? 100,
   }
 }
 
@@ -725,8 +716,8 @@ export function buildUpstreamAccountConfigsFromChannelAccounts(
   accounts.forEach((account) => {
     const key = upstreamAccountFromChannelAccount(account)
     configs[upstreamKeyConfigId(key, account.id)] = {
-      priority: account.priority || 0,
-      weight: account.weight || 0,
+      priority: account.priority ?? 0,
+      weight: account.weight ?? 100,
       enabled: account.status === CHANNEL_STATUS.ENABLED,
       models: account.models || '',
       group: account.group || '',
@@ -1239,7 +1230,6 @@ export function ChannelMutateDrawer({
   const [upstreamPreviewNowMs, setUpstreamPreviewNowMs] = useState(() =>
     Date.now()
   )
-  const [upstreamApplySuggested, setUpstreamApplySuggested] = useState(true)
   const [upstreamAccountConfigs, setUpstreamAccountConfigs] = useState<
     Record<string, UpstreamAccountConfigDraft>
   >({})
@@ -1863,12 +1853,10 @@ export function ChannelMutateDrawer({
       snapshot: Pick<UpstreamAccountSnapshot, 'balance' | 'keys'>,
       options: {
         showBalance?: boolean
-        showSuggestedToggle?: boolean
         emptyText?: string
         previewId?: string
       } = {}
     ) => {
-      const showSuggestedToggle = options.showSuggestedToggle !== false
       const capabilitySummary = summarizeUpstreamAccountCapabilities(
         snapshot.keys,
         upstreamAccountConfigs
@@ -1950,27 +1938,26 @@ export function ChannelMutateDrawer({
             </div>
           )}
 
-          {showSuggestedToggle && (
-            <div className='flex items-center justify-between gap-3'>
-              <div className='flex flex-col gap-1'>
-                <span className='text-sm font-medium'>
-                  {t(
-                    'Use upstream suggestions to overwrite key priority and weight'
-                  )}
-                </span>
-                <span className='text-muted-foreground text-xs'>
-                  {t(
-                    'Lower ratio conversion gets higher key priority and weight by default.'
-                  )}
-                </span>
-              </div>
-              <Switch
-                checked={upstreamApplySuggested}
-                disabled={snapshot.keys.length === 0}
-                onCheckedChange={setUpstreamApplySuggested}
-              />
+          <div className='rounded-md border p-3'>
+            <div className='flex flex-col gap-1'>
+              <span className='text-sm font-medium'>
+                {t('Scheduling rules')}
+              </span>
+              <span className='text-muted-foreground text-xs'>
+                {t(
+                  'Key priority is managed by admins and will not be overwritten by upstream sync.'
+                )}
+              </span>
+              <span className='text-muted-foreground text-xs'>
+                {t('New synced keys default to priority 0.')}
+              </span>
+              <span className='text-muted-foreground text-xs'>
+                {t(
+                  'Key weight is recalculated from ratio conversion on every upstream sync.'
+                )}
+              </span>
             </div>
-          )}
+          </div>
 
           {snapshot.keys.length === 0 ? (
             <Alert>
@@ -2126,9 +2113,9 @@ export function ChannelMutateDrawer({
                     currentAccessGroupsArrayValue
                   )
                   const currentPriorityValue =
-                    config?.priority ?? key.suggested_priority ?? 0
+                    config?.priority ?? 0
                   const currentWeightValue =
-                    config?.weight ?? key.suggested_weight ?? 0
+                    config?.weight ?? key.suggested_weight ?? 100
                   const currentKeyGroupLabel = getUpstreamKeyGroupLabel(key)
                   const keyRatioValue = getUpstreamKeyRatioDisplayValue(key)
                   const displayedRatioValue = getUpstreamRatioDisplayValue(key)
@@ -2302,7 +2289,6 @@ export function ChannelMutateDrawer({
                       <Input
                         type='number'
                         value={currentPriorityValue}
-                        disabled={showSuggestedToggle && upstreamApplySuggested}
                         onChange={(event) =>
                           setConfigValue({
                             priority: Number(event.target.value),
@@ -2313,12 +2299,8 @@ export function ChannelMutateDrawer({
                       <Input
                         type='number'
                         value={currentWeightValue}
-                        disabled={showSuggestedToggle && upstreamApplySuggested}
-                        onChange={(event) =>
-                          setConfigValue({
-                            weight: Number(event.target.value),
-                          })
-                        }
+                        disabled
+                        title={t('Sync-managed weight')}
                         className='h-8 px-2 text-xs'
                       />
                       <Switch
@@ -2344,7 +2326,6 @@ export function ChannelMutateDrawer({
       permissions.canOperateChannelAccount,
       t,
       upstreamAccountConfigs,
-      upstreamApplySuggested,
       upstreamRatioConversion,
     ]
   )
@@ -2794,9 +2775,6 @@ export function ChannelMutateDrawer({
       setUpstreamUseSavedCredential(
         captureRefreshContext ? false : savedUpstreamCredentialAvailable
       )
-      // 已有同步渠道的密钥优先级/权重属于管理员本地配置；进入编辑或刷新预览时
-      // 默认关闭上游建议覆盖，只有管理员主动开启开关才允许覆盖这些值。
-      setUpstreamApplySuggested(!isSyncedChannel)
       setUpstreamUsername('')
       setUpstreamPassword('')
       resetUpstreamImportedLogin()
@@ -2827,7 +2805,6 @@ export function ChannelMutateDrawer({
       setUpstreamPlatform('new-api')
       setUpstreamBaseUrl('')
       setUpstreamUseSavedCredential(false)
-      setUpstreamApplySuggested(true)
       setUpstreamUsername('')
       setUpstreamPassword('')
       resetUpstreamImportedLogin()
@@ -3828,13 +3805,13 @@ export function ChannelMutateDrawer({
       id: channelId,
       payload: {
         preview_id: upstreamRefreshPreviewId,
-        apply_suggested: upstreamApplySuggested,
+        apply_suggested: false,
         disable_missing_key: true,
         ratio_conversion: upstreamRatioConversion,
         accounts: buildUpstreamAccountPayloads(
           upstreamRefreshSnapshot.keys,
           upstreamAccountConfigs,
-          upstreamApplySuggested
+          false
         ),
       },
     })
@@ -3843,7 +3820,6 @@ export function ChannelMutateDrawer({
     noPermissionMessage,
     permissions.canSensitiveWrite,
     t,
-    upstreamApplySuggested,
     upstreamAccountConfigs,
     upstreamRefreshPreviewId,
     upstreamRefreshSnapshot,
@@ -4274,7 +4250,7 @@ export function ChannelMutateDrawer({
         const upstreamChannelGroup = resolveUpstreamChannelGroup(data.group)
         await upstreamCreateMutation.mutateAsync({
           preview_id: upstreamPreviewId,
-          apply_suggested: upstreamApplySuggested,
+          apply_suggested: false,
           ratio_conversion: upstreamRatioConversion,
           channel: {
             name: data.name,
@@ -4292,7 +4268,7 @@ export function ChannelMutateDrawer({
           accounts: buildUpstreamAccountPayloads(
             upstreamSnapshot.keys,
             upstreamAccountConfigs,
-            upstreamApplySuggested,
+            false,
             upstreamChannelModels,
             ''
           ),
@@ -4416,7 +4392,6 @@ export function ChannelMutateDrawer({
       submitChannelMutation,
       t,
       upstreamAccountConfigs,
-      upstreamApplySuggested,
       upstreamCreateMutation,
       upstreamRatioConversion,
       clearUpstreamCreatePreview,
@@ -5113,7 +5088,6 @@ export function ChannelMutateDrawer({
                                   { keys: syncedEditableAccounts },
                                   {
                                     showBalance: false,
-                                    showSuggestedToggle: false,
                                     emptyText: t(
                                       'No synced keys were found for this channel.'
                                     ),

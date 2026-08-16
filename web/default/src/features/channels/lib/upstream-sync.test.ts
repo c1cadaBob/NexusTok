@@ -243,7 +243,7 @@ describe('上游账号刷新共享 payload', () => {
     assert.equal(payload.channel_id, undefined)
   })
 
-  test('应用刷新默认禁用缺失 key 并携带逐 key 配置', () => {
+  test('应用刷新携带管理员 priority 且不提交同步托管 weight', () => {
     const payload = buildUpstreamAccountRefreshPayload({
       previewId: 'preview-1',
       keys: [makeSnapshotKey()],
@@ -281,7 +281,6 @@ describe('上游账号刷新共享 payload', () => {
           group: 'vip',
           access_groups: 'default',
           priority: 9,
-          weight: 40,
         },
       ],
     })
@@ -457,9 +456,19 @@ describe('上游账号刷新共享 payload', () => {
 
     assert.equal(draft.enabled, true)
     assert.equal(draft.priority, 3)
-    assert.equal(draft.weight, 40)
+    assert.equal(draft.weight, 88)
     assert.equal(draft.models, 'gpt-upstream,gpt-shared')
     assert.equal(draft.group, 'vip')
     assert.equal(draft.access_groups, 'default,vip')
+
+    const defaultDraft = buildUpstreamAccountConfigDraft(
+      makeSnapshotKey({
+        suggested_priority: 7,
+        suggested_weight: 66,
+      }),
+      undefined
+    )
+    assert.equal(defaultDraft.priority, 0)
+    assert.equal(defaultDraft.weight, 66)
   })
 })

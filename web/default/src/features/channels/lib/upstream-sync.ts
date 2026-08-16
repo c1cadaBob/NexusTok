@@ -567,8 +567,8 @@ export function buildUpstreamAccountConfigDraft(
 ): UpstreamAccountConfigDraft {
   return {
     enabled: previous?.enabled ?? shouldEnableUpstreamAccountKeyByDefault(key),
-    priority: previous?.priority ?? key.suggested_priority ?? 0,
-    weight: previous?.weight ?? key.suggested_weight ?? 0,
+    priority: previous?.priority ?? 0,
+    weight: key.suggested_weight ?? previous?.weight ?? 100,
     models: previous?.models ?? key.models?.join(',') ?? '',
     group: previous?.group ?? key.group_name ?? key.group_id ?? '',
     access_groups: previous?.access_groups ?? key.access_groups ?? 'default',
@@ -628,17 +628,9 @@ function upstreamAccountGroupValue(
 }
 
 function upstreamAccountPriorityValue(
-  config: UpstreamAccountConfigDraft | undefined,
-  applySuggested: boolean
+  config: UpstreamAccountConfigDraft | undefined
 ) {
-  return applySuggested ? undefined : config?.priority
-}
-
-function upstreamAccountWeightValue(
-  config: UpstreamAccountConfigDraft | undefined,
-  applySuggested: boolean
-) {
-  return applySuggested ? undefined : config?.weight
+  return config?.priority ?? 0
 }
 
 export function upstreamAccountKeyConfigId(
@@ -676,8 +668,8 @@ export function buildUpstreamAccountConfigsFromSnapshotKeys(
     const configId = upstreamAccountKeyConfigId(key, index)
     const previousConfig = getUpstreamAccountConfig(previousConfigs, key, index)
     configs[configId] = {
-      priority: previousConfig?.priority ?? key.suggested_priority,
-      weight: previousConfig?.weight ?? key.suggested_weight,
+      priority: previousConfig?.priority ?? 0,
+      weight: key.suggested_weight ?? previousConfig?.weight ?? 100,
       enabled:
         previousConfig?.enabled ?? shouldEnableUpstreamAccountKeyByDefault(key),
       models: previousConfig?.models ?? key.models?.join(',') ?? '',
@@ -696,8 +688,8 @@ export function buildUpstreamAccountConfigsFromChannelAccounts(
   accounts.forEach((account) => {
     const key = upstreamAccountFromChannelAccount(account)
     configs[upstreamAccountKeyConfigId(key, account.id)] = {
-      priority: account.priority || 0,
-      weight: account.weight || 0,
+      priority: account.priority ?? 0,
+      weight: account.weight ?? 100,
       enabled: account.status === CHANNEL_STATUS.ENABLED,
       models: account.models || '',
       group: account.group || '',
@@ -824,7 +816,7 @@ export function collectUpstreamAccountCapabilityValidationErrors(
 export function buildUpstreamAccountPayloads(
   keys: UpstreamAccountKey[],
   configs: Record<string, UpstreamAccountConfigDraft>,
-  applySuggested: boolean
+  _applySuggested: boolean
 ) {
   return keys.map((key, index) => {
     const config = getUpstreamAccountConfig(configs, key, index)
@@ -836,8 +828,7 @@ export function buildUpstreamAccountPayloads(
       models: upstreamAccountModelsValue(key, config),
       group: upstreamAccountGroupValue(key, config),
       access_groups: upstreamAccountAccessGroupsValue(key, config),
-      priority: upstreamAccountPriorityValue(config, applySuggested),
-      weight: upstreamAccountWeightValue(config, applySuggested),
+      priority: upstreamAccountPriorityValue(config),
     }
   })
 }
