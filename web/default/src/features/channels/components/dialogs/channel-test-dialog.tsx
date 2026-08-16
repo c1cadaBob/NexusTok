@@ -650,7 +650,7 @@ export function ChannelTestDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={handleClose}>
-        <DialogContent className='max-h-[90vh] overflow-hidden sm:max-w-3xl'>
+        <DialogContent className='max-h-[90vh] overflow-hidden sm:max-w-5xl'>
           <DialogHeader>
             <DialogTitle>{t('Test Channel Connection')}</DialogTitle>
             <DialogDescription>
@@ -658,7 +658,7 @@ export function ChannelTestDialog({
             </DialogDescription>
           </DialogHeader>
 
-          <div className='max-h-[78vh] space-y-4 overflow-y-auto py-4 pr-1'>
+          <div className='flex max-h-[78vh] flex-col gap-4 overflow-y-auto py-4 pr-1'>
             <div className='grid gap-4 md:grid-cols-2'>
               {isSyncedAccountPool ? (
                 <div className='grid gap-2 md:col-span-2'>
