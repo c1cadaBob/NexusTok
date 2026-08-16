@@ -159,7 +159,7 @@ function buildFormDefaults(
       ratio_threshold:
         defaults['upstream_account_key_check.ratio_threshold'] || 0,
       failure_threshold:
-        defaults['upstream_account_key_check.failure_threshold'] || 2,
+        defaults['upstream_account_key_check.failure_threshold'] || 3,
       auto_recover_enabled:
         defaults['upstream_account_key_check.auto_recover_enabled'],
     },
@@ -206,7 +206,7 @@ function normalizeDefaults(
     'upstream_account_key_check.ratio_threshold':
       defaults['upstream_account_key_check.ratio_threshold'] || 0,
     'upstream_account_key_check.failure_threshold':
-      defaults['upstream_account_key_check.failure_threshold'] || 2,
+      defaults['upstream_account_key_check.failure_threshold'] || 3,
     'upstream_account_key_check.auto_recover_enabled':
       defaults['upstream_account_key_check.auto_recover_enabled'],
     'system_task_setting.async_task_poll_enabled':

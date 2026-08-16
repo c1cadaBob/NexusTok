@@ -48,7 +48,7 @@ const defaultOperationsSettings: OperationsSettings = {
   'upstream_account_key_check.enabled': false,
   'upstream_account_key_check.interval_minutes': 30,
   'upstream_account_key_check.ratio_threshold': 0,
-  'upstream_account_key_check.failure_threshold': 2,
+  'upstream_account_key_check.failure_threshold': 3,
   'upstream_account_key_check.auto_recover_enabled': true,
   'system_task_setting.async_task_poll_enabled': true,
   'system_task_setting.midjourney_poll_enabled': true,

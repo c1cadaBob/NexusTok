@@ -18,7 +18,7 @@ type UpstreamAccountKeyCheckSetting struct {
 	IntervalMinutes int `json:"interval_minutes"`
 	// RatioThreshold 为 0 时测试所有符合条件的同步密钥；大于 0 时只测试换算倍率小于该值的密钥。
 	RatioThreshold float64 `json:"ratio_threshold"`
-	// FailureThreshold 表示连续失败达到多少次后自动禁用，非法值按默认 2 次处理。
+	// FailureThreshold 表示连续失败达到多少次后自动禁用，非法值按默认 3 次处理。
 	FailureThreshold int `json:"failure_threshold"`
 	// AutoRecoverEnabled 控制由本任务自动禁用的密钥在后续测试成功后是否自动恢复。
 	AutoRecoverEnabled bool `json:"auto_recover_enabled"`
@@ -28,7 +28,7 @@ var upstreamAccountKeyCheckSetting = UpstreamAccountKeyCheckSetting{
 	Enabled:            false,
 	IntervalMinutes:    30,
 	RatioThreshold:     0,
-	FailureThreshold:   2,
+	FailureThreshold:   3,
 	AutoRecoverEnabled: true,
 }
 
@@ -53,7 +53,7 @@ func (setting UpstreamAccountKeyCheckSetting) Interval() time.Duration {
 // NormalizedFailureThreshold 返回最小为 1 的连续失败阈值。
 func (setting UpstreamAccountKeyCheckSetting) NormalizedFailureThreshold() int {
 	if setting.FailureThreshold <= 0 {
-		return 2
+		return 3
 	}
 	return setting.FailureThreshold
 }
