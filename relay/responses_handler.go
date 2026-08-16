@@ -97,6 +97,40 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		return types.NewError(fmt.Errorf("invalid api type: %d", info.ApiType), types.ErrorCodeInvalidApiType, types.ErrOptionWithSkipRetry())
 	}
 	adaptor.Init(info)
+	if info.EndpointAutoConversion != nil && info.EndpointAutoConversion.IsResponsesToChat() {
+		if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
+			return endpointAutoConversionPassthroughError(info)
+		}
+		if !endpointAutoConversionChannelAllowed(info) {
+			return endpointAutoConversionUnsupportedError(info)
+		}
+		usage, newApiErr := responsesViaChatCompletions(c, info, adaptor, request)
+		if newApiErr != nil {
+			return newApiErr
+		}
+		if info.RelayMode == relayconstant.RelayModeResponsesCompact {
+			originModelName := info.OriginModelName
+			originPriceData := info.PriceData
+
+			_, err := helper.ModelPriceHelper(c, info, info.GetEstimatePromptTokens(), &types.TokenCountMeta{})
+			if err != nil {
+				info.OriginModelName = originModelName
+				info.PriceData = originPriceData
+				return types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithSkipRetry(), types.ErrOptionWithStatusCode(http.StatusBadRequest))
+			}
+			service.PostTextConsumeQuota(c, info, usage, nil)
+
+			info.OriginModelName = originModelName
+			info.PriceData = originPriceData
+			return nil
+		}
+		if strings.HasPrefix(info.OriginModelName, "gpt-4o-audio") {
+			service.PostAudioConsumeQuota(c, info, usage, "")
+		} else {
+			service.PostTextConsumeQuota(c, info, usage, nil)
+		}
+		return nil
+	}
 	var requestBody io.Reader
 	info.UpstreamRequestBodySize = 0
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {

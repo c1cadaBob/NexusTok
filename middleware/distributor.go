@@ -29,6 +29,7 @@ import (
 	"github.com/c1cada/NexusTok/dto"                          // 数据传输对象
 	"github.com/c1cada/NexusTok/i18n"                         // 国际化
 	"github.com/c1cada/NexusTok/model"                        // 数据模型
+	relaycommon "github.com/c1cada/NexusTok/relay/common"     // 中继公共包
 	relayconstant "github.com/c1cada/NexusTok/relay/constant" // 中继常量
 	"github.com/c1cada/NexusTok/service"                      // 服务层
 	"github.com/c1cada/NexusTok/service/upstreamaccount"      // 上游账号同步元数据
@@ -88,6 +89,9 @@ func PrepareRelayChannelContext(c *gin.Context) (*model.Channel, bool) {
 	modelRequest, shouldSelectChannel, err := getModelRequest(c)
 	if err != nil {
 		abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
+		return nil, false
+	}
+	if !prepareEndpointAutoConversion(c, modelRequest) {
 		return nil, false
 	}
 	if ok {
@@ -192,7 +196,7 @@ func selectRelayChannelForSetupRetry(
 		Ctx:         c,
 		ModelName:   modelRequest.Model,
 		TokenGroup:  usingGroup,
-		RequestPath: c.Request.URL.Path,
+		RequestPath: relaycommon.EffectiveRequestPath(c),
 		Retry:       common.GetPointer(0),
 	})
 	if err != nil {
@@ -286,7 +290,7 @@ func selectRelayChannel(c *gin.Context, modelRequest *ModelRequest, shouldSelect
 			} else if preferred.Status != common.ChannelStatusEnabled {
 				// 亲和性渠道已禁用
 				shouldAbortAffinityDisabled = service.ShouldSkipRetryAfterChannelAffinityFailure(c)
-			} else if !channelSupportsRequestPath(preferred, c.Request.URL.Path) {
+			} else if !channelSupportsRequestPath(preferred, relaycommon.EffectiveRequestPath(c)) {
 				// Advanced Custom 渠道可能只配置了部分入口路径。
 				// 模型能力匹配但 path 不匹配时不能复用亲和性渠道，否则会把
 				// /v1/responses、Gemini native 等请求打到错误 route。
@@ -327,7 +331,7 @@ func selectRelayChannel(c *gin.Context, modelRequest *ModelRequest, shouldSelect
 			Ctx:         c,
 			ModelName:   modelRequest.Model,
 			TokenGroup:  usingGroup,
-			RequestPath: c.Request.URL.Path,
+			RequestPath: relaycommon.EffectiveRequestPath(c),
 			Retry:       common.GetPointer(0),
 		})
 		if err != nil {

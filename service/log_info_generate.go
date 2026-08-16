@@ -269,6 +269,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	appendRequestPath(ctx, relayInfo, other)       // 请求路径
 	appendRequestConversionChain(relayInfo, other) // 请求格式转换链
 	appendFinalRequestFormat(relayInfo, other)     // 最终请求格式
+	appendEndpointAutoConversion(relayInfo, other) // 端点路径自动纠错诊断
 	appendBillingInfo(relayInfo, other)            // 计费模式信息
 	appendParamOverrideInfo(relayInfo, other)      // 参数覆盖审计
 	appendStreamStatus(relayInfo, other)           // 流式状态
@@ -419,6 +420,18 @@ func appendRequestConversionChain(relayInfo *relaycommon.RelayInfo, other map[st
 		return
 	}
 	other["request_conversion"] = chain
+}
+
+// appendEndpointAutoConversion 将模型端点路径安全纠错信息写入消费日志。
+//
+// 字段只包含模型、源/目标 endpoint 和路径，便于管理员确认客户端是否把 Chat-only
+// 模型打到了 Responses 路径，或把 Responses-only 模型打到了 Chat 路径；不会写入渠道
+// Key、请求正文或任何上游凭据。
+func appendEndpointAutoConversion(relayInfo *relaycommon.RelayInfo, other map[string]interface{}) {
+	if relayInfo == nil || other == nil || relayInfo.EndpointAutoConversion == nil {
+		return
+	}
+	other["endpoint_auto_conversion"] = relayInfo.EndpointAutoConversion.AuditMap()
 }
 
 // appendFinalRequestFormat 将最终请求格式信息追加到附加信息映射中。

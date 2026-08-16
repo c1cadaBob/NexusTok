@@ -105,6 +105,10 @@ func InvalidatePricingCache() {
 	pricingMap = nil
 	vendorsList = nil
 	lastGetPricingTime = time.Time{}
+	modelSupportEndpointsLock.Lock()
+	modelSupportEndpointTypes = make(map[string][]constant.EndpointType)
+	supportedEndpointMap = nil
+	modelSupportEndpointsLock.Unlock()
 }
 
 // GetVendors 返回当前定价接口使用到的供应商信息
@@ -119,6 +123,15 @@ func GetVendors() []PricingVendor {
 func GetModelSupportEndpointTypes(model string) []constant.EndpointType {
 	if model == "" {
 		return make([]constant.EndpointType, 0)
+	}
+	modelSupportEndpointsLock.RLock()
+	needLoad := len(modelSupportEndpointTypes) == 0
+	modelSupportEndpointsLock.RUnlock()
+	if needLoad {
+		// 端点路径纠错发生在请求体完整校验和计费之前。刚启动时 pricing 缓存可能
+		// 还未被页面或计费链路预热，因此这里主动触发一次加载，避免把“缓存为空”
+		// 误判成“模型没有端点能力配置”。
+		GetPricing()
 	}
 	modelSupportEndpointsLock.RLock()
 	defer modelSupportEndpointsLock.RUnlock()

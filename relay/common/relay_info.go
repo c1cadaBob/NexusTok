@@ -212,6 +212,10 @@ type RelayInfo struct {
 	// 若为空，调用 GetFinalRequestRelayFormat 会回退到 RequestConversionChain 的最后一项或 RelayFormat。
 	FinalRequestRelayFormat types.RelayFormat
 
+	// EndpointAutoConversion 记录本次请求是否在端点层做了安全纠错。
+	// 它不改变客户端请求格式，只指导后续 Relay 层把上游请求切到安全目标端点。
+	EndpointAutoConversion *EndpointAutoConversion
+
 	StreamStatus *StreamStatus
 
 	ThinkingContentInfo
@@ -599,6 +603,9 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 			//promptTokens: common.GetContextKeyInt(c, constant.ContextKeyPromptTokens),
 			estimatePromptTokens: common.GetContextKeyInt(c, constant.ContextKeyEstimatedTokens),
 		},
+	}
+	if conversion, ok := GetEndpointAutoConversion(c); ok {
+		info.EndpointAutoConversion = conversion
 	}
 
 	if info.RelayMode == relayconstant.RelayModeUnknown {
