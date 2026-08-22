@@ -508,6 +508,32 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 	}
 
 	for attempt := 0; attempt < maxChannelSetupSelectionAttempts(); attempt++ {
+		candidate, selectGroup, candidateErr := service.SelectRoutingCandidate(retryParam)
+		if candidateErr == nil && candidate != nil {
+			selectedChannel, channelErr := model.CacheGetChannel(candidate.ChannelID)
+			if channelErr == nil && selectedChannel != nil {
+				common.SetContextKey(c, constant.ContextKeyRoutingCandidate, candidate.Clone())
+				newAPIError := middleware.SetupContextForRoutingCandidate(c, candidate, info.OriginModelName)
+				if newAPIError != nil {
+					if shouldExcludeSetupFailedChannel(c, newAPIError) {
+						service.AddExcludedRoutingCandidate(c, candidate)
+						continue
+					}
+					return nil, newAPIError
+				}
+				if !channelAllowedForEndpointAutoConversion(c, selectedChannel) {
+					service.ReleaseSelectedChannelAccount(c)
+					service.ReleaseSelectedPoolAccount(c)
+					service.AddExcludedChannelId(c, selectedChannel.Id)
+					service.AddExcludedRoutingCandidate(c, candidate)
+					continue
+				}
+				info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
+				info.InitChannelMeta(c)
+				return selectedChannel, nil
+			}
+		}
+
 		channel, selectGroup, err := service.CacheGetRandomSatisfiedChannel(retryParam)
 
 		if err != nil {
@@ -754,6 +780,7 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 			}
 		}
 		service.AppendChannelAffinityAdminInfo(c, adminInfo)
+		service.AppendRoutingCandidateAdminInfo(c, adminInfo)
 		other["admin_info"] = adminInfo
 		startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
 		if startTime.IsZero() {

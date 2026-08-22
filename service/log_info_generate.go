@@ -263,6 +263,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 
 	// 渠道亲和性信息
 	AppendChannelAffinityAdminInfo(ctx, adminInfo)
+	AppendRoutingCandidateAdminInfo(ctx, adminInfo)
 
 	other["admin_info"] = adminInfo
 	// 追加各类附加信息

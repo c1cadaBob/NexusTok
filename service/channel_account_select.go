@@ -429,19 +429,7 @@ func resolveChannelAccountUsingGroup(c *gin.Context, usingGroup string) string {
 // 上游同步账号的模型列表是管理员确认后的显式白名单，空值表示该同步密钥暂不参与
 // 任何模型路由，不能再回退到渠道聚合模型，否则“清空模型”会被错误解释成“支持全部”。
 func channelAccountSupportsModel(account *model.ChannelAccount, channel *model.Channel, modelName string) bool {
-	models := account.Models
-	if channel != nil && channel.HasUpstreamAccountSyncMetadata() {
-		if strings.TrimSpace(models) == "" {
-			return false
-		}
-	} else if strings.TrimSpace(models) == "" && channel != nil {
-		models = channel.Models
-	}
-	modelList := model.SplitCommaValues(models)
-	if len(modelList) == 0 {
-		return true
-	}
-	return model.MatchesModelList(modelList, modelName)
+	return model.RoutingChannelAccountSupportsModel(account, channel, modelName)
 }
 
 // channelAccountSupportsGroup 检查渠道账号是否属于指定的使用分组。
@@ -451,36 +439,7 @@ func channelAccountSupportsModel(account *model.ChannelAccount, channel *model.C
 // 区分；此时必须只按 Channel.group 判断用户可用分组，否则下游用户会被上游 key 的
 // 分组名称错误拦截，导致同步渠道无法按渠道分组正常路由。
 func channelAccountSupportsGroup(account *model.ChannelAccount, channel *model.Channel, usingGroup string) bool {
-	if strings.TrimSpace(usingGroup) == "" {
-		return true
-	}
-	group := ""
-	if channel != nil && channel.HasUpstreamAccountSyncMetadata() {
-		// 上游同步账号的 Group 是平台内部的密钥分组，不能当作 NexusTok
-		// 下游用户组；空 access_groups 代表该密钥不允许任何用户组。
-		if account == nil {
-			return false
-		}
-		if strings.TrimSpace(account.AccessGroups) == "" {
-			return false
-		}
-		group = account.AccessGroups
-	} else {
-		group = account.Group
-		if strings.TrimSpace(group) == "" && channel != nil {
-			group = channel.Group
-		}
-	}
-	groups := model.SplitCommaValues(group)
-	if len(groups) == 0 {
-		return true
-	}
-	for _, candidate := range groups {
-		if candidate == "*" || candidate == usingGroup {
-			return true
-		}
-	}
-	return false
+	return model.RoutingChannelAccountSupportsGroup(account, channel, usingGroup)
 }
 
 // removeChannelAccount 从渠道账号列表中移除指定 ID 的账号。

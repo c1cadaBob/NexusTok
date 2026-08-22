@@ -84,6 +84,7 @@ func InitChannelCache() {
 	}
 	newGroup2model2channels := make(map[string]map[string][]int)
 	newChannelAbilitySchedules := make(map[string]map[string]map[int]channelAbilitySchedule)
+	newRoutingCandidateCache := buildRoutingCandidateCache(channels)
 	var abilities []*Ability
 	DB.Find(&abilities)
 	representedAbilityKeys := make(map[string]struct{}, len(abilities))
@@ -173,6 +174,7 @@ func InitChannelCache() {
 	channelsIDM = newChannelId2channel
 	channel2advancedCustomConfig = newChannel2advancedCustomConfig
 	channelAbilitySchedules = newChannelAbilitySchedules
+	routingCandidateCache = newRoutingCandidateCache
 	channelSyncLock.Unlock()
 	common.SysLog("channels synced from database")
 }

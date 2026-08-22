@@ -96,6 +96,14 @@ const (
 	// ContextKeyChannelExcludedIds 当前请求中已经失败的渠道 ID 集合
 	// 重试选路必须排除这些渠道，避免自动禁用的异步缓存更新尚未完成时再次命中同一渠道。
 	ContextKeyChannelExcludedIds ContextKey = "channel_excluded_ids"
+	// ContextKeyRoutingCandidate 保存本次统一密钥级调度命中的非敏感候选元数据。
+	// 该值只包含渠道 ID、凭证类型、账号 ID 或 multi-key 索引以及合成后的调度值，
+	// 不包含明文 API Key，供日志、重试和后续调度优化追踪使用。
+	ContextKeyRoutingCandidate ContextKey = "routing_candidate"
+	// ContextKeyRoutingCandidateExcludedKeys 当前请求中已经失败的密钥级候选集合。
+	// 候选维度比渠道更细：同一渠道下某个账号或 key 失败后，下一轮可以继续尝试
+	// 同渠道内其它可用凭证，只有该渠道候选耗尽后才进入渠道级降级。
+	ContextKeyRoutingCandidateExcludedKeys ContextKey = "routing_candidate_excluded_keys"
 	// ContextKeyChannelCredentialMode 渠道凭证模式
 	ContextKeyChannelCredentialMode ContextKey = "channel_credential_mode"
 	// ContextKeyChannelAccountPool 渠道账号池

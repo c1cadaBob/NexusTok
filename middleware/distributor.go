@@ -143,6 +143,38 @@ func setupSelectedChannelWithFallback(
 	if channel == nil || modelRequest == nil {
 		return channel, SetupContextForSelectedChannel(c, channel, "")
 	}
+	if candidate := routingCandidateFromContext(c, channel.Id); candidate != nil {
+		for attempt := 0; attempt < maxInitialChannelSetupAttempts(); attempt++ {
+			setupErr := SetupContextForRoutingCandidate(c, candidate, modelRequest.Model)
+			if setupErr == nil {
+				if selected, err := model.CacheGetChannel(candidate.ChannelID); err == nil && selected != nil {
+					return selected, nil
+				}
+				return channel, nil
+			}
+			if !shouldRetryInitialChannelSetup(c, setupErr) {
+				return channel, setupErr
+			}
+			service.AddExcludedRoutingCandidate(c, candidate)
+			nextCandidate, nextErr := selectRoutingCandidateForSetupRetry(c, modelRequest)
+			if nextErr != nil {
+				return channel, nextErr
+			}
+			if nextCandidate == nil {
+				return channel, setupErr
+			}
+			candidate = nextCandidate
+			if selected, err := model.CacheGetChannel(candidate.ChannelID); err == nil && selected != nil {
+				channel = selected
+			}
+		}
+		return channel, types.NewError(
+			fmt.Errorf("分组 %s 下模型 %s 的密钥级候选均不可用", common.GetContextKeyString(c, constant.ContextKeyUsingGroup), modelRequest.Model),
+			types.ErrorCodeGetChannelFailed,
+			types.ErrOptionWithStatusCode(http.StatusServiceUnavailable),
+			types.ErrOptionWithSkipRetry(),
+		)
+	}
 	for attempt := 0; attempt < maxInitialChannelSetupAttempts(); attempt++ {
 		setupErr := SetupContextForSelectedChannel(c, channel, modelRequest.Model)
 		if setupErr == nil {
@@ -185,6 +217,61 @@ func shouldRetryInitialChannelSetup(c *gin.Context, err *types.NexusTokError) bo
 		return false
 	}
 	return true
+}
+
+func routingCandidateFromContext(c *gin.Context, channelID int) *model.RoutingCandidate {
+	if c == nil {
+		return nil
+	}
+	value, ok := common.GetContextKey(c, constant.ContextKeyRoutingCandidate)
+	if !ok || value == nil {
+		return nil
+	}
+	var candidate *model.RoutingCandidate
+	switch typed := value.(type) {
+	case *model.RoutingCandidate:
+		candidate = typed
+	case model.RoutingCandidate:
+		candidate = &typed
+	default:
+		return nil
+	}
+	if candidate == nil || candidate.ChannelID <= 0 {
+		return nil
+	}
+	if channelID > 0 && candidate.ChannelID != channelID {
+		return nil
+	}
+	return candidate.Clone()
+}
+
+func selectRoutingCandidateForSetupRetry(c *gin.Context, modelRequest *ModelRequest) (*model.RoutingCandidate, *types.NexusTokError) {
+	usingGroup := service.RoutingGroupFromContext(c)
+	candidate, selectGroup, err := service.SelectRoutingCandidate(&service.RetryParam{
+		Ctx:         c,
+		ModelName:   modelRequest.Model,
+		TokenGroup:  usingGroup,
+		RequestPath: relaycommon.EffectiveRequestPath(c),
+		Retry:       common.GetPointer(0),
+	})
+	if err != nil {
+		return nil, types.NewError(
+			fmt.Errorf("获取分组 %s 下模型 %s 的可用密钥候选失败：%s", selectGroup, modelRequest.Model, err.Error()),
+			types.ErrorCodeGetChannelFailed,
+			types.ErrOptionWithStatusCode(http.StatusServiceUnavailable),
+			types.ErrOptionWithSkipRetry(),
+		)
+	}
+	if candidate == nil {
+		return nil, types.NewError(
+			fmt.Errorf("分组 %s 下模型 %s 的可用密钥候选不存在", selectGroup, modelRequest.Model),
+			types.ErrorCodeGetChannelFailed,
+			types.ErrOptionWithStatusCode(http.StatusServiceUnavailable),
+			types.ErrOptionWithSkipRetry(),
+		)
+	}
+	common.SetContextKey(c, constant.ContextKeyRoutingCandidate, candidate.Clone())
+	return candidate, nil
 }
 
 func selectRelayChannelForSetupRetry(
@@ -327,13 +414,31 @@ func selectRelayChannel(c *gin.Context, modelRequest *ModelRequest, shouldSelect
 
 	// ========== 随机选择渠道（兜底逻辑） ==========
 	if channel == nil {
-		channel, selectGroup, err = service.CacheGetRandomSatisfiedChannel(&service.RetryParam{
+		candidate, candidateSelectGroup, candidateErr := service.SelectRoutingCandidate(&service.RetryParam{
 			Ctx:         c,
 			ModelName:   modelRequest.Model,
 			TokenGroup:  usingGroup,
 			RequestPath: relaycommon.EffectiveRequestPath(c),
 			Retry:       common.GetPointer(0),
 		})
+		if candidateErr == nil && candidate != nil {
+			if selectedChannel, channelErr := model.CacheGetChannel(candidate.ChannelID); channelErr == nil && selectedChannel != nil {
+				channel = selectedChannel
+				selectGroup = candidateSelectGroup
+				common.SetContextKey(c, constant.ContextKeyRoutingCandidate, candidate.Clone())
+			}
+		}
+		if channel == nil {
+			channel, selectGroup, err = service.CacheGetRandomSatisfiedChannel(&service.RetryParam{
+				Ctx:         c,
+				ModelName:   modelRequest.Model,
+				TokenGroup:  usingGroup,
+				RequestPath: relaycommon.EffectiveRequestPath(c),
+				Retry:       common.GetPointer(0),
+			})
+		} else {
+			err = nil
+		}
 		if err != nil {
 			showGroup := usingGroup
 			if usingGroup == "auto" {
@@ -622,6 +727,7 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, modelName string) *types.NexusTokError {
 	c.Set("original_model", modelName) // for retry
 	clearUpstreamRatioConversionContext(c)
+	common.SetContextKey(c, constant.ContextKeyRoutingCandidate, nil)
 	if channel == nil {
 		return types.NewError(errors.New("channel is nil"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 	}

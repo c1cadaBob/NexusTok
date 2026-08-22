@@ -124,6 +124,97 @@ func SelectPoolAccount(c *gin.Context, channel *model.Channel, modelName string,
 	}
 }
 
+// SelectSpecificPoolAccount 校验并预留统一调度已经选中的全局账号池账号。
+//
+// 统一候选层只保存非敏感账号 ID 和调度元数据；真正进入 Relay 前仍必须在这里重新校验
+// 分组状态、模型/用户组权限、冷却、每日限制、RPM 和并发槽位。任一原子预留失败时，
+// 调用方会把该候选加入请求级排除集并重新选择，避免并发槽位泄漏或重复命中同一账号。
+func SelectSpecificPoolAccount(c *gin.Context, channel *model.Channel, modelName string, usingGroup string, groupID int, accountID int, relayMode int) (*model.AccountPoolGroup, *model.PoolAccount, error) {
+	_ = relayMode
+	if channel == nil || groupID <= 0 || accountID <= 0 || channel.ChannelInfo.AccountPoolGroupId != groupID {
+		return nil, nil, ErrNoAvailablePoolAccount
+	}
+	group, err := model.GetAccountPoolGroupById(groupID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if group == nil || group.Status != common.ChannelStatusEnabled {
+		return group, nil, ErrNoAvailablePoolAccount
+	}
+	if err := ensureNativeAccountPoolGroup(group); err != nil {
+		return group, nil, err
+	}
+	nowTime := time.Now()
+	if reset, err := model.ResetAccountPoolGroupDailyUsageIfNeeded(group.Id, nowTime); err != nil {
+		return group, nil, err
+	} else if reset {
+		group.DailyRequestCount = 0
+		group.DailyUsedQuota = 0
+		group.DailyResetTime = model.AccountPoolDailyWindowStart(nowTime)
+	}
+	if group.DailyRequestLimit > 0 && group.DailyRequestCount >= group.DailyRequestLimit {
+		return group, nil, model.ErrAccountPoolGroupDailyRequestLimitExceeded
+	}
+	if group.DailyQuotaLimit > 0 && group.DailyUsedQuota >= group.DailyQuotaLimit {
+		return group, nil, model.ErrAccountPoolGroupDailyQuotaLimitExceeded
+	}
+
+	usingGroup = resolveChannelAccountUsingGroup(c, usingGroup)
+	account, err := model.GetPoolAccountById(accountID)
+	if err != nil {
+		return group, nil, err
+	}
+	now := common.GetTimestamp()
+	if account == nil || account.PoolGroupId != group.Id || account.Status != common.ChannelStatusEnabled || !account.Schedulable || account.Unavailable || account.IsCoolingDown(now) {
+		return group, nil, ErrNoAvailablePoolAccount
+	}
+	if err := model.PoolAccountDailyLimitError(account, nowTime); err != nil {
+		if markErr := model.MarkPoolAccountDailyLimitExceeded(account.Id, err, nowTime); markErr != nil {
+			common.SysLog(fmt.Sprintf("failed to mark pool account daily limit exceeded: account_id=%d, error=%v", account.Id, markErr))
+		}
+		return group, nil, err
+	}
+	if !poolAccountSupportsModel(account, group, modelName) || !poolAccountSupportsGroup(account, group, usingGroup) {
+		return group, nil, ErrNoAvailablePoolAccount
+	}
+	if poolAccountNeedsPreflightCheck(group, account, now) {
+		triggerPoolAccountPreflightWarmup(c, group, []int{account.Id}, now)
+		if group.GetPreflightCheckMode() == model.AccountPoolPreflightCheckModeRequireRecent {
+			return group, nil, ErrPoolAccountPreflightCheckRequired
+		}
+	}
+
+	groupReserved := false
+	if group.GetMaxConcurrency() > 0 {
+		if !reservePoolGroupForRequest(c, group) {
+			return group, nil, ErrPoolAccountGroupConcurrencyExceeded
+		}
+		groupReserved = true
+	}
+	releaseGroupOnFailure := true
+	defer func() {
+		if groupReserved && releaseGroupOnFailure {
+			releaseReservedPoolGroup(c)
+		}
+	}()
+
+	if !ReservePoolAccount(c, account) {
+		return group, nil, ErrPoolAccountConcurrencyExceeded
+	}
+	if err := reservePoolAccountUsageLimit(account); err != nil {
+		releaseReservedPoolAccount(c)
+		return group, nil, err
+	}
+	if err := reservePoolGroupUsageLimit(group); err != nil {
+		releasePoolAccountUsageReservation(account)
+		ReleaseSelectedPoolAccount(c)
+		return group, nil, err
+	}
+	model.TouchPoolAccount(account.Id)
+	releaseGroupOnFailure = false
+	return group, account, nil
+}
+
 // selectPoolAccountOnce 执行一次账号池选号尝试。
 // 外层 SelectPoolAccount 只负责处理“并发满时短暂等待”的可选策略；本函数保持原有热路径语义：
 // 能立即选到账号就返回账号，非短暂资源不足或配置错误则返回明确错误。
@@ -1024,38 +1115,14 @@ func BuildPoolAccountChannelKey(account *model.PoolAccount) (string, error) {
 // 优先使用账号级别的模型列表，其次使用分组级别的模型列表。
 // 空列表表示支持所有模型。
 func poolAccountSupportsModel(account *model.PoolAccount, group *model.AccountPoolGroup, modelName string) bool {
-	models := account.Models
-	if strings.TrimSpace(models) == "" && group != nil {
-		models = group.Models
-	}
-	modelList := model.SplitCommaValues(models)
-	if len(modelList) == 0 {
-		return true
-	}
-	return model.MatchesModelList(modelList, modelName)
+	return model.RoutingPoolAccountSupportsModel(account, group, modelName)
 }
 
 // poolAccountSupportsGroup 检查账号是否属于指定的使用分组。
 // 优先使用账号级别的分组，其次使用分组级别的分组。
 // 空列表或通配符 "*" 表示属于所有分组。
 func poolAccountSupportsGroup(account *model.PoolAccount, group *model.AccountPoolGroup, usingGroup string) bool {
-	if strings.TrimSpace(usingGroup) == "" {
-		return true
-	}
-	groupValue := account.Group
-	if strings.TrimSpace(groupValue) == "" && group != nil {
-		groupValue = group.Group
-	}
-	groups := model.SplitCommaValues(groupValue)
-	if len(groups) == 0 {
-		return true
-	}
-	for _, candidate := range groups {
-		if candidate == "*" || candidate == usingGroup {
-			return true
-		}
-	}
-	return false
+	return model.RoutingPoolAccountSupportsGroup(account, group, usingGroup)
 }
 
 // removePoolAccount 从账号列表中移除指定 ID 的账号。
