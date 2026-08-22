@@ -34,14 +34,26 @@ import (
 )
 
 // group2model2channels 分组 -> 模型 -> 渠道 ID 列表的映射（仅包含启用的渠道）
-var group2model2channels map[string]map[string][]int // enabled channel
+var group2model2channels map[string]map[string][]int // 启用渠道映射
 
 // channelsIDM 渠道 ID -> 渠道对象的映射（包含所有渠道，含禁用的）
-var channelsIDM map[int]*Channel // all channels include disabled
+var channelsIDM map[int]*Channel // 包含禁用状态在内的全量渠道
 
 // channel2advancedCustomConfig 缓存 type 58 渠道解析后的 Advanced Custom 配置。
 // 选路热路径只需要判断 request path 是否命中 route，缓存配置可以避免每次请求重复解析 JSON。
 var channel2advancedCustomConfig map[int]*dto.AdvancedCustomConfig
+
+// channelAbilitySchedules 保存 group/model/channel 维度的 Ability 调度值。
+//
+// channels 表只能表达渠道级 priority/weight；账号池渠道会按每个启用密钥生成 Ability，
+// 同一个渠道在不同模型或分组下可能对应不同的最优密钥调度值。内存缓存选路必须读取
+// 这里的 Ability 值，才能与数据库兜底路径保持一致。
+var channelAbilitySchedules map[string]map[string]map[int]channelAbilitySchedule
+
+type channelAbilitySchedule struct {
+	Priority int64
+	Weight   int
+}
 
 // channelSyncLock 渠道缓存的读写锁，保证并发安全
 var channelSyncLock sync.RWMutex
@@ -70,15 +82,30 @@ func InitChannelCache() {
 			}
 		}
 	}
+	newGroup2model2channels := make(map[string]map[string][]int)
+	newChannelAbilitySchedules := make(map[string]map[string]map[int]channelAbilitySchedule)
 	var abilities []*Ability
 	DB.Find(&abilities)
-	groups := make(map[string]bool)
+	representedAbilityKeys := make(map[string]struct{}, len(abilities))
 	for _, ability := range abilities {
-		groups[ability.Group] = true
-	}
-	newGroup2model2channels := make(map[string]map[string][]int)
-	for group := range groups {
-		newGroup2model2channels[group] = make(map[string][]int)
+		if ability == nil {
+			continue
+		}
+		group := strings.TrimSpace(ability.Group)
+		modelName := strings.TrimSpace(ability.Model)
+		if group == "" || modelName == "" || ability.ChannelId <= 0 {
+			continue
+		}
+		representedAbilityKeys[cachedAbilityKey(group, modelName, ability.ChannelId)] = struct{}{}
+		channel, ok := newChannelId2channel[ability.ChannelId]
+		if !ok || channel.Status != common.ChannelStatusEnabled || !ability.Enabled {
+			continue
+		}
+		priority := int64(0)
+		if ability.Priority != nil {
+			priority = *ability.Priority
+		}
+		addCachedChannelAbility(newGroup2model2channels, newChannelAbilitySchedules, group, modelName, channel.Id, priority, int(ability.Weight))
 	}
 	for _, channel := range channels {
 		if channel.Status != common.ChannelStatusEnabled {
@@ -102,19 +129,27 @@ func InitChannelCache() {
 				if model == "" {
 					continue
 				}
-				if _, ok := newGroup2model2channels[group][model]; !ok {
-					newGroup2model2channels[group][model] = make([]int, 0)
+				if _, represented := representedAbilityKeys[cachedAbilityKey(group, model, channel.Id)]; represented {
+					continue
 				}
-				newGroup2model2channels[group][model] = append(newGroup2model2channels[group][model], channel.Id)
+				addCachedChannelAbility(newGroup2model2channels, newChannelAbilitySchedules, group, model, channel.Id, channel.GetPriority(), channel.GetWeight())
 			}
 		}
 	}
 
-	// sort by priority
+	// 按 Ability 或渠道调度值排序，保证缓存列表本身也保持最优候选在前。
 	for group, model2channels := range newGroup2model2channels {
 		for model, channels := range model2channels {
 			sort.Slice(channels, func(i, j int) bool {
-				return newChannelId2channel[channels[i]].GetPriority() > newChannelId2channel[channels[j]].GetPriority()
+				left := cachedChannelScheduleFrom(newChannelAbilitySchedules, group, model, channels[i], newChannelId2channel[channels[i]])
+				right := cachedChannelScheduleFrom(newChannelAbilitySchedules, group, model, channels[j], newChannelId2channel[channels[j]])
+				if left.Priority != right.Priority {
+					return left.Priority > right.Priority
+				}
+				if left.Weight != right.Weight {
+					return left.Weight > right.Weight
+				}
+				return channels[i] < channels[j]
 			})
 			newGroup2model2channels[group][model] = channels
 		}
@@ -122,7 +157,6 @@ func InitChannelCache() {
 
 	channelSyncLock.Lock()
 	group2model2channels = newGroup2model2channels
-	//channelsIDM = newChannelId2channel
 	for i, channel := range newChannelId2channel {
 		if channel.ChannelInfo.IsMultiKey {
 			channel.Keys = channel.GetKeys()
@@ -138,8 +172,51 @@ func InitChannelCache() {
 	}
 	channelsIDM = newChannelId2channel
 	channel2advancedCustomConfig = newChannel2advancedCustomConfig
+	channelAbilitySchedules = newChannelAbilitySchedules
 	channelSyncLock.Unlock()
 	common.SysLog("channels synced from database")
+}
+
+func addCachedChannelAbility(
+	groupModelChannels map[string]map[string][]int,
+	schedules map[string]map[string]map[int]channelAbilitySchedule,
+	group string,
+	modelName string,
+	channelID int,
+	priority int64,
+	weight int,
+) {
+	if group == "" || modelName == "" || channelID <= 0 {
+		return
+	}
+	if _, ok := groupModelChannels[group]; !ok {
+		groupModelChannels[group] = make(map[string][]int)
+	}
+	if _, ok := groupModelChannels[group][modelName]; !ok {
+		groupModelChannels[group][modelName] = make([]int, 0)
+	}
+	for _, existingID := range groupModelChannels[group][modelName] {
+		if existingID == channelID {
+			setCachedChannelSchedule(schedules, group, modelName, channelID, priority, weight)
+			return
+		}
+	}
+	groupModelChannels[group][modelName] = append(groupModelChannels[group][modelName], channelID)
+	setCachedChannelSchedule(schedules, group, modelName, channelID, priority, weight)
+}
+
+func setCachedChannelSchedule(schedules map[string]map[string]map[int]channelAbilitySchedule, group string, modelName string, channelID int, priority int64, weight int) {
+	if _, ok := schedules[group]; !ok {
+		schedules[group] = make(map[string]map[int]channelAbilitySchedule)
+	}
+	if _, ok := schedules[group][modelName]; !ok {
+		schedules[group][modelName] = make(map[int]channelAbilitySchedule)
+	}
+	schedules[group][modelName][channelID] = channelAbilitySchedule{Priority: priority, Weight: weight}
+}
+
+func cachedAbilityKey(group string, modelName string, channelID int) string {
+	return fmt.Sprintf("%s\x00%s\x00%d", group, modelName, channelID)
 }
 
 // SyncChannelCache 定时同步渠道缓存（后台协程）
@@ -170,7 +247,7 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 // 保留旧的 retry -> 优先级层级映射；存在排除项时，会从 retry 指向的优先级
 // 切换为“剩余候选的最高优先级”，避免同优先级其他健康渠道被跳过。
 func GetRandomSatisfiedChannelWithExclusions(group string, model string, retry int, requestPath string, excludedChannelIds []int) (*Channel, error) {
-	// if memory cache is disabled, get channel directly from database
+	// 未启用内存缓存时，直接使用数据库兜底路径。
 	if !common.MemoryCacheEnabled {
 		return GetChannelWithExclusions(group, model, retry, requestPath, excludedChannelIds)
 	}
@@ -178,16 +255,10 @@ func GetRandomSatisfiedChannelWithExclusions(group string, model string, retry i
 	channelSyncLock.RLock()
 	defer channelSyncLock.RUnlock()
 
-	// First, try to find channels with the exact model name.
+	// 先按原始模型名查找，找不到时在 helper 内回退到规范化模型名。
 	excludedSet := intSliceToSet(excludedChannelIds)
 
-	channels := filterCandidateChannels(group2model2channels[group][model], requestPath, excludedSet)
-
-	// If no channels found, try to find channels with the normalized model name.
-	if len(channels) == 0 {
-		normalizedModel := ratio_setting.FormatMatchingModelName(model)
-		channels = filterCandidateChannels(group2model2channels[group][normalizedModel], requestPath, excludedSet)
-	}
+	channels, cacheModel := getCachedCandidateChannelIDs(group, model, requestPath, excludedSet)
 
 	if len(channels) == 0 {
 		return nil, nil
@@ -195,7 +266,7 @@ func GetRandomSatisfiedChannelWithExclusions(group string, model string, retry i
 
 	if len(channels) == 1 {
 		if channel, ok := channelsIDM[channels[0]]; ok {
-			return channel, nil
+			return materializeCachedChannel(group, cacheModel, channel), nil
 		}
 		return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channels[0])
 	}
@@ -203,7 +274,7 @@ func GetRandomSatisfiedChannelWithExclusions(group string, model string, retry i
 	uniquePriorities := make(map[int]bool)
 	for _, channelId := range channels {
 		if channel, ok := channelsIDM[channelId]; ok {
-			uniquePriorities[int(channel.GetPriority())] = true
+			uniquePriorities[int(cachedChannelSchedule(group, cacheModel, channelId, channel).Priority)] = true
 		} else {
 			return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelId)
 		}
@@ -219,14 +290,15 @@ func GetRandomSatisfiedChannelWithExclusions(group string, model string, retry i
 	}
 	targetPriority := int64(sortedUniquePriorities[selectPriorityIndexForRetry(sortedUniquePriorities, retry, len(excludedSet) > 0)])
 
-	// get the priority for the given retry number
+	// 根据本次 retry 对应的优先级层级收集候选渠道。
 	var sumWeight = 0
 	var targetChannels []*Channel
 	for _, channelId := range channels {
 		if channel, ok := channelsIDM[channelId]; ok {
-			if channel.GetPriority() == targetPriority {
-				sumWeight += channel.GetWeight()
-				targetChannels = append(targetChannels, channel)
+			schedule := cachedChannelSchedule(group, cacheModel, channelId, channel)
+			if schedule.Priority == targetPriority {
+				sumWeight += schedule.Weight
+				targetChannels = append(targetChannels, materializeCachedChannel(group, cacheModel, channel))
 			}
 		} else {
 			return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelId)
@@ -237,34 +309,28 @@ func GetRandomSatisfiedChannelWithExclusions(group string, model string, retry i
 		return nil, errors.New(fmt.Sprintf("no channel found, group: %s, model: %s, priority: %d", group, model, targetPriority))
 	}
 
-	// smoothing factor and adjustment
+	// 平滑权重，兼容历史“权重全为 0 时等权随机”的行为。
 	smoothingFactor := 1
 	smoothingAdjustment := 0
 
 	if sumWeight == 0 {
-		// when all channels have weight 0, set sumWeight to the number of channels and set smoothing adjustment to 100
-		// each channel's effective weight = 100
+		// 所有渠道权重为 0 时，每个渠道按有效权重 100 参与随机。
 		sumWeight = len(targetChannels) * 100
 		smoothingAdjustment = 100
 	} else if sumWeight/len(targetChannels) < 10 {
-		// when the average weight is less than 10, set smoothing factor to 100
+		// 平均权重过小时放大 100 倍，降低整数随机带来的偏差。
 		smoothingFactor = 100
 	}
 
-	// Calculate the total weight of all channels up to endIdx
+	// 计算目标优先级内的总权重并执行加权随机。
 	totalWeight := sumWeight * smoothingFactor
-
-	// Generate a random value in the range [0, totalWeight)
 	randomWeight := rand.Intn(totalWeight)
-
-	// Find a channel based on its weight
 	for _, channel := range targetChannels {
 		randomWeight -= channel.GetWeight()*smoothingFactor + smoothingAdjustment
 		if randomWeight < 0 {
 			return channel, nil
 		}
 	}
-	// return null if no channel is not found
 	return nil, errors.New("channel not found")
 }
 
@@ -282,11 +348,7 @@ func GetSatisfiedChannelCandidatesWithExclusions(group string, model string, ret
 	defer channelSyncLock.RUnlock()
 
 	excludedSet := intSliceToSet(excludedChannelIds)
-	channelIds := filterCandidateChannels(group2model2channels[group][model], requestPath, excludedSet)
-	if len(channelIds) == 0 {
-		normalizedModel := ratio_setting.FormatMatchingModelName(model)
-		channelIds = filterCandidateChannels(group2model2channels[group][normalizedModel], requestPath, excludedSet)
-	}
+	channelIds, cacheModel := getCachedCandidateChannelIDs(group, model, requestPath, excludedSet)
 	if len(channelIds) == 0 {
 		return nil, nil
 	}
@@ -297,7 +359,7 @@ func GetSatisfiedChannelCandidatesWithExclusions(group string, model string, ret
 		if !ok {
 			return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelId)
 		}
-		uniquePriorities[int(channel.GetPriority())] = true
+		uniquePriorities[int(cachedChannelSchedule(group, cacheModel, channelId, channel).Priority)] = true
 	}
 	sortedUniquePriorities := make([]int, 0, len(uniquePriorities))
 	for priority := range uniquePriorities {
@@ -309,8 +371,8 @@ func GetSatisfiedChannelCandidatesWithExclusions(group string, model string, ret
 	targetChannels := make([]*Channel, 0, len(channelIds))
 	for _, channelId := range channelIds {
 		channel := channelsIDM[channelId]
-		if channel.GetPriority() == targetPriority {
-			targetChannels = append(targetChannels, channel)
+		if cachedChannelSchedule(group, cacheModel, channelId, channel).Priority == targetPriority {
+			targetChannels = append(targetChannels, materializeCachedChannel(group, cacheModel, channel))
 		}
 	}
 	if len(targetChannels) == 0 {
@@ -333,11 +395,7 @@ func GetAllSatisfiedChannelCandidatesWithExclusions(group string, model string, 
 	defer channelSyncLock.RUnlock()
 
 	excludedSet := intSliceToSet(excludedChannelIds)
-	channelIDs := filterCandidateChannels(group2model2channels[group][model], requestPath, excludedSet)
-	if len(channelIDs) == 0 {
-		normalizedModel := ratio_setting.FormatMatchingModelName(model)
-		channelIDs = filterCandidateChannels(group2model2channels[group][normalizedModel], requestPath, excludedSet)
-	}
+	channelIDs, cacheModel := getCachedCandidateChannelIDs(group, model, requestPath, excludedSet)
 	if len(channelIDs) == 0 {
 		return nil, nil
 	}
@@ -348,9 +406,58 @@ func GetAllSatisfiedChannelCandidatesWithExclusions(group string, model string, 
 		if !ok {
 			return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelID)
 		}
-		channels = append(channels, channel)
+		channels = append(channels, materializeCachedChannel(group, cacheModel, channel))
 	}
 	return channels, nil
+}
+
+func getCachedCandidateChannelIDs(group string, model string, requestPath string, excludedSet map[int]struct{}) ([]int, string) {
+	channelIDs := filterCandidateChannels(group2model2channels[group][model], requestPath, excludedSet)
+	if len(channelIDs) > 0 {
+		return channelIDs, model
+	}
+	normalizedModel := ratio_setting.FormatMatchingModelName(model)
+	channelIDs = filterCandidateChannels(group2model2channels[group][normalizedModel], requestPath, excludedSet)
+	return channelIDs, normalizedModel
+}
+
+func cachedChannelSchedule(group string, modelName string, channelID int, channel *Channel) channelAbilitySchedule {
+	return cachedChannelScheduleFrom(channelAbilitySchedules, group, modelName, channelID, channel)
+}
+
+func cachedChannelScheduleFrom(schedules map[string]map[string]map[int]channelAbilitySchedule, group string, modelName string, channelID int, channel *Channel) channelAbilitySchedule {
+	if schedules != nil {
+		if modelSchedules, ok := schedules[group]; ok {
+			if channelSchedules, ok := modelSchedules[modelName]; ok {
+				if schedule, ok := channelSchedules[channelID]; ok {
+					return schedule
+				}
+			}
+		}
+	}
+	if channel == nil {
+		return channelAbilitySchedule{}
+	}
+	return channelAbilitySchedule{Priority: channel.GetPriority(), Weight: channel.GetWeight()}
+}
+
+func materializeCachedChannel(group string, modelName string, channel *Channel) *Channel {
+	if channel == nil {
+		return nil
+	}
+	schedule := cachedChannelSchedule(group, modelName, channel.Id, channel)
+	if schedule.Priority == channel.GetPriority() && schedule.Weight == channel.GetWeight() {
+		return channel
+	}
+	priority := schedule.Priority
+	weight := uint(0)
+	if schedule.Weight > 0 {
+		weight = uint(schedule.Weight)
+	}
+	clone := *channel
+	clone.Priority = &priority
+	clone.Weight = &weight
+	return &clone
 }
 
 // SelectChannelByWeight 按渠道权重随机选择一个候选。
@@ -540,7 +647,7 @@ func CacheUpdateChannelStatus(id int, status int) {
 		channel.Status = status
 	}
 	if status != common.ChannelStatusEnabled {
-		// delete the channel from group2model2channels
+		// 从 group2model2channels 中移除该渠道。
 		for group, model2channels := range group2model2channels {
 			for model, channels := range model2channels {
 				filtered := channels[:0]

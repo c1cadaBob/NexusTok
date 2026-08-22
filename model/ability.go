@@ -68,7 +68,7 @@ func GetAllEnableAbilityWithChannels() ([]AbilityWithChannel, error) {
 // 返回去重后的模型名称切片
 func GetGroupEnabledModels(group string) []string {
 	var models []string
-	// Find distinct models
+	// 查询分组下去重后的模型名称。
 	DB.Table("abilities").Where(commonGroupCol+" = ? and enabled = ?", group, true).Distinct("model").Pluck("model", &models)
 	return models
 }
@@ -77,7 +77,7 @@ func GetGroupEnabledModels(group string) []string {
 // 返回去重后的模型名称切片
 func GetEnabledModels() []string {
 	var models []string
-	// Find distinct models
+	// 查询全局去重后的模型名称。
 	DB.Table("abilities").Where("enabled = ?", true).Distinct("model").Pluck("model", &models)
 	return models
 }
@@ -213,19 +213,20 @@ func GetChannelWithExclusions(group string, model string, retry int, requestPath
 	}
 	abilities = filterAbilitiesByRequestPath(abilities, requestPath)
 	channel := Channel{}
+	var selectedAbility *Ability
 	if len(abilities) > 0 {
-		// Randomly choose one
+		// 按 Ability 权重随机选择一个渠道。
 		weightSum := uint(0)
 		for _, ability_ := range abilities {
 			weightSum += ability_.Weight + 10
 		}
-		// Randomly choose one
 		weight := common.GetRandomInt(int(weightSum))
 		for _, ability_ := range abilities {
 			weight -= int(ability_.Weight) + 10
-			//log.Printf("weight: %d, ability weight: %d", weight, *ability_.Weight)
 			if weight <= 0 {
 				channel.Id = ability_.ChannelId
+				selected := ability_
+				selectedAbility = &selected
 				break
 			}
 		}
@@ -233,7 +234,13 @@ func GetChannelWithExclusions(group string, model string, retry int, requestPath
 		return nil, nil
 	}
 	err = DB.First(&channel, "id = ?", channel.Id).Error
-	return &channel, err
+	if err != nil {
+		return nil, err
+	}
+	if selectedAbility != nil {
+		return channelWithAbilitySchedule(&channel, *selectedAbility), nil
+	}
+	return &channel, nil
 }
 
 // getChannelCandidatesWithExclusions 获取数据库兜底路径下的候选渠道。
@@ -274,12 +281,12 @@ func getChannelCandidatesWithExclusions(group string, model string, retry int, r
 		channelByID[channel.Id] = channel
 	}
 	ordered := make([]*Channel, 0, len(channelIDs))
-	for _, channelID := range channelIDs {
-		channel, ok := channelByID[channelID]
+	for _, ability := range abilities {
+		channel, ok := channelByID[ability.ChannelId]
 		if !ok {
-			return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelID)
+			return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", ability.ChannelId)
 		}
-		ordered = append(ordered, channel)
+		ordered = append(ordered, channelWithAbilitySchedule(channel, ability))
 	}
 	return ordered, nil
 }
@@ -331,14 +338,39 @@ func getAllChannelCandidatesWithExclusions(group, model, requestPath string, exc
 		channelByID[channel.Id] = channel
 	}
 	ordered := make([]*Channel, 0, len(channelIDs))
-	for _, channelID := range channelIDs {
-		channel, ok := channelByID[channelID]
+	for _, ability := range abilities {
+		channel, ok := channelByID[ability.ChannelId]
 		if !ok {
-			return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelID)
+			return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", ability.ChannelId)
 		}
-		ordered = append(ordered, channel)
+		ordered = append(ordered, channelWithAbilitySchedule(channel, ability))
 	}
 	return ordered, nil
+}
+
+// channelWithAbilitySchedule 返回带 Ability 调度值的渠道副本。
+//
+// 动态健康选路会在 service 层根据 Channel.GetPriority/GetWeight 再做一次候选过滤
+// 和加权选择；如果这里直接返回数据库里的渠道字段，账号池按密钥生成的 Ability
+// priority/weight 会在这一层丢失，表现为“密钥优先级/权重很高但仍被其它渠道抢走”。
+// 因此数据库兜底路径需要把本次 group/model 命中的 Ability 调度值临时覆盖到副本上，
+// 只影响当前选路，不回写 channels 表。
+func channelWithAbilitySchedule(channel *Channel, ability Ability) *Channel {
+	if channel == nil {
+		return nil
+	}
+	priority := int64(0)
+	if ability.Priority != nil {
+		priority = *ability.Priority
+	}
+	weight := ability.Weight
+	if channel.GetPriority() == priority && channel.GetWeight() == int(weight) {
+		return channel
+	}
+	clone := *channel
+	clone.Priority = &priority
+	clone.Weight = &weight
+	return &clone
 }
 
 // requestPathNormalizedExclusions 返回去重后的渠道排除列表。
@@ -450,7 +482,7 @@ func (channel *Channel) AddAbilities(tx *gorm.DB) error {
 	if len(abilities) == 0 {
 		return nil
 	}
-	// choose DB or provided tx
+	// 优先使用调用方传入的事务，否则使用全局 DB。
 	useDB := DB
 	if tx != nil {
 		useDB = tx
@@ -469,8 +501,8 @@ func (channel *Channel) DeleteAbilities() error {
 	return DB.Where("channel_id = ?", channel.Id).Delete(&Ability{}).Error
 }
 
-// UpdateAbilities updates abilities of this channel.
-// Make sure the channel is completed before calling this function.
+// UpdateAbilities 更新当前渠道的能力记录。
+// 调用前必须确保渠道字段已经完整，避免按半成品 models/group 重建路由能力。
 func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 	if channel.IsChannelAccountPoolEnabled() && !channel.ChannelInfo.AccountPoolFallback {
 		return channel.UpdateAccountPoolAbilities(tx)
@@ -490,7 +522,7 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 		}()
 	}
 
-	// First delete all abilities of this channel
+	// 先删除当前渠道的旧能力记录。
 	err := tx.Where("channel_id = ?", channel.Id).Delete(&Ability{}).Error
 	if err != nil {
 		if isNewTx {
@@ -499,7 +531,7 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 		return err
 	}
 
-	// Then add new abilities
+	// 再根据最新渠道配置写入新的能力记录。
 	models_ := strings.Split(channel.Models, ",")
 	groups_ := strings.Split(channel.Group, ",")
 	abilitySet := make(map[string]struct{})
@@ -660,11 +692,11 @@ func (channel *Channel) syncAccountPoolCapabilities(tx *gorm.DB) error {
 
 func (channel *Channel) buildAccountPoolAbilities(tx *gorm.DB) ([]Ability, string, string, error) {
 	var accounts []ChannelAccount
-	if err := tx.Where("channel_id = ? AND status = ?", channel.Id, common.ChannelStatusEnabled).Order("priority DESC").Order("id ASC").Find(&accounts).Error; err != nil {
+	if err := tx.Where("channel_id = ? AND status = ?", channel.Id, common.ChannelStatusEnabled).Order("priority DESC").Order("weight DESC").Order("id ASC").Find(&accounts).Error; err != nil {
 		return nil, "", "", err
 	}
 	abilities := make([]Ability, 0)
-	abilitySet := map[string]struct{}{}
+	abilityIndex := map[string]int{}
 	modelSet := map[string]struct{}{}
 	groupSet := map[string]struct{}{}
 	models := make([]string, 0)
@@ -703,23 +735,50 @@ func (channel *Channel) buildAccountPoolAbilities(tx *gorm.DB) ([]Ability, strin
 			}
 			for _, groupName := range accountGroups {
 				abilityKey := groupName + "|" + modelName
-				if _, exists := abilitySet[abilityKey]; exists {
+				if idx, exists := abilityIndex[abilityKey]; exists {
+					abilities[idx] = betterAccountPoolAbilitySchedule(abilities[idx], account)
 					continue
 				}
-				abilitySet[abilityKey] = struct{}{}
+				abilityIndex[abilityKey] = len(abilities)
+				priority := account.Priority
+				weight := uint(account.GetWeight())
 				abilities = append(abilities, Ability{
 					Group:     groupName,
 					Model:     modelName,
 					ChannelId: channel.Id,
 					Enabled:   channel.Status == common.ChannelStatusEnabled,
-					Priority:  channel.Priority,
-					Weight:    uint(channel.GetWeight()),
+					Priority:  &priority,
+					Weight:    weight,
 					Tag:       channel.Tag,
 				})
 			}
 		}
 	}
 	return abilities, strings.Join(models, ","), strings.Join(groups, ","), nil
+}
+
+// betterAccountPoolAbilitySchedule 按账号池真实可路由密钥更新 Ability 调度值。
+//
+// Ability 是路由第一阶段的候选入口，账号池渠道如果仍写入渠道自身 priority/weight，
+// 其它渠道在内存缓存或数据库兜底路径中看不到密钥级调度配置。这里对同一
+// group/model/channel 组合聚合出最优启用密钥：先比较密钥 priority，优先级相同再比较
+// 密钥 weight。后续 SelectChannelAccount 会用同样的密钥候选继续选出具体 key。
+func betterAccountPoolAbilitySchedule(ability Ability, account ChannelAccount) Ability {
+	currentPriority := int64(0)
+	if ability.Priority != nil {
+		currentPriority = *ability.Priority
+	}
+	accountWeight := uint(account.GetWeight())
+	if account.Priority < currentPriority {
+		return ability
+	}
+	if account.Priority == currentPriority && accountWeight <= ability.Weight {
+		return ability
+	}
+	priority := account.Priority
+	ability.Priority = &priority
+	ability.Weight = accountWeight
+	return ability
 }
 
 func replaceChannelAbilities(tx *gorm.DB, channelID int, abilities []Ability) error {
@@ -797,7 +856,7 @@ func FixAbility() (int, int, error) {
 	}
 	defer fixLock.Unlock()
 
-	// truncate abilities table
+	// 清空能力表，随后按当前渠道配置完整重建。
 	if common.UsingSQLite {
 		err := DB.Exec("DELETE FROM abilities").Error
 		if err != nil {
@@ -812,7 +871,7 @@ func FixAbility() (int, int, error) {
 		}
 	}
 	var channels []*Channel
-	// Find all channels
+	// 查询所有渠道作为重建来源。
 	err := DB.Model(&Channel{}).Find(&channels).Error
 	if err != nil {
 		return 0, 0, err
@@ -824,14 +883,14 @@ func FixAbility() (int, int, error) {
 	failCount := 0
 	for _, chunk := range lo.Chunk(channels, 50) {
 		ids := lo.Map(chunk, func(c *Channel, _ int) int { return c.Id })
-		// Delete all abilities of this channel
+		// 删除当前渠道的旧能力记录。
 		err = DB.Where("channel_id IN ?", ids).Delete(&Ability{}).Error
 		if err != nil {
 			common.SysLog(fmt.Sprintf("Delete abilities failed: %s", err.Error()))
 			failCount += len(chunk)
 			continue
 		}
-		// Then add new abilities
+		// 根据当前渠道配置写入新的能力记录。
 		for _, channel := range chunk {
 			err = channel.AddAbilities(nil)
 			if err != nil {

@@ -25,9 +25,11 @@ func setupRetryExclusionChannelCache(t *testing.T, groupModelChannels map[string
 	oldGroup2Model2Channels := group2model2channels
 	oldChannelsIDM := channelsIDM
 	oldAdvancedConfigs := channel2advancedCustomConfig
+	oldAbilitySchedules := channelAbilitySchedules
 	group2model2channels = groupModelChannels
 	channelsIDM = channels
 	channel2advancedCustomConfig = map[int]*dto.AdvancedCustomConfig{}
+	channelAbilitySchedules = map[string]map[string]map[int]channelAbilitySchedule{}
 	channelSyncLock.Unlock()
 
 	t.Cleanup(func() {
@@ -37,6 +39,7 @@ func setupRetryExclusionChannelCache(t *testing.T, groupModelChannels map[string
 		group2model2channels = oldGroup2Model2Channels
 		channelsIDM = oldChannelsIDM
 		channel2advancedCustomConfig = oldAdvancedConfigs
+		channelAbilitySchedules = oldAbilitySchedules
 	})
 }
 
@@ -374,6 +377,196 @@ func TestSyncChannelAccountPoolCapabilitiesSkipsEmptyModelsForUpstreamSync(t *te
 	require.NoError(t, db.First(&refreshed, channel.Id).Error)
 	require.Equal(t, "gpt-active", refreshed.Models)
 	require.Equal(t, "default,vip", refreshed.Group)
+}
+
+func TestSyncChannelAccountPoolCapabilitiesUsesBestAccountSchedule(t *testing.T) {
+	oldDB := DB
+	oldLogDB := LOG_DB
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&Channel{}, &Ability{}, &ChannelAccount{}))
+	DB = db
+	LOG_DB = db
+
+	t.Cleanup(func() {
+		DB = oldDB
+		LOG_DB = oldLogDB
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+
+	channelPriority := int64(0)
+	channel := Channel{
+		Type:          constant.ChannelTypeNewAPI,
+		Status:        common.ChannelStatusEnabled,
+		Name:          "account-schedule-channel",
+		Models:        "gpt-route,gpt-other",
+		Group:         "default",
+		Priority:      &channelPriority,
+		Weight:        retryExclusionTestWeight(1),
+		OtherSettings: `{"upstream_account_sync":{"platform":"new-api","base_url":"https://upstream.example"}}`,
+		ChannelInfo: ChannelInfo{
+			CredentialMode:     constant.ChannelCredentialModeAccountPool,
+			AccountPoolEnabled: true,
+			AccountPoolMode:    constant.ChannelAccountPoolModePolling,
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+	require.NoError(t, db.Create(&[]ChannelAccount{
+		{
+			ChannelId:    channel.Id,
+			Name:         "lower-priority-high-weight",
+			Key:          "sk-low",
+			Status:       common.ChannelStatusEnabled,
+			Models:       "gpt-route",
+			AccessGroups: "default",
+			Priority:     0,
+			Weight:       500,
+		},
+		{
+			ChannelId:    channel.Id,
+			Name:         "best-key",
+			Key:          "sk-best",
+			Status:       common.ChannelStatusEnabled,
+			Models:       "gpt-route",
+			AccessGroups: "default",
+			Priority:     1,
+			Weight:       195,
+		},
+		{
+			ChannelId:    channel.Id,
+			Name:         "same-priority-lower-weight",
+			Key:          "sk-mid",
+			Status:       common.ChannelStatusEnabled,
+			Models:       "gpt-route",
+			AccessGroups: "default",
+			Priority:     1,
+			Weight:       80,
+		},
+		{
+			ChannelId:    channel.Id,
+			Name:         "other-model-key",
+			Key:          "sk-other",
+			Status:       common.ChannelStatusEnabled,
+			Models:       "gpt-other",
+			AccessGroups: "default",
+			Priority:     9,
+			Weight:       999,
+		},
+	}).Error)
+
+	require.NoError(t, SyncChannelAccountPoolCapabilities(channel.Id, nil))
+
+	var routeAbility Ability
+	require.NoError(t, db.Where(commonGroupCol+" = ? AND model = ? AND channel_id = ?", "default", "gpt-route", channel.Id).First(&routeAbility).Error)
+	require.NotNil(t, routeAbility.Priority)
+	require.EqualValues(t, 1, *routeAbility.Priority)
+	require.EqualValues(t, 195, routeAbility.Weight)
+
+	var otherAbility Ability
+	require.NoError(t, db.Where(commonGroupCol+" = ? AND model = ? AND channel_id = ?", "default", "gpt-other", channel.Id).First(&otherAbility).Error)
+	require.NotNil(t, otherAbility.Priority)
+	require.EqualValues(t, 9, *otherAbility.Priority)
+	require.EqualValues(t, 999, otherAbility.Weight)
+}
+
+func TestChannelCacheUsesAbilityScheduleForAccountPoolCandidates(t *testing.T) {
+	oldDB := DB
+	oldLogDB := LOG_DB
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	oldGroup2Model2Channels := group2model2channels
+	oldChannelsIDM := channelsIDM
+	oldAdvancedConfigs := channel2advancedCustomConfig
+	oldAbilitySchedules := channelAbilitySchedules
+	common.MemoryCacheEnabled = true
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&Channel{}, &Ability{}, &ChannelAccount{}))
+	DB = db
+	LOG_DB = db
+
+	t.Cleanup(func() {
+		DB = oldDB
+		LOG_DB = oldLogDB
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+		channelSyncLock.Lock()
+		defer channelSyncLock.Unlock()
+		group2model2channels = oldGroup2Model2Channels
+		channelsIDM = oldChannelsIDM
+		channel2advancedCustomConfig = oldAdvancedConfigs
+		channelAbilitySchedules = oldAbilitySchedules
+	})
+
+	channelPriority := int64(0)
+	for _, channel := range []*Channel{
+		{
+			Id:            1,
+			Type:          constant.ChannelTypeNewAPI,
+			Status:        common.ChannelStatusEnabled,
+			Name:          "best-account-channel",
+			Models:        "gpt-route",
+			Group:         "default",
+			Priority:      &channelPriority,
+			Weight:        retryExclusionTestWeight(1),
+			OtherSettings: `{"upstream_account_sync":{"platform":"new-api","base_url":"https://upstream.example"}}`,
+			ChannelInfo: ChannelInfo{
+				CredentialMode:     constant.ChannelCredentialModeAccountPool,
+				AccountPoolEnabled: true,
+			},
+		},
+		{
+			Id:            2,
+			Type:          constant.ChannelTypeNewAPI,
+			Status:        common.ChannelStatusEnabled,
+			Name:          "lower-account-channel",
+			Models:        "gpt-route",
+			Group:         "default",
+			Priority:      &channelPriority,
+			Weight:        retryExclusionTestWeight(1),
+			OtherSettings: `{"upstream_account_sync":{"platform":"new-api","base_url":"https://upstream.example"}}`,
+			ChannelInfo: ChannelInfo{
+				CredentialMode:     constant.ChannelCredentialModeAccountPool,
+				AccountPoolEnabled: true,
+			},
+		},
+	} {
+		require.NoError(t, db.Create(channel).Error)
+	}
+	require.NoError(t, db.Create(&[]ChannelAccount{
+		{
+			ChannelId:    1,
+			Name:         "best-key",
+			Key:          "sk-best",
+			Status:       common.ChannelStatusEnabled,
+			Models:       "gpt-route",
+			AccessGroups: "default",
+			Priority:     1,
+			Weight:       195,
+		},
+		{
+			ChannelId:    2,
+			Name:         "lower-key",
+			Key:          "sk-lower",
+			Status:       common.ChannelStatusEnabled,
+			Models:       "gpt-route",
+			AccessGroups: "default",
+			Priority:     0,
+			Weight:       999,
+		},
+	}).Error)
+	require.NoError(t, SyncChannelAccountPoolCapabilities(1, nil))
+	require.NoError(t, SyncChannelAccountPoolCapabilities(2, nil))
+
+	InitChannelCache()
+	candidates, err := GetSatisfiedChannelCandidatesWithExclusions("default", "gpt-route", 0, "", nil)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.Equal(t, 1, candidates[0].Id)
+	require.EqualValues(t, 1, candidates[0].GetPriority())
+	require.Equal(t, 195, candidates[0].GetWeight())
 }
 
 func TestGetChannelWithExclusionsFiltersChannelStatusInDBFallback(t *testing.T) {
