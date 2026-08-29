@@ -45,9 +45,9 @@ func AddExcludedRoutingCandidate(c *gin.Context, candidate *model.RoutingCandida
 
 // SelectRoutingCandidate 执行统一密钥级调度。
 //
-// 选择流程：收集当前 group/model/path 下的所有非敏感候选；过滤请求级排除、凭证动态状态
-// 和渠道临时健康；在最高 effective priority 层内按策略域选出代表候选，再跨域按
-// effective weight 加权选择。旧的 CacheGetRandomSatisfiedChannel 保留为兜底路径。
+// 选择流程：先收集当前 group/model/path 下的结构性候选，再按四级字典序找出最高层；
+// 健康度、策略域和同层 tie-break 只在这一层内生效，低层候选不会因为其他变量反超。
+// 旧的 CacheGetRandomSatisfiedChannel 保留为兜底路径。
 func SelectRoutingCandidate(param *RetryParam) (*model.RoutingCandidate, string, error) {
 	if param == nil {
 		return nil, "", errors.New("retry param is nil")
@@ -106,31 +106,18 @@ func selectRoutingCandidateInGroup(param *RetryParam, usingGroup string) (*model
 		return nil, err
 	}
 	usable := make([]*model.RoutingCandidate, 0, len(candidates))
-	seenChannelCandidates := make(map[int]struct{})
-	seenUsableChannels := make(map[int]struct{})
-	now := common.GetTimestamp()
 	for _, candidate := range candidates {
 		if candidate == nil {
 			continue
-		}
-		if candidate != nil && candidate.ChannelID > 0 {
-			seenChannelCandidates[candidate.ChannelID] = struct{}{}
 		}
 		channel, channelErr := model.CacheGetChannel(candidate.ChannelID)
 		if channelErr != nil || channel == nil || channel.Status != common.ChannelStatusEnabled {
 			continue
 		}
-		if !model.RoutingCandidateDynamicAllowed(candidate, channel, usingGroup, param.ModelName, now) {
+		if !model.RoutingCandidateDynamicAllowed(candidate, channel, usingGroup, param.ModelName) {
 			continue
 		}
 		usable = append(usable, candidate)
-		seenUsableChannels[candidate.ChannelID] = struct{}{}
-	}
-	for channelID := range seenChannelCandidates {
-		if _, ok := seenUsableChannels[channelID]; ok {
-			continue
-		}
-		AddExcludedChannelId(param.Ctx, channelID)
 	}
 	if len(usable) == 0 {
 		return nil, nil
@@ -139,18 +126,18 @@ func selectRoutingCandidateInGroup(param *RetryParam, usingGroup string) (*model
 }
 
 func selectRoutingCandidateByStrategy(usingGroup string, modelName string, candidates []*model.RoutingCandidate) *model.RoutingCandidate {
-	priorityLayer := bestRoutingPriorityCandidates(candidates)
-	if len(priorityLayer) == 0 {
+	layerCandidates := bestRoutingScheduleCandidates(candidates)
+	if len(layerCandidates) == 0 {
 		return nil
 	}
-	healthy := make([]*model.RoutingCandidate, 0, len(priorityLayer))
-	for _, candidate := range priorityLayer {
+	healthy := make([]*model.RoutingCandidate, 0, len(layerCandidates))
+	for _, candidate := range layerCandidates {
 		if candidate != nil && IsChannelRoutingHealthy(usingGroup, modelName, candidate.ChannelID) {
 			healthy = append(healthy, candidate)
 		}
 	}
 	if len(healthy) == 0 {
-		healthy = leastDegradedRoutingCandidates(usingGroup, modelName, priorityLayer)
+		healthy = leastDegradedRoutingCandidates(usingGroup, modelName, layerCandidates)
 	}
 	if len(healthy) == 0 {
 		return nil
@@ -162,21 +149,30 @@ func selectRoutingCandidateByStrategy(usingGroup string, modelName string, candi
 	case "cost":
 		healthy = bestRoutingWeightCandidates(healthy)
 	}
+	if len(healthy) == 0 {
+		return nil
+	}
 
 	domainWinners := pickRoutingPolicyDomainCandidates(usingGroup, modelName, healthy)
-	return pickRoutingCandidateByEffectiveWeight(domainWinners)
+	return pickRoutingCandidateByLayerWeight(domainWinners)
 }
 
-func bestRoutingPriorityCandidates(candidates []*model.RoutingCandidate) []*model.RoutingCandidate {
-	bestPriority := int64(-1 << 63)
+func bestRoutingScheduleCandidates(candidates []*model.RoutingCandidate) []*model.RoutingCandidate {
+	var best *model.RoutingCandidate
 	for _, candidate := range candidates {
-		if candidate != nil && candidate.Schedule.EffectivePriority > bestPriority {
-			bestPriority = candidate.Schedule.EffectivePriority
+		if candidate == nil {
+			continue
 		}
+		if best == nil || candidate.Schedule.Compare(best.Schedule) > 0 {
+			best = candidate
+		}
+	}
+	if best == nil {
+		return nil
 	}
 	result := make([]*model.RoutingCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
-		if candidate != nil && candidate.Schedule.EffectivePriority == bestPriority {
+		if candidate != nil && candidate.Schedule.SameLayer(best.Schedule) {
 			result = append(result, candidate)
 		}
 	}
@@ -224,13 +220,16 @@ func bestRoutingAvailabilityCandidates(group, modelName string, candidates []*mo
 func bestRoutingWeightCandidates(candidates []*model.RoutingCandidate) []*model.RoutingCandidate {
 	bestWeight := -1
 	for _, candidate := range candidates {
-		if candidate != nil && candidate.Schedule.EffectiveWeight > bestWeight {
-			bestWeight = candidate.Schedule.EffectiveWeight
+		if candidate == nil {
+			continue
+		}
+		if weight := routingCandidateScheduleWeight(candidate); weight > bestWeight {
+			bestWeight = weight
 		}
 	}
 	result := make([]*model.RoutingCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
-		if candidate != nil && candidate.Schedule.EffectiveWeight == bestWeight {
+		if candidate != nil && routingCandidateScheduleWeight(candidate) == bestWeight {
 			result = append(result, candidate)
 		}
 	}
@@ -280,7 +279,7 @@ func pickRoutingCandidateInPolicyDomain(usingGroup string, modelName string, can
 	case model.RoutingCredentialKindPoolAccount:
 		return pickPoolAccountRoutingCandidate(usingGroup, modelName, candidates)
 	default:
-		return pickRoutingCandidateByEffectiveWeight(candidates)
+		return pickRoutingCandidateByLayerWeight(candidates)
 	}
 }
 
@@ -386,7 +385,7 @@ func pickPoolAccountRoutingCandidate(usingGroup string, modelName string, candid
 	return candidateByAccount[picked.Id]
 }
 
-func pickRoutingCandidateByEffectiveWeight(candidates []*model.RoutingCandidate) *model.RoutingCandidate {
+func pickRoutingCandidateByLayerWeight(candidates []*model.RoutingCandidate) *model.RoutingCandidate {
 	if len(candidates) == 0 {
 		return nil
 	}
@@ -396,8 +395,11 @@ func pickRoutingCandidateByEffectiveWeight(candidates []*model.RoutingCandidate)
 	sortRoutingCandidatesByStableKey(candidates)
 	sumWeight := 0
 	for _, candidate := range candidates {
-		if candidate != nil && candidate.Schedule.EffectiveWeight > 0 {
-			sumWeight += candidate.Schedule.EffectiveWeight
+		if candidate == nil {
+			continue
+		}
+		if weight := routingCandidateScheduleWeight(candidate); weight > 0 {
+			sumWeight += weight
 		}
 	}
 	if sumWeight <= 0 {
@@ -409,7 +411,7 @@ func pickRoutingCandidateByEffectiveWeight(candidates []*model.RoutingCandidate)
 	}
 	randomWeight := rand.Intn(sumWeight * smoothingFactor)
 	for _, candidate := range candidates {
-		weight := candidate.Schedule.EffectiveWeight
+		weight := routingCandidateScheduleWeight(candidate)
 		if weight <= 0 {
 			continue
 		}
@@ -421,6 +423,17 @@ func pickRoutingCandidateByEffectiveWeight(candidates []*model.RoutingCandidate)
 	return candidates[len(candidates)-1]
 }
 
+func routingCandidateScheduleWeight(candidate *model.RoutingCandidate) int {
+	if candidate == nil {
+		return 0
+	}
+	weight := candidate.Schedule.ChannelWeight + candidate.Schedule.CredentialWeight
+	if weight < 0 {
+		return 0
+	}
+	return weight
+}
+
 func sortRoutingCandidatesByStableKey(candidates []*model.RoutingCandidate) {
 	sort.SliceStable(candidates, func(i, j int) bool {
 		return candidates[i].CandidateKey().String() < candidates[j].CandidateKey().String()
@@ -428,7 +441,7 @@ func sortRoutingCandidatesByStableKey(candidates []*model.RoutingCandidate) {
 }
 
 // AppendRoutingCandidateAdminInfo 把统一调度命中的非敏感候选信息追加到管理日志。
-// 这里刻意只记录类型、ID 和合成调度值，不记录 channel_key、账号凭据或脱敏摘要，
+// 这里刻意只记录类型、ID 和四级原始调度值，不记录 channel_key、账号凭据或脱敏摘要，
 // 既方便排查调度结果，也避免日志扩大敏感信息暴露面。
 func AppendRoutingCandidateAdminInfo(c *gin.Context, adminInfo map[string]interface{}) {
 	if c == nil || adminInfo == nil {
@@ -451,11 +464,13 @@ func AppendRoutingCandidateAdminInfo(c *gin.Context, adminInfo map[string]interf
 		return
 	}
 	info := map[string]interface{}{
-		"kind":               string(candidate.Kind),
-		"channel_id":         candidate.ChannelID,
-		"effective_priority": candidate.Schedule.EffectivePriority,
-		"effective_weight":   candidate.Schedule.EffectiveWeight,
-		"policy_domain":      candidate.PolicyDomain,
+		"kind":                string(candidate.Kind),
+		"channel_id":          candidate.ChannelID,
+		"channel_priority":    candidate.Schedule.ChannelPriority,
+		"channel_weight":      candidate.Schedule.ChannelWeight,
+		"credential_priority": candidate.Schedule.CredentialPriority,
+		"credential_weight":   candidate.Schedule.CredentialWeight,
+		"policy_domain":       candidate.PolicyDomain,
 	}
 	if candidate.MultiKeyIndex > 0 || candidate.Kind == model.RoutingCredentialKindMultiKey {
 		info["multi_key_index"] = candidate.MultiKeyIndex

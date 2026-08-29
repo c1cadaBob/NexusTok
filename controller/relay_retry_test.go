@@ -157,7 +157,8 @@ func TestPrepareRelayChannelContextFallsBackWhenInitialAccountPoolUnavailable(t 
 	require.True(t, ok)
 	require.NotNil(t, selected)
 	require.Equal(t, fallbackChannel.Id, selected.Id)
-	require.Equal(t, []int{accountPoolChannel.Id}, service.GetExcludedChannelIds(c))
+	require.Empty(t, service.GetExcludedChannelIds(c))
+	require.Len(t, service.GetExcludedRoutingCandidateKeys(c), 1)
 	require.Equal(t, fallbackChannel.Id, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
 }
 

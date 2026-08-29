@@ -161,20 +161,36 @@ func TestRoutingCandidatesGenerateCredentialKindsAndSchedules(t *testing.T) {
 	require.Len(t, byKind[RoutingCredentialKindMultiKey], 2)
 	require.Len(t, byKind[RoutingCredentialKindChannelAccount], 1)
 	require.Len(t, byKind[RoutingCredentialKindPoolAccount], 1)
-	require.EqualValues(t, 7, byKind[RoutingCredentialKindChannelAccount][0].Schedule.EffectivePriority)
-	require.Equal(t, 105, byKind[RoutingCredentialKindChannelAccount][0].Schedule.EffectiveWeight)
-	require.EqualValues(t, 7, byKind[RoutingCredentialKindPoolAccount][0].Schedule.EffectivePriority)
-	require.Equal(t, 10, byKind[RoutingCredentialKindPoolAccount][0].Schedule.EffectiveWeight)
+	require.EqualValues(t, 0, byKind[RoutingCredentialKindSingleKey][0].Schedule.CredentialPriority)
+	require.Equal(t, 0, byKind[RoutingCredentialKindSingleKey][0].Schedule.CredentialWeight)
+	require.EqualValues(t, 0, byKind[RoutingCredentialKindMultiKey][0].Schedule.CredentialPriority)
+	require.Equal(t, 0, byKind[RoutingCredentialKindMultiKey][0].Schedule.CredentialWeight)
+	require.EqualValues(t, 0, byKind[RoutingCredentialKindMultiKey][1].Schedule.CredentialPriority)
+	require.Equal(t, 0, byKind[RoutingCredentialKindMultiKey][1].Schedule.CredentialWeight)
+	require.EqualValues(t, 0, byKind[RoutingCredentialKindChannelAccount][0].Schedule.ChannelPriority)
+	require.Equal(t, 5, byKind[RoutingCredentialKindChannelAccount][0].Schedule.ChannelWeight)
+	require.EqualValues(t, 7, byKind[RoutingCredentialKindChannelAccount][0].Schedule.CredentialPriority)
+	require.Equal(t, 100, byKind[RoutingCredentialKindChannelAccount][0].Schedule.CredentialWeight)
+	require.EqualValues(t, 3, byKind[RoutingCredentialKindPoolAccount][0].Schedule.ChannelPriority)
+	require.Equal(t, 1, byKind[RoutingCredentialKindPoolAccount][0].Schedule.ChannelWeight)
+	require.EqualValues(t, 4, byKind[RoutingCredentialKindPoolAccount][0].Schedule.CredentialPriority)
+	require.Equal(t, 9, byKind[RoutingCredentialKindPoolAccount][0].Schedule.CredentialWeight)
 }
 
-func TestRoutingScheduleUsesAdditiveFormulaAndZeroWeight(t *testing.T) {
-	schedule := NewRoutingSchedule(3, 10, 2, 195)
-	require.EqualValues(t, 5, schedule.EffectivePriority)
-	require.Equal(t, 205, schedule.EffectiveWeight)
+func TestRoutingScheduleComparesLexicographically(t *testing.T) {
+	channelPriorityWins := NewRoutingSchedule(3, 0, 0, 0)
+	lowerChannelPriority := NewRoutingSchedule(2, 999, 999, 999)
+	require.Equal(t, 1, channelPriorityWins.Compare(lowerChannelPriority))
 
-	zero := NewRoutingSchedule(0, 0, 0, 0)
-	require.EqualValues(t, 0, zero.EffectivePriority)
-	require.Equal(t, 0, zero.EffectiveWeight)
+	channelWeightWins := NewRoutingSchedule(3, 10, 0, 0)
+	higherCredentialPriority := NewRoutingSchedule(3, 9, 999, 999)
+	require.Equal(t, 1, channelWeightWins.Compare(higherCredentialPriority))
+
+	credentialPriorityWins := NewRoutingSchedule(3, 10, 2, 1)
+	lowerCredentialWeight := NewRoutingSchedule(3, 10, 2, 0)
+	require.Equal(t, 1, credentialPriorityWins.Compare(lowerCredentialWeight))
+
+	require.True(t, channelPriorityWins.SameLayer(NewRoutingSchedule(3, 0, 0, 0)))
 }
 
 func modelAccountPoolAuthTypeAPIKeyForTest() string {

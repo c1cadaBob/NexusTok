@@ -3,7 +3,6 @@ package model
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/constant"
@@ -38,19 +37,17 @@ func (key RoutingCandidateKey) String() string {
 	return fmt.Sprintf("%d:%s:%d:%d:%d:%d", key.ChannelID, key.Kind, key.MultiKeyIndex, key.ChannelAccountID, key.PoolGroupID, key.PoolAccountID)
 }
 
-// RoutingSchedule 保存渠道调度值、凭证调度值和加法合成后的有效调度值。
-// 第一版固定使用加法：effective = channel + credential，确保密钥级配置可以跨渠道竞争，
-// 但低优先级候选不能凭权重、健康度或成功率反超高优先级候选。
+// RoutingSchedule 保存渠道与凭证的四级字典序调度值。
+// 比较顺序固定为：channel_priority > channel_weight > credential_priority > credential_weight。
+// 这里只保存原始字段，不再提前折叠成合成分数，避免低层候选借助别的变量反超高层候选。
 type RoutingSchedule struct {
 	ChannelPriority    int64 `json:"channel_priority"`
 	ChannelWeight      int   `json:"channel_weight"`
 	CredentialPriority int64 `json:"credential_priority"`
 	CredentialWeight   int   `json:"credential_weight"`
-	EffectivePriority  int64 `json:"effective_priority"`
-	EffectiveWeight    int   `json:"effective_weight"`
 }
 
-// NewRoutingSchedule 按统一公式合成候选调度值。
+// NewRoutingSchedule 构建候选的四级调度值。
 func NewRoutingSchedule(channelPriority int64, channelWeight int, credentialPriority int64, credentialWeight int) RoutingSchedule {
 	if channelWeight < 0 {
 		channelWeight = 0
@@ -63,9 +60,46 @@ func NewRoutingSchedule(channelPriority int64, channelWeight int, credentialPrio
 		ChannelWeight:      channelWeight,
 		CredentialPriority: credentialPriority,
 		CredentialWeight:   credentialWeight,
-		EffectivePriority:  channelPriority + credentialPriority,
-		EffectiveWeight:    channelWeight + credentialWeight,
 	}
+}
+
+// Compare 按四级字典序比较两个调度值。
+//
+// 返回值含义：
+//   - 1：当前调度值更高
+//   - 0：两个调度值完全相同
+//   - -1：当前调度值更低
+func (schedule RoutingSchedule) Compare(other RoutingSchedule) int {
+	if schedule.ChannelPriority != other.ChannelPriority {
+		if schedule.ChannelPriority > other.ChannelPriority {
+			return 1
+		}
+		return -1
+	}
+	if schedule.ChannelWeight != other.ChannelWeight {
+		if schedule.ChannelWeight > other.ChannelWeight {
+			return 1
+		}
+		return -1
+	}
+	if schedule.CredentialPriority != other.CredentialPriority {
+		if schedule.CredentialPriority > other.CredentialPriority {
+			return 1
+		}
+		return -1
+	}
+	if schedule.CredentialWeight != other.CredentialWeight {
+		if schedule.CredentialWeight > other.CredentialWeight {
+			return 1
+		}
+		return -1
+	}
+	return 0
+}
+
+// SameLayer 判断两个调度值是否完全相同。
+func (schedule RoutingSchedule) SameLayer(other RoutingSchedule) bool {
+	return schedule.Compare(other) == 0
 }
 
 // RoutingCandidate 是统一调度层使用的非敏感候选元数据。
@@ -563,15 +597,14 @@ func routingCandidateRequestPathAllowed(channel *Channel, requestPath string) bo
 	return config != nil && config.SupportsPath(requestPath)
 }
 
-// RoutingCandidateDynamicAllowed 根据候选指向的凭证执行轻量动态过滤。
-// 这里不预留并发和额度，只过滤已经明确禁用、冷却或不支持当前模型/分组的凭证；
-// 原子预留仍在 middleware setup 阶段完成，失败后通过请求级候选排除集重选。
-func RoutingCandidateDynamicAllowed(candidate *RoutingCandidate, channel *Channel, usingGroup string, modelName string, now int64) bool {
+// RoutingCandidateDynamicAllowed 根据候选指向的凭证执行结构性过滤。
+//
+// 这里只保留不会改变四级字典序层级的条件：渠道/账号状态、凭证模式、模型白名单和
+// 分组白名单。冷却、并发、额度和其他运行态限制留到具体候选被选中后再处理，避免
+// 低层候选因为运行态状态提前抢位。
+func RoutingCandidateDynamicAllowed(candidate *RoutingCandidate, channel *Channel, usingGroup string, modelName string) bool {
 	if candidate == nil || channel == nil {
 		return false
-	}
-	if now <= 0 {
-		now = common.GetTimestamp()
 	}
 	switch candidate.Kind {
 	case RoutingCredentialKindSingleKey:
@@ -587,7 +620,7 @@ func RoutingCandidateDynamicAllowed(candidate *RoutingCandidate, channel *Channe
 		if err != nil || account == nil {
 			return false
 		}
-		return account.Status == common.ChannelStatusEnabled && !account.IsCoolingDown(now) && RoutingChannelAccountSupportsModel(account, channel, modelName) && RoutingChannelAccountSupportsGroup(account, channel, usingGroup)
+		return account.Status == common.ChannelStatusEnabled && RoutingChannelAccountSupportsModel(account, channel, modelName) && RoutingChannelAccountSupportsGroup(account, channel, usingGroup)
 	case RoutingCredentialKindPoolAccount:
 		group, err := GetAccountPoolGroupById(candidate.PoolGroupID)
 		if err != nil || group == nil || group.Status != common.ChannelStatusEnabled || !IsNativeAccountPoolGroupSource(group.Source) {
@@ -597,13 +630,7 @@ func RoutingCandidateDynamicAllowed(candidate *RoutingCandidate, channel *Channe
 		if err != nil || account == nil {
 			return false
 		}
-		if account.Status != common.ChannelStatusEnabled || !account.Schedulable || account.Unavailable || account.IsCoolingDown(now) {
-			return false
-		}
-		if err := PoolAccountDailyLimitError(account, time.Now()); err != nil {
-			return false
-		}
-		return RoutingPoolAccountSupportsModel(account, group, modelName) && RoutingPoolAccountSupportsGroup(account, group, usingGroup)
+		return account.Status == common.ChannelStatusEnabled && account.Schedulable && RoutingPoolAccountSupportsModel(account, group, modelName) && RoutingPoolAccountSupportsGroup(account, group, usingGroup)
 	default:
 		return false
 	}

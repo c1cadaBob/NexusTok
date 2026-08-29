@@ -19,50 +19,277 @@ func routingSelectTestPriority(priority int64) *int64 {
 	return &priority
 }
 
-func TestSelectRoutingCandidateHonorsCredentialPriorityAcrossChannels(t *testing.T) {
+func newRoutingSelectTestContext() *gin.Context {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	common.SetContextKey(c, constant.ContextKeyUsingGroup, "default")
+	common.SetContextKey(c, constant.ContextKeyUserGroup, "default")
+	return c
+}
+
+func TestSelectRoutingCandidateRespectsFourLevelOrder(t *testing.T) {
+	t.Run("channel priority before credential priority", func(t *testing.T) {
+		db := setupChannelAccountSelectTestDB(t)
+		highPriority := model.Channel{
+			Type:     constant.ChannelTypeOpenAI,
+			Key:      "sk-high",
+			Status:   common.ChannelStatusEnabled,
+			Name:     "high-priority-channel",
+			Models:   "gpt-route",
+			Group:    "default",
+			Priority: routingSelectTestPriority(10),
+			Weight:   routingSelectTestWeight(0),
+		}
+		lowPriority := model.Channel{
+			Type:     constant.ChannelTypeOpenAI,
+			Status:   common.ChannelStatusEnabled,
+			Name:     "low-priority-high-credential",
+			Models:   "gpt-route",
+			Group:    "default",
+			Priority: routingSelectTestPriority(0),
+			Weight:   routingSelectTestWeight(1000),
+			ChannelInfo: model.ChannelInfo{
+				CredentialMode:     constant.ChannelCredentialModeAccountPool,
+				AccountPoolEnabled: true,
+			},
+		}
+		require.NoError(t, db.Create(&highPriority).Error)
+		require.NoError(t, db.Create(&lowPriority).Error)
+		require.NoError(t, db.Create(&model.ChannelAccount{
+			ChannelId: lowPriority.Id,
+			Name:      "low-priority-key",
+			Key:       "sk-low",
+			Status:    common.ChannelStatusEnabled,
+			Models:    "gpt-route",
+			Group:     "default",
+			Priority:  100,
+			Weight:    100,
+		}).Error)
+
+		candidate, selectedGroup, err := SelectRoutingCandidate(&RetryParam{
+			Ctx:        newRoutingSelectTestContext(),
+			TokenGroup: "default",
+			ModelName:  "gpt-route",
+			Retry:      common.GetPointer(0),
+		})
+
+		require.NoError(t, err)
+		require.Equal(t, "default", selectedGroup)
+		require.NotNil(t, candidate)
+		require.Equal(t, model.RoutingCredentialKindSingleKey, candidate.Kind)
+		require.Equal(t, highPriority.Id, candidate.ChannelID)
+		require.EqualValues(t, 10, candidate.Schedule.ChannelPriority)
+		require.Equal(t, 0, candidate.Schedule.ChannelWeight)
+		require.EqualValues(t, 0, candidate.Schedule.CredentialPriority)
+		require.Equal(t, 0, candidate.Schedule.CredentialWeight)
+	})
+
+	t.Run("channel weight before credential priority", func(t *testing.T) {
+		db := setupChannelAccountSelectTestDB(t)
+		lowWeight := model.Channel{
+			Type:     constant.ChannelTypeOpenAI,
+			Key:      "sk-low-weight",
+			Status:   common.ChannelStatusEnabled,
+			Name:     "low-weight-channel",
+			Models:   "gpt-route",
+			Group:    "default",
+			Priority: routingSelectTestPriority(5),
+			Weight:   routingSelectTestWeight(10),
+		}
+		highWeight := model.Channel{
+			Type:     constant.ChannelTypeOpenAI,
+			Status:   common.ChannelStatusEnabled,
+			Name:     "high-weight-high-credential",
+			Models:   "gpt-route",
+			Group:    "default",
+			Priority: routingSelectTestPriority(5),
+			Weight:   routingSelectTestWeight(20),
+			ChannelInfo: model.ChannelInfo{
+				CredentialMode:     constant.ChannelCredentialModeAccountPool,
+				AccountPoolEnabled: true,
+			},
+		}
+		require.NoError(t, db.Create(&lowWeight).Error)
+		require.NoError(t, db.Create(&highWeight).Error)
+		require.NoError(t, db.Create(&model.ChannelAccount{
+			ChannelId: highWeight.Id,
+			Name:      "high-weight-key",
+			Key:       "sk-high",
+			Status:    common.ChannelStatusEnabled,
+			Models:    "gpt-route",
+			Group:     "default",
+			Priority:  100,
+			Weight:    1,
+		}).Error)
+
+		candidate, selectedGroup, err := SelectRoutingCandidate(&RetryParam{
+			Ctx:        newRoutingSelectTestContext(),
+			TokenGroup: "default",
+			ModelName:  "gpt-route",
+			Retry:      common.GetPointer(0),
+		})
+
+		require.NoError(t, err)
+		require.Equal(t, "default", selectedGroup)
+		require.NotNil(t, candidate)
+		require.Equal(t, model.RoutingCredentialKindChannelAccount, candidate.Kind)
+		require.Equal(t, highWeight.Id, candidate.ChannelID)
+		require.EqualValues(t, 5, candidate.Schedule.ChannelPriority)
+		require.Equal(t, 20, candidate.Schedule.ChannelWeight)
+		require.EqualValues(t, 100, candidate.Schedule.CredentialPriority)
+		require.Equal(t, 1, candidate.Schedule.CredentialWeight)
+	})
+
+	t.Run("credential priority before credential weight", func(t *testing.T) {
+		db := setupChannelAccountSelectTestDB(t)
+		channel := model.Channel{
+			Type:     constant.ChannelTypeOpenAI,
+			Status:   common.ChannelStatusEnabled,
+			Name:     "credential-priority-channel",
+			Models:   "gpt-route",
+			Group:    "default",
+			Priority: routingSelectTestPriority(3),
+			Weight:   routingSelectTestWeight(30),
+			ChannelInfo: model.ChannelInfo{
+				CredentialMode:     constant.ChannelCredentialModeAccountPool,
+				AccountPoolEnabled: true,
+			},
+		}
+		require.NoError(t, db.Create(&channel).Error)
+		require.NoError(t, db.Create(&[]model.ChannelAccount{
+			{
+				ChannelId: channel.Id,
+				Name:      "higher-priority",
+				Key:       "sk-higher-priority",
+				Status:    common.ChannelStatusEnabled,
+				Models:    "gpt-route",
+				Group:     "default",
+				Priority:  2,
+				Weight:    1,
+			},
+			{
+				ChannelId: channel.Id,
+				Name:      "lower-priority-higher-weight",
+				Key:       "sk-lower-priority",
+				Status:    common.ChannelStatusEnabled,
+				Models:    "gpt-route",
+				Group:     "default",
+				Priority:  1,
+				Weight:    100,
+			},
+		}).Error)
+
+		candidate, selectedGroup, err := SelectRoutingCandidate(&RetryParam{
+			Ctx:        newRoutingSelectTestContext(),
+			TokenGroup: "default",
+			ModelName:  "gpt-route",
+			Retry:      common.GetPointer(0),
+		})
+
+		require.NoError(t, err)
+		require.Equal(t, "default", selectedGroup)
+		require.NotNil(t, candidate)
+		require.Equal(t, model.RoutingCredentialKindChannelAccount, candidate.Kind)
+		require.Equal(t, channel.Id, candidate.ChannelID)
+		require.EqualValues(t, 2, candidate.Schedule.CredentialPriority)
+		require.Equal(t, 1, candidate.Schedule.CredentialWeight)
+	})
+
+	t.Run("credential weight after前三层相同", func(t *testing.T) {
+		db := setupChannelAccountSelectTestDB(t)
+		channel := model.Channel{
+			Type:     constant.ChannelTypeOpenAI,
+			Status:   common.ChannelStatusEnabled,
+			Name:     "credential-weight-channel",
+			Models:   "gpt-route",
+			Group:    "default",
+			Priority: routingSelectTestPriority(3),
+			Weight:   routingSelectTestWeight(30),
+			ChannelInfo: model.ChannelInfo{
+				CredentialMode:     constant.ChannelCredentialModeAccountPool,
+				AccountPoolEnabled: true,
+			},
+		}
+		require.NoError(t, db.Create(&channel).Error)
+		require.NoError(t, db.Create(&[]model.ChannelAccount{
+			{
+				ChannelId: channel.Id,
+				Name:      "lower-weight",
+				Key:       "sk-lower-weight",
+				Status:    common.ChannelStatusEnabled,
+				Models:    "gpt-route",
+				Group:     "default",
+				Priority:  1,
+				Weight:    10,
+			},
+			{
+				ChannelId: channel.Id,
+				Name:      "higher-weight",
+				Key:       "sk-higher-weight",
+				Status:    common.ChannelStatusEnabled,
+				Models:    "gpt-route",
+				Group:     "default",
+				Priority:  1,
+				Weight:    100,
+			},
+		}).Error)
+
+		candidate, selectedGroup, err := SelectRoutingCandidate(&RetryParam{
+			Ctx:        newRoutingSelectTestContext(),
+			TokenGroup: "default",
+			ModelName:  "gpt-route",
+			Retry:      common.GetPointer(0),
+		})
+
+		require.NoError(t, err)
+		require.Equal(t, "default", selectedGroup)
+		require.NotNil(t, candidate)
+		require.Equal(t, model.RoutingCredentialKindChannelAccount, candidate.Kind)
+		require.Equal(t, channel.Id, candidate.ChannelID)
+		require.EqualValues(t, 1, candidate.Schedule.CredentialPriority)
+		require.Equal(t, 100, candidate.Schedule.CredentialWeight)
+	})
+}
+
+func TestSelectRoutingCandidatePrefersHealthyCandidateWithinSameLayer(t *testing.T) {
+	clearRoutingHealthCacheForTest(t)
 	db := setupChannelAccountSelectTestDB(t)
-	lowChannel := model.Channel{
+	highHealthy := model.Channel{
 		Type:     constant.ChannelTypeOpenAI,
-		Key:      "sk-low-channel",
+		Key:      "sk-high-healthy",
 		Status:   common.ChannelStatusEnabled,
-		Name:     "low-channel-high-weight",
+		Name:     "high-layer-healthy",
+		Models:   "gpt-route",
+		Group:    "default",
+		Priority: routingSelectTestPriority(10),
+		Weight:   routingSelectTestWeight(10),
+	}
+	highCooling := model.Channel{
+		Type:     constant.ChannelTypeOpenAI,
+		Key:      "sk-high-cooling",
+		Status:   common.ChannelStatusEnabled,
+		Name:     "high-layer-cooling",
+		Models:   "gpt-route",
+		Group:    "default",
+		Priority: routingSelectTestPriority(10),
+		Weight:   routingSelectTestWeight(10),
+	}
+	lowHealthy := model.Channel{
+		Type:     constant.ChannelTypeOpenAI,
+		Key:      "sk-low-healthy",
+		Status:   common.ChannelStatusEnabled,
+		Name:     "low-layer-healthy",
 		Models:   "gpt-route",
 		Group:    "default",
 		Priority: routingSelectTestPriority(0),
 		Weight:   routingSelectTestWeight(1000),
 	}
-	require.NoError(t, db.Create(&lowChannel).Error)
-	highKeyChannel := model.Channel{
-		Type:     constant.ChannelTypeOpenAI,
-		Status:   common.ChannelStatusEnabled,
-		Name:     "high-key-channel",
-		Models:   "gpt-route",
-		Group:    "default",
-		Priority: routingSelectTestPriority(0),
-		Weight:   routingSelectTestWeight(0),
-		ChannelInfo: model.ChannelInfo{
-			CredentialMode:     constant.ChannelCredentialModeAccountPool,
-			AccountPoolEnabled: true,
-		},
-	}
-	require.NoError(t, db.Create(&highKeyChannel).Error)
-	account := model.ChannelAccount{
-		ChannelId: highKeyChannel.Id,
-		Name:      "priority-key",
-		Key:       "sk-priority",
-		Status:    common.ChannelStatusEnabled,
-		Models:    "gpt-route",
-		Group:     "default",
-		Priority:  1,
-		Weight:    195,
-	}
-	require.NoError(t, db.Create(&account).Error)
+	require.NoError(t, db.Create(&highHealthy).Error)
+	require.NoError(t, db.Create(&highCooling).Error)
+	require.NoError(t, db.Create(&lowHealthy).Error)
+	RecordChannelRoutingFailure("default", "gpt-route", highCooling.Id)
 
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	common.SetContextKey(c, constant.ContextKeyUsingGroup, "default")
-	common.SetContextKey(c, constant.ContextKeyUserGroup, "default")
 	candidate, selectedGroup, err := SelectRoutingCandidate(&RetryParam{
-		Ctx:        c,
+		Ctx:        newRoutingSelectTestContext(),
 		TokenGroup: "default",
 		ModelName:  "gpt-route",
 		Retry:      common.GetPointer(0),
@@ -71,47 +298,119 @@ func TestSelectRoutingCandidateHonorsCredentialPriorityAcrossChannels(t *testing
 	require.NoError(t, err)
 	require.Equal(t, "default", selectedGroup)
 	require.NotNil(t, candidate)
-	require.Equal(t, model.RoutingCredentialKindChannelAccount, candidate.Kind)
-	require.Equal(t, highKeyChannel.Id, candidate.ChannelID)
-	require.Equal(t, account.Id, candidate.ChannelAccountID)
-	require.EqualValues(t, 1, candidate.Schedule.EffectivePriority)
-	require.Equal(t, 195, candidate.Schedule.EffectiveWeight)
+	require.Equal(t, highHealthy.Id, candidate.ChannelID)
+	require.NotEqual(t, lowHealthy.Id, candidate.ChannelID)
 }
 
-func TestSelectRoutingCandidateExcludesFailedCandidateBeforeChannel(t *testing.T) {
+func TestSelectRoutingCandidateKeepsLeastDegradedCandidateWithinSameLayer(t *testing.T) {
+	clearRoutingHealthCacheForTest(t)
 	db := setupChannelAccountSelectTestDB(t)
-	channel := model.Channel{
+	better := model.Channel{
 		Type:     constant.ChannelTypeOpenAI,
+		Key:      "sk-better",
 		Status:   common.ChannelStatusEnabled,
-		Name:     "account-channel",
+		Name:     "better-high-layer",
+		Models:   "gpt-route",
+		Group:    "default",
+		Priority: routingSelectTestPriority(10),
+		Weight:   routingSelectTestWeight(10),
+	}
+	worse := model.Channel{
+		Type:     constant.ChannelTypeOpenAI,
+		Key:      "sk-worse",
+		Status:   common.ChannelStatusEnabled,
+		Name:     "worse-high-layer",
+		Models:   "gpt-route",
+		Group:    "default",
+		Priority: routingSelectTestPriority(10),
+		Weight:   routingSelectTestWeight(10),
+	}
+	low := model.Channel{
+		Type:     constant.ChannelTypeOpenAI,
+		Key:      "sk-low",
+		Status:   common.ChannelStatusEnabled,
+		Name:     "low-layer",
 		Models:   "gpt-route",
 		Group:    "default",
 		Priority: routingSelectTestPriority(0),
-		Weight:   routingSelectTestWeight(0),
-		ChannelInfo: model.ChannelInfo{
-			CredentialMode:     constant.ChannelCredentialModeAccountPool,
-			AccountPoolEnabled: true,
-		},
+		Weight:   routingSelectTestWeight(1000),
 	}
-	require.NoError(t, db.Create(&channel).Error)
-	accounts := []model.ChannelAccount{
-		{ChannelId: channel.Id, Name: "first", Key: "sk-first", Status: common.ChannelStatusEnabled, Models: "gpt-route", Group: "default", Priority: 1, Weight: 10},
-		{ChannelId: channel.Id, Name: "second", Key: "sk-second", Status: common.ChannelStatusEnabled, Models: "gpt-route", Group: "default", Priority: 1, Weight: 10},
-	}
-	require.NoError(t, db.Create(&accounts).Error)
+	require.NoError(t, db.Create(&better).Error)
+	require.NoError(t, db.Create(&worse).Error)
+	require.NoError(t, db.Create(&low).Error)
+	RecordChannelRoutingFailure("default", "gpt-route", better.Id)
+	RecordChannelRoutingFailure("default", "gpt-route", worse.Id)
+	RecordChannelRoutingFailure("default", "gpt-route", worse.Id)
 
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	common.SetContextKey(c, constant.ContextKeyUsingGroup, "default")
-	common.SetContextKey(c, constant.ContextKeyUserGroup, "default")
-	first, _, err := SelectRoutingCandidate(&RetryParam{Ctx: c, TokenGroup: "default", ModelName: "gpt-route", Retry: common.GetPointer(0)})
+	candidate, selectedGroup, err := SelectRoutingCandidate(&RetryParam{
+		Ctx:        newRoutingSelectTestContext(),
+		TokenGroup: "default",
+		ModelName:  "gpt-route",
+		Retry:      common.GetPointer(0),
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "default", selectedGroup)
+	require.NotNil(t, candidate)
+	require.Equal(t, better.Id, candidate.ChannelID)
+	require.NotEqual(t, low.Id, candidate.ChannelID)
+}
+
+func TestSelectRoutingCandidateReSelectsWithinSameLayerBeforeLowerLayer(t *testing.T) {
+	db := setupChannelAccountSelectTestDB(t)
+	firstChannel := model.Channel{
+		Type:     constant.ChannelTypeOpenAI,
+		Key:      "sk-first",
+		Status:   common.ChannelStatusEnabled,
+		Name:     "first-high-layer",
+		Models:   "gpt-route",
+		Group:    "default",
+		Priority: routingSelectTestPriority(10),
+		Weight:   routingSelectTestWeight(10),
+	}
+	secondChannel := model.Channel{
+		Type:     constant.ChannelTypeOpenAI,
+		Key:      "sk-second",
+		Status:   common.ChannelStatusEnabled,
+		Name:     "second-high-layer",
+		Models:   "gpt-route",
+		Group:    "default",
+		Priority: routingSelectTestPriority(10),
+		Weight:   routingSelectTestWeight(10),
+	}
+	lowChannel := model.Channel{
+		Type:     constant.ChannelTypeOpenAI,
+		Key:      "sk-low",
+		Status:   common.ChannelStatusEnabled,
+		Name:     "low-layer",
+		Models:   "gpt-route",
+		Group:    "default",
+		Priority: routingSelectTestPriority(0),
+		Weight:   routingSelectTestWeight(1000),
+	}
+	require.NoError(t, db.Create(&firstChannel).Error)
+	require.NoError(t, db.Create(&secondChannel).Error)
+	require.NoError(t, db.Create(&lowChannel).Error)
+
+	ctx := newRoutingSelectTestContext()
+	first, _, err := SelectRoutingCandidate(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-route",
+		Retry:      common.GetPointer(0),
+	})
 	require.NoError(t, err)
 	require.NotNil(t, first)
-	AddExcludedRoutingCandidate(c, first)
+	AddExcludedRoutingCandidate(ctx, first)
 
-	second, _, err := SelectRoutingCandidate(&RetryParam{Ctx: c, TokenGroup: "default", ModelName: "gpt-route", Retry: common.GetPointer(0)})
+	second, _, err := SelectRoutingCandidate(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-route",
+		Retry:      common.GetPointer(0),
+	})
 	require.NoError(t, err)
 	require.NotNil(t, second)
-	require.Equal(t, channel.Id, second.ChannelID)
-	require.NotEqual(t, first.ChannelAccountID, second.ChannelAccountID)
-	require.Empty(t, GetExcludedChannelIds(c))
+	require.NotEqual(t, first.ChannelID, second.ChannelID)
+	require.NotEqual(t, lowChannel.Id, second.ChannelID)
 }
