@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"github.com/c1cada/NexusTok/common"
@@ -132,6 +133,193 @@ func TestRelayRetriesToNextChannelAccountAfterSyncedKeyFailure(t *testing.T) {
 	require.True(t, service.GetExcludedChannelAccountIds(c)[firstStored.Id])
 }
 
+func TestRelayRetriesToNextMultiKeyCandidateBeforeChannelFallback(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupRelayRetryFallbackTestState(t)
+	common.RetryTimes = 1
+
+	var mu sync.Mutex
+	seenKeys := make([]string, 0, 2)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+		auth := r.Header.Get("Authorization")
+		mu.Lock()
+		seenKeys = append(seenKeys, auth)
+		mu.Unlock()
+		if auth == "Bearer sk-multi-fail" {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":{"message":"first multi key rejected","type":"invalid_request_error","code":"invalid_api_key"}}`))
+			return
+		}
+		require.Equal(t, "Bearer sk-multi-ok", auth)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-multi-key-ok","object":"chat.completion","created":1,"model":"gpt-retry-relay","choices":[{"index":0,"message":{"role":"assistant","content":"multi-key-ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer upstream.Close()
+
+	var fallbackHits int
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackHits++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer fallback.Close()
+
+	channel := createRelayRetryFallbackMultiKeyChannel(t, 11, "multi-key-channel", upstream.URL, 20)
+	createRelayRetryFallbackChannel(t, 12, "fallback", fallback.URL, 10)
+	model.InitChannelCache()
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	body := []byte(`{"model":"gpt-retry-relay","messages":[{"role":"user","content":"ping"}]}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	storage, err := common.CreateBodyStorage(body)
+	require.NoError(t, err)
+	c.Set(common.KeyBodyStorage, storage)
+	defer common.CleanupBodyStorage(c)
+	setRelayRetryFallbackRequestContext(c)
+
+	candidate, _, err := service.SelectRoutingCandidate(&service.RetryParam{
+		Ctx:         c,
+		TokenGroup:  "default",
+		ModelName:   "gpt-retry-relay",
+		RequestPath: "/v1/chat/completions",
+		Retry:       common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, candidate)
+	require.Equal(t, model.RoutingCredentialKindMultiKey, candidate.Kind)
+	require.Equal(t, 0, candidate.MultiKeyIndex)
+	require.Nil(t, middleware.SetupContextForRoutingCandidate(c, candidate, "gpt-retry-relay"))
+
+	Relay(c, types.RelayFormatOpenAI)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "multi-key-ok")
+	require.Equal(t, []string{"11", "11"}, c.GetStringSlice("use_channel"))
+	require.Empty(t, service.GetExcludedChannelIds(c))
+	require.Equal(t, 0, fallbackHits)
+	require.Equal(t, []string{"Bearer sk-multi-fail", "Bearer sk-multi-ok"}, seenKeys)
+	require.True(t, service.GetExcludedRoutingCandidateKeys(c)[(&model.RoutingCandidate{
+		ChannelID:     channel.Id,
+		Kind:          model.RoutingCredentialKindMultiKey,
+		MultiKeyIndex: 0,
+	}).CandidateKey().String()])
+}
+
+func TestRelayFallsBackToNextChannelAfterAllMultiKeyCandidatesFail(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupRelayRetryFallbackTestState(t)
+	common.RetryTimes = 2
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"message":"multi key rejected","type":"invalid_request_error","code":"invalid_api_key"}}`))
+	}))
+	defer upstream.Close()
+
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+		require.Equal(t, "Bearer sk-test", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-after-multi-key-ok","object":"chat.completion","created":1,"model":"gpt-retry-relay","choices":[{"index":0,"message":{"role":"assistant","content":"channel-fallback-ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer fallback.Close()
+
+	channel := createRelayRetryFallbackMultiKeyChannel(t, 21, "multi-key-channel", upstream.URL, 20)
+	createRelayRetryFallbackChannel(t, 22, "fallback", fallback.URL, 10)
+	model.InitChannelCache()
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	body := []byte(`{"model":"gpt-retry-relay","messages":[{"role":"user","content":"ping"}]}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	storage, err := common.CreateBodyStorage(body)
+	require.NoError(t, err)
+	c.Set(common.KeyBodyStorage, storage)
+	defer common.CleanupBodyStorage(c)
+	setRelayRetryFallbackRequestContext(c)
+
+	candidate, _, err := service.SelectRoutingCandidate(&service.RetryParam{
+		Ctx:         c,
+		TokenGroup:  "default",
+		ModelName:   "gpt-retry-relay",
+		RequestPath: "/v1/chat/completions",
+		Retry:       common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, candidate)
+	require.Equal(t, model.RoutingCredentialKindMultiKey, candidate.Kind)
+	require.Equal(t, 0, candidate.MultiKeyIndex)
+	require.Nil(t, middleware.SetupContextForRoutingCandidate(c, candidate, "gpt-retry-relay"))
+
+	Relay(c, types.RelayFormatOpenAI)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "channel-fallback-ok")
+	require.Equal(t, []string{"21", "21", "22"}, c.GetStringSlice("use_channel"))
+	require.Equal(t, []int{channel.Id}, service.GetExcludedChannelIds(c))
+	require.Len(t, service.GetExcludedRoutingCandidateKeys(c), 2)
+}
+
+func TestRelayDoesNotRetryMultiKeyWhenRetryTimesIsZero(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupRelayRetryFallbackTestState(t)
+	common.RetryTimes = 0
+
+	var mu sync.Mutex
+	seenKeys := make([]string, 0, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		mu.Lock()
+		seenKeys = append(seenKeys, auth)
+		mu.Unlock()
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"message":"first multi key rejected","type":"invalid_request_error","code":"invalid_api_key"}}`))
+	}))
+	defer upstream.Close()
+
+	candidateChannel := createRelayRetryFallbackMultiKeyChannel(t, 31, "multi-key-channel", upstream.URL, 20)
+	model.InitChannelCache()
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	body := []byte(`{"model":"gpt-retry-relay","messages":[{"role":"user","content":"ping"}]}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	storage, err := common.CreateBodyStorage(body)
+	require.NoError(t, err)
+	c.Set(common.KeyBodyStorage, storage)
+	defer common.CleanupBodyStorage(c)
+	setRelayRetryFallbackRequestContext(c)
+
+	candidate, _, err := service.SelectRoutingCandidate(&service.RetryParam{
+		Ctx:         c,
+		TokenGroup:  "default",
+		ModelName:   "gpt-retry-relay",
+		RequestPath: "/v1/chat/completions",
+		Retry:       common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, candidate)
+	require.Equal(t, model.RoutingCredentialKindMultiKey, candidate.Kind)
+	require.Nil(t, middleware.SetupContextForRoutingCandidate(c, candidate, "gpt-retry-relay"))
+
+	Relay(c, types.RelayFormatOpenAI)
+
+	require.Equal(t, http.StatusUnauthorized, recorder.Code)
+	require.Equal(t, []string{"31"}, c.GetStringSlice("use_channel"))
+	require.Empty(t, service.GetExcludedChannelIds(c))
+	require.Equal(t, []string{"Bearer sk-multi-fail"}, seenKeys)
+	require.True(t, service.GetExcludedRoutingCandidateKeys(c)[(&model.RoutingCandidate{
+		ChannelID:     candidateChannel.Id,
+		Kind:          model.RoutingCredentialKindMultiKey,
+		MultiKeyIndex: 0,
+	}).CandidateKey().String()])
+}
+
 func TestPrepareRelayChannelContextFallsBackWhenInitialAccountPoolUnavailable(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupRelayRetryFallbackTestState(t)
@@ -250,6 +438,42 @@ func createRelayRetryFallbackChannel(t *testing.T, id int, name string, baseURL 
 		Group:    "default",
 		Priority: &priority,
 		AutoBan:  &autoBan,
+	}
+	require.NoError(t, model.DB.Create(channel).Error)
+	require.NoError(t, model.DB.Create(&model.Ability{
+		Group:     "default",
+		Model:     "gpt-retry-relay",
+		ChannelId: id,
+		Enabled:   true,
+		Priority:  &priority,
+		Weight:    weight,
+	}).Error)
+	return channel
+}
+
+func createRelayRetryFallbackMultiKeyChannel(t *testing.T, id int, name string, baseURL string, priority int64) *model.Channel {
+	t.Helper()
+
+	weight := uint(100)
+	autoBan := 0
+	channel := &model.Channel{
+		Id:       id,
+		Type:     constant.ChannelTypeOpenAI,
+		Key:      "sk-multi-fail\nsk-multi-ok",
+		Status:   common.ChannelStatusEnabled,
+		Name:     name,
+		Weight:   &weight,
+		BaseURL:  &baseURL,
+		Models:   "gpt-retry-relay",
+		Group:    "default",
+		Priority: &priority,
+		AutoBan:  &autoBan,
+		ChannelInfo: model.ChannelInfo{
+			CredentialMode: constant.ChannelCredentialModeMultiKey,
+			IsMultiKey:     true,
+			MultiKeySize:   2,
+			MultiKeyMode:   constant.MultiKeyModePolling,
+		},
 	}
 	require.NoError(t, model.DB.Create(channel).Error)
 	require.NoError(t, model.DB.Create(&model.Ability{

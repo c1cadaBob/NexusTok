@@ -99,6 +99,49 @@ func SelectRoutingCandidate(param *RetryParam) (*model.RoutingCandidate, string,
 }
 
 func selectRoutingCandidateInGroup(param *RetryParam, usingGroup string) (*model.RoutingCandidate, error) {
+	usable, err := usableRoutingCandidatesInGroup(param, usingGroup)
+	if err != nil || len(usable) == 0 {
+		return nil, err
+	}
+	return selectRoutingCandidateByStrategy(usingGroup, param.ModelName, usable), nil
+}
+
+// SelectRoutingCandidateForChannel 只在指定渠道的剩余密钥级候选中选择。
+//
+// Relay 失败重试需要先尝试同渠道内的其它 key/account，确认该渠道的候选真的
+// 耗尽后才进入渠道级降级。本函数复用统一候选的结构性过滤、动态过滤和同层策略，
+// 但额外限制 channel_id，避免同层全局加权把请求提前切到其它渠道。
+func SelectRoutingCandidateForChannel(param *RetryParam, channelID int) (*model.RoutingCandidate, string, error) {
+	if param == nil {
+		return nil, "", errors.New("retry param is nil")
+	}
+	if channelID <= 0 {
+		return nil, param.TokenGroup, nil
+	}
+	usingGroup := param.TokenGroup
+	if actualGroup := RoutingGroupFromContext(param.Ctx); actualGroup != "" {
+		usingGroup = actualGroup
+	}
+	if usingGroup == "" || usingGroup == "auto" {
+		return nil, usingGroup, nil
+	}
+	usable, err := usableRoutingCandidatesInGroup(param, usingGroup)
+	if err != nil || len(usable) == 0 {
+		return nil, usingGroup, err
+	}
+	sameChannel := make([]*model.RoutingCandidate, 0, len(usable))
+	for _, candidate := range usable {
+		if candidate != nil && candidate.ChannelID == channelID {
+			sameChannel = append(sameChannel, candidate)
+		}
+	}
+	if len(sameChannel) == 0 {
+		return nil, usingGroup, nil
+	}
+	return selectRoutingCandidateByStrategy(usingGroup, param.ModelName, sameChannel), usingGroup, nil
+}
+
+func usableRoutingCandidatesInGroup(param *RetryParam, usingGroup string) ([]*model.RoutingCandidate, error) {
 	excludedChannels := GetExcludedChannelIds(param.Ctx)
 	excludedCandidates := GetExcludedRoutingCandidateKeys(param.Ctx)
 	candidates, err := model.GetRoutingCandidatesWithExclusions(usingGroup, param.ModelName, param.RequestPath, excludedChannels, excludedCandidates)
@@ -122,7 +165,7 @@ func selectRoutingCandidateInGroup(param *RetryParam, usingGroup string) (*model
 	if len(usable) == 0 {
 		return nil, nil
 	}
-	return selectRoutingCandidateByStrategy(usingGroup, param.ModelName, usable), nil
+	return usable, nil
 }
 
 func selectRoutingCandidateByStrategy(usingGroup string, modelName string, candidates []*model.RoutingCandidate) *model.RoutingCandidate {

@@ -352,9 +352,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		// 处理渠道错误（禁用渠道、记录日志等）
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
-		service.RecordChannelRoutingFailureIfEligible(c, channel, relayInfo.OriginModelName, newAPIError)
 
-		markChannelExcludedForRetry(c, channel.Id)
+		markFailedCredentialForRetry(c, channel, relayInfo, retryParam, newAPIError)
 
 		// 错误处理需要读取账号池上下文；处理完成后再释放并发槽位。
 		service.ReleaseSelectedChannelAccount(c)
@@ -398,19 +397,133 @@ func addUsedChannel(c *gin.Context, channelId int) {
 	c.Set("use_channel", useChannel)
 }
 
-// markChannelExcludedForRetry 把本轮失败的渠道加入请求级排除集。
+// markFailedCredentialForRetry 按失败粒度更新本次请求的排除集。
 //
-// 普通渠道失败后必须立即排除，避免自动禁用异步执行尚未完成时下一轮又选中
-// 同一渠道。账号池渠道失败时先由账号级排除集在同渠道内切换账号；只有同渠
-// 道已经没有可用账号、准备进入渠道级降级时，才排除整个渠道。
-func markChannelExcludedForRetry(c *gin.Context, channelId int) {
-	if channelId <= 0 {
+// 统一密钥级调度命中 multi-key、渠道账号或全局账号时，失败后应先排除当前
+// RoutingCandidate，让下一轮有机会继续留在同渠道内切到备用凭证。只有单 Key、
+// 未走统一候选的旧路径，或者当前渠道已经没有剩余候选时，才把整条 channel 加入
+// 请求级排除集并记录渠道级动态健康，避免同一个请求反复撞到已经耗尽的渠道。
+func markFailedCredentialForRetry(c *gin.Context, channel *model.Channel, relayInfo *relaycommon.RelayInfo, retryParam *service.RetryParam, err *types.NexusTokError) {
+	if c == nil || channel == nil || channel.Id <= 0 {
 		return
+	}
+	candidate := routingCredentialCandidateFromContext(c, channel.Id)
+	if candidate != nil && candidate.Kind != model.RoutingCredentialKindSingleKey {
+		service.AddExcludedRoutingCandidate(c, candidate)
+		if routingCandidateChannelHasAlternative(c, channel, relayInfo, retryParam) {
+			return
+		}
 	}
 	if common.GetContextKeyBool(c, constant.ContextKeyChannelAccountPool) {
 		return
 	}
-	service.AddExcludedChannelId(c, channelId)
+	service.RecordChannelRoutingFailureIfEligible(c, channel, relayModelNameForRetry(c, relayInfo), err)
+	service.AddExcludedChannelId(c, channel.Id)
+}
+
+func routingCandidateFromRelayContext(c *gin.Context, channelID int) *model.RoutingCandidate {
+	if c == nil {
+		return nil
+	}
+	value, ok := common.GetContextKey(c, constant.ContextKeyRoutingCandidate)
+	if !ok || value == nil {
+		return nil
+	}
+	var candidate *model.RoutingCandidate
+	switch typed := value.(type) {
+	case *model.RoutingCandidate:
+		candidate = typed
+	case model.RoutingCandidate:
+		candidate = &typed
+	default:
+		return nil
+	}
+	if candidate == nil || candidate.ChannelID <= 0 {
+		return nil
+	}
+	if channelID > 0 && candidate.ChannelID != channelID {
+		return nil
+	}
+	return candidate.Clone()
+}
+
+func routingCredentialCandidateFromContext(c *gin.Context, channelID int) *model.RoutingCandidate {
+	if candidate := routingCandidateFromRelayContext(c, channelID); candidate != nil {
+		return candidate
+	}
+	if c == nil || channelID <= 0 {
+		return nil
+	}
+	if common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey) {
+		return &model.RoutingCandidate{
+			ChannelID:     channelID,
+			Kind:          model.RoutingCredentialKindMultiKey,
+			MultiKeyIndex: common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex),
+		}
+	}
+	if !common.GetContextKeyBool(c, constant.ContextKeyChannelAccountPool) {
+		return nil
+	}
+	if poolAccountID := common.GetContextKeyInt(c, constant.ContextKeyPoolAccountId); poolAccountID > 0 {
+		return &model.RoutingCandidate{
+			ChannelID:     channelID,
+			Kind:          model.RoutingCredentialKindPoolAccount,
+			PoolGroupID:   common.GetContextKeyInt(c, constant.ContextKeyPoolGroupId),
+			PoolAccountID: poolAccountID,
+		}
+	}
+	if channelAccountID := common.GetContextKeyInt(c, constant.ContextKeyChannelAccountId); channelAccountID > 0 {
+		return &model.RoutingCandidate{
+			ChannelID:        channelID,
+			Kind:             model.RoutingCredentialKindChannelAccount,
+			ChannelAccountID: channelAccountID,
+		}
+	}
+	return nil
+}
+
+func routingCandidateChannelHasAlternative(c *gin.Context, channel *model.Channel, relayInfo *relaycommon.RelayInfo, retryParam *service.RetryParam) bool {
+	if c == nil || channel == nil || retryParam == nil {
+		return false
+	}
+	usingGroup := retryParam.TokenGroup
+	if actualGroup := service.RoutingGroupFromContext(c); actualGroup != "" {
+		usingGroup = actualGroup
+	}
+	excludedCandidates := service.GetExcludedRoutingCandidateKeys(c)
+	excludedChannels := service.GetExcludedChannelIds(c)
+	candidates, err := model.GetRoutingCandidatesWithExclusions(
+		usingGroup,
+		relayModelNameForRetry(c, relayInfo),
+		retryParam.RequestPath,
+		excludedChannels,
+		excludedCandidates,
+	)
+	if err != nil {
+		return false
+	}
+	for _, candidate := range candidates {
+		if candidate == nil || candidate.ChannelID != channel.Id {
+			continue
+		}
+		if model.RoutingCandidateDynamicAllowed(candidate, channel, usingGroup, relayModelNameForRetry(c, relayInfo)) {
+			return true
+		}
+	}
+	return false
+}
+
+func relayModelNameForRetry(c *gin.Context, relayInfo *relaycommon.RelayInfo) string {
+	if relayInfo != nil && relayInfo.OriginModelName != "" {
+		return relayInfo.OriginModelName
+	}
+	if c == nil {
+		return ""
+	}
+	if modelName := c.GetString("original_model"); modelName != "" {
+		return modelName
+	}
+	return c.GetString("model")
 }
 
 func fastTokenCountMetaForPricing(request dto.Request) *types.TokenCountMeta {
@@ -503,6 +616,9 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 		}
 		return channel, nil
 	}
+	if channel, setupErr, ok := trySetupRoutingCandidateRetryChannel(c, info, retryParam); ok {
+		return channel, setupErr
+	}
 	if channel, setupErr, ok := trySetupAccountPoolRetryChannel(c, info); ok {
 		return channel, setupErr
 	}
@@ -567,6 +683,50 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 		return nil, endpointAutoConversionNoCompatibleChannelError(info)
 	}
 	return nil, types.NewError(fmt.Errorf("分组 %s 下模型 %s 的候选渠道均不可用（retry）", retryParam.TokenGroup, info.OriginModelName), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+}
+
+// trySetupRoutingCandidateRetryChannel 在密钥级失败后的下一轮优先复用当前渠道。
+//
+// 统一调度已经能把 multi-key、渠道账号和全局账号都表达成独立候选；Relay 真正
+// 调用失败后，应该先排除“当前候选”并尝试同渠道内剩余候选。只有这里找不到
+// 同渠道备用候选时，后续流程才会进入账号池旧兜底或全局渠道选择。
+func trySetupRoutingCandidateRetryChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam) (*model.Channel, *types.NexusTokError, bool) {
+	if c == nil || info == nil || retryParam == nil {
+		return nil, nil, false
+	}
+	current := routingCredentialCandidateFromContext(c, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
+	if current == nil || current.Kind == model.RoutingCredentialKindSingleKey {
+		return nil, nil, false
+	}
+	if !service.GetExcludedRoutingCandidateKeys(c)[current.CandidateKey().String()] {
+		return nil, nil, false
+	}
+	candidate, _, err := service.SelectRoutingCandidateForChannel(retryParam, current.ChannelID)
+	if err != nil || candidate == nil {
+		return nil, nil, false
+	}
+	selectedChannel, channelErr := model.CacheGetChannel(candidate.ChannelID)
+	if channelErr != nil || selectedChannel == nil {
+		return nil, nil, false
+	}
+	common.SetContextKey(c, constant.ContextKeyRoutingCandidate, candidate.Clone())
+	setupErr := middleware.SetupContextForRoutingCandidate(c, candidate, info.OriginModelName)
+	if setupErr != nil {
+		if shouldExcludeSetupFailedChannel(c, setupErr) {
+			service.AddExcludedRoutingCandidate(c, candidate)
+			return nil, nil, false
+		}
+		return nil, setupErr, true
+	}
+	if !channelAllowedForEndpointAutoConversion(c, selectedChannel) {
+		service.ReleaseSelectedChannelAccount(c)
+		service.ReleaseSelectedPoolAccount(c)
+		service.AddExcludedRoutingCandidate(c, candidate)
+		return nil, nil, false
+	}
+	info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
+	info.InitChannelMeta(c)
+	return selectedChannel, nil, true
 }
 
 // maxChannelSetupSelectionAttempts 限制单次 getChannel 内因 setup 失败而重选渠道的次数。
@@ -947,12 +1107,12 @@ func RelayTask(c *gin.Context) {
 		}
 
 		if !taskErr.LocalError {
+			upstreamErr := types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode)
 			processChannelError(c,
 				*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
 					common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
-				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode))
-			markChannelExcludedForRetry(c, channel.Id)
-			service.RecordChannelRoutingFailureIfEligible(c, channel, relayInfo.OriginModelName, types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode))
+				upstreamErr)
+			markFailedCredentialForRetry(c, channel, relayInfo, retryParam, upstreamErr)
 		}
 		service.ReleaseSelectedChannelAccount(c)
 		service.ReleaseSelectedPoolAccount(c)
