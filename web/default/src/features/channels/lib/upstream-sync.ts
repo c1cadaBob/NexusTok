@@ -20,6 +20,8 @@ import { CHANNEL_STATUS } from '../constants'
 import type {
   Channel,
   ChannelAccount,
+  ChannelAccountListResponse,
+  ChannelAccountStats,
   UpstreamAccountKey,
   UpstreamAccountPreviewData,
   UpstreamAccountPreviewRequest,
@@ -39,6 +41,7 @@ const CHANNEL_TYPE_NEW_API = 59
 const CHANNEL_TYPE_SUB2API = 60
 export const DEFAULT_UPSTREAM_PAID_AMOUNT = '1'
 export const DEFAULT_UPSTREAM_PLATFORM_CREDIT = '10'
+export const CHANNEL_ACCOUNT_PAGE_SIZE_LIMIT = 100
 
 type RatioDisplaySource = {
   ratio_conversion?: number | null
@@ -96,6 +99,17 @@ export type BuildUpstreamAccountRefreshPayloadOptions = {
   disableMissingKey?: boolean
 }
 
+export type LoadChannelAccountsPage = (
+  page: number,
+  pageSize: number
+) => Promise<ChannelAccountListResponse>
+
+export type LoadAllChannelAccountsResult = {
+  accounts: ChannelAccount[]
+  total: number
+  stats?: ChannelAccountStats
+}
+
 export function parseSettingsRecord(
   settings: string | undefined
 ): Record<string, unknown> {
@@ -109,6 +123,121 @@ export function parseSettingsRecord(
     return {}
   }
   return {}
+}
+
+function positiveFiniteNumberFromUnknown(value: unknown): number | undefined {
+  const parsed =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim()
+        ? Number(value)
+        : Number.NaN
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined
+  return parsed
+}
+
+export function normalizeUpstreamRatioConversionConfig(
+  config: UpstreamAccountRatioConversion | null | undefined
+): UpstreamAccountRatioConversion | undefined {
+  if (!config || config.enabled === false) return undefined
+  const paidCny = positiveFiniteNumberFromUnknown(config.paid_cny)
+  const platformUsdCredit = positiveFiniteNumberFromUnknown(
+    config.platform_usd_credit
+  )
+  if (!paidCny || !platformUsdCredit) return undefined
+  return {
+    paid_cny: paidCny,
+    platform_usd_credit: platformUsdCredit,
+    enabled: true,
+  }
+}
+
+export function getUpstreamRatioConversionConfigFromSettings(
+  settings: string | undefined
+): UpstreamAccountRatioConversion | undefined {
+  const metadata =
+    parseSettingsRecord(settings)[UPSTREAM_ACCOUNT_SYNC_SETTINGS_KEY]
+  if (!metadata || typeof metadata !== 'object') return undefined
+  const rawConfig = (metadata as Record<string, unknown>)
+    .ratio_conversion_config
+  if (!rawConfig || typeof rawConfig !== 'object') return undefined
+  return normalizeUpstreamRatioConversionConfig(
+    rawConfig as UpstreamAccountRatioConversion
+  )
+}
+
+export function resolveStoredUpstreamRatioConversionConfig({
+  channelSettings,
+  accounts,
+}: {
+  channelSettings?: string
+  accounts?: ChannelAccount[]
+}): UpstreamAccountRatioConversion | undefined {
+  const channelConfig =
+    getUpstreamRatioConversionConfigFromSettings(channelSettings)
+  if (channelConfig) return channelConfig
+
+  for (const account of accounts ?? []) {
+    const accountConfig = normalizeUpstreamRatioConversionConfig(
+      account.ratio_conversion_config
+    )
+    if (accountConfig) return accountConfig
+  }
+
+  return undefined
+}
+
+export function getUpstreamRatioConversionInputValues(
+  config: UpstreamAccountRatioConversion | null | undefined
+) {
+  const normalized = normalizeUpstreamRatioConversionConfig(config)
+  return {
+    paidCny: normalized?.paid_cny
+      ? String(normalized.paid_cny)
+      : DEFAULT_UPSTREAM_PAID_AMOUNT,
+    platformUsdCredit: normalized?.platform_usd_credit
+      ? String(normalized.platform_usd_credit)
+      : DEFAULT_UPSTREAM_PLATFORM_CREDIT,
+  }
+}
+
+export async function loadAllChannelAccounts(
+  loadPage: LoadChannelAccountsPage,
+  pageSize = CHANNEL_ACCOUNT_PAGE_SIZE_LIMIT
+): Promise<LoadAllChannelAccountsResult> {
+  const accounts: ChannelAccount[] = []
+  let page = 1
+  let total = 0
+  let stats: ChannelAccountStats | undefined
+
+  for (;;) {
+    const response = await loadPage(page, pageSize)
+    if (!response.success || !response.data) {
+      throw new Error(response.message || 'Failed to load channel accounts')
+    }
+
+    const pageData = response.data.accounts
+    const pageItems = pageData.items ?? []
+    accounts.push(...pageItems)
+    total = Math.max(total, pageData.total ?? 0)
+    stats = response.data.stats ?? stats
+
+    const responsePageSize = pageData.page_size || pageSize
+    const loadedAllKnownItems = total > 0 && accounts.length >= total
+    const reachedShortPage =
+      pageItems.length === 0 || pageItems.length < responsePageSize
+    if (loadedAllKnownItems || reachedShortPage) {
+      break
+    }
+
+    page += 1
+  }
+
+  return {
+    accounts,
+    total: total || accounts.length,
+    stats,
+  }
 }
 
 export function upstreamPlatformFromChannelType(

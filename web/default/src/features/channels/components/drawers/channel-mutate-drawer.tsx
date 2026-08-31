@@ -193,6 +193,7 @@ import {
   buildUpstreamAccountConfigDraft,
   formatUpstreamModelRatioDetails,
   formatUpstreamRatioCompact,
+  getUpstreamRatioConversionInputValues,
   getUpstreamSyncCredentialAuthModeFromSettings,
   getUpstreamKeyRatioDisplayValue,
   getUpstreamKeyGroupLabel,
@@ -200,6 +201,8 @@ import {
   getUpstreamPreviewBalanceDisplay,
   collectUpstreamAccountCapabilityValidationErrors,
   hasUpstreamKeyModelSyncFailure,
+  loadAllChannelAccounts,
+  resolveStoredUpstreamRatioConversionConfig,
   shouldEnableUpstreamAccountKeyByDefault,
   summarizeUpstreamAccountCapabilities,
 } from '../../lib/upstream-sync'
@@ -419,16 +422,9 @@ function setUpstreamRatioConversionState(
   setPaidCny: (value: string) => void,
   setPlatformUsdCredit: (value: string) => void
 ) {
-  setPaidCny(
-    config?.paid_cny && Number.isFinite(config.paid_cny)
-      ? String(config.paid_cny)
-      : DEFAULT_UPSTREAM_PAID_AMOUNT
-  )
-  setPlatformUsdCredit(
-    config?.platform_usd_credit && Number.isFinite(config.platform_usd_credit)
-      ? String(config.platform_usd_credit)
-      : DEFAULT_UPSTREAM_PLATFORM_CREDIT
-  )
+  const values = getUpstreamRatioConversionInputValues(config)
+  setPaidCny(values.paidCny)
+  setPlatformUsdCredit(values.platformUsdCredit)
 }
 
 export function upstreamKeyConfigId(key: UpstreamAccountKey, index: number) {
@@ -1233,6 +1229,8 @@ export function ChannelMutateDrawer({
   const [upstreamAccountConfigs, setUpstreamAccountConfigs] = useState<
     Record<string, UpstreamAccountConfigDraft>
   >({})
+  const [upstreamRatioConfigLoaded, setUpstreamRatioConfigLoaded] =
+    useState(false)
   const upstreamRatioConversion = useMemo(
     () =>
       buildUpstreamRatioConversionPayload(
@@ -1252,7 +1250,7 @@ export function ChannelMutateDrawer({
   const upstreamRefreshCapturePanelRef =
     useRef<UpstreamAccountCapturePanelHandle>(null)
   const upstreamCaptureReturnAppliedRef = useRef('')
-  const upstreamRatioConfigLoadedRef = useRef(false)
+  const upstreamRatioConfigDirtyRef = useRef(false)
   const [statusCodeRiskOpen, setStatusCodeRiskOpen] = useState(false)
   const [statusCodeRiskDetailItems, setStatusCodeRiskDetailItems] = useState<
     string[]
@@ -1272,6 +1270,39 @@ export function ChannelMutateDrawer({
   const [paramOverrideEditorOpen, setParamOverrideEditorOpen] = useState(false)
   const [advancedCustomEditorOpen, setAdvancedCustomEditorOpen] =
     useState(false)
+
+  const applyUpstreamRatioConversionState = useCallback(
+    (
+      config: UpstreamAccountRatioConversion | null | undefined,
+      options: { force?: boolean; markLoaded?: boolean } = {}
+    ) => {
+      if (!options.force && upstreamRatioConfigDirtyRef.current) {
+        if (options.markLoaded !== false) {
+          setUpstreamRatioConfigLoaded(true)
+        }
+        return
+      }
+      setUpstreamRatioConversionState(
+        config,
+        setUpstreamPaidCny,
+        setUpstreamPlatformUsdCredit
+      )
+      if (options.markLoaded !== false) {
+        setUpstreamRatioConfigLoaded(true)
+      }
+    },
+    []
+  )
+
+  const handleUpstreamPaidCnyChange = useCallback((value: string) => {
+    upstreamRatioConfigDirtyRef.current = true
+    setUpstreamPaidCny(value)
+  }, [])
+
+  const handleUpstreamPlatformUsdCreditChange = useCallback((value: string) => {
+    upstreamRatioConfigDirtyRef.current = true
+    setUpstreamPlatformUsdCredit(value)
+  }, [])
   const [activeEditorSectionId, setActiveEditorSectionId] = useState<string>(
     CHANNEL_EDITOR_SECTION_IDS.identity
   )
@@ -1636,10 +1667,12 @@ export function ChannelMutateDrawer({
       'upstream-sync-accounts',
     ],
     queryFn: () =>
-      getChannelAccounts(channelId!, {
-        p: 1,
-        page_size: 100,
-      }),
+      loadAllChannelAccounts((page, pageSize) =>
+        getChannelAccounts(channelId!, {
+          p: page,
+          page_size: pageSize,
+        })
+      ),
     enabled:
       open &&
       Boolean(channelId) &&
@@ -1650,12 +1683,26 @@ export function ChannelMutateDrawer({
   // 否则 `undefined ?? []` 会在每次渲染时生成新数组，触发依赖它的 useEffect
   // 反复执行 `form.reset`，最终让创建抽屉进入 React 最大更新深度错误。
   const syncedChannelAccounts = useMemo(
-    () => syncedChannelAccountsQuery.data?.data?.accounts.items ?? [],
-    [syncedChannelAccountsQuery.data?.data?.accounts.items]
+    () => syncedChannelAccountsQuery.data?.accounts ?? [],
+    [syncedChannelAccountsQuery.data?.accounts]
   )
-  const syncedChannelAccountsTotal =
-    syncedChannelAccountsQuery.data?.data?.accounts.total ?? 0
+  const syncedChannelAccountsTotal = syncedChannelAccountsQuery.data?.total ?? 0
   const syncedChannelAccountsLoadedCount = syncedChannelAccounts.length
+  const syncedChannelSettings =
+    channelData?.data?.settings ?? renderCurrentRow?.settings
+  const storedChannelRatioConfig = useMemo(
+    () =>
+      resolveStoredUpstreamRatioConversionConfig({
+        channelSettings: syncedChannelSettings,
+      }),
+    [syncedChannelSettings]
+  )
+  const upstreamRefreshRatioConfigPending =
+    isUpstreamAccountSyncedChannel &&
+    permissions.canReadChannelAccount &&
+    !storedChannelRatioConfig &&
+    !upstreamRatioConfigLoaded &&
+    !syncedChannelAccountsQuery.isFetched
   const syncedEditableAccounts = useMemo(
     () => syncedChannelAccounts.map(upstreamAccountFromChannelAccount),
     [syncedChannelAccounts]
@@ -2778,16 +2825,20 @@ export function ChannelMutateDrawer({
       setUpstreamUsername('')
       setUpstreamPassword('')
       resetUpstreamImportedLogin()
+      upstreamRatioConfigDirtyRef.current = false
+      setUpstreamRatioConfigLoaded(false)
       if (captureRefreshContext) {
         setUpstreamAuthMode('oauth_browser')
         setUpstreamRefreshCaptureId(captureRefreshContext.captureId)
       }
-      setUpstreamRatioConversionState(
-        syncedChannelAccounts[0]?.ratio_conversion_config,
-        setUpstreamPaidCny,
-        setUpstreamPlatformUsdCredit
-      )
-      upstreamRatioConfigLoadedRef.current = true
+      const storedRatioConfig = resolveStoredUpstreamRatioConversionConfig({
+        channelSettings: channelData.data.settings,
+      })
+      applyUpstreamRatioConversionState(storedRatioConfig, {
+        force: true,
+        markLoaded:
+          Boolean(storedRatioConfig) || !permissions.canReadChannelAccount,
+      })
       setSyncRefreshOpen(Boolean(captureRefreshContext))
       setAdvancedSettingsOpen(
         readAdvancedSettingsPreference() || hasAdvancedSettingsValues(defaults)
@@ -2808,9 +2859,12 @@ export function ChannelMutateDrawer({
       setUpstreamUsername('')
       setUpstreamPassword('')
       resetUpstreamImportedLogin()
-      setUpstreamPaidCny(DEFAULT_UPSTREAM_PAID_AMOUNT)
-      setUpstreamPlatformUsdCredit(DEFAULT_UPSTREAM_PLATFORM_CREDIT)
-      upstreamRatioConfigLoadedRef.current = false
+      upstreamRatioConfigDirtyRef.current = false
+      applyUpstreamRatioConversionState(undefined, {
+        force: true,
+        markLoaded: false,
+      })
+      setUpstreamRatioConfigLoaded(false)
       setSyncRefreshOpen(false)
       setAdvancedSettingsOpen(false)
       initialModelsRef.current = []
@@ -2818,12 +2872,13 @@ export function ChannelMutateDrawer({
       initialStatusCodeMappingRef.current = ''
     }
   }, [
+    applyUpstreamRatioConversionState,
     clearAllUpstreamPreviews,
     isEditing,
     channelData,
     form,
     resetUpstreamImportedLogin,
-    syncedChannelAccounts,
+    permissions.canReadChannelAccount,
     savedUpstreamCredentialAvailable,
     captureReturnContext,
   ])
@@ -2920,24 +2975,25 @@ export function ChannelMutateDrawer({
       !isUpstreamAccountSyncedChannel ||
       upstreamRefreshSnapshot ||
       upstreamSnapshot ||
-      upstreamRatioConfigLoadedRef.current
+      upstreamRatioConfigLoaded ||
+      !syncedChannelAccountsQuery.isFetched
     ) {
       return
     }
-    const ratioConfig = syncedChannelAccounts.find(
-      (account) => account.ratio_conversion_config
-    )?.ratio_conversion_config
-    if (ratioConfig) {
-      setUpstreamRatioConversionState(
-        ratioConfig,
-        setUpstreamPaidCny,
-        setUpstreamPlatformUsdCredit
-      )
-    }
-    upstreamRatioConfigLoadedRef.current = true
+    const ratioConfig = resolveStoredUpstreamRatioConversionConfig({
+      channelSettings:
+        channelData?.data?.settings ?? renderCurrentRow?.settings,
+      accounts: syncedChannelAccounts,
+    })
+    applyUpstreamRatioConversionState(ratioConfig)
   }, [
+    applyUpstreamRatioConversionState,
+    channelData?.data?.settings,
     isUpstreamAccountSyncedChannel,
+    renderCurrentRow?.settings,
     syncedChannelAccounts,
+    syncedChannelAccountsQuery.isFetched,
+    upstreamRatioConfigLoaded,
     upstreamRefreshSnapshot,
     upstreamSnapshot,
   ])
@@ -3266,12 +3322,7 @@ export function ChannelMutateDrawer({
         buildUpstreamAccountConfigsFromSnapshotKeys(data.snapshot.keys, prev)
       )
       if (data.snapshot.ratio_conversion) {
-        setUpstreamRatioConversionState(
-          data.snapshot.ratio_conversion,
-          setUpstreamPaidCny,
-          setUpstreamPlatformUsdCredit
-        )
-        upstreamRatioConfigLoadedRef.current = true
+        applyUpstreamRatioConversionState(data.snapshot.ratio_conversion)
       }
 
       if (mode === 'create') {
@@ -3319,6 +3370,7 @@ export function ChannelMutateDrawer({
       )
     },
     [
+      applyUpstreamRatioConversionState,
       clearUpstreamCreatePreview,
       clearUpstreamRefreshPreview,
       form,
@@ -3836,6 +3888,10 @@ export function ChannelMutateDrawer({
       toast.error(noPermissionMessage)
       return
     }
+    if (upstreamRefreshRatioConfigPending) {
+      return
+    }
+    const refreshPlatform = forcedUpstreamPlatform ?? upstreamPlatform
     const usingSavedCredential =
       isUpstreamAccountSyncedChannel &&
       upstreamUseSavedCredential &&
@@ -3850,7 +3906,6 @@ export function ChannelMutateDrawer({
     }
     if (!usingSavedCredential) {
       const baseUrl = upstreamBaseUrl.trim()
-      const refreshPlatform = forcedUpstreamPlatform ?? upstreamPlatform
       if (!baseUrl) {
         toast.error(t('Upstream platform URL is required'))
         return
@@ -3894,7 +3949,6 @@ export function ChannelMutateDrawer({
         }
       }
     }
-    const refreshPlatform = forcedUpstreamPlatform ?? upstreamPlatform
     const res = await upstreamPreviewMutation.mutateAsync(
       usingSavedCredential
         ? {
@@ -3977,6 +4031,7 @@ export function ChannelMutateDrawer({
     upstreamTokenExpiresAt,
     upstreamUseSavedCredential,
     upstreamPreviewMutation,
+    upstreamRefreshRatioConfigPending,
     upstreamRatioConversion,
     upstreamUsername,
     upstreamUserId,
@@ -4426,7 +4481,7 @@ export function ChannelMutateDrawer({
         resetUpstreamImportedLogin()
         setUpstreamPaidCny(DEFAULT_UPSTREAM_PAID_AMOUNT)
         setUpstreamPlatformUsdCredit(DEFAULT_UPSTREAM_PLATFORM_CREDIT)
-        upstreamRatioConfigLoadedRef.current = false
+        setUpstreamRatioConfigLoaded(false)
         clearAllUpstreamPreviews()
         upstreamCredentialFingerprintRef.current = ''
       }
@@ -4953,7 +5008,9 @@ export function ChannelMutateDrawer({
                                   id='upstream-sync-paid-cny'
                                   value={upstreamPaidCny}
                                   onChange={(event) =>
-                                    setUpstreamPaidCny(event.target.value)
+                                    handleUpstreamPaidCnyChange(
+                                      event.target.value
+                                    )
                                   }
                                   inputMode='decimal'
                                   placeholder={DEFAULT_UPSTREAM_PAID_AMOUNT}
@@ -4967,7 +5024,7 @@ export function ChannelMutateDrawer({
                                   id='upstream-sync-platform-usd-credit'
                                   value={upstreamPlatformUsdCredit}
                                   onChange={(event) =>
-                                    setUpstreamPlatformUsdCredit(
+                                    handleUpstreamPlatformUsdCreditChange(
                                       event.target.value
                                     )
                                   }
@@ -5343,7 +5400,9 @@ export function ChannelMutateDrawer({
                                     id='upstream-refresh-paid-cny'
                                     value={upstreamPaidCny}
                                     onChange={(event) =>
-                                      setUpstreamPaidCny(event.target.value)
+                                      handleUpstreamPaidCnyChange(
+                                        event.target.value
+                                      )
                                     }
                                     inputMode='decimal'
                                     placeholder={DEFAULT_UPSTREAM_PAID_AMOUNT}
@@ -5357,7 +5416,7 @@ export function ChannelMutateDrawer({
                                     id='upstream-refresh-platform-usd-credit'
                                     value={upstreamPlatformUsdCredit}
                                     onChange={(event) =>
-                                      setUpstreamPlatformUsdCredit(
+                                      handleUpstreamPlatformUsdCreditChange(
                                         event.target.value
                                       )
                                     }
@@ -5374,7 +5433,10 @@ export function ChannelMutateDrawer({
                                     type='button'
                                     variant='outline'
                                     className='min-w-0 flex-1 whitespace-nowrap'
-                                    disabled={upstreamPreviewMutation.isPending}
+                                    disabled={
+                                      upstreamPreviewMutation.isPending ||
+                                      upstreamRefreshRatioConfigPending
+                                    }
                                     onClick={handlePreviewUpstreamRefresh}
                                   >
                                     {upstreamPreviewMutation.isPending ? (
@@ -5397,7 +5459,8 @@ export function ChannelMutateDrawer({
                                       isUpstreamRefreshPreviewExpired ||
                                       upstreamPreviewMutation.isPending ||
                                       upstreamPreview2FAMutation.isPending ||
-                                      upstreamRefreshMutation.isPending
+                                      upstreamRefreshMutation.isPending ||
+                                      upstreamRefreshRatioConfigPending
                                     }
                                     onClick={handleRefreshUpstreamAccount}
                                   >

@@ -72,6 +72,7 @@ import {
   formatUpstreamModelRatioDetails,
   formatUpstreamPreviewRemaining,
   formatUpstreamRatioCompact,
+  getUpstreamRatioConversionInputValues,
   getUpstreamSyncCredentialAuthModeFromSettings,
   getUpstreamKeyGroupLabel,
   getUpstreamKeyRatioDisplayValue,
@@ -84,7 +85,9 @@ import {
   hasUpstreamPreviewSnapshot,
   hasUpstreamSyncSavedCredential,
   isUpstreamPreviewExpiredError,
+  loadAllChannelAccounts,
   normalizeUpstreamChannelBaseUrl,
+  resolveStoredUpstreamRatioConversionConfig,
   shouldEnableUpstreamAccountKeyByDefault,
   summarizeUpstreamAccountCapabilities,
   upstreamAccountKeyConfigId,
@@ -97,6 +100,7 @@ import type {
   UpstreamAccountPlatform,
   UpstreamAccountAuthMode,
   UpstreamAccountPreviewData,
+  UpstreamAccountRatioConversion,
   UpstreamAccountSnapshot,
   UpstreamAccountTwoFactorChallenge,
 } from '../types'
@@ -240,9 +244,10 @@ export function UpstreamAccountRefreshPanel({
   const [upstreamAccountConfigs, setUpstreamAccountConfigs] = useState<
     Record<string, UpstreamAccountConfigDraft>
   >({})
+  const [ratioConfigLoaded, setRatioConfigLoaded] = useState(false)
   const autoPreviewTriggeredRef = useRef(false)
   const capturePanelRef = useRef<UpstreamAccountCapturePanelHandle>(null)
-  const ratioConfigLoadedRef = useRef(false)
+  const ratioConfigDirtyRef = useRef(false)
 
   const { data: groupsData } = useQuery({
     queryKey: ['groups'],
@@ -256,20 +261,34 @@ export function UpstreamAccountRefreshPanel({
       'upstream-refresh-accounts',
     ],
     queryFn: () =>
-      getChannelAccounts(channelId!, {
-        p: 1,
-        page_size: 10000,
-      }),
+      loadAllChannelAccounts((page, pageSize) =>
+        getChannelAccounts(channelId!, {
+          p: page,
+          page_size: pageSize,
+        })
+      ),
     enabled: open && Boolean(channelId) && canReadChannelAccount,
   })
 
   const refreshAccounts = useMemo(
-    () => refreshAccountsQuery.data?.data?.accounts.items ?? [],
-    [refreshAccountsQuery.data?.data?.accounts.items]
+    () => refreshAccountsQuery.data?.accounts ?? [],
+    [refreshAccountsQuery.data?.accounts]
   )
-  const refreshAccountsTotal =
-    refreshAccountsQuery.data?.data?.accounts.total ?? 0
+  const refreshAccountsTotal = refreshAccountsQuery.data?.total ?? 0
   const refreshAccountsLoadedCount = refreshAccounts.length
+  const storedChannelRatioConfig = useMemo(
+    () =>
+      resolveStoredUpstreamRatioConversionConfig({
+        channelSettings,
+      }),
+    [channelSettings]
+  )
+  const upstreamRefreshRatioConfigPending =
+    open &&
+    canReadChannelAccount &&
+    !storedChannelRatioConfig &&
+    !ratioConfigLoaded &&
+    !refreshAccountsQuery.isFetched
   const groupOptions = useMemo(
     () =>
       (groupsData?.data ?? []).map((group) => ({
@@ -317,6 +336,37 @@ export function UpstreamAccountRefreshPanel({
     upstreamRefreshTwoFactorChallenge && upstreamRefreshTwoFactorRemaining <= 0
   )
 
+  const applyRatioConversionState = useCallback(
+    (
+      config: UpstreamAccountRatioConversion | null | undefined,
+      options: { force?: boolean; markLoaded?: boolean } = {}
+    ) => {
+      if (!options.force && ratioConfigDirtyRef.current) {
+        if (options.markLoaded !== false) {
+          setRatioConfigLoaded(true)
+        }
+        return
+      }
+      const values = getUpstreamRatioConversionInputValues(config)
+      setUpstreamPaidCny(values.paidCny)
+      setUpstreamPlatformUsdCredit(values.platformUsdCredit)
+      if (options.markLoaded !== false) {
+        setRatioConfigLoaded(true)
+      }
+    },
+    []
+  )
+
+  const handleUpstreamPaidCnyChange = useCallback((value: string) => {
+    ratioConfigDirtyRef.current = true
+    setUpstreamPaidCny(value)
+  }, [])
+
+  const handleUpstreamPlatformUsdCreditChange = useCallback((value: string) => {
+    ratioConfigDirtyRef.current = true
+    setUpstreamPlatformUsdCredit(value)
+  }, [])
+
   const resetRefreshState = useCallback(() => {
     const nextPlatform =
       getUpstreamSyncPlatformFromSettings(channelSettings) ||
@@ -338,8 +388,12 @@ export function UpstreamAccountRefreshPanel({
     setUpstreamTokenExpiresAt('')
     setUpstreamCaptureId('')
     setUpstreamUseSavedCredential(savedUpstreamCredentialAvailable)
-    setUpstreamPaidCny(DEFAULT_UPSTREAM_PAID_AMOUNT)
-    setUpstreamPlatformUsdCredit(DEFAULT_UPSTREAM_PLATFORM_CREDIT)
+    ratioConfigDirtyRef.current = false
+    setRatioConfigLoaded(false)
+    applyRatioConversionState(storedChannelRatioConfig, {
+      force: true,
+      markLoaded: Boolean(storedChannelRatioConfig) || !canReadChannelAccount,
+    })
     setUpstreamRefreshPreviewId('')
     setUpstreamRefreshPreviewExpiresAt(0)
     setUpstreamRefreshSnapshot(null)
@@ -347,12 +401,14 @@ export function UpstreamAccountRefreshPanel({
     setUpstreamRefreshTwoFactorCode('')
     setUpstreamAccountConfigs({})
     autoPreviewTriggeredRef.current = false
-    ratioConfigLoadedRef.current = false
   }, [
+    applyRatioConversionState,
+    canReadChannelAccount,
     channelBaseUrl,
     channelSettings,
     forcedUpstreamPlatform,
     savedUpstreamCredentialAvailable,
+    storedChannelRatioConfig,
   ])
 
   const clearRefreshPreview = useCallback(() => {
@@ -374,15 +430,8 @@ export function UpstreamAccountRefreshPanel({
         buildUpstreamAccountConfigsFromSnapshotKeys(data.snapshot.keys, prev)
       )
       const ratio = data.snapshot.ratio_conversion
-      if (
-        ratio?.paid_cny &&
-        Number.isFinite(ratio.paid_cny) &&
-        ratio.platform_usd_credit &&
-        Number.isFinite(ratio.platform_usd_credit)
-      ) {
-        setUpstreamPaidCny(String(ratio.paid_cny))
-        setUpstreamPlatformUsdCredit(String(ratio.platform_usd_credit))
-        ratioConfigLoadedRef.current = true
+      if (ratio) {
+        applyRatioConversionState(ratio)
       }
       toast.success(
         t('Synced {{count}} upstream key(s)', {
@@ -390,7 +439,7 @@ export function UpstreamAccountRefreshPanel({
         })
       )
     },
-    [t]
+    [applyRatioConversionState, t]
   )
 
   const previewMutation = useMutation({
@@ -451,6 +500,9 @@ export function UpstreamAccountRefreshPanel({
   const handlePreviewUpstreamRefresh = useCallback(async () => {
     if (!canSensitiveWrite) {
       toast.error(noPermissionMessage)
+      return
+    }
+    if (upstreamRefreshRatioConfigPending) {
       return
     }
     if (upstreamUseSavedCredential && !savedUpstreamCredentialAvailable) {
@@ -586,6 +638,7 @@ export function UpstreamAccountRefreshPanel({
     upstreamUseSavedCredential,
     upstreamUsername,
     upstreamUserId,
+    upstreamRefreshRatioConfigPending,
   ])
 
   const handleCompleteUpstreamTwoFactor = useCallback(async () => {
@@ -695,25 +748,26 @@ export function UpstreamAccountRefreshPanel({
     if (
       !open ||
       upstreamRefreshSnapshot ||
-      ratioConfigLoadedRef.current ||
-      refreshAccounts.length === 0
+      ratioConfigLoaded ||
+      (canReadChannelAccount && !refreshAccountsQuery.isFetched)
     ) {
       return
     }
-    const ratioConfig = refreshAccounts.find(
-      (account) => account.ratio_conversion_config
-    )?.ratio_conversion_config
-    if (
-      ratioConfig?.paid_cny &&
-      Number.isFinite(ratioConfig.paid_cny) &&
-      ratioConfig.platform_usd_credit &&
-      Number.isFinite(ratioConfig.platform_usd_credit)
-    ) {
-      setUpstreamPaidCny(String(ratioConfig.paid_cny))
-      setUpstreamPlatformUsdCredit(String(ratioConfig.platform_usd_credit))
-    }
-    ratioConfigLoadedRef.current = true
-  }, [open, refreshAccounts, upstreamRefreshSnapshot])
+    const ratioConfig = resolveStoredUpstreamRatioConversionConfig({
+      channelSettings,
+      accounts: refreshAccounts,
+    })
+    applyRatioConversionState(ratioConfig)
+  }, [
+    applyRatioConversionState,
+    canReadChannelAccount,
+    channelSettings,
+    open,
+    ratioConfigLoaded,
+    refreshAccounts,
+    refreshAccountsQuery.isFetched,
+    upstreamRefreshSnapshot,
+  ])
 
   useEffect(() => {
     if (
@@ -724,8 +778,9 @@ export function UpstreamAccountRefreshPanel({
       autoPreviewTriggeredRef.current ||
       upstreamRefreshSnapshot ||
       (canReadChannelAccount &&
-        refreshAccounts.length > 0 &&
-        !ratioConfigLoadedRef.current)
+        !ratioConfigLoaded &&
+        !refreshAccountsQuery.isFetched &&
+        !storedChannelRatioConfig)
     ) {
       return
     }
@@ -734,10 +789,12 @@ export function UpstreamAccountRefreshPanel({
   }, [
     busy,
     canReadChannelAccount,
-    refreshAccounts.length,
     handlePreviewUpstreamRefresh,
     open,
+    refreshAccountsQuery.isFetched,
+    ratioConfigLoaded,
     savedUpstreamCredentialAvailable,
+    storedChannelRatioConfig,
     upstreamRefreshSnapshot,
     upstreamUseSavedCredential,
   ])
@@ -1272,7 +1329,8 @@ export function UpstreamAccountRefreshPanel({
     !canSensitiveWrite ||
     previewMutation.isPending ||
     preview2FAMutation.isPending ||
-    refreshMutation.isPending
+    refreshMutation.isPending ||
+    upstreamRefreshRatioConfigPending
 
   const usingSavedCredential =
     savedUpstreamCredentialAvailable && upstreamUseSavedCredential
@@ -1448,7 +1506,9 @@ export function UpstreamAccountRefreshPanel({
           <Input
             id='upstream-refresh-paid-cny'
             value={upstreamPaidCny}
-            onChange={(event) => setUpstreamPaidCny(event.target.value)}
+            onChange={(event) =>
+              handleUpstreamPaidCnyChange(event.target.value)
+            }
             inputMode='decimal'
             placeholder={DEFAULT_UPSTREAM_PAID_AMOUNT}
             disabled={!canSensitiveWrite}
@@ -1462,7 +1522,7 @@ export function UpstreamAccountRefreshPanel({
             id='upstream-refresh-platform-usd-credit'
             value={upstreamPlatformUsdCredit}
             onChange={(event) =>
-              setUpstreamPlatformUsdCredit(event.target.value)
+              handleUpstreamPlatformUsdCreditChange(event.target.value)
             }
             inputMode='decimal'
             placeholder={DEFAULT_UPSTREAM_PLATFORM_CREDIT}

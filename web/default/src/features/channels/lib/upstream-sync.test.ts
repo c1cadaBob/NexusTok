@@ -18,16 +18,25 @@ For commercial licensing, please contact support@c1cada.dev
 */
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import type { Channel, ChannelAccount, UpstreamAccountKey } from '../types'
+import type {
+  Channel,
+  ChannelAccount,
+  ChannelAccountListResponse,
+  UpstreamAccountKey,
+} from '../types'
 import {
   buildUpstreamAccountConfigDraft,
   buildUpstreamAccountConfigsFromSnapshotKeys,
   buildUpstreamAccountPreviewRequest,
   buildUpstreamAccountRefreshPayload,
+  buildUpstreamRatioConversionPayload,
   collectUpstreamAccountCapabilityValidationErrors,
   getChannelAccountAssetDisplaySource,
   getChannelBalanceDisplaySource,
+  getUpstreamRatioConversionInputValues,
   getUpstreamPreviewBalanceDisplay,
+  loadAllChannelAccounts,
+  resolveStoredUpstreamRatioConversionConfig,
   shouldEnableUpstreamAccountKeyByDefault,
   summarizeUpstreamAccountCapabilities,
   upstreamAssetConversionFactor,
@@ -50,7 +59,202 @@ function makeSnapshotKey(
   }
 }
 
+function makeChannelAccount(
+  overrides: Partial<ChannelAccount> = {}
+): ChannelAccount {
+  return {
+    id: 1,
+    channel_id: 10,
+    name: 'synced key',
+    key: 'sk-****',
+    status: 1,
+    models: 'gpt-4o',
+    group: 'default',
+    access_groups: 'default',
+    priority: 0,
+    weight: 100,
+    last_used_time: 0,
+    used_quota: 0,
+    other: '',
+    settings: '{}',
+    last_error: '',
+    rate_limited_until: 0,
+    overload_until: 0,
+    temp_disabled_until: 0,
+    disabled_reason: '',
+    max_concurrency: 0,
+    created_time: 0,
+    ...overrides,
+  }
+}
+
+function makeChannelAccountPage({
+  items,
+  total,
+  page,
+  pageSize,
+}: {
+  items: ChannelAccount[]
+  total: number
+  page: number
+  pageSize: number
+}): ChannelAccountListResponse {
+  return {
+    success: true,
+    data: {
+      accounts: {
+        items,
+        total,
+        page,
+        page_size: pageSize,
+      },
+      stats: {
+        total,
+        enabled: total,
+        disabled: 0,
+        cooldown: 0,
+      },
+    },
+  }
+}
+
 describe('上游账号刷新共享 payload', () => {
+  test('全量渠道账号加载器按后端分页上限拉满并保持顺序', async () => {
+    const firstPage = Array.from({ length: 100 }, (_, index) =>
+      makeChannelAccount({ id: index + 1 })
+    )
+    const secondPage = [makeChannelAccount({ id: 101 })]
+    const calls: Array<{ page: number; pageSize: number }> = []
+
+    const result = await loadAllChannelAccounts((page, pageSize) => {
+      calls.push({ page, pageSize })
+      return Promise.resolve(
+        makeChannelAccountPage({
+          items: page === 1 ? firstPage : secondPage,
+          total: 101,
+          page,
+          pageSize,
+        })
+      )
+    })
+
+    assert.deepEqual(calls, [
+      { page: 1, pageSize: 100 },
+      { page: 2, pageSize: 100 },
+    ])
+    assert.equal(result.total, 101)
+    assert.deepEqual(
+      result.accounts.map((account) => account.id),
+      Array.from({ length: 101 }, (_, index) => index + 1)
+    )
+  })
+
+  test('全量渠道账号加载器单页完成时不再追加请求', async () => {
+    let callCount = 0
+
+    const result = await loadAllChannelAccounts((page, pageSize) => {
+      callCount += 1
+      return Promise.resolve(
+        makeChannelAccountPage({
+          items: [makeChannelAccount({ id: 7 })],
+          total: 1,
+          page,
+          pageSize,
+        })
+      )
+    })
+
+    assert.equal(callCount, 1)
+    assert.deepEqual(
+      result.accounts.map((account) => account.id),
+      [7]
+    )
+  })
+
+  test('全量渠道账号加载器遇到失败响应时整体失败', async () => {
+    await assert.rejects(
+      () =>
+        loadAllChannelAccounts(async () => ({
+          success: false,
+          message: 'boom',
+        })),
+      /boom/
+    )
+  })
+
+  test('刷新比例优先从渠道 settings 回填，再回退账号元数据', () => {
+    const channelSettings =
+      '{"upstream_account_sync":{"ratio_conversion_config":{"paid_cny":3,"platform_usd_credit":12,"enabled":true}}}'
+    const accountRatio = {
+      paid_cny: 9,
+      platform_usd_credit: 18,
+      enabled: true,
+    }
+
+    assert.deepEqual(
+      resolveStoredUpstreamRatioConversionConfig({
+        channelSettings,
+        accounts: [
+          makeChannelAccount({ ratio_conversion_config: accountRatio }),
+        ],
+      }),
+      {
+        paid_cny: 3,
+        platform_usd_credit: 12,
+        enabled: true,
+      }
+    )
+
+    assert.deepEqual(
+      resolveStoredUpstreamRatioConversionConfig({
+        channelSettings:
+          '{"upstream_account_sync":{"ratio_conversion_config":{"paid_cny":0,"platform_usd_credit":12,"enabled":true}}}',
+        accounts: [
+          makeChannelAccount({ ratio_conversion_config: accountRatio }),
+        ],
+      }),
+      accountRatio
+    )
+  })
+
+  test('刷新比例缺失时输入值才回退默认值', () => {
+    assert.equal(
+      resolveStoredUpstreamRatioConversionConfig({
+        channelSettings: '{}',
+        accounts: [],
+      }),
+      undefined
+    )
+    assert.deepEqual(getUpstreamRatioConversionInputValues(undefined), {
+      paidCny: '1',
+      platformUsdCredit: '10',
+    })
+  })
+
+  test('刷新 payload 使用已回填的历史比例而不是输入框默认值', () => {
+    const ratioConfig = resolveStoredUpstreamRatioConversionConfig({
+      channelSettings:
+        '{"upstream_account_sync":{"ratio_conversion_config":{"paid_cny":6,"platform_usd_credit":30,"enabled":true}}}',
+      accounts: [],
+    })
+    const inputValues = getUpstreamRatioConversionInputValues(ratioConfig)
+    const payload = buildUpstreamAccountRefreshPayload({
+      previewId: 'preview-1',
+      keys: [makeSnapshotKey()],
+      configs: {},
+      applySuggested: false,
+      ratioConversion: buildUpstreamRatioConversionPayload(
+        inputValues.paidCny,
+        inputValues.platformUsdCredit
+      ),
+    })
+
+    assert.deepEqual(payload.ratio_conversion, {
+      paid_cny: 6,
+      platform_usd_credit: 30,
+    })
+  })
+
   test('上游资产预览使用实付金额与到账额度换算', () => {
     const display = getUpstreamPreviewBalanceDisplay(
       {

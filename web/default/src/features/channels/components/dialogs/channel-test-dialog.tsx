@@ -114,6 +114,7 @@ import {
 import {
   formatUpstreamRatioCompact,
   getUpstreamRatioDisplayValue,
+  loadAllChannelAccounts,
 } from '../../lib/upstream-sync'
 import { getChannelAccounts } from '../../api'
 import { CHANNEL_STATUS } from '../../constants'
@@ -316,17 +317,19 @@ export function ChannelTestDialog({
   } = useQuery({
     queryKey: ['channel-test-accounts', currentRow?.id],
     queryFn: () =>
-      getChannelAccounts(currentRow!.id, {
-        p: 1,
-        page_size: 100,
-      }),
+      loadAllChannelAccounts((page, pageSize) =>
+        getChannelAccounts(currentRow!.id, {
+          p: page,
+          page_size: pageSize,
+        })
+      ),
     enabled: open && isSyncedAccountPool && Boolean(currentRow?.id),
     staleTime: 30_000,
   })
 
   const testAccounts = useMemo(
-    () => channelAccountsData?.data?.accounts.items ?? [],
-    [channelAccountsData?.data?.accounts.items]
+    () => channelAccountsData?.accounts ?? [],
+    [channelAccountsData?.accounts]
   )
 
   const selectedAccount =
@@ -978,7 +981,7 @@ function UpstreamAccountSelector({
       </PopoverTrigger>
       <PopoverContent
         align='start'
-        className='w-[min(920px,calc(100vw-2rem))] overflow-hidden p-0'
+        className='h-[min(70vh,520px)] w-[min(920px,calc(100vw-2rem))] overflow-hidden p-0'
         onWheel={(event) => event.stopPropagation()}
         onTouchMove={(event) => event.stopPropagation()}
         onPointerDown={(event) => event.stopPropagation()}
@@ -1042,7 +1045,7 @@ function UpstreamAccountSelectorTable({
 
   return (
     <div className='flex h-full min-h-0 flex-col'>
-      <div className='border-b p-3'>
+      <div className='shrink-0 border-b p-3'>
         <div className='relative'>
           <Search
             className='text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2'
@@ -1056,9 +1059,9 @@ function UpstreamAccountSelectorTable({
           />
         </div>
       </div>
-      <div className='min-h-0 flex-1 overflow-auto'>
+      <div className='min-h-0 flex-1 overflow-auto overscroll-contain'>
         <Table className='min-w-[760px]'>
-          <TableHeader>
+          <TableHeader className='bg-popover sticky top-0'>
             <TableRow>
               <TableHead className='w-12'>{t('Select')}</TableHead>
               <TableHead>{t('Account')}</TableHead>
