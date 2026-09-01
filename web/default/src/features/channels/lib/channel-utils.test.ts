@@ -21,6 +21,7 @@ import { describe, test } from 'node:test'
 import {
   aggregateChannelsByTag,
   canManuallyMutateChannelAccounts,
+  isUpstreamAccountSyncAccountPoolChannel,
   isUpstreamAccountSyncChannel,
 } from './channel-utils'
 import type { Channel } from '../types'
@@ -43,6 +44,55 @@ describe('账号池手动入口可见性', () => {
 
     assert.equal(isUpstreamAccountSyncChannel(channel), false)
     assert.equal(canManuallyMutateChannelAccounts(channel), true)
+  })
+})
+
+describe('同步平台账号池渠道识别', () => {
+  test('同步元数据和账号池模式同时存在时才视为平台账号渠道', () => {
+    const syncedAccountPool = {
+      settings:
+        '{"upstream_account_sync":{"platform":"new-api","base_url":"https://upstream.example","synced_at":1}}',
+      channel_info: {
+        is_multi_key: false,
+        multi_key_size: 0,
+        multi_key_polling_index: 0,
+        multi_key_mode: 'random',
+        credential_mode: 'account_pool',
+      },
+    } as unknown as Channel
+
+    const manualAccountPool = {
+      settings: '{}',
+      channel_info: {
+        is_multi_key: false,
+        multi_key_size: 0,
+        multi_key_polling_index: 0,
+        multi_key_mode: 'random',
+        credential_mode: 'account_pool',
+      },
+    } as unknown as Channel
+
+    const syncedSingleKey = {
+      settings:
+        '{"upstream_account_sync":{"platform":"new-api","base_url":"https://upstream.example","synced_at":1}}',
+      channel_info: {
+        is_multi_key: false,
+        multi_key_size: 0,
+        multi_key_polling_index: 0,
+        multi_key_mode: 'random',
+        credential_mode: 'single_key',
+      },
+    } as unknown as Channel
+
+    assert.equal(
+      isUpstreamAccountSyncAccountPoolChannel(syncedAccountPool),
+      true
+    )
+    assert.equal(
+      isUpstreamAccountSyncAccountPoolChannel(manualAccountPool),
+      false
+    )
+    assert.equal(isUpstreamAccountSyncAccountPoolChannel(syncedSingleKey), false)
   })
 })
 

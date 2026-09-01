@@ -60,14 +60,26 @@ function RatioModelMenuBody({
 }: MinimumRatioModelSelectorProps) {
   const { t } = useTranslation()
   const [search, setSearch] = useState('')
-  const showSearch = modelOptions.length > RATIO_MODEL_SEARCH_THRESHOLD
+  const resolvedModelOptions = useMemo(() => {
+    const selected = selectedModel.trim()
+    if (
+      !selected ||
+      modelOptions.some((model) => model.trim() === selected)
+    ) {
+      return modelOptions
+    }
+
+    // 后端选项随当前筛选条件异步刷新；把当前选择补回列表，避免刷新过程丢失选择态。
+    return [selected, ...modelOptions]
+  }, [modelOptions, selectedModel])
+  const showSearch = resolvedModelOptions.length > RATIO_MODEL_SEARCH_THRESHOLD
   const filteredModels = useMemo(() => {
     const normalized = search.trim().toLowerCase()
-    if (!normalized) return modelOptions
-    return modelOptions.filter((model) =>
+    if (!normalized) return resolvedModelOptions
+    return resolvedModelOptions.filter((model) =>
       model.toLowerCase().includes(normalized)
     )
-  }, [modelOptions, search])
+  }, [resolvedModelOptions, search])
 
   return (
     <div className='flex min-w-0 flex-col gap-2 p-2'>

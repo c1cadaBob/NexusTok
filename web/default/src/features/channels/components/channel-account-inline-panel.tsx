@@ -16,9 +16,18 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cada.dev
 */
-import { useQuery } from '@tanstack/react-query'
-import { AlertCircle, ArrowUpRight } from 'lucide-react'
+import { useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  AlertCircle,
+  ArrowUpRight,
+  Gauge,
+  Loader2,
+  Power,
+  PowerOff,
+} from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { formatQuotaWithCurrency } from '@/lib/currency'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -31,22 +40,34 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { StatusBadge } from '@/components/status-badge'
 import { TruncatedText } from '@/components/truncated-text'
-import { getChannelAccounts } from '../api'
+import { getChannelAccounts, updateChannelAccountStatus } from '../api'
 import { CHANNEL_STATUS } from '../constants'
-import { channelsQueryKeys, formatTimestamp } from '../lib'
+import { useChannelPermissions } from '../hooks/use-channel-permissions'
 import {
+  channelsQueryKeys,
+  formatTimestamp,
+  handleTestChannel,
+  isUpstreamAccountSyncAccountPoolChannel,
+} from '../lib'
+import {
+  CHANNEL_ACCOUNT_PAGE_SIZE_LIMIT,
   formatUpstreamModelRatioDetails,
   formatUpstreamRatioCompact,
   getChannelAccountAssetDisplaySource,
   getUpstreamKeyRatioDisplayValue,
   getUpstreamKeyGroupLabel,
   getUpstreamRatioDisplayValue,
+  loadAllChannelAccounts,
 } from '../lib/upstream-sync'
 import type { Channel, ChannelAccount } from '../types'
 
-const INLINE_ACCOUNT_PAGE_SIZE = 50
 const SENSITIVE_MASK = '••••'
 
 type ChannelAccountInlinePanelProps = {
@@ -99,8 +120,9 @@ function formatAccountModels(models: string): string {
 }
 
 /**
- * 账号池内联面板只承担快速核对职责，逐 key 的写操作统一进入现有账号池管理弹窗。
- * 这样可以复用已经过权限校验、缓存刷新和能力重建验证的保存路径。
+ * 账号池内联面板承担主表展开后的快速核对职责。
+ * 同步平台账号池的测试和启停已经是密钥级操作，所以直接下沉到每把密钥行末尾；
+ * 普通手动账号池仍保留完整预览字段，深度维护继续进入账号池管理弹窗。
  */
 export function ChannelAccountInlinePanel({
   channel,
@@ -109,26 +131,103 @@ export function ChannelAccountInlinePanel({
   onManage,
 }: ChannelAccountInlinePanelProps) {
   const { t } = useTranslation()
+  const queryClient = useQueryClient()
+  const permissions = useChannelPermissions()
+  const noPermissionMessage = t("You don't have necessary permission")
+  const [testingAccountId, setTestingAccountId] = useState<number | null>(null)
+  const [togglingAccountId, setTogglingAccountId] = useState<number | null>(
+    null
+  )
+  const isSyncedAccountPool = isUpstreamAccountSyncAccountPoolChannel(channel)
   const query = useQuery({
     queryKey: [
       ...channelsQueryKeys.detail(channel.id),
       'accounts',
       'inline',
-      INLINE_ACCOUNT_PAGE_SIZE,
+      'all',
+      CHANNEL_ACCOUNT_PAGE_SIZE_LIMIT,
     ],
     queryFn: () =>
-      getChannelAccounts(channel.id, {
-        p: 1,
-        page_size: INLINE_ACCOUNT_PAGE_SIZE,
-      }),
+      loadAllChannelAccounts((page, pageSize) =>
+        getChannelAccounts(channel.id, {
+          p: page,
+          page_size: pageSize,
+        })
+      ),
   })
 
-  const accounts = query.data?.data?.accounts.items ?? []
-  const total = query.data?.data?.accounts.total ?? 0
-  const stats = query.data?.data?.stats ?? channel.channel_account_stats
+  const accounts = query.data?.accounts ?? []
+  const total = query.data?.total ?? 0
+  const stats = query.data?.stats ?? channel.channel_account_stats
   const nowSeconds =
     query.dataUpdatedAt > 0 ? Math.floor(query.dataUpdatedAt / 1000) : 0
   const maskedText = sensitiveVisible ? undefined : SENSITIVE_MASK
+
+  const refreshRelatedQueries = async () => {
+    await Promise.all([
+      query.refetch(),
+      queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() }),
+      queryClient.invalidateQueries({
+        queryKey: channelsQueryKeys.detail(channel.id),
+      }),
+    ])
+  }
+
+  const handleTestAccount = async (account: ChannelAccount) => {
+    if (!permissions.canOperate) {
+      toast.error(noPermissionMessage)
+      return
+    }
+    setTestingAccountId(account.id)
+    try {
+      await handleTestChannel(
+        channel.id,
+        { accountId: account.id },
+        undefined,
+        queryClient
+      )
+      await refreshRelatedQueries()
+    } finally {
+      setTestingAccountId(null)
+    }
+  }
+
+  const handleToggleAccountStatus = async (account: ChannelAccount) => {
+    if (!permissions.canOperateChannelAccount) {
+      toast.error(noPermissionMessage)
+      return
+    }
+    const shouldEnable = account.status !== CHANNEL_STATUS.ENABLED
+    setTogglingAccountId(account.id)
+    try {
+      const response = await updateChannelAccountStatus(
+        channel.id,
+        account.id,
+        shouldEnable
+          ? {
+              status: CHANNEL_STATUS.ENABLED,
+              reason: '',
+              clear_cooldown: true,
+            }
+          : {
+              status: CHANNEL_STATUS.MANUAL_DISABLED,
+              reason: '',
+              clear_cooldown: false,
+            }
+      )
+      if (!response.success) {
+        throw new Error(response.message || t('Operation failed'))
+      }
+      toast.success(t('Operation successful'))
+      await refreshRelatedQueries()
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : t('Operation failed')
+      )
+    } finally {
+      setTogglingAccountId(null)
+    }
+  }
 
   return (
     <div
@@ -185,162 +284,272 @@ export function ChannelAccountInlinePanel({
           {t('No channel accounts found')}
         </div>
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>{t('Name')}</TableHead>
-              <TableHead>{t('Key')}</TableHead>
-              <TableHead>{t('Status')}</TableHead>
-              <TableHead>{t('Models')}</TableHead>
-              <TableHead>{t('Key Group')}</TableHead>
-              <TableHead>{t('Key Ratio')}</TableHead>
-              <TableHead>{t('Ratio Conversion')}</TableHead>
-              <TableHead>{t('Key Priority')}</TableHead>
-              <TableHead>{t('Key Weight')}</TableHead>
-              <TableHead>{t('Upstream Used')}</TableHead>
-              <TableHead>{t('Upstream Remaining')}</TableHead>
-              <TableHead>{t('Last Used')}</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {accounts.map((account) => {
-              const status = getAccountStatus(account, nowSeconds)
-              const cooldownUntil = getCooldownUntil(account)
-              const assetDisplay = getChannelAccountAssetDisplaySource(account)
-              const usedQuota = formatQuotaWithCurrency(assetDisplay.usedQuota, {
-                digitsLarge: 2,
-                digitsSmall: 4,
-                abbreviate: true,
-              })
-              const remainingQuota =
-                assetDisplay.remainingQuota == null
-                  ? '-'
-                  : formatQuotaWithCurrency(assetDisplay.remainingQuota, {
-                      digitsLarge: 2,
-                      digitsSmall: 4,
-                      abbreviate: true,
-                    })
-              const keyRatioValue = getUpstreamKeyRatioDisplayValue(account)
-              const ratioValue = getUpstreamRatioDisplayValue(account)
-              const ratioDetails = formatUpstreamModelRatioDetails(
-                account.model_ratios
-              )
-              const keyRatioTitle = ratioDetails
-                ? `${t('Model Ratios')}:\n${ratioDetails}`
-                : undefined
+        <div className='max-h-[min(55vh,640px)] overflow-auto overscroll-contain'>
+          <Table
+            className={cn(
+              isSyncedAccountPool ? 'min-w-[980px]' : 'min-w-[1120px]'
+            )}
+          >
+            <TableHeader className='bg-background sticky top-0'>
+              <TableRow>
+                <TableHead>{t('Name')}</TableHead>
+                <TableHead>{t('Key')}</TableHead>
+                <TableHead>{t('Status')}</TableHead>
+                <TableHead>{t('Models')}</TableHead>
+                {!isSyncedAccountPool && (
+                  <TableHead>{t('Key Group')}</TableHead>
+                )}
+                {!isSyncedAccountPool && (
+                  <TableHead>{t('Key Ratio')}</TableHead>
+                )}
+                <TableHead>{t('Ratio Conversion')}</TableHead>
+                <TableHead>{t('Key Priority')}</TableHead>
+                <TableHead>{t('Key Weight')}</TableHead>
+                <TableHead>{t('Upstream Used')}</TableHead>
+                {!isSyncedAccountPool && (
+                  <TableHead>{t('Upstream Remaining')}</TableHead>
+                )}
+                <TableHead>{t('Last Used')}</TableHead>
+                {isSyncedAccountPool && (
+                  <TableHead className='text-right'>{t('Actions')}</TableHead>
+                )}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {accounts.map((account) => {
+                const status = getAccountStatus(account, nowSeconds)
+                const cooldownUntil = getCooldownUntil(account)
+                const assetDisplay =
+                  getChannelAccountAssetDisplaySource(account)
+                const usedQuota = formatQuotaWithCurrency(
+                  assetDisplay.usedQuota,
+                  {
+                    digitsLarge: 2,
+                    digitsSmall: 4,
+                    abbreviate: true,
+                  }
+                )
+                const remainingQuota =
+                  assetDisplay.remainingQuota == null
+                    ? '-'
+                    : formatQuotaWithCurrency(assetDisplay.remainingQuota, {
+                        digitsLarge: 2,
+                        digitsSmall: 4,
+                        abbreviate: true,
+                      })
+                const keyRatioValue =
+                  getUpstreamKeyRatioDisplayValue(account)
+                const ratioValue = getUpstreamRatioDisplayValue(account)
+                const ratioDetails = formatUpstreamModelRatioDetails(
+                  account.model_ratios
+                )
+                const keyRatioTitle = ratioDetails
+                  ? `${t('Model Ratios')}:\n${ratioDetails}`
+                  : undefined
+                const isTestingAccount = testingAccountId === account.id
+                const isTogglingAccount = togglingAccountId === account.id
+                const accountEnabled = account.status === CHANNEL_STATUS.ENABLED
 
-              return (
-                <TableRow key={account.id}>
-                  <TableCell>
-                    <div className='flex min-w-[120px] flex-col gap-0.5'>
+                return (
+                  <TableRow key={account.id}>
+                    <TableCell>
+                      <div className='flex min-w-[120px] flex-col gap-0.5'>
+                        <TruncatedText
+                          text={
+                            sensitiveVisible
+                              ? account.name || `#${account.id}`
+                              : SENSITIVE_MASK
+                          }
+                          maxWidth='max-w-[180px]'
+                          className='font-medium'
+                        />
+                        <span className='text-muted-foreground font-mono text-[11px]'>
+                          #{account.id}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <span className='font-mono text-xs'>
+                        {sensitiveVisible ? account.key || '-' : SENSITIVE_MASK}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <div className='flex flex-col gap-1'>
+                        <StatusBadge
+                          label={t(status.label)}
+                          variant={status.variant}
+                          size='sm'
+                          copyable={false}
+                        />
+                        {cooldownUntil > nowSeconds && (
+                          <span className='text-muted-foreground text-[11px]'>
+                            {formatTimestamp(cooldownUntil)}
+                          </span>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
                       <TruncatedText
                         text={
                           sensitiveVisible
-                            ? account.name || `#${account.id}`
+                            ? formatAccountModels(account.models)
                             : SENSITIVE_MASK
                         }
-                        maxWidth='max-w-[180px]'
-                        className='font-medium'
+                        maxWidth='max-w-[220px]'
+                        className='text-xs'
                       />
-                      <span className='text-muted-foreground font-mono text-[11px]'>
-                        #{account.id}
-                      </span>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <span className='font-mono text-xs'>
-                      {sensitiveVisible ? account.key || '-' : SENSITIVE_MASK}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <div className='flex flex-col gap-1'>
-                      <StatusBadge
-                        label={t(status.label)}
-                        variant={status.variant}
-                        size='sm'
-                        copyable={false}
-                      />
-                      {cooldownUntil > nowSeconds && (
-                        <span className='text-muted-foreground text-[11px]'>
-                          {formatTimestamp(cooldownUntil)}
+                    </TableCell>
+                    {!isSyncedAccountPool && (
+                      <TableCell>
+                        <span className='text-xs'>
+                          {maskedText ??
+                            (getUpstreamKeyGroupLabel(account) || '-')}
                         </span>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <TruncatedText
-                      text={
-                        sensitiveVisible
-                          ? formatAccountModels(account.models)
-                          : SENSITIVE_MASK
-                      }
-                      maxWidth='max-w-[220px]'
-                      className='text-xs'
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <span className='text-xs'>
-                      {maskedText ?? (getUpstreamKeyGroupLabel(account) || '-')}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <span
-                      className='font-mono text-xs'
-                      title={keyRatioTitle}
-                    >
-                      {maskedText ??
-                        (keyRatioValue != null
-                          ? `${formatUpstreamRatioCompact(keyRatioValue)}x`
-                          : '-')}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <span
-                      className='font-mono text-xs'
-                      title={ratioDetails || undefined}
-                    >
-                      {maskedText ??
-                        (ratioValue != null
-                          ? `${formatUpstreamRatioCompact(ratioValue)}x`
-                          : '-')}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <span className='font-mono text-xs tabular-nums'>
-                      {account.priority}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <span className='font-mono text-xs tabular-nums'>
-                      {account.weight}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <span className='font-mono text-xs tabular-nums'>
-                      {sensitiveVisible ? usedQuota : SENSITIVE_MASK}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <span className='font-mono text-xs tabular-nums'>
-                      {sensitiveVisible
-                        ? remainingQuota
-                        : remainingQuota === '-'
-                          ? '-'
-                          : SENSITIVE_MASK}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <span className='text-muted-foreground text-xs'>
-                      {account.last_used_time > 0
-                        ? formatTimestamp(account.last_used_time)
-                        : '-'}
-                    </span>
-                  </TableCell>
-                </TableRow>
-              )
-            })}
-          </TableBody>
-        </Table>
+                      </TableCell>
+                    )}
+                    {!isSyncedAccountPool && (
+                      <TableCell>
+                        <span
+                          className='font-mono text-xs'
+                          title={keyRatioTitle}
+                        >
+                          {maskedText ??
+                            (keyRatioValue != null
+                              ? `${formatUpstreamRatioCompact(keyRatioValue)}x`
+                              : '-')}
+                        </span>
+                      </TableCell>
+                    )}
+                    <TableCell>
+                      <span
+                        className='font-mono text-xs'
+                        title={ratioDetails || undefined}
+                      >
+                        {maskedText ??
+                          (ratioValue != null
+                            ? `${formatUpstreamRatioCompact(ratioValue)}x`
+                            : '-')}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <span className='font-mono text-xs tabular-nums'>
+                        {account.priority}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <span className='font-mono text-xs tabular-nums'>
+                        {account.weight}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <span className='font-mono text-xs tabular-nums'>
+                        {sensitiveVisible ? usedQuota : SENSITIVE_MASK}
+                      </span>
+                    </TableCell>
+                    {!isSyncedAccountPool && (
+                      <TableCell>
+                        <span className='font-mono text-xs tabular-nums'>
+                          {sensitiveVisible
+                            ? remainingQuota
+                            : remainingQuota === '-'
+                              ? '-'
+                              : SENSITIVE_MASK}
+                        </span>
+                      </TableCell>
+                    )}
+                    <TableCell>
+                      <span className='text-muted-foreground text-xs'>
+                        {account.last_used_time > 0
+                          ? formatTimestamp(account.last_used_time)
+                          : '-'}
+                      </span>
+                    </TableCell>
+                    {isSyncedAccountPool && (
+                      <TableCell>
+                        <div className='flex justify-end gap-1'>
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <Button
+                                  type='button'
+                                  variant='ghost'
+                                  size='icon-sm'
+                                  onClick={(event) => {
+                                    event.stopPropagation()
+                                    void handleTestAccount(account)
+                                  }}
+                                  disabled={
+                                    !permissions.canOperate ||
+                                    testingAccountId !== null ||
+                                    togglingAccountId !== null
+                                  }
+                                  aria-label={t('Test Connection')}
+                                />
+                              }
+                            >
+                              {isTestingAccount ? (
+                                <Loader2 className='animate-spin' />
+                              ) : (
+                                <Gauge />
+                              )}
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              {permissions.canOperate
+                                ? t('Test Connection')
+                                : noPermissionMessage}
+                            </TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <Button
+                                  type='button'
+                                  variant='ghost'
+                                  size='icon-sm'
+                                  onClick={(event) => {
+                                    event.stopPropagation()
+                                    void handleToggleAccountStatus(account)
+                                  }}
+                                  disabled={
+                                    !permissions.canOperateChannelAccount ||
+                                    testingAccountId !== null ||
+                                    togglingAccountId !== null
+                                  }
+                                  aria-label={
+                                    accountEnabled ? t('Disable') : t('Enable')
+                                  }
+                                  className={cn(
+                                    accountEnabled &&
+                                      'text-destructive hover:text-destructive'
+                                  )}
+                                />
+                              }
+                            >
+                              {isTogglingAccount ? (
+                                <Loader2 className='animate-spin' />
+                              ) : accountEnabled ? (
+                                <PowerOff />
+                              ) : (
+                                <Power />
+                              )}
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              {permissions.canOperateChannelAccount
+                                ? accountEnabled
+                                  ? t('Disable')
+                                  : t('Enable')
+                                : noPermissionMessage}
+                            </TooltipContent>
+                          </Tooltip>
+                        </div>
+                      </TableCell>
+                    )}
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
+        </div>
       )}
 
       {total > accounts.length && (

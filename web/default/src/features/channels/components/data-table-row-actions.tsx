@@ -62,6 +62,7 @@ import {
   handleToggleChannelStatus,
   isChannelEnabled,
   isMultiKeyChannel,
+  isUpstreamAccountSyncAccountPoolChannel,
 } from '../lib'
 import { parseUpstreamUpdateMeta } from '../lib/upstream-update-utils'
 import type { Channel } from '../types'
@@ -86,6 +87,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
 
   const isEnabled = isChannelEnabled(channel)
   const isMultiKey = isMultiKeyChannel(channel)
+  const isSyncedAccountPool = isUpstreamAccountSyncAccountPoolChannel(channel)
   const canFetchAndSaveModels = permissions.canOperate && permissions.canWrite
   const canManageChannelAccounts = permissions.canReadChannelAccount
 
@@ -195,28 +197,32 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         </Tooltip>
       )}
 
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              variant='ghost'
-              size='icon-sm'
-              onClick={handleDirectTest}
-              disabled={!permissions.canOperate || isTesting}
-              aria-label={t('Test Connection')}
-            />
-          }
-        >
-          {isTesting ? (
-            <Loader2 className='size-4 animate-spin' />
-          ) : (
-            <Gauge className='size-4' />
-          )}
-        </TooltipTrigger>
-        <TooltipContent>
-          {permissions.canOperate ? t('Test Connection') : noPermissionMessage}
-        </TooltipContent>
-      </Tooltip>
+      {!isSyncedAccountPool && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant='ghost'
+                size='icon-sm'
+                onClick={handleDirectTest}
+                disabled={!permissions.canOperate || isTesting}
+                aria-label={t('Test Connection')}
+              />
+            }
+          >
+            {isTesting ? (
+              <Loader2 className='animate-spin' />
+            ) : (
+              <Gauge />
+            )}
+          </TooltipTrigger>
+          <TooltipContent>
+            {permissions.canOperate
+              ? t('Test Connection')
+              : noPermissionMessage}
+          </TooltipContent>
+        </Tooltip>
+      )}
 
       <Tooltip>
         <TooltipTrigger
@@ -278,19 +284,21 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             </DropdownMenuItem>
           )}
 
-          {/* Test Connection */}
-          <DropdownMenuItem
-            onClick={handleTest}
-            disabled={!permissions.canOperate}
-            title={permissions.canOperate ? undefined : noPermissionMessage}
-          >
-            {t('Test Connection')}
-            <DropdownMenuShortcut>
-              <TestTube size={16} />
-            </DropdownMenuShortcut>
-          </DropdownMenuItem>
+          {/* 同步平台账号池的测试入口下沉到每把密钥行末尾。 */}
+          {!isSyncedAccountPool && (
+            <DropdownMenuItem
+              onClick={handleTest}
+              disabled={!permissions.canOperate}
+              title={permissions.canOperate ? undefined : noPermissionMessage}
+            >
+              {t('Test Connection')}
+              <DropdownMenuShortcut>
+                <TestTube size={16} />
+              </DropdownMenuShortcut>
+            </DropdownMenuItem>
+          )}
 
-          {/* Query Balance */}
+          {/* 查询余额 */}
           <DropdownMenuItem
             onClick={handleQueryBalance}
             disabled={!permissions.canOperate}
@@ -302,7 +310,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             </DropdownMenuShortcut>
           </DropdownMenuItem>
 
-          {/* Fetch Models */}
+          {/* 获取模型 */}
           <DropdownMenuItem
             onClick={handleFetchModels}
             disabled={!canFetchAndSaveModels}
@@ -314,7 +322,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             </DropdownMenuShortcut>
           </DropdownMenuItem>
 
-          {/* Detect Upstream Updates (only for fetchable channel types) */}
+          {/* 支持拉取模型的渠道才展示上游变更检测。 */}
           {MODEL_FETCHABLE_TYPES.has(channel.type) && (
             <DropdownMenuItem
               onClick={() => {
@@ -345,7 +353,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             </DropdownMenuItem>
           )}
 
-          {/* Ollama Models (only for Ollama channels) */}
+          {/* Ollama 渠道专属模型管理入口。 */}
           {channel.type === 4 && (
             <DropdownMenuItem
               onClick={handleManageOllamaModels}
@@ -361,7 +369,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
 
           <DropdownMenuSeparator />
 
-          {/* Copy Channel */}
+          {/* 复制渠道 */}
           <DropdownMenuItem
             onClick={handleCopy}
             disabled={!permissions.canSensitiveWrite}
@@ -375,7 +383,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             </DropdownMenuShortcut>
           </DropdownMenuItem>
 
-          {/* Manage Keys (only for multi-key channels) */}
+          {/* 多 Key 渠道专属密钥管理入口。 */}
           {isMultiKey && (
             <DropdownMenuItem
               onClick={handleManageKeys}
@@ -404,7 +412,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
 
           <DropdownMenuSeparator />
 
-          {/* Delete */}
+          {/* 删除渠道 */}
           <DropdownMenuItem
             onSelect={(e) => {
               e.preventDefault()

@@ -81,6 +81,8 @@ const EMPTY_FILTER_VALUES: string[] = []
 const CHANNELS_COLUMN_VISIBILITY_STORAGE_KEY = 'channels-column-visibility'
 const CHANNELS_VIEW_MODE_STORAGE_KEY = 'channels-table-view-mode'
 const CHANNELS_SORTING_STORAGE_KEY = 'channels-table-sorting'
+const CHANNELS_MINIMUM_RATIO_MODEL_STORAGE_KEY =
+  'channels-minimum-ratio-model'
 const CHANNELS_INITIAL_COLUMN_VISIBILITY = {
   models: false,
   tag: false,
@@ -132,14 +134,57 @@ function loadSavedChannelSorting(): SortingState {
   }
 }
 
+function loadSavedMinimumRatioModel(): string {
+  if (typeof window === 'undefined') return ''
+  try {
+    return (
+      window.localStorage
+        .getItem(CHANNELS_MINIMUM_RATIO_MODEL_STORAGE_KEY)
+        ?.trim() ?? ''
+    )
+  } catch {
+    return ''
+  }
+}
+
+function persistMinimumRatioModel(model: string) {
+  if (typeof window === 'undefined') return
+  try {
+    const nextModel = model.trim()
+    if (nextModel) {
+      window.localStorage.setItem(
+        CHANNELS_MINIMUM_RATIO_MODEL_STORAGE_KEY,
+        nextModel
+      )
+    } else {
+      window.localStorage.removeItem(CHANNELS_MINIMUM_RATIO_MODEL_STORAGE_KEY)
+    }
+  } catch {
+    // 忽略本地存储失败，URL 中的选择仍会继续生效。
+  }
+}
+
+function hasMinimumRatioModelSearchParam(): boolean {
+  if (typeof window === 'undefined') return false
+  return new URLSearchParams(window.location.search).has('minimumRatioModel')
+}
+
 export function ChannelsTable() {
   const { t } = useTranslation()
   const routeSearch = route.useSearch()
   const navigate = route.useNavigate()
-  const minimumRatioModel =
+  const routeMinimumRatioModel =
     typeof routeSearch.minimumRatioModel === 'string'
       ? routeSearch.minimumRatioModel.trim()
       : ''
+  const minimumRatioModelSearchParamPresent =
+    hasMinimumRatioModelSearchParam()
+  const [storedMinimumRatioModel, setStoredMinimumRatioModel] = useState(
+    () => loadSavedMinimumRatioModel()
+  )
+  const minimumRatioModel = minimumRatioModelSearchParamPresent
+    ? routeMinimumRatioModel
+    : storedMinimumRatioModel
   const {
     enableTagMode,
     idSort,
@@ -211,9 +256,35 @@ export function ChannelsTable() {
   // 全局关键字或模型过滤存在时走搜索接口，否则走普通列表接口。
   const shouldSearch = Boolean(globalFilter?.trim() || modelFilter.trim())
 
+  useEffect(() => {
+    if (minimumRatioModelSearchParamPresent) {
+      persistMinimumRatioModel(routeMinimumRatioModel)
+      setStoredMinimumRatioModel(routeMinimumRatioModel)
+      return
+    }
+
+    if (!storedMinimumRatioModel) return
+
+    // URL 仍是可分享状态；没有 URL 参数时，用本地记忆补回，刷新和重新进入页面都能恢复排序上下文。
+    navigate({
+      replace: true,
+      search: (prev) => ({
+        ...(prev as Record<string, unknown>),
+        minimumRatioModel: storedMinimumRatioModel,
+      }),
+    })
+  }, [
+    minimumRatioModelSearchParamPresent,
+    navigate,
+    routeMinimumRatioModel,
+    storedMinimumRatioModel,
+  ])
+
   const handleMinimumRatioModelChange = useCallback(
     (model: string) => {
       const nextModel = model.trim()
+      persistMinimumRatioModel(nextModel)
+      setStoredMinimumRatioModel(nextModel)
       navigate({
         search: (prev) => ({
           ...(prev as Record<string, unknown>),

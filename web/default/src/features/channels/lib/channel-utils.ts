@@ -311,6 +311,25 @@ export function isUpstreamAccountSyncChannel(
   return hasUpstreamAccountSyncMetadata(channel?.settings)
 }
 
+// isUpstreamAccountSyncAccountPoolChannel 专门识别“上游平台账号同步出来的账号池渠道”。
+// 这类渠道的每把同步密钥都有独立状态和测试入口，主渠道行不再承担渠道级测试按钮；
+// 普通手动账号池没有 upstream_account_sync 元数据，仍保留原有渠道行操作语义。
+export function isUpstreamAccountSyncAccountPoolChannel(
+  channel:
+    | Pick<Channel, 'settings' | 'channel_info' | 'channel_account_stats'>
+    | null
+    | undefined
+): boolean {
+  if (!channel) return false
+  if (!isUpstreamAccountSyncChannel(channel)) return false
+  const info = channel.channel_info
+  return (
+    info?.credential_mode === 'account_pool' ||
+    info?.account_pool_enabled === true ||
+    (channel.channel_account_stats?.total ?? 0) > 0
+  )
+}
+
 // canManuallyMutateChannelAccounts 统一决定账号池手动新增、导入和删除入口是否可见。
 export function canManuallyMutateChannelAccounts(
   channel: Pick<Channel, 'settings'> | null | undefined
