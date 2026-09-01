@@ -207,6 +207,71 @@ func TestRelayRetriesToNextMultiKeyCandidateBeforeChannelFallback(t *testing.T) 
 	}).CandidateKey().String()])
 }
 
+func TestRelayAffinitySkipRetryStillAllowsCredentialDegradation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupRelayRetryFallbackTestState(t)
+	common.RetryTimes = 1
+
+	var mu sync.Mutex
+	seenKeys := make([]string, 0, 2)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+		auth := r.Header.Get("Authorization")
+		mu.Lock()
+		seenKeys = append(seenKeys, auth)
+		mu.Unlock()
+		if auth == "Bearer sk-multi-fail" {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":{"message":"affinity key rejected","type":"invalid_request_error","code":"invalid_api_key"}}`))
+			return
+		}
+		require.Equal(t, "Bearer sk-multi-ok", auth)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-affinity-retry-ok","object":"chat.completion","created":1,"model":"gpt-retry-relay","choices":[{"index":0,"message":{"role":"assistant","content":"affinity-fallback-ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer upstream.Close()
+
+	channel := createRelayRetryFallbackMultiKeyChannel(t, 41, "affinity-multi-key-channel", upstream.URL, 20)
+	model.InitChannelCache()
+	seedRelayRetryAffinity(t, "affinity-skip-key", channel.Id)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	body := []byte(`{"model":"gpt-retry-relay","messages":[{"role":"user","content":"ping"}]}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("X-Test-Affinity", "affinity-skip-key")
+	storage, err := common.CreateBodyStorage(body)
+	require.NoError(t, err)
+	c.Set(common.KeyBodyStorage, storage)
+	defer common.CleanupBodyStorage(c)
+	setRelayRetryFallbackRequestContext(c)
+
+	preferredID, found := service.GetPreferredChannelByAffinity(c, "gpt-retry-relay", "default")
+	require.True(t, found)
+	require.Equal(t, channel.Id, preferredID)
+	service.MarkChannelAffinityUsed(c, "default", channel.Id)
+	require.True(t, service.ShouldSkipRetryAfterChannelAffinityFailure(c))
+	candidate, _, err := service.SelectRoutingCandidate(&service.RetryParam{
+		Ctx:         c,
+		TokenGroup:  "default",
+		ModelName:   "gpt-retry-relay",
+		RequestPath: "/v1/chat/completions",
+		Retry:       common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, candidate)
+	require.Nil(t, middleware.SetupContextForRoutingCandidate(c, candidate, "gpt-retry-relay"))
+
+	Relay(c, types.RelayFormatOpenAI)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "affinity-fallback-ok")
+	require.Equal(t, []string{"41", "41"}, c.GetStringSlice("use_channel"))
+	require.Equal(t, []string{"Bearer sk-multi-fail", "Bearer sk-multi-ok"}, seenKeys)
+	require.False(t, service.ShouldSkipRetryAfterChannelAffinityFailure(c))
+}
+
 func TestRelayFallsBackToNextChannelAfterAllMultiKeyCandidatesFail(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupRelayRetryFallbackTestState(t)
@@ -418,6 +483,42 @@ func setupRelayRetryFallbackTestState(t *testing.T) {
 		*operation_setting.GetQuotaSetting() = oldQuotaSetting
 		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(string(oldModelRatioJSON)))
 		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(string(oldGroupRatioJSON)))
+	})
+}
+
+func seedRelayRetryAffinity(t *testing.T, headerValue string, channelID int) {
+	t.Helper()
+	setting := operation_setting.GetChannelAffinitySetting()
+	original := *setting
+	originalRules := append([]operation_setting.ChannelAffinityRule(nil), setting.Rules...)
+	setting.Enabled = true
+	setting.SwitchOnSuccess = true
+	setting.KeepOnChannelDisabled = false
+	setting.DefaultTTLSeconds = 3600
+	setting.Rules = []operation_setting.ChannelAffinityRule{
+		{
+			Name:       "relay retry affinity",
+			ModelRegex: []string{"^gpt-retry-relay$"},
+			PathRegex:  []string{"/v1/chat/completions"},
+			KeySources: []operation_setting.ChannelAffinityKeySource{
+				{Type: "request_header", Key: "X-Test-Affinity"},
+			},
+			SkipRetryOnFailure: true,
+			IncludeUsingGroup:  true,
+			IncludeRuleName:    true,
+		},
+	}
+
+	seedCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	seedCtx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	seedCtx.Request.Header.Set("X-Test-Affinity", headerValue)
+	_, _ = service.GetPreferredChannelByAffinity(seedCtx, "gpt-retry-relay", "default")
+	service.RecordChannelAffinity(seedCtx, channelID)
+
+	t.Cleanup(func() {
+		service.ClearCurrentChannelAffinityCache(seedCtx)
+		*setting = original
+		setting.Rules = originalRules
 	})
 }
 

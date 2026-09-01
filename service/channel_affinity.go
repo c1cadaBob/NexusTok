@@ -733,6 +733,29 @@ func ShouldSkipRetryAfterChannelAffinityFailure(c *gin.Context) bool {
 	return meta.SkipRetry
 }
 
+// AllowChannelAffinityDegradationRetry 允许本次亲和命中在真实上游失败后继续降级重试。
+//
+// skip_retry_on_failure 的原始用途是避免缓存亲和请求在失败时盲目重放；但当一次
+// 请求已经命中了具体 channel/key，并且后续错误处理会把失败候选加入请求级排除集时，
+// 继续阻断重试会导致坏密钥直接中断用户对话。这里仅清除本次请求上下文中的跳过
+// 重试标记，不修改管理员规则本身，也不删除亲和缓存；如果后续重试成功且开启了
+// SwitchOnSuccess，成功渠道会按既有逻辑回写为新的亲和目标。
+func AllowChannelAffinityDegradationRetry(c *gin.Context) {
+	if c == nil {
+		return
+	}
+	if _, ok := getChannelAffinityMeta(c); !ok {
+		return
+	}
+	c.Set(ginKeyChannelAffinitySkipRetry, false)
+	if anyInfo, ok := c.Get(ginKeyChannelAffinityLogInfo); ok {
+		if info, ok := anyInfo.(map[string]interface{}); ok {
+			info["degradation_retry"] = true
+			c.Set(ginKeyChannelAffinityLogInfo, info)
+		}
+	}
+}
+
 // ClearCurrentChannelAffinityCache 清理当前请求命中的渠道亲和缓存。
 //
 // 当缓存命中的渠道已禁用、已删除或不再支持当前分组/模型时，继续保留该缓存会让后续

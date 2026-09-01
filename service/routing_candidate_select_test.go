@@ -414,3 +414,94 @@ func TestSelectRoutingCandidateReSelectsWithinSameLayerBeforeLowerLayer(t *testi
 	require.NotEqual(t, first.ChannelID, second.ChannelID)
 	require.NotEqual(t, lowChannel.Id, second.ChannelID)
 }
+
+func TestSelectRoutingCandidateForChannelUsesExplicitGroupWhenContextIsAuto(t *testing.T) {
+	db := setupChannelAccountSelectTestDB(t)
+	priority := int64(10)
+	weight := uint(100)
+	channel := model.Channel{
+		Type:     constant.ChannelTypeOpenAI,
+		Key:      "sk-auto-group",
+		Status:   common.ChannelStatusEnabled,
+		Name:     "auto-context-channel",
+		Models:   "gpt-route",
+		Group:    "default",
+		Priority: &priority,
+		Weight:   &weight,
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	ctx := newRoutingSelectTestContext()
+	common.SetContextKey(ctx, constant.ContextKeyUsingGroup, "auto")
+	candidate, selectedGroup, err := SelectRoutingCandidateForChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-route",
+		Retry:      common.GetPointer(0),
+	}, channel.Id)
+
+	require.NoError(t, err)
+	require.Equal(t, "default", selectedGroup)
+	require.NotNil(t, candidate)
+	require.Equal(t, channel.Id, candidate.ChannelID)
+	require.Equal(t, model.RoutingCredentialKindSingleKey, candidate.Kind)
+}
+
+func TestSelectRoutingCandidateForChannelPrefersSyncedManagedWeight(t *testing.T) {
+	db := setupChannelAccountSelectTestDB(t)
+	priority := int64(10)
+	weight := uint(100)
+	channel := model.Channel{
+		Type:          constant.ChannelTypeOpenAI,
+		Status:        common.ChannelStatusEnabled,
+		Name:          "synced-affinity-channel",
+		Models:        "gpt-route",
+		Group:         "default",
+		Priority:      &priority,
+		Weight:        &weight,
+		OtherSettings: `{"upstream_account_sync":{"platform":"new-api","base_url":"https://upstream.example"}}`,
+		ChannelInfo: model.ChannelInfo{
+			CredentialMode:     constant.ChannelCredentialModeAccountPool,
+			AccountPoolEnabled: true,
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+	cheap := model.ChannelAccount{
+		ChannelId:     channel.Id,
+		Name:          "cheap-key",
+		Key:           "sk-cheap",
+		Status:        common.ChannelStatusEnabled,
+		Models:        "gpt-route",
+		AccessGroups:  "default",
+		Priority:      0,
+		Weight:        150,
+		OtherSettings: `{"upstream_account_sync":{"platform":"new-api","base_url":"https://upstream.example","external_id":"cheap","key_digest":"cheap","ratio_conversion":0.5}}`,
+	}
+	expensive := model.ChannelAccount{
+		ChannelId:     channel.Id,
+		Name:          "expensive-key",
+		Key:           "sk-expensive",
+		Status:        common.ChannelStatusEnabled,
+		Models:        "gpt-route",
+		AccessGroups:  "default",
+		Priority:      0,
+		Weight:        80,
+		OtherSettings: `{"upstream_account_sync":{"platform":"new-api","base_url":"https://upstream.example","external_id":"expensive","key_digest":"expensive","ratio_conversion":1.2}}`,
+	}
+	require.NoError(t, db.Create(&cheap).Error)
+	require.NoError(t, db.Create(&expensive).Error)
+
+	candidate, selectedGroup, err := SelectRoutingCandidateForChannel(&RetryParam{
+		Ctx:         newRoutingSelectTestContext(),
+		TokenGroup:  "default",
+		ModelName:   "gpt-route",
+		RequestPath: "/v1/chat/completions",
+		Retry:       common.GetPointer(0),
+	}, channel.Id)
+
+	require.NoError(t, err)
+	require.Equal(t, "default", selectedGroup)
+	require.NotNil(t, candidate)
+	require.Equal(t, cheap.Id, candidate.ChannelAccountID)
+	require.Equal(t, 150, candidate.Schedule.CredentialWeight)
+}

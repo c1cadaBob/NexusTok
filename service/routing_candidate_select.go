@@ -119,7 +119,7 @@ func SelectRoutingCandidateForChannel(param *RetryParam, channelID int) (*model.
 		return nil, param.TokenGroup, nil
 	}
 	usingGroup := param.TokenGroup
-	if actualGroup := RoutingGroupFromContext(param.Ctx); actualGroup != "" {
+	if actualGroup := RoutingGroupFromContext(param.Ctx); actualGroup != "" && actualGroup != "auto" {
 		usingGroup = actualGroup
 	}
 	if usingGroup == "" || usingGroup == "auto" {

@@ -345,13 +345,17 @@ export function ChannelAccountInlinePanel({
                   <TableHead>{t('Key Ratio')}</TableHead>
                 )}
                 <TableHead>{t('Ratio Conversion')}</TableHead>
-                <TableHead>{t('Key Priority')}</TableHead>
-                <TableHead>{t('Key Weight')}</TableHead>
-                <TableHead>{t('Upstream Used')}</TableHead>
+                <TableHead className='text-center'>
+                  {t('Key Priority')}
+                </TableHead>
+                <TableHead className='text-center'>{t('Key Weight')}</TableHead>
+                <TableHead className='text-center'>
+                  {t('Upstream Used')}
+                </TableHead>
                 {!isSyncedAccountPool && (
                   <TableHead>{t('Upstream Remaining')}</TableHead>
                 )}
-                <TableHead>{t('Last Used')}</TableHead>
+                <TableHead className='text-center'>{t('Last Used')}</TableHead>
                 {isSyncedAccountPool && (
                   <TableHead className='text-right'>{t('Actions')}</TableHead>
                 )}
@@ -473,10 +477,10 @@ export function ChannelAccountInlinePanel({
                             : '-')}
                       </span>
                     </TableCell>
-                    <TableCell>
+                    <TableCell className='text-center'>
                       {isSyncedAccountPool ? (
                         <div
-                          className='min-w-[104px]'
+                          className='flex min-w-[104px] justify-center'
                           title={
                             permissions.canWriteChannelAccount
                               ? undefined
@@ -503,7 +507,7 @@ export function ChannelAccountInlinePanel({
                         </span>
                       )}
                     </TableCell>
-                    <TableCell>
+                    <TableCell className='text-center'>
                       <span
                         className='font-mono text-xs tabular-nums'
                         title={
@@ -515,7 +519,7 @@ export function ChannelAccountInlinePanel({
                         {account.weight}
                       </span>
                     </TableCell>
-                    <TableCell>
+                    <TableCell className='text-center'>
                       <span className='font-mono text-xs tabular-nums'>
                         {sensitiveVisible ? usedQuota : SENSITIVE_MASK}
                       </span>
@@ -531,7 +535,7 @@ export function ChannelAccountInlinePanel({
                         </span>
                       </TableCell>
                     )}
-                    <TableCell>
+                    <TableCell className='text-center'>
                       <span className='text-muted-foreground text-xs'>
                         {account.last_used_time > 0
                           ? formatTimestamp(account.last_used_time)

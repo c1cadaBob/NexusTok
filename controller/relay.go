@@ -407,6 +407,9 @@ func markFailedCredentialForRetry(c *gin.Context, channel *model.Channel, relayI
 	if c == nil || channel == nil || channel.Id <= 0 {
 		return
 	}
+	if err != nil && !types.IsSkipRetryError(err) {
+		service.AllowChannelAffinityDegradationRetry(c)
+	}
 	candidate := routingCredentialCandidateFromContext(c, channel.Id)
 	if candidate != nil && candidate.Kind != model.RoutingCredentialKindSingleKey {
 		service.AddExcludedRoutingCandidate(c, candidate)

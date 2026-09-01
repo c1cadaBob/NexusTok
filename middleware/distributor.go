@@ -156,7 +156,7 @@ func setupSelectedChannelWithFallback(
 				return channel, setupErr
 			}
 			service.AddExcludedRoutingCandidate(c, candidate)
-			nextCandidate, nextErr := selectRoutingCandidateForSetupRetry(c, modelRequest)
+			nextCandidate, nextErr := selectRoutingCandidateForSetupRetry(c, modelRequest, candidate)
 			if nextErr != nil {
 				return channel, nextErr
 			}
@@ -245,8 +245,27 @@ func routingCandidateFromContext(c *gin.Context, channelID int) *model.RoutingCa
 	return candidate.Clone()
 }
 
-func selectRoutingCandidateForSetupRetry(c *gin.Context, modelRequest *ModelRequest) (*model.RoutingCandidate, *types.NexusTokError) {
+func selectRoutingCandidateForSetupRetry(c *gin.Context, modelRequest *ModelRequest, current *model.RoutingCandidate) (*model.RoutingCandidate, *types.NexusTokError) {
 	usingGroup := service.RoutingGroupFromContext(c)
+	if current != nil && current.Kind != model.RoutingCredentialKindSingleKey {
+		if sameChannelCandidate, _, err := service.SelectRoutingCandidateForChannel(&service.RetryParam{
+			Ctx:         c,
+			ModelName:   modelRequest.Model,
+			TokenGroup:  usingGroup,
+			RequestPath: relaycommon.EffectiveRequestPath(c),
+			Retry:       common.GetPointer(0),
+		}, current.ChannelID); err != nil {
+			return nil, types.NewError(
+				fmt.Errorf("获取分组 %s 下模型 %s 的同渠道备用密钥候选失败：%s", usingGroup, modelRequest.Model, err.Error()),
+				types.ErrorCodeGetChannelFailed,
+				types.ErrOptionWithStatusCode(http.StatusServiceUnavailable),
+				types.ErrOptionWithSkipRetry(),
+			)
+		} else if sameChannelCandidate != nil {
+			common.SetContextKey(c, constant.ContextKeyRoutingCandidate, sameChannelCandidate.Clone())
+			return sameChannelCandidate, nil
+		}
+	}
 	candidate, selectGroup, err := service.SelectRoutingCandidate(&service.RetryParam{
 		Ctx:         c,
 		ModelName:   modelRequest.Model,
@@ -365,50 +384,32 @@ func selectRelayChannel(c *gin.Context, modelRequest *ModelRequest, shouldSelect
 	}
 
 	// ========== 渠道亲和性（Channel Affinity）优先选择 ==========
-	// 如果之前对该模型的成功请求使用过某个渠道，优先复用该渠道
+	// 如果之前对该模型的成功请求使用过某个渠道，优先在该渠道内按统一候选规则选择
+	// 具体 key/account。这样亲和性只提供“优先尝试同渠道”的约束，不会绕过密钥级
+	// 优先级、同步托管权重和后续失败降级机制。
 	if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
 		affinityUsable := false
-		shouldAbortAffinityDisabled := false
 		preferred, err := model.CacheGetChannel(preferredChannelID)
 		if err == nil && preferred != nil {
 			if !service.IsChannelRoutingHealthy(usingGroup, modelRequest.Model, preferred.Id) {
 				// 亲和渠道处于动态冷却期时，允许健康候选接管本次请求，
 				// 避免“亲和”把已知故障渠道硬锁回来。
 			} else if preferred.Status != common.ChannelStatusEnabled {
-				// 亲和性渠道已禁用
-				shouldAbortAffinityDisabled = service.ShouldSkipRetryAfterChannelAffinityFailure(c)
+				// 亲和性渠道已禁用时直接回到统一选路，避免缓存命中导致对话中断。
 			} else if !channelSupportsRequestPath(preferred, relaycommon.EffectiveRequestPath(c)) {
 				// Advanced Custom 渠道可能只配置了部分入口路径。
 				// 模型能力匹配但 path 不匹配时不能复用亲和性渠道，否则会把
 				// /v1/responses、Gemini native 等请求打到错误 route。
-			} else if usingGroup == "auto" {
-				// auto 分组：遍历用户可用的自动分组，找到第一个支持该模型的分组
-				userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
-				autoGroups := service.GetUserAutoGroup(userGroup)
-				for _, g := range autoGroups {
-					if model.IsChannelEnabledForGroupModel(g, modelRequest.Model, preferred.Id) && service.IsChannelRoutingHealthy(g, modelRequest.Model, preferred.Id) {
-						selectGroup = g
-						common.SetContextKey(c, constant.ContextKeyAutoGroup, g)
-						channel = preferred
-						affinityUsable = true
-						service.MarkChannelAffinityUsed(c, g, preferred.Id)
-						break
-					}
-				}
-			} else if model.IsChannelEnabledForGroupModel(usingGroup, modelRequest.Model, preferred.Id) {
-				// 普通分组：检查渠道是否在该分组中支持该模型
+			} else if candidate, candidateGroup, ok := selectAffinityRoutingCandidate(c, modelRequest, preferred, usingGroup); ok {
+				selectGroup = candidateGroup
 				channel = preferred
-				selectGroup = usingGroup
 				affinityUsable = true
-				service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
+				common.SetContextKey(c, constant.ContextKeyRoutingCandidate, candidate.Clone())
+				service.MarkChannelAffinityUsed(c, candidateGroup, preferred.Id)
 			}
 		}
 		if !affinityUsable && !service.ShouldKeepChannelAffinityOnChannelDisabled() {
 			service.ClearCurrentChannelAffinityCache(c)
-		}
-		if shouldAbortAffinityDisabled {
-			abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorAffinityChannelDisabled))
-			return nil, false
 		}
 	}
 
@@ -454,6 +455,60 @@ func selectRelayChannel(c *gin.Context, modelRequest *ModelRequest, shouldSelect
 		}
 	}
 	return channel, true
+}
+
+// selectAffinityRoutingCandidate 在亲和命中的渠道内选择一个统一路由候选。
+//
+// 亲和性不能直接绕过统一调度：同步上游平台账号的最低倍率会被转换为账号
+// weight，multi-key 和账号池也都有各自的候选级排除与轮询语义。这里先把
+// 亲和命中收敛到“指定 channel_id 的候选选择”，后续 setup / relay 失败时
+// 才能继续按同渠道换 key、候选耗尽后再降级到其他渠道的顺序运行。
+func selectAffinityRoutingCandidate(c *gin.Context, modelRequest *ModelRequest, preferred *model.Channel, usingGroup string) (*model.RoutingCandidate, string, bool) {
+	if c == nil || modelRequest == nil || preferred == nil || preferred.Id <= 0 {
+		return nil, "", false
+	}
+	requestPath := relaycommon.EffectiveRequestPath(c)
+	selectInGroup := func(group string) (*model.RoutingCandidate, bool) {
+		if group == "" || group == "auto" {
+			return nil, false
+		}
+		if !service.IsChannelRoutingHealthy(group, modelRequest.Model, preferred.Id) {
+			return nil, false
+		}
+		if !model.IsChannelEnabledForGroupModel(group, modelRequest.Model, preferred.Id) {
+			return nil, false
+		}
+		candidate, _, err := service.SelectRoutingCandidateForChannel(&service.RetryParam{
+			Ctx:         c,
+			ModelName:   modelRequest.Model,
+			TokenGroup:  group,
+			RequestPath: requestPath,
+			Retry:       common.GetPointer(0),
+		}, preferred.Id)
+		if err != nil || candidate == nil {
+			return nil, false
+		}
+		return candidate, true
+	}
+
+	if usingGroup == "auto" {
+		userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+		for _, group := range service.GetUserAutoGroup(userGroup) {
+			candidate, ok := selectInGroup(group)
+			if !ok {
+				continue
+			}
+			common.SetContextKey(c, constant.ContextKeyAutoGroup, group)
+			return candidate, group, true
+		}
+		return nil, "", false
+	}
+
+	candidate, ok := selectInGroup(usingGroup)
+	if !ok {
+		return nil, "", false
+	}
+	return candidate, usingGroup, true
 }
 
 // channelSupportsRequestPath 判断渠道是否能处理当前请求路径。
