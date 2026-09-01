@@ -47,7 +47,11 @@ import {
 } from '@/components/ui/tooltip'
 import { StatusBadge } from '@/components/status-badge'
 import { TruncatedText } from '@/components/truncated-text'
-import { getChannelAccounts, updateChannelAccountStatus } from '../api'
+import {
+  getChannelAccounts,
+  updateChannelAccount,
+  updateChannelAccountStatus,
+} from '../api'
 import { CHANNEL_STATUS } from '../constants'
 import { useChannelPermissions } from '../hooks/use-channel-permissions'
 import {
@@ -66,6 +70,7 @@ import {
   getUpstreamRatioDisplayValue,
   loadAllChannelAccounts,
 } from '../lib/upstream-sync'
+import { NumericSpinnerInput } from './numeric-spinner-input'
 import type { Channel, ChannelAccount } from '../types'
 
 const SENSITIVE_MASK = '••••'
@@ -138,6 +143,9 @@ export function ChannelAccountInlinePanel({
   const [togglingAccountId, setTogglingAccountId] = useState<number | null>(
     null
   )
+  const [updatingPriorityAccountId, setUpdatingPriorityAccountId] = useState<
+    number | null
+  >(null)
   const isSyncedAccountPool = isUpstreamAccountSyncAccountPoolChannel(channel)
   const query = useQuery({
     queryKey: [
@@ -226,6 +234,40 @@ export function ChannelAccountInlinePanel({
       )
     } finally {
       setTogglingAccountId(null)
+    }
+  }
+
+  const handleUpdateAccountPriority = async (
+    account: ChannelAccount,
+    value: number
+  ) => {
+    if (!permissions.canWriteChannelAccount) {
+      toast.error(noPermissionMessage)
+      return
+    }
+    if (value === (account.priority ?? 0)) return
+
+    setUpdatingPriorityAccountId(account.id)
+    try {
+      const response = await updateChannelAccount(channel.id, account.id, {
+        priority: value,
+      })
+      if (!response.success) {
+        throw new Error(response.message || t('Operation failed'))
+      }
+      toast.success(
+        t('{{field}} updated to {{value}}', {
+          field: t('Key Priority'),
+          value,
+        })
+      )
+      await refreshRelatedQueries()
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : t('Operation failed')
+      )
+    } finally {
+      setUpdatingPriorityAccountId(null)
     }
   }
 
@@ -432,12 +474,44 @@ export function ChannelAccountInlinePanel({
                       </span>
                     </TableCell>
                     <TableCell>
-                      <span className='font-mono text-xs tabular-nums'>
-                        {account.priority}
-                      </span>
+                      {isSyncedAccountPool ? (
+                        <div
+                          className='min-w-[104px]'
+                          title={
+                            permissions.canWriteChannelAccount
+                              ? undefined
+                              : noPermissionMessage
+                          }
+                        >
+                          <NumericSpinnerInput
+                            value={account.priority ?? 0}
+                            min={-999}
+                            disabled={
+                              !permissions.canWriteChannelAccount ||
+                              updatingPriorityAccountId === account.id ||
+                              testingAccountId !== null ||
+                              togglingAccountId !== null
+                            }
+                            onChange={(value) => {
+                              void handleUpdateAccountPriority(account, value)
+                            }}
+                          />
+                        </div>
+                      ) : (
+                        <span className='font-mono text-xs tabular-nums'>
+                          {account.priority}
+                        </span>
+                      )}
                     </TableCell>
                     <TableCell>
-                      <span className='font-mono text-xs tabular-nums'>
+                      <span
+                        className='font-mono text-xs tabular-nums'
+                        title={
+                          isSyncedAccountPool
+                            ? t('Sync-managed weight')
+                            : undefined
+                        }
+                      >
                         {account.weight}
                       </span>
                     </TableCell>
@@ -480,6 +554,7 @@ export function ChannelAccountInlinePanel({
                                   }}
                                   disabled={
                                     !permissions.canOperate ||
+                                    updatingPriorityAccountId !== null ||
                                     testingAccountId !== null ||
                                     togglingAccountId !== null
                                   }
@@ -512,6 +587,7 @@ export function ChannelAccountInlinePanel({
                                   }}
                                   disabled={
                                     !permissions.canOperateChannelAccount ||
+                                    updatingPriorityAccountId !== null ||
                                     testingAccountId !== null ||
                                     togglingAccountId !== null
                                   }
