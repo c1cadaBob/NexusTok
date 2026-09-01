@@ -9,7 +9,13 @@ import (
 	"github.com/c1cada/NexusTok/common"
 )
 
-const upstreamAccountSyncMetadataKey = "upstream_account_sync"
+const (
+	upstreamAccountSyncMetadataKey = "upstream_account_sync"
+	// AccountAutoCheckFastSuccessDurationMs 是自动测试允许恢复同步密钥的单次成功耗时上限。
+	// 自动恢复需要连续两次成功且两次都严格小于该阈值；慢成功只说明上游可达，
+	// 不能证明该密钥足够健康到可以重新承接用户对话。
+	AccountAutoCheckFastSuccessDurationMs int64 = 45 * 1000
+)
 
 type syncMetadata struct {
 	Platform                     string                   `json:"platform,omitempty"`
@@ -37,6 +43,8 @@ type syncMetadata struct {
 	KeyModelsManualOverride      bool                     `json:"key_models_manual_override,omitempty"`
 	AutoCheckLastCheckedAt       int64                    `json:"auto_check_last_checked_at,omitempty"`
 	AutoCheckLastSuccessAt       int64                    `json:"auto_check_last_success_at,omitempty"`
+	AutoCheckLastDurationMS      int64                    `json:"auto_check_last_duration_ms,omitempty"`
+	AutoCheckFastSuccessStreak   int                      `json:"auto_check_fast_success_streak,omitempty"`
 	AutoCheckFailureCount        int                      `json:"auto_check_failure_count,omitempty"`
 	AutoCheckLastError           string                   `json:"auto_check_last_error,omitempty"`
 	AutoCheckLastStatus          string                   `json:"auto_check_last_status,omitempty"`
@@ -66,6 +74,8 @@ type AccountAutoCheckMetadata struct {
 	FailureCount        int     `json:"failure_count,omitempty"`
 	LastCheckedAt       int64   `json:"last_checked_at,omitempty"`
 	LastSuccessAt       int64   `json:"last_success_at,omitempty"`
+	LastDurationMS      int64   `json:"last_duration_ms,omitempty"`
+	FastSuccessStreak   int     `json:"fast_success_streak,omitempty"`
 	LastError           string  `json:"last_error,omitempty"`
 	LastStatus          string  `json:"last_status,omitempty"`
 	DisabledByAutoCheck bool    `json:"disabled_by_auto_check,omitempty"`
@@ -217,6 +227,8 @@ func mergeAccountSyncMetadata(existing string, snapshot *Snapshot, key SyncedKey
 		KeyModelsManualOverride:      existingMetadata.KeyModelsManualOverride,
 		AutoCheckLastCheckedAt:       existingMetadata.AutoCheckLastCheckedAt,
 		AutoCheckLastSuccessAt:       existingMetadata.AutoCheckLastSuccessAt,
+		AutoCheckLastDurationMS:      existingMetadata.AutoCheckLastDurationMS,
+		AutoCheckFastSuccessStreak:   existingMetadata.AutoCheckFastSuccessStreak,
 		AutoCheckFailureCount:        existingMetadata.AutoCheckFailureCount,
 		AutoCheckLastError:           existingMetadata.AutoCheckLastError,
 		AutoCheckLastStatus:          existingMetadata.AutoCheckLastStatus,
@@ -570,6 +582,8 @@ func ReadAccountAutoCheckMetadata(settings string) AccountAutoCheckMetadata {
 		FailureCount:        metadata.AutoCheckFailureCount,
 		LastCheckedAt:       metadata.AutoCheckLastCheckedAt,
 		LastSuccessAt:       metadata.AutoCheckLastSuccessAt,
+		LastDurationMS:      metadata.AutoCheckLastDurationMS,
+		FastSuccessStreak:   metadata.AutoCheckFastSuccessStreak,
 		LastError:           metadata.AutoCheckLastError,
 		LastStatus:          metadata.AutoCheckLastStatus,
 		DisabledByAutoCheck: metadata.AutoCheckDisabledByAutoCheck,
@@ -577,15 +591,68 @@ func ReadAccountAutoCheckMetadata(settings string) AccountAutoCheckMetadata {
 	}
 }
 
-// ApplyAccountAutoCheckSuccess 写入同步密钥自动连接测试成功状态。
+// ApplyAccountAutoCheckSuccess 写入同步密钥手动测试成功状态。
+//
+// 该函数保留给旧调用点作为兼容包装：手动测试成功代表管理员已经明确验证该密钥
+// 可用，因此会立即清除自动禁用标记。后台自动测试必须调用
+// ApplyAccountAutoCheckAutomaticSuccess，避免第一次成功就绕过恢复门槛。
 func ApplyAccountAutoCheckSuccess(settings string) string {
+	return ApplyAccountAutoCheckManualSuccess(settings, 0)
+}
+
+// ApplyAccountAutoCheckAutomaticSuccess 写入同步密钥后台自动测试成功状态。
+//
+// 自动测试成功只表示本次探测可达。为了避免偶发恢复造成用户请求再次失败，这里只
+// 记录连续快速成功次数，不清除 auto_check_disabled_by_auto_check。真正恢复账号状态
+// 由调用方在确认连续两次快速成功后，再调用 ApplyAccountAutoCheckRecoveryMarker 完成。
+func ApplyAccountAutoCheckAutomaticSuccess(settings string, durationMs int64) string {
 	now := common.GetTimestamp()
+	durationMs = normalizeAccountAutoCheckDurationMS(durationMs)
+	previous := readAccountSyncMetadata(settings)
+	fastSuccessStreak := 0
+	if AccountAutoCheckDurationFast(durationMs) {
+		fastSuccessStreak = previous.AutoCheckFastSuccessStreak + 1
+	}
 	return mutateAccountSyncMetadata(settings, func(metadata map[string]any) {
 		metadata["auto_check_last_checked_at"] = now
 		metadata["auto_check_last_success_at"] = now
+		metadata["auto_check_last_duration_ms"] = durationMs
+		metadata["auto_check_fast_success_streak"] = fastSuccessStreak
 		metadata["auto_check_failure_count"] = 0
 		metadata["auto_check_last_error"] = ""
 		metadata["auto_check_last_status"] = "success"
+	})
+}
+
+// ApplyAccountAutoCheckManualSuccess 写入同步密钥手动测试成功状态。
+//
+// 手动测试是管理员针对指定密钥发起的显式验证，成功后应立即恢复该密钥并清除所有
+// 自动禁用恢复状态；否则页面上“测试成功但仍禁用”的结果会与管理员预期相冲突。
+func ApplyAccountAutoCheckManualSuccess(settings string, durationMs int64) string {
+	now := common.GetTimestamp()
+	durationMs = normalizeAccountAutoCheckDurationMS(durationMs)
+	return mutateAccountSyncMetadata(settings, func(metadata map[string]any) {
+		metadata["auto_check_last_checked_at"] = now
+		metadata["auto_check_last_success_at"] = now
+		metadata["auto_check_last_duration_ms"] = durationMs
+		metadata["auto_check_fast_success_streak"] = 0
+		metadata["auto_check_failure_count"] = 0
+		metadata["auto_check_last_error"] = ""
+		metadata["auto_check_last_status"] = "success"
+		metadata["auto_check_disabled_by_auto_check"] = false
+		metadata["auto_check_disabled_at"] = 0
+	})
+}
+
+// ApplyAccountAutoCheckRecoveryMarker 清除自动检测禁用标记并保留成功测试状态。
+//
+// 后台自动测试达到恢复门槛后使用该函数。它不同于 ClearAccountAutoCheckDisableMarker：
+// last_status 仍应保持 success，表示账号是由连通性检测恢复，而不是由管理员直接改状态。
+func ApplyAccountAutoCheckRecoveryMarker(settings string) string {
+	return mutateAccountSyncMetadata(settings, func(metadata map[string]any) {
+		metadata["auto_check_fast_success_streak"] = 0
+		metadata["auto_check_failure_count"] = 0
+		metadata["auto_check_last_error"] = ""
 		metadata["auto_check_disabled_by_auto_check"] = false
 		metadata["auto_check_disabled_at"] = 0
 	})
@@ -597,6 +664,7 @@ func ApplyAccountAutoCheckFailure(settings string, failureCount int, errorText s
 	errorText = sanitizeUpstreamAccountSyncTaskLogText(common.MaskSensitiveInfo(errorText), upstreamAccountSyncTaskLogErrorMaxRunes)
 	return mutateAccountSyncMetadata(settings, func(metadata map[string]any) {
 		metadata["auto_check_last_checked_at"] = now
+		metadata["auto_check_fast_success_streak"] = 0
 		metadata["auto_check_failure_count"] = failureCount
 		metadata["auto_check_last_error"] = errorText
 		metadata["auto_check_last_status"] = "failed"
@@ -615,12 +683,25 @@ func ApplyAccountAutoCheckFailure(settings string, failureCount int, errorText s
 // 可自动恢复的状态。
 func ClearAccountAutoCheckDisableMarker(settings string) string {
 	return mutateAccountSyncMetadata(settings, func(metadata map[string]any) {
+		metadata["auto_check_fast_success_streak"] = 0
 		metadata["auto_check_failure_count"] = 0
 		metadata["auto_check_last_error"] = ""
 		metadata["auto_check_last_status"] = "manual"
 		metadata["auto_check_disabled_by_auto_check"] = false
 		metadata["auto_check_disabled_at"] = 0
 	})
+}
+
+// AccountAutoCheckDurationFast 判断一次自动测试成功是否满足恢复用的快速成功条件。
+func AccountAutoCheckDurationFast(durationMs int64) bool {
+	return normalizeAccountAutoCheckDurationMS(durationMs) < AccountAutoCheckFastSuccessDurationMs
+}
+
+func normalizeAccountAutoCheckDurationMS(durationMs int64) int64 {
+	if durationMs < 0 {
+		return 0
+	}
+	return durationMs
 }
 
 func applyAccountKeyModelsSyncMetadata(settings string, key SyncedKey, manualOverride bool, usedModels string) string {

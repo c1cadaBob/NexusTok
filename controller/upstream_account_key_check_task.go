@@ -197,7 +197,7 @@ func upstreamAccountKeyCheckEligible(
 	switch account.Status {
 	case common.ChannelStatusEnabled:
 	case common.ChannelStatusAutoDisabled:
-		if !autoMetadata.DisabledByAutoCheck || !setting.AutoRecoverEnabled {
+		if !autoMetadata.DisabledByAutoCheck {
 			return false
 		}
 	default:
@@ -228,9 +228,11 @@ func checkSingleUpstreamAccountKey(
 	account *model.ChannelAccount,
 ) (recovered bool, disabled bool, err error) {
 	tempChannel := upstreammodel.ChannelWithAccountCredential(channel, account)
+	startedAt := time.Now()
 	_, fetchErr := upstreammodel.FetchChannelModelIDs(tempChannel)
+	durationMs := time.Since(startedAt).Milliseconds()
 	if fetchErr == nil {
-		return applyUpstreamAccountKeyCheckSuccess(setting, account)
+		return applyUpstreamAccountKeyCheckSuccess(setting, account, durationMs)
 	}
 	return applyUpstreamAccountKeyCheckFailure(setting, account, fetchErr)
 }
@@ -238,16 +240,24 @@ func checkSingleUpstreamAccountKey(
 func applyUpstreamAccountKeyCheckSuccess(
 	setting *operation_setting.UpstreamAccountKeyCheckSetting,
 	account *model.ChannelAccount,
+	durationMs int64,
 ) (bool, bool, error) {
-	settings := upstreamaccount.ApplyAccountAutoCheckSuccess(account.OtherSettings)
+	settings := upstreamaccount.ApplyAccountAutoCheckAutomaticSuccess(account.OtherSettings, durationMs)
 	updates := map[string]any{
 		"settings": settings,
 	}
 	recovered := false
 	autoMetadata := upstreamaccount.ReadAccountAutoCheckMetadata(account.OtherSettings)
-	if account.Status == common.ChannelStatusAutoDisabled && autoMetadata.DisabledByAutoCheck && setting.AutoRecoverEnabled {
+	updatedMetadata := upstreamaccount.ReadAccountAutoCheckMetadata(settings)
+	if account.Status == common.ChannelStatusAutoDisabled &&
+		autoMetadata.DisabledByAutoCheck &&
+		setting != nil &&
+		setting.AutoRecoverEnabled &&
+		updatedMetadata.FastSuccessStreak >= 2 {
+		settings = upstreamaccount.ApplyAccountAutoCheckRecoveryMarker(settings)
 		recovered = true
 		updates["status"] = common.ChannelStatusEnabled
+		updates["settings"] = settings
 		updates["disabled_reason"] = ""
 		updates["last_error"] = ""
 		updates["rate_limited_until"] = 0

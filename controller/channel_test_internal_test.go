@@ -239,7 +239,7 @@ func TestApplyManualChannelAccountTestSuccessClearsFailureCount(t *testing.T) {
 	channel, account := createUpstreamAccountKeyCheckFixture(t, "https://upstream.example", common.ChannelStatusAutoDisabled, `{"upstream_account_sync":{"platform":"new-api","base_url":"https://upstream.example","external_id":"key-1","key_digest":"digest","ratio_conversion":0.2,"auto_check_failure_count":1,"auto_check_last_error":"previous","auto_check_disabled_by_auto_check":true}}`)
 	require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", channel.Id).Update("status", common.ChannelStatusManuallyDisabled).Error)
 
-	recovery := applyManualChannelAccountTestSuccess(channel.Id, account.Id)
+	recovery := applyManualChannelAccountTestSuccess(channel.Id, account.Id, 1234)
 
 	require.True(t, recovery.Updated)
 	require.True(t, recovery.AccountRecovered)
@@ -256,6 +256,8 @@ func TestApplyManualChannelAccountTestSuccessClearsFailureCount(t *testing.T) {
 	require.Empty(t, stored.LastError)
 	metadata := upstreamaccount.ReadAccountAutoCheckMetadata(stored.OtherSettings)
 	require.Equal(t, 0, metadata.FailureCount)
+	require.Equal(t, 0, metadata.FastSuccessStreak)
+	require.Equal(t, int64(1234), metadata.LastDurationMS)
 	require.Equal(t, "success", metadata.LastStatus)
 	require.NotZero(t, metadata.LastSuccessAt)
 	var storedChannel model.Channel

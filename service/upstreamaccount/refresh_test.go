@@ -1470,6 +1470,129 @@ func TestRefreshChannelFromSnapshotKeepsManualSchedulingWhenSuggestionsDisabled(
 	require.Equal(t, common.ChannelStatusManuallyDisabled, refreshed.Status)
 }
 
+func TestRefreshChannelFromSnapshotPreservesAutoDisabledAccountDespiteEnabledConfig(t *testing.T) {
+	db := setupRefreshChannelTestDB(t)
+	channel := createRefreshTestSyncedChannel(t, db, "auto-disabled-preserve-channel", "")
+	key := SyncedKey{
+		ExternalID: "auto-disabled",
+		Name:       "Auto Disabled",
+		Key:        "sk-auto-old",
+		MaskedKey:  "sk-auto-old",
+		GroupName:  "default",
+		Models:     []string{"gpt-old"},
+	}
+	settings := mergeAccountSyncMetadata("", &Snapshot{Platform: PlatformNewAPI, BaseURL: "https://newapi.example"}, key)
+	settings = ApplyAccountAutoCheckFailure(settings, 2, "previous upstream failure", true)
+	existing := model.ChannelAccount{
+		ChannelId:         channel.Id,
+		Name:              "Auto Disabled",
+		Key:               "sk-auto-old",
+		Status:            common.ChannelStatusAutoDisabled,
+		Models:            "gpt-old",
+		Group:             "default",
+		AccessGroups:      "default",
+		OtherSettings:     settings,
+		DisabledReason:    "previous disabled reason",
+		LastError:         "previous last error",
+		RateLimitedUntil:  111,
+		OverloadUntil:     222,
+		TempDisabledUntil: 333,
+	}
+	require.NoError(t, db.Create(&existing).Error)
+
+	enabled := true
+	result, err := RefreshChannelFromSnapshot(channel.Id, &Snapshot{
+		Platform: PlatformNewAPI,
+		BaseURL:  "https://newapi.example",
+		Keys: []SyncedKey{
+			{
+				ExternalID: "auto-disabled",
+				Name:       "Auto Disabled Refreshed",
+				Key:        "sk-auto-new",
+				MaskedKey:  "sk-auto-new",
+				GroupName:  "vip",
+				Models:     []string{"gpt-new"},
+			},
+		},
+	}, RefreshRequest{
+		ChannelID: channel.Id,
+		Accounts:  []AccountCreateConfig{{ExternalID: "auto-disabled", Enabled: &enabled}},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Updated)
+	var refreshed model.ChannelAccount
+	require.NoError(t, db.First(&refreshed, existing.Id).Error)
+	require.Equal(t, "Auto Disabled Refreshed", refreshed.Name)
+	require.Equal(t, "sk-auto-new", refreshed.Key)
+	require.Equal(t, common.ChannelStatusAutoDisabled, refreshed.Status)
+	require.Equal(t, "previous disabled reason", refreshed.DisabledReason)
+	require.Equal(t, "previous last error", refreshed.LastError)
+	require.Equal(t, int64(111), refreshed.RateLimitedUntil)
+	require.Equal(t, int64(222), refreshed.OverloadUntil)
+	require.Equal(t, int64(333), refreshed.TempDisabledUntil)
+	metadata := ReadAccountAutoCheckMetadata(refreshed.OtherSettings)
+	require.True(t, metadata.DisabledByAutoCheck)
+	require.Equal(t, 2, metadata.FailureCount)
+}
+
+func TestRefreshChannelFromSnapshotExplicitDisableClearsAutoRecoverMarker(t *testing.T) {
+	db := setupRefreshChannelTestDB(t)
+	channel := createRefreshTestSyncedChannel(t, db, "explicit-disable-marker-channel", "")
+	key := SyncedKey{
+		ExternalID: "explicit-disable",
+		Name:       "Explicit Disable",
+		Key:        "sk-explicit-old",
+		MaskedKey:  "sk-explicit-old",
+		GroupName:  "default",
+		Models:     []string{"gpt-old"},
+	}
+	settings := mergeAccountSyncMetadata("", &Snapshot{Platform: PlatformNewAPI, BaseURL: "https://newapi.example"}, key)
+	settings = ApplyAccountAutoCheckFailure(settings, 2, "previous upstream failure", true)
+	settings = ApplyAccountAutoCheckAutomaticSuccess(settings, 10)
+	existing := model.ChannelAccount{
+		ChannelId:     channel.Id,
+		Name:          "Explicit Disable",
+		Key:           "sk-explicit-old",
+		Status:        common.ChannelStatusEnabled,
+		Models:        "gpt-old",
+		Group:         "default",
+		AccessGroups:  "default",
+		OtherSettings: settings,
+	}
+	require.NoError(t, db.Create(&existing).Error)
+
+	disabled := false
+	result, err := RefreshChannelFromSnapshot(channel.Id, &Snapshot{
+		Platform: PlatformNewAPI,
+		BaseURL:  "https://newapi.example",
+		Keys: []SyncedKey{
+			{
+				ExternalID: "explicit-disable",
+				Name:       "Explicit Disable Refreshed",
+				Key:        "sk-explicit-new",
+				MaskedKey:  "sk-explicit-new",
+				GroupName:  "default",
+				Models:     []string{"gpt-new"},
+			},
+		},
+	}, RefreshRequest{
+		ChannelID: channel.Id,
+		Accounts:  []AccountCreateConfig{{ExternalID: "explicit-disable", Enabled: &disabled}},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Updated)
+	var refreshed model.ChannelAccount
+	require.NoError(t, db.First(&refreshed, existing.Id).Error)
+	require.Equal(t, common.ChannelStatusManuallyDisabled, refreshed.Status)
+	require.Equal(t, "upstream account sync disabled", refreshed.DisabledReason)
+	metadata := ReadAccountAutoCheckMetadata(refreshed.OtherSettings)
+	require.False(t, metadata.DisabledByAutoCheck)
+	require.Equal(t, 0, metadata.FastSuccessStreak)
+	require.Equal(t, "manual", metadata.LastStatus)
+}
+
 func TestRefreshChannelFromSnapshotAppliesConfigBySyncIDWhenExternalIDMissing(t *testing.T) {
 	oldDB := model.DB
 	oldLogDB := model.LOG_DB

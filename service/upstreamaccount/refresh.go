@@ -457,13 +457,24 @@ func buildAccountFromSyncedKey(snapshot *Snapshot, key SyncedKey, config Account
 func buildAccountRefreshUpdates(existing *model.ChannelAccount, snapshot *Snapshot, key SyncedKey, config AccountCreateConfig, applySuggested bool, defaultModels string, defaultGroup string) (map[string]any, error) {
 	account := buildAccountFromSyncedKey(snapshot, key, config, applySuggested, defaultModels, defaultGroup)
 	settings := account.OtherSettings
+	explicitDisable := config.Enabled != nil && !*config.Enabled
 	if existing != nil {
 		settings = mergeAccountSyncMetadata(existing.OtherSettings, snapshot, key)
 		if config.Priority == nil {
 			account.Priority = existing.Priority
 		}
-		if config.Enabled == nil {
+		if explicitDisable {
+			settings = applyExplicitSyncedAccountRefreshDisable(&account, settings)
+		} else if existing.Status != common.ChannelStatusEnabled {
+			// 刷新同步账号只能更新上游快照带来的托管字段，不能把已经禁用的密钥
+			// 偷偷恢复成启用。真正恢复必须来自手动测试成功、自动测试连续快速成功，
+			// 或管理员在账号管理中显式点击启用。
 			account.Status = existing.Status
+			account.DisabledReason = existing.DisabledReason
+			account.LastError = existing.LastError
+			account.RateLimitedUntil = existing.RateLimitedUntil
+			account.OverloadUntil = existing.OverloadUntil
+			account.TempDisabledUntil = existing.TempDisabledUntil
 		}
 		modelsManuallyOverridden := config.Models != nil
 		if config.Models == nil && shouldPreserveExistingAccountModels(existing) {
@@ -481,8 +492,11 @@ func buildAccountRefreshUpdates(existing *model.ChannelAccount, snapshot *Snapsh
 	}
 	// 显式关闭的同步 key 可以保留空模型或空访问组作为草稿；这里先写入最终状态，
 	// 再执行启用态校验，避免刷新禁用 key 时被误判为能力缺失。
-	if config.Enabled != nil && !*config.Enabled {
+	if explicitDisable {
 		account.Status = common.ChannelStatusManuallyDisabled
+		if strings.TrimSpace(account.DisabledReason) == "" {
+			account.DisabledReason = "upstream account sync disabled"
+		}
 	}
 	applySyncedKeyModelFailureFallback(&account, key)
 	if err := validateEnabledSyncedAccountCapability(account); err != nil {
@@ -502,9 +516,9 @@ func buildAccountRefreshUpdates(existing *model.ChannelAccount, snapshot *Snapsh
 		"used_quota":          account.UsedQuota,
 		"settings":            settings,
 		"disabled_reason":     disabledReason,
-		"rate_limited_until":  0,
-		"overload_until":      0,
-		"temp_disabled_until": 0,
+		"rate_limited_until":  account.RateLimitedUntil,
+		"overload_until":      account.OverloadUntil,
+		"temp_disabled_until": account.TempDisabledUntil,
 		"last_error":          lastError,
 	}
 	// 已有账号可能被管理员在 NexusTok 中做过本地覆盖。刷新默认只更新上游同步字段；
@@ -543,6 +557,20 @@ func buildAccountRefreshUpdates(existing *model.ChannelAccount, snapshot *Snapsh
 		updates["status_code_mapping"] = account.StatusCodeMapping
 	}
 	return updates, nil
+}
+
+func applyExplicitSyncedAccountRefreshDisable(account *model.ChannelAccount, settings string) string {
+	if account != nil {
+		account.Status = common.ChannelStatusManuallyDisabled
+		account.DisabledReason = "upstream account sync disabled"
+		account.LastError = ""
+		account.RateLimitedUntil = 0
+		account.OverloadUntil = 0
+		account.TempDisabledUntil = 0
+	}
+	// 刷新面板显式关闭密钥等同于管理员人工禁用：必须清掉自动恢复标记，
+	// 否则后续后台自动测试可能把这个人工状态误当成可自动恢复。
+	return ClearAccountAutoCheckDisableMarker(settings)
 }
 
 func shouldPreserveExistingAccountModels(existing *model.ChannelAccount) bool {

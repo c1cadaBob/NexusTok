@@ -55,7 +55,7 @@ func TestUpstreamAccountKeyCheckDisablesAfterFailureThreshold(t *testing.T) {
 	require.NotContains(t, metadata.LastError, "sk-secret")
 }
 
-func TestUpstreamAccountKeyCheckRecoversAutoDisabledAccount(t *testing.T) {
+func TestUpstreamAccountKeyCheckRecoversAutoDisabledAccountAfterTwoFastSuccesses(t *testing.T) {
 	db := setupChannelAccountMutationTestDB(t)
 	withUpstreamAccountKeyCheckSetting(t, operation_setting.UpstreamAccountKeyCheckSetting{
 		Enabled:            true,
@@ -74,10 +74,24 @@ func TestUpstreamAccountKeyCheckRecoversAutoDisabledAccount(t *testing.T) {
 	settings := `{"upstream_account_sync":{"platform":"new-api","base_url":"` + upstream.URL + `","external_id":"key-1","key_digest":"digest","ratio_conversion":0.2,"auto_check_failure_count":2,"auto_check_disabled_by_auto_check":true,"auto_check_disabled_at":123}}`
 	_, account := createUpstreamAccountKeyCheckFixture(t, upstream.URL, common.ChannelStatusAutoDisabled, settings)
 
-	summary, err := runUpstreamAccountKeyCheckTask(context.Background(), nil)
+	first, err := runUpstreamAccountKeyCheckTask(context.Background(), nil)
 	require.NoError(t, err)
-	require.Equal(t, 1, summary.SucceededAccounts)
-	require.Equal(t, 1, summary.RecoveredAccounts)
+	require.Equal(t, 1, first.SucceededAccounts)
+	require.Equal(t, 0, first.RecoveredAccounts)
+
+	var afterFirst model.ChannelAccount
+	require.NoError(t, db.First(&afterFirst, account.Id).Error)
+	require.Equal(t, common.ChannelStatusAutoDisabled, afterFirst.Status)
+	firstMetadata := upstreamaccount.ReadAccountAutoCheckMetadata(afterFirst.OtherSettings)
+	require.Equal(t, 0, firstMetadata.FailureCount)
+	require.True(t, firstMetadata.DisabledByAutoCheck)
+	require.Equal(t, 1, firstMetadata.FastSuccessStreak)
+	require.Less(t, firstMetadata.LastDurationMS, upstreamaccount.AccountAutoCheckFastSuccessDurationMs)
+
+	second, err := runUpstreamAccountKeyCheckTask(context.Background(), nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, second.SucceededAccounts)
+	require.Equal(t, 1, second.RecoveredAccounts)
 
 	var recovered model.ChannelAccount
 	require.NoError(t, db.First(&recovered, account.Id).Error)
@@ -85,7 +99,106 @@ func TestUpstreamAccountKeyCheckRecoversAutoDisabledAccount(t *testing.T) {
 	metadata := upstreamaccount.ReadAccountAutoCheckMetadata(recovered.OtherSettings)
 	require.Equal(t, 0, metadata.FailureCount)
 	require.False(t, metadata.DisabledByAutoCheck)
+	require.Equal(t, 0, metadata.FastSuccessStreak)
 	require.NotZero(t, metadata.LastSuccessAt)
+}
+
+func TestUpstreamAccountKeyCheckSlowSuccessDoesNotRecoverAutoDisabledAccount(t *testing.T) {
+	db := setupChannelAccountMutationTestDB(t)
+	setting := operation_setting.UpstreamAccountKeyCheckSetting{
+		Enabled:            true,
+		IntervalMinutes:    30,
+		FailureThreshold:   2,
+		AutoRecoverEnabled: true,
+	}
+	withUpstreamAccountKeyCheckSetting(t, setting)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"gpt-slow"}]}`))
+	}))
+	defer upstream.Close()
+
+	settings := `{"upstream_account_sync":{"platform":"new-api","base_url":"` + upstream.URL + `","external_id":"key-1","key_digest":"digest","ratio_conversion":0.2,"auto_check_failure_count":2,"auto_check_fast_success_streak":1,"auto_check_disabled_by_auto_check":true,"auto_check_disabled_at":123}}`
+	_, account := createUpstreamAccountKeyCheckFixture(t, upstream.URL, common.ChannelStatusAutoDisabled, settings)
+
+	recovered, disabled, err := applyUpstreamAccountKeyCheckSuccess(&setting, &account, upstreamaccount.AccountAutoCheckFastSuccessDurationMs)
+
+	require.NoError(t, err)
+	require.False(t, recovered)
+	require.False(t, disabled)
+	var stored model.ChannelAccount
+	require.NoError(t, db.First(&stored, account.Id).Error)
+	require.Equal(t, common.ChannelStatusAutoDisabled, stored.Status)
+	metadata := upstreamaccount.ReadAccountAutoCheckMetadata(stored.OtherSettings)
+	require.True(t, metadata.DisabledByAutoCheck)
+	require.Equal(t, int64(45000), metadata.LastDurationMS)
+	require.Equal(t, 0, metadata.FastSuccessStreak)
+}
+
+func TestUpstreamAccountKeyCheckFailureClearsFastSuccessStreak(t *testing.T) {
+	db := setupChannelAccountMutationTestDB(t)
+	withUpstreamAccountKeyCheckSetting(t, operation_setting.UpstreamAccountKeyCheckSetting{
+		Enabled:            true,
+		IntervalMinutes:    30,
+		FailureThreshold:   2,
+		AutoRecoverEnabled: true,
+	})
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":{"message":"still bad"}}`, http.StatusUnauthorized)
+	}))
+	defer upstream.Close()
+
+	_, account := createUpstreamAccountKeyCheckFixture(t, upstream.URL, common.ChannelStatusEnabled, `{"upstream_account_sync":{"platform":"new-api","base_url":"`+upstream.URL+`","external_id":"key-1","key_digest":"digest","ratio_conversion":0.2,"auto_check_fast_success_streak":1}}`)
+
+	summary, err := runUpstreamAccountKeyCheckTask(context.Background(), nil)
+
+	require.NoError(t, err)
+	require.Equal(t, 1, summary.FailedAccounts)
+	var stored model.ChannelAccount
+	require.NoError(t, db.First(&stored, account.Id).Error)
+	metadata := upstreamaccount.ReadAccountAutoCheckMetadata(stored.OtherSettings)
+	require.Equal(t, 1, metadata.FailureCount)
+	require.Equal(t, 0, metadata.FastSuccessStreak)
+}
+
+func TestUpstreamAccountKeyCheckRecordsSuccessWithoutAutoRecover(t *testing.T) {
+	db := setupChannelAccountMutationTestDB(t)
+	withUpstreamAccountKeyCheckSetting(t, operation_setting.UpstreamAccountKeyCheckSetting{
+		Enabled:            true,
+		IntervalMinutes:    30,
+		FailureThreshold:   2,
+		AutoRecoverEnabled: false,
+	})
+	requests := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"gpt-still-disabled"}]}`))
+	}))
+	defer upstream.Close()
+
+	settings := `{"upstream_account_sync":{"platform":"new-api","base_url":"` + upstream.URL + `","external_id":"key-1","key_digest":"digest","ratio_conversion":0.2,"auto_check_failure_count":2,"auto_check_disabled_by_auto_check":true,"auto_check_disabled_at":123}}`
+	_, account := createUpstreamAccountKeyCheckFixture(t, upstream.URL, common.ChannelStatusAutoDisabled, settings)
+
+	first, err := runUpstreamAccountKeyCheckTask(context.Background(), nil)
+	require.NoError(t, err)
+	second, err := runUpstreamAccountKeyCheckTask(context.Background(), nil)
+	require.NoError(t, err)
+
+	require.Equal(t, 1, first.SucceededAccounts)
+	require.Equal(t, 0, first.RecoveredAccounts)
+	require.Equal(t, 1, second.SucceededAccounts)
+	require.Equal(t, 0, second.RecoveredAccounts)
+	require.Equal(t, 2, requests)
+	var stored model.ChannelAccount
+	require.NoError(t, db.First(&stored, account.Id).Error)
+	require.Equal(t, common.ChannelStatusAutoDisabled, stored.Status)
+	metadata := upstreamaccount.ReadAccountAutoCheckMetadata(stored.OtherSettings)
+	require.Equal(t, 2, metadata.FastSuccessStreak)
+	require.Equal(t, "success", metadata.LastStatus)
+	require.True(t, metadata.DisabledByAutoCheck)
 }
 
 func TestUpstreamAccountKeyCheckSkipsManuallyDisabledAccounts(t *testing.T) {

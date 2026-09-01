@@ -595,7 +595,7 @@ func testChannelOnce(ctx context.Context, channel *model.Channel, testUserID int
 	milliseconds := tok.Sub(tik).Milliseconds()
 	consumedTime := float64(milliseconds) / 1000.0
 	other := buildTestLogOther(c, info, priceData, usage, tieredResult)
-	recovery := applyManualChannelAccountTestSuccess(channel.Id, selectedAccountID)
+	recovery := applyManualChannelAccountTestSuccess(channel.Id, selectedAccountID, milliseconds)
 	attachChannelTestLogMetadata(other, channelTestLogMetadata{
 		Status:                 "success",
 		Model:                  info.OriginModelName,
@@ -820,7 +820,7 @@ func sanitizeChannelTestLogError(errText string, account *model.ChannelAccount) 
 	return errText
 }
 
-func applyManualChannelAccountTestSuccess(channelID int, selectedAccountID int) channelTestRecovery {
+func applyManualChannelAccountTestSuccess(channelID int, selectedAccountID int, durationMs int64) channelTestRecovery {
 	recovery := channelTestRecovery{SelectedAccountID: selectedAccountID}
 	if channelID <= 0 || selectedAccountID <= 0 {
 		return recovery
@@ -837,7 +837,7 @@ func applyManualChannelAccountTestSuccess(channelID int, selectedAccountID int) 
 		strings.TrimSpace(account.LastError) != ""
 	recovery.ChannelStatusBefore = common.ChannelStatusEnabled
 	recovery.ChannelStatusAfter = common.ChannelStatusEnabled
-	settings := upstreamaccount.ApplyAccountAutoCheckSuccess(account.OtherSettings)
+	settings := upstreamaccount.ApplyAccountAutoCheckManualSuccess(account.OtherSettings, durationMs)
 	updates := map[string]any{
 		"settings":            settings,
 		"status":              common.ChannelStatusEnabled,
