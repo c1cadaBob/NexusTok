@@ -41,6 +41,7 @@ import {
 import { CHANNEL_STATUS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import type {
   Channel,
+  ChannelAccount,
   ChannelBalanceResponse,
   ChannelTestResponse,
   CopyChannelParams,
@@ -77,6 +78,104 @@ type ChannelTestParams = {
   endpoint_type?: string
   stream?: boolean
   account_id?: number
+}
+
+function parseChannelTestModels(value: string | null | undefined): string[] {
+  if (!value) return []
+  return value
+    .split(',')
+    .map((model) => model.trim())
+    .filter(Boolean)
+}
+
+function normalizeChannelTestModelName(model: string): string {
+  const name = model.trim()
+  if (name.startsWith('gemini-2.5-flash-lite') && name.includes('-thinking-')) {
+    return 'gemini-2.5-flash-lite-thinking-*'
+  }
+  if (name.startsWith('gemini-2.5-flash') && name.includes('-thinking-')) {
+    return 'gemini-2.5-flash-thinking-*'
+  }
+  if (name.startsWith('gemini-2.5-pro') && name.includes('-thinking-')) {
+    return 'gemini-2.5-pro-thinking-*'
+  }
+  if (name.startsWith('gpt-4o-gizmo')) {
+    return 'gpt-4o-gizmo-*'
+  }
+  if (name.startsWith('gpt-4-gizmo')) {
+    return 'gpt-4-gizmo-*'
+  }
+  return name
+}
+
+function channelTestModelListSupports(
+  models: string[],
+  modelName: string
+): boolean {
+  const requested = modelName.trim()
+  if (!requested) return false
+  const canonicalRequested = normalizeChannelTestModelName(requested)
+
+  return models.some((model) => {
+    const candidate = model.trim()
+    if (!candidate) return false
+    if (
+      candidate === '*' ||
+      candidate === requested ||
+      candidate === canonicalRequested
+    ) {
+      return true
+    }
+
+    const canonicalCandidate = normalizeChannelTestModelName(candidate)
+    if (
+      canonicalCandidate === requested ||
+      canonicalCandidate === canonicalRequested
+    ) {
+      return true
+    }
+
+    for (const pattern of [candidate, canonicalCandidate]) {
+      if (!pattern.endsWith('*')) continue
+      const prefix = pattern.slice(0, -1)
+      if (
+        requested.startsWith(prefix) ||
+        canonicalRequested.startsWith(prefix)
+      ) {
+        return true
+      }
+    }
+
+    return false
+  })
+}
+
+function isConcreteChannelTestModel(model: string): boolean {
+  const value = model.trim()
+  return value !== '' && value !== '*' && !value.endsWith('*')
+}
+
+/**
+ * 为同步密钥的一键快速测试选择一个真实可测模型。
+ * 渠道 test_model 只有被当前密钥模型白名单支持时才可复用，否则回退到该密钥
+ * 自己同步出的第一个具体模型，避免后端按渠道默认模型测试到不属于该密钥的模型。
+ */
+export function selectChannelAccountQuickTestModel(
+  channel: Pick<Channel, 'test_model'> | null | undefined,
+  account: Pick<ChannelAccount, 'models'> | null | undefined
+): string | undefined {
+  const accountModels = parseChannelTestModels(account?.models)
+  if (accountModels.length === 0) return undefined
+
+  const configuredTestModel = channel?.test_model?.trim()
+  if (
+    configuredTestModel &&
+    channelTestModelListSupports(accountModels, configuredTestModel)
+  ) {
+    return configuredTestModel
+  }
+
+  return accountModels.find(isConcreteChannelTestModel)
 }
 
 export function buildChannelTestParams(

@@ -112,6 +112,12 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const handleDirectTest = async (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation()
     if (!guardPermission(permissions.canOperate)) return
+    if (isSyncedAccountPool) {
+      setCurrentRow(channel)
+      setOpen('test-channel')
+      return
+    }
+
     setIsTesting(true)
     try {
       await handleTestChannel(channel.id, undefined, () => {
@@ -197,32 +203,26 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         </Tooltip>
       )}
 
-      {!isSyncedAccountPool && (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                variant='ghost'
-                size='icon-sm'
-                onClick={handleDirectTest}
-                disabled={!permissions.canOperate || isTesting}
-                aria-label={t('Test Connection')}
-              />
-            }
-          >
-            {isTesting ? (
-              <Loader2 className='animate-spin' />
-            ) : (
-              <Gauge />
-            )}
-          </TooltipTrigger>
-          <TooltipContent>
-            {permissions.canOperate
-              ? t('Test Connection')
-              : noPermissionMessage}
-          </TooltipContent>
-        </Tooltip>
-      )}
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant='ghost'
+              size='icon-sm'
+              onClick={handleDirectTest}
+              disabled={
+                !permissions.canOperate || (!isSyncedAccountPool && isTesting)
+              }
+              aria-label={t('Test Connection')}
+            />
+          }
+        >
+          {isTesting ? <Loader2 className='animate-spin' /> : <Gauge />}
+        </TooltipTrigger>
+        <TooltipContent>
+          {permissions.canOperate ? t('Test Connection') : noPermissionMessage}
+        </TooltipContent>
+      </Tooltip>
 
       <Tooltip>
         <TooltipTrigger
@@ -284,19 +284,17 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             </DropdownMenuItem>
           )}
 
-          {/* 同步平台账号池的测试入口下沉到每把密钥行末尾。 */}
-          {!isSyncedAccountPool && (
-            <DropdownMenuItem
-              onClick={handleTest}
-              disabled={!permissions.canOperate}
-              title={permissions.canOperate ? undefined : noPermissionMessage}
-            >
-              {t('Test Connection')}
-              <DropdownMenuShortcut>
-                <TestTube size={16} />
-              </DropdownMenuShortcut>
-            </DropdownMenuItem>
-          )}
+          {/* 渠道级测试保留完整弹窗；同步密钥行末尾另提供一键快速测试。 */}
+          <DropdownMenuItem
+            onClick={handleTest}
+            disabled={!permissions.canOperate}
+            title={permissions.canOperate ? undefined : noPermissionMessage}
+          >
+            {t('Test Connection')}
+            <DropdownMenuShortcut>
+              <TestTube size={16} />
+            </DropdownMenuShortcut>
+          </DropdownMenuItem>
 
           {/* 查询余额 */}
           <DropdownMenuItem

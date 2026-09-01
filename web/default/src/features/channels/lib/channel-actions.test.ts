@@ -24,6 +24,7 @@ import {
   buildChannelTestParams,
   channelsQueryKeys,
   patchChannelBalanceCache,
+  selectChannelAccountQuickTestModel,
 } from './channel-actions'
 
 function makeChannel(overrides: Partial<Channel>): Channel {
@@ -276,5 +277,47 @@ describe('渠道测试请求参数', () => {
 
   test('没有测试选项时不产生查询参数', () => {
     assert.equal(buildChannelTestParams(), undefined)
+  })
+})
+
+describe('同步密钥快速测试模型选择', () => {
+  test('渠道测试模型属于密钥模型时优先使用渠道配置', () => {
+    assert.equal(
+      selectChannelAccountQuickTestModel(
+        { test_model: 'gpt-5.4' },
+        { models: 'gpt-5.4,gpt-5.4-mini' }
+      ),
+      'gpt-5.4'
+    )
+  })
+
+  test('渠道测试模型不属于密钥模型时回退到密钥首个具体模型', () => {
+    assert.equal(
+      selectChannelAccountQuickTestModel(
+        { test_model: 'deepseek' },
+        { models: 'claude-haiku-4-5-20251001,claude-opus-4-7' }
+      ),
+      'claude-haiku-4-5-20251001'
+    )
+  })
+
+  test('通配模型支持渠道测试模型命中', () => {
+    assert.equal(
+      selectChannelAccountQuickTestModel(
+        { test_model: 'gpt-5.4-mini' },
+        { models: 'gpt-5.4-*' }
+      ),
+      'gpt-5.4-mini'
+    )
+  })
+
+  test('没有具体模型时不生成快速测试模型', () => {
+    assert.equal(
+      selectChannelAccountQuickTestModel(
+        { test_model: 'deepseek' },
+        { models: 'gpt-*' }
+      ),
+      undefined
+    )
   })
 })

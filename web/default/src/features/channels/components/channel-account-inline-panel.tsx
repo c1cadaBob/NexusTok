@@ -59,6 +59,7 @@ import {
   formatTimestamp,
   handleTestChannel,
   isUpstreamAccountSyncAccountPoolChannel,
+  selectChannelAccountQuickTestModel,
 } from '../lib'
 import {
   CHANNEL_ACCOUNT_PAGE_SIZE_LIMIT,
@@ -186,11 +187,17 @@ export function ChannelAccountInlinePanel({
       toast.error(noPermissionMessage)
       return
     }
+    const testModel = selectChannelAccountQuickTestModel(channel, account)
+    if (!testModel) {
+      toast.error(t('This upstream key has no synced models.'))
+      return
+    }
+
     setTestingAccountId(account.id)
     try {
       await handleTestChannel(
         channel.id,
-        { accountId: account.id },
+        { accountId: account.id, testModel },
         undefined,
         queryClient
       )
