@@ -180,7 +180,7 @@ func NewProxyHttpClient(proxyURL string) (*http.Client, error) {
 			ResponseHeaderTimeout: relayResponseHeaderTimeout(),
 			ForceAttemptHTTP2:     true,
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				return dialer.Dial(network, addr)
+				return dialProxyContext(ctx, dialer, network, addr)
 			},
 		}
 		if common.TLSInsecureSkipVerify {
@@ -194,6 +194,42 @@ func NewProxyHttpClient(proxyURL string) (*http.Client, error) {
 
 	default:
 		return nil, fmt.Errorf("unsupported proxy scheme: %s, must be http, https, socks5 or socks5h", parsedURL.Scheme)
+	}
+}
+
+// dialProxyContext 为代理拨号统一补充 context 取消和 deadline 语义。
+// x/net/proxy 中部分 Dialer 只实现 Dial，若直接调用会让 HTTP 请求的 context
+// 无法中断代理建连；兼容路径使用独立 goroutine 等待拨号结果，并在取消后
+// 关闭迟到的连接，避免把代理建连卡住变成首包长尾。
+func dialProxyContext(ctx context.Context, dialer proxy.Dialer, network, addr string) (net.Conn, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if contextDialer, ok := dialer.(proxy.ContextDialer); ok {
+		return contextDialer.DialContext(ctx, network, addr)
+	}
+
+	type dialResult struct {
+		conn net.Conn
+		err  error
+	}
+	result := make(chan dialResult, 1)
+	go func() {
+		conn, err := dialer.Dial(network, addr)
+		result <- dialResult{conn: conn, err: err}
+	}()
+
+	select {
+	case outcome := <-result:
+		return outcome.conn, outcome.err
+	case <-ctx.Done():
+		go func() {
+			outcome := <-result
+			if outcome.conn != nil {
+				_ = outcome.conn.Close()
+			}
+		}()
+		return nil, ctx.Err()
 	}
 }
 

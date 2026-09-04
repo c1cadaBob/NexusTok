@@ -34,6 +34,9 @@ const (
 	// ContextKeyRequestStartTime 请求开始时间
 	// 用于计算请求处理耗时
 	ContextKeyRequestStartTime ContextKey = "request_start_time"
+	// ContextKeyRequestObservedStartTime 请求观测起始时间
+	// 在渠道选路前记录，用于拆分本地选路耗时与上游请求耗时
+	ContextKeyRequestObservedStartTime ContextKey = "request_observed_start_time"
 	// ContextKeyEndpointAutoConversion 记录本次请求是否因模型端点能力与请求路径不一致而启用安全纠错。
 	// 该字段只保存模型名、源/目标端点和路径等非敏感诊断信息，供渠道选择、Relay 转换链和消费日志复用。
 	ContextKeyEndpointAutoConversion ContextKey = "endpoint_auto_conversion"

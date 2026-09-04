@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"math"
 	"strings" // 字符串操作
+	"time"
 
 	"github.com/c1cada/NexusTok/common"                   // 项目公共工具包
 	"github.com/c1cada/NexusTok/constant"                 // 常量定义（上下文键、Relay 格式等）
@@ -204,6 +205,9 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	other["user_group_ratio"] = userGroupRatio
 	// 首次响应时间（毫秒），用于性能监控
 	other["frt"] = float64(relayInfo.FirstResponseTime.UnixMilli() - relayInfo.StartTime.UnixMilli())
+	for name, value := range relayInfo.TimingMetrics(time.Now()) {
+		other[name] = value
+	}
 	// 推理努力程度（如 o1 模型的 reasoning_effort 参数）
 	if relayInfo.ReasoningEffort != "" {
 		other["reasoning_effort"] = relayInfo.ReasoningEffort

@@ -1,13 +1,73 @@
 package service
 
 import (
+	"context"
+	"errors"
+	"net"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/c1cada/NexusTok/common"
 	"github.com/stretchr/testify/require"
+
+	"golang.org/x/net/proxy"
 )
+
+type blockingProxyDialer struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (d *blockingProxyDialer) Dial(network, address string) (net.Conn, error) {
+	close(d.started)
+	<-d.release
+	return nil, errors.New("dial released")
+}
+
+type contextProxyDialer struct {
+	called bool
+}
+
+func (d *contextProxyDialer) Dial(network, address string) (net.Conn, error) {
+	return nil, errors.New("Dial should not be called")
+}
+
+func (d *contextProxyDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	d.called = true
+	return nil, ctx.Err()
+}
+
+var _ proxy.Dialer = (*blockingProxyDialer)(nil)
+var _ proxy.ContextDialer = (*contextProxyDialer)(nil)
+
+func TestDialProxyContextHonorsCancellationForLegacyDialer(t *testing.T) {
+	dialer := &blockingProxyDialer{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	conn, err := dialProxyContext(ctx, dialer, "tcp", "example.com:443")
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Nil(t, conn)
+	require.Less(t, time.Since(start), time.Second)
+	<-dialer.started
+	close(dialer.release)
+}
+
+func TestDialProxyContextUsesContextDialer(t *testing.T) {
+	dialer := &contextProxyDialer{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	conn, err := dialProxyContext(ctx, dialer, "tcp", "example.com:443")
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, conn)
+	require.True(t, dialer.called)
+}
 
 // resetHTTPClientConfigForTest 保存并恢复通用 HTTP client 相关全局配置。
 // 这些变量会在 InitHttpClient 与代理 client 缓存中被读取，测试必须隔离，避免影响其它用例。

@@ -118,16 +118,19 @@ type TokenCountMeta struct {
 // 该结构体在请求开始时创建，在整个中继过程中被传递和修改，
 // 最终在请求结束后用于计费结算和日志记录。
 type RelayInfo struct {
-	TokenId           int
-	TokenKey          string
-	TokenGroup        string
-	UserId            int
-	UsingGroup        string // 使用的分组，当auto跨分组重试时，会变动
-	UserGroup         string // 用户所在分组
-	TokenUnlimited    bool
-	StartTime         time.Time
-	FirstResponseTime time.Time
-	isFirstResponse   bool
+	TokenId                    int
+	TokenKey                   string
+	TokenGroup                 string
+	UserId                     int
+	UsingGroup                 string // 使用的分组，当auto跨分组重试时，会变动
+	UserGroup                  string // 用户所在分组
+	TokenUnlimited             bool
+	ObservedStartTime          time.Time // 请求进入分发链路的观测起始时间
+	StartTime                  time.Time
+	FirstResponseTime          time.Time
+	UpstreamRequestStartTime   time.Time // 最近一次上游请求发起时间
+	UpstreamResponseHeaderTime time.Time // 最近一次收到上游响应头的时间
+	isFirstResponse            bool
 	//SendLastReasoningResponse bool
 	IsStream               bool
 	IsGeminiBatchEmbedding bool
@@ -556,6 +559,10 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 	if startTime.IsZero() {
 		startTime = time.Now()
 	}
+	observedStartTime := common.GetContextKeyTime(c, constant.ContextKeyRequestObservedStartTime)
+	if observedStartTime.IsZero() {
+		observedStartTime = startTime
+	}
 
 	isStream := false
 
@@ -594,6 +601,7 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 		IsStream:        isStream,
 
 		StartTime:         startTime,
+		ObservedStartTime: observedStartTime,
 		FirstResponseTime: startTime.Add(-time.Second),
 		ThinkingContentInfo: ThinkingContentInfo{
 			IsFirstThinkingContent:  true,
@@ -810,6 +818,67 @@ func (info *RelayInfo) SetFirstResponseTime() {
 		info.FirstResponseTime = time.Now()
 		info.isFirstResponse = false
 	}
+}
+
+// SetUpstreamRequestStartTime 记录最近一次上游请求真正发起的时间。
+// 该时间点放在 client.Do 前，避免把请求体转换、客户端获取等本地阶段混入上游首包耗时。
+func (info *RelayInfo) SetUpstreamRequestStartTime(at time.Time) {
+	if info == nil {
+		return
+	}
+	if at.IsZero() {
+		at = time.Now()
+	}
+	info.UpstreamRequestStartTime = at
+}
+
+// SetUpstreamResponseHeaderTime 记录最近一次收到上游 HTTP 响应头的时间。
+func (info *RelayInfo) SetUpstreamResponseHeaderTime(at time.Time) {
+	if info == nil {
+		return
+	}
+	if at.IsZero() {
+		at = time.Now()
+	}
+	info.UpstreamResponseHeaderTime = at
+}
+
+// TimingMetrics 返回请求各阶段的毫秒耗时。
+// 字段可能因非 HTTP、非流式或请求在上游建连阶段失败而缺失，此时对应值为 0。
+func (info *RelayInfo) TimingMetrics(now time.Time) map[string]int64 {
+	metrics := map[string]int64{
+		"selected_ms":        0,
+		"upstream_header_ms": 0,
+		"first_sse_ms":       0,
+		"total_ms":           0,
+	}
+	if info == nil {
+		return metrics
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	if !info.ObservedStartTime.IsZero() && !info.StartTime.IsZero() {
+		if duration := info.StartTime.Sub(info.ObservedStartTime).Milliseconds(); duration >= 0 {
+			metrics["selected_ms"] = duration
+		}
+	}
+	if !info.UpstreamRequestStartTime.IsZero() && !info.UpstreamResponseHeaderTime.IsZero() {
+		if duration := info.UpstreamResponseHeaderTime.Sub(info.UpstreamRequestStartTime).Milliseconds(); duration >= 0 {
+			metrics["upstream_header_ms"] = duration
+		}
+	}
+	if !info.UpstreamResponseHeaderTime.IsZero() && info.HasSendResponse() {
+		if duration := info.FirstResponseTime.Sub(info.UpstreamResponseHeaderTime).Milliseconds(); duration >= 0 {
+			metrics["first_sse_ms"] = duration
+		}
+	}
+	if !info.ObservedStartTime.IsZero() {
+		if duration := now.Sub(info.ObservedStartTime).Milliseconds(); duration >= 0 {
+			metrics["total_ms"] = duration
+		}
+	}
+	return metrics
 }
 
 // HasSendResponse 判断是否已收到上游的首个响应。

@@ -169,7 +169,14 @@ func usableRoutingCandidatesInGroup(param *RetryParam, usingGroup string) ([]*mo
 }
 
 func selectRoutingCandidateByStrategy(usingGroup string, modelName string, candidates []*model.RoutingCandidate) *model.RoutingCandidate {
-	layerCandidates := bestRoutingScheduleCandidates(candidates)
+	// TTFT 冷却需要在静态层裁剪前生效，这样高优先级但持续慢的渠道
+	// 才不会阻塞已有健康样本的低层快渠道。没有任何健康候选时保留全部候选，
+	// 确保性能缓存异常或全渠道变慢时仍然有可用 fallback。
+	ttftHealthy := bestRoutingTTFTCandidates(usingGroup, modelName, candidates)
+	if len(ttftHealthy) == 0 {
+		ttftHealthy = candidates
+	}
+	layerCandidates := bestRoutingScheduleCandidates(ttftHealthy)
 	if len(layerCandidates) == 0 {
 		return nil
 	}
@@ -198,6 +205,18 @@ func selectRoutingCandidateByStrategy(usingGroup string, modelName string, candi
 
 	domainWinners := pickRoutingPolicyDomainCandidates(usingGroup, modelName, healthy)
 	return pickRoutingCandidateByLayerWeight(domainWinners)
+}
+
+// bestRoutingTTFTCandidates 过滤处于首包冷却期的密钥级候选。
+// 渠道账号和全局账号池按具体账号统计；普通单 Key、multi-key 候选使用渠道级统计。
+func bestRoutingTTFTCandidates(group, modelName string, candidates []*model.RoutingCandidate) []*model.RoutingCandidate {
+	result := make([]*model.RoutingCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate != nil && IsRoutingCandidateTTFTHealthy(group, modelName, candidate) {
+			result = append(result, candidate)
+		}
+	}
+	return result
 }
 
 func bestRoutingScheduleCandidates(candidates []*model.RoutingCandidate) []*model.RoutingCandidate {

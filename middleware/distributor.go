@@ -57,6 +57,7 @@ type ModelRequest struct {
 // 返回值：gin.HandlerFunc 中间件函数
 func Distribute() func(c *gin.Context) {
 	return func(c *gin.Context) {
+		common.SetContextKey(c, constant.ContextKeyRequestObservedStartTime, time.Now())
 		channel, ok := PrepareRelayChannelContext(c)
 		if !ok {
 			return
@@ -82,6 +83,9 @@ func Distribute() func(c *gin.Context) {
 // 如果准备失败，本函数会直接写入 OpenAI 兼容错误响应并 Abort，调用方只需要
 // 根据返回的 ok 判断是否继续执行 Relay。
 func PrepareRelayChannelContext(c *gin.Context) (*model.Channel, bool) {
+	if common.GetContextKeyTime(c, constant.ContextKeyRequestObservedStartTime).IsZero() {
+		common.SetContextKey(c, constant.ContextKeyRequestObservedStartTime, time.Now())
+	}
 	var channel *model.Channel
 	// 检查是否指定了特定渠道（管理员功能）
 	channelId, ok := common.GetContextKey(c, constant.ContextKeyTokenSpecificChannelId)
@@ -485,7 +489,8 @@ func selectAffinityRoutingCandidate(c *gin.Context, modelRequest *ModelRequest, 
 			RequestPath: requestPath,
 			Retry:       common.GetPointer(0),
 		}, preferred.Id)
-		if err != nil || candidate == nil {
+		if err != nil || candidate == nil ||
+			!service.IsRoutingCandidateTTFTHealthy(group, modelRequest.Model, candidate) {
 			return nil, false
 		}
 		return candidate, true
