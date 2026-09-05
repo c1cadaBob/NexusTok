@@ -24,6 +24,12 @@ import (
 const (
 	systemUpdateDockerSockDefault = "/var/run/docker.sock"
 
+	// Docker Engine 拉取镜像时会自行访问 registry；短暂的 DNS、连接复用或
+	// registry 网关抖动不应直接让后台更新任务失败。重试次数保持有限，避免
+	// 真正的镜像名称、权限或配置错误被长时间掩盖。
+	systemUpdateDockerPullRetryDelayFirst  = 2 * time.Second
+	systemUpdateDockerPullRetryDelaySecond = 5 * time.Second
+
 	systemUpdateDockerHelperActionUpdate   = "update"
 	systemUpdateDockerHelperActionRollback = "rollback"
 
@@ -39,8 +45,9 @@ const (
 var containerIDPattern = regexp.MustCompile(`[0-9a-f]{64}`)
 
 type dockerEngineClient struct {
-	socketPath string
-	httpClient *http.Client
+	socketPath      string
+	httpClient      *http.Client
+	pullRetryDelays []time.Duration
 }
 
 type dockerInspectContainer struct {
@@ -212,6 +219,10 @@ func newDockerEngineClient(socketPath string) *dockerEngineClient {
 			Transport: transport,
 			Timeout:   10 * time.Minute,
 		},
+		pullRetryDelays: []time.Duration{
+			systemUpdateDockerPullRetryDelayFirst,
+			systemUpdateDockerPullRetryDelaySecond,
+		},
 	}
 }
 
@@ -281,6 +292,42 @@ func (c *dockerEngineClient) inspectContainer(ctx context.Context, idOrName stri
 }
 
 func (c *dockerEngineClient) pullImage(ctx context.Context, image string, onStatus func(status string)) error {
+	retryDelays := c.pullRetryDelays
+	if retryDelays == nil {
+		retryDelays = []time.Duration{
+			systemUpdateDockerPullRetryDelayFirst,
+			systemUpdateDockerPullRetryDelaySecond,
+		}
+	}
+
+	attempts := len(retryDelays) + 1
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		lastErr = c.pullImageOnce(ctx, image, onStatus)
+		if lastErr == nil {
+			return nil
+		}
+		if attempt == attempts || !isRetryableDockerPullError(lastErr) || ctx.Err() != nil {
+			break
+		}
+
+		delay := retryDelays[attempt-1]
+		if onStatus != nil {
+			onStatus(fmt.Sprintf("Docker image pull temporarily failed; retrying in %s (%d/%d)", delay, attempt, attempts-1))
+		}
+		if err := waitForDockerPullRetry(ctx, delay); err != nil {
+			return err
+		}
+	}
+	return lastErr
+}
+
+// pullImageOnce 执行一次 Docker Engine 镜像流式拉取。
+//
+// Docker Engine 的 pull 接口即使 HTTP 状态为 200，也可能在响应流中返回
+// error/errorDetail；因此状态码错误和流内错误都统一转换为可分类的
+// dockerPullError，供外层只对瞬时网络错误重试。
+func (c *dockerEngineClient) pullImageOnce(ctx context.Context, image string, onStatus func(status string)) error {
 	repo, tag := splitDockerImage(image)
 	query := url.Values{"fromImage": {repo}}
 	if tag != "" {
@@ -297,7 +344,10 @@ func (c *dockerEngineClient) pullImage(ctx context.Context, image string, onStat
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-		return fmt.Errorf("Docker image pull returned %d: %s", resp.StatusCode, common.MaskSensitiveInfo(string(data)))
+		return &dockerPullError{
+			statusCode: resp.StatusCode,
+			message:    common.MaskSensitiveInfo(string(data)),
+		}
 	}
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
@@ -311,15 +361,135 @@ func (c *dockerEngineClient) pullImage(ctx context.Context, image string, onStat
 		}
 		if status.Error != "" {
 			if status.ErrorDetail != nil && status.ErrorDetail.Message != "" {
-				return errors.New(status.ErrorDetail.Message)
+				return &dockerPullError{
+					message: common.MaskSensitiveInfo(status.ErrorDetail.Message),
+				}
 			}
-			return errors.New(status.Error)
+			return &dockerPullError{
+				message: common.MaskSensitiveInfo(status.Error),
+			}
 		}
 		if onStatus != nil {
 			onStatus(firstNonEmptySystemUpdateString(status.Status, status.ID))
 		}
 	}
 	return scanner.Err()
+}
+
+type dockerPullError struct {
+	statusCode int
+	message    string
+}
+
+func (e *dockerPullError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if e.statusCode > 0 {
+		return fmt.Sprintf("Docker image pull returned %d: %s", e.statusCode, e.message)
+	}
+	return e.message
+}
+
+// waitForDockerPullRetry 在重试间隔内监听任务上下文，避免请求已经取消后仍然
+// 阻塞 helper。delay 为零主要用于测试，生产默认使用短暂指数退避。
+func waitForDockerPullRetry(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// isRetryableDockerPullError 只识别可以通过稍后再次拉取缓解的错误。
+//
+// Docker Engine 常把 registry 的网络超时包装成 HTTP 500，因此不能只看
+// HTTP 状态码；同时也不能对 manifest unknown、pull access denied 等确定性
+// 错误盲目重试。
+func isRetryableDockerPullError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+
+	var networkErr net.Error
+	if errors.As(err, &networkErr) && networkErr.Timeout() {
+		return true
+	}
+
+	var pullErr *dockerPullError
+	if errors.As(err, &pullErr) && pullErr.statusCode >= http.StatusBadGateway && pullErr.statusCode <= http.StatusGatewayTimeout {
+		return true
+	}
+
+	text := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"timeout",
+		"timed out",
+		"awaiting headers",
+		"i/o timeout",
+		"connection reset",
+		"connection refused",
+		"temporary failure",
+		"temporarily unavailable",
+		"unexpected eof",
+	} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// isDockerRegistryTimeoutError 判断错误是否明确表示 registry 连接等待超时。
+// Docker Engine 经常把这类错误包装成 HTTP 500，因此同时检查 registry 地址和
+// “awaiting headers”等网络错误文本，而不是单独依赖 HTTP 状态码。
+func isDockerRegistryTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	hasTimeout := strings.Contains(text, "timeout") ||
+		strings.Contains(text, "timed out") ||
+		strings.Contains(text, "awaiting headers") ||
+		strings.Contains(text, "i/o timeout")
+	if !hasTimeout {
+		return false
+	}
+	return strings.Contains(text, "registry") ||
+		strings.Contains(text, "docker.io") ||
+		strings.Contains(text, "awaiting headers")
+}
+
+// formatDockerImagePullError 将 registry 网络故障转换成管理员可直接执行的
+// 排查提示；原始错误仍保留在末尾，方便从任务记录和日志定位具体节点。
+func formatDockerImagePullError(image string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if isDockerRegistryTimeoutError(err) {
+		return fmt.Errorf(
+			"pull Docker image %q failed: Docker Engine could not reach the image registry before timing out. Check the host network and DNS, configure a Docker registry mirror if needed, then retry. Last error: %w",
+			image,
+			err,
+		)
+	}
+	if isRetryableDockerPullError(err) {
+		return fmt.Errorf(
+			"pull Docker image %q failed: Docker Engine encountered a transient network error while contacting the image registry. Check the host network and DNS, configure a Docker registry mirror if needed, then retry. Last error: %w",
+			image,
+			err,
+		)
+	}
+	return fmt.Errorf("pull Docker image %q failed: %w", image, err)
 }
 
 func (c *dockerEngineClient) createContainer(ctx context.Context, name string, request dockerCreateContainerRequest) (string, error) {
@@ -792,7 +962,7 @@ func (s *SystemUpdateService) performDockerUpdateInProcess(ctx context.Context, 
 		lastPullUpdate = time.Now()
 		_ = updateSystemUpdateTaskState(task, runnerID, state)
 	}); err != nil {
-		return nil, fmt.Errorf("pull Docker image failed: %w", err)
+		return nil, formatDockerImagePullError(targetImage, err)
 	}
 
 	state.Phase = SystemUpdatePhaseRecreatingContainer
