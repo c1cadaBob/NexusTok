@@ -3071,6 +3071,7 @@
     "Max concurrency": "Đồng thời tối đa",
     "Max Disk Cache Size (MB)": "Dung lượng tối đa bộ nhớ đệm đĩa (MB)",
     "Max Entries": "Số mục tối đa",
+    "Max request interval (seconds)": "Khoảng cách yêu cầu tối đa (giây)",
     "Max output": "Đầu ra tối đa",
     "Max Requests (incl. failures)": "Maximum number of requests (including errors)",
     "Max Requests (including failures)": "Số yêu cầu tối đa (bao gồm cả các lỗi)",

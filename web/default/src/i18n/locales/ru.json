@@ -3071,6 +3071,7 @@
     "Max concurrency": "Максимальная параллельность",
     "Max Disk Cache Size (MB)": "Макс. размер дискового кэша (МБ)",
     "Max Entries": "Макс. записей",
+    "Max request interval (seconds)": "Максимальный интервал между запросами (секунды)",
     "Max output": "Макс. вывод",
     "Max Requests (incl. failures)": "Макс. запросов (вкл. сбои)",
     "Max Requests (including failures)": "Макс. запросов (включая сбои)",

@@ -93,6 +93,9 @@ export function ChannelAffinitySection(props: Props) {
   const [defaultTtl, setDefaultTtl] = useState(
     props.defaultValues['channel_affinity_setting.default_ttl_seconds']
   )
+  const [maxRequestIntervalSeconds, setMaxRequestIntervalSeconds] = useState(
+    props.defaultValues['channel_affinity_setting.max_request_interval_seconds']
+  )
   const [rules, setRules] = useState<AffinityRule[]>(() =>
     parseRules(props.defaultValues['channel_affinity_setting.rules'])
   )
@@ -129,6 +132,9 @@ export function ChannelAffinitySection(props: Props) {
     setMaxEntries(props.defaultValues['channel_affinity_setting.max_entries'])
     setDefaultTtl(
       props.defaultValues['channel_affinity_setting.default_ttl_seconds']
+    )
+    setMaxRequestIntervalSeconds(
+      props.defaultValues['channel_affinity_setting.max_request_interval_seconds']
     )
     const parsed = parseRules(
       props.defaultValues['channel_affinity_setting.rules']
@@ -249,6 +255,16 @@ export function ChannelAffinitySection(props: Props) {
         updates.push({
           key: 'channel_affinity_setting.default_ttl_seconds',
           value: String(defaultTtl),
+        })
+      if (
+        maxRequestIntervalSeconds !==
+        props.defaultValues[
+          'channel_affinity_setting.max_request_interval_seconds'
+        ]
+      )
+        updates.push({
+          key: 'channel_affinity_setting.max_request_interval_seconds',
+          value: String(maxRequestIntervalSeconds),
         })
 
       const origRules = props.defaultValues['channel_affinity_setting.rules']
@@ -380,14 +396,21 @@ export function ChannelAffinitySection(props: Props) {
         </Alert>
 
         {/* 基础设置 */}
-        <div className='grid grid-cols-1 gap-4 md:grid-cols-3'>
+        <div className='grid grid-cols-1 gap-4 md:grid-cols-4'>
           <div className='flex items-center gap-2'>
-            <Switch checked={enabled} onCheckedChange={setEnabled} />
-            <Label>{t('Enable')}</Label>
+            <Switch
+              id='channel-affinity-enabled'
+              checked={enabled}
+              onCheckedChange={setEnabled}
+            />
+            <Label htmlFor='channel-affinity-enabled'>{t('Enable')}</Label>
           </div>
           <div className='grid gap-1.5'>
-            <Label>{t('Max Entries')}</Label>
+            <Label htmlFor='channel-affinity-max-entries'>
+              {t('Max Entries')}
+            </Label>
             <Input
+              id='channel-affinity-max-entries'
               type='number'
               min={0}
               value={maxEntries}
@@ -395,22 +418,42 @@ export function ChannelAffinitySection(props: Props) {
             />
           </div>
           <div className='grid gap-1.5'>
-            <Label>{t('Default TTL (seconds)')}</Label>
+            <Label htmlFor='channel-affinity-default-ttl'>
+              {t('Default TTL (seconds)')}
+            </Label>
             <Input
+              id='channel-affinity-default-ttl'
               type='number'
               min={0}
               value={defaultTtl}
               onChange={(e) => setDefaultTtl(Number(e.target.value))}
             />
           </div>
+          <div className='grid gap-1.5'>
+            <Label htmlFor='channel-affinity-max-request-interval'>
+              {t('Max request interval (seconds)')}
+            </Label>
+            <Input
+              id='channel-affinity-max-request-interval'
+              type='number'
+              min={0}
+              value={maxRequestIntervalSeconds}
+              onChange={(e) =>
+                setMaxRequestIntervalSeconds(Number(e.target.value))
+              }
+            />
+          </div>
         </div>
 
         <div className='flex items-center gap-2'>
           <Switch
+            id='channel-affinity-switch-on-success'
             checked={switchOnSuccess}
             onCheckedChange={setSwitchOnSuccess}
           />
-          <Label>{t('Switch affinity on success')}</Label>
+          <Label htmlFor='channel-affinity-switch-on-success'>
+            {t('Switch affinity on success')}
+          </Label>
           <span className='text-muted-foreground text-xs'>
             {t(
               'If the affinity channel fails and retry succeeds on another channel, update affinity to the successful channel.'
@@ -419,10 +462,13 @@ export function ChannelAffinitySection(props: Props) {
         </div>
         <div className='flex items-center gap-2'>
           <Switch
+            id='channel-affinity-keep-on-channel-disabled'
             checked={keepOnChannelDisabled}
             onCheckedChange={setKeepOnChannelDisabled}
           />
-          <Label>{t('Keep affinity when channel is disabled')}</Label>
+          <Label htmlFor='channel-affinity-keep-on-channel-disabled'>
+            {t('Keep affinity when channel is disabled')}
+          </Label>
           <span className='text-muted-foreground text-xs'>
             {t(
               'When enabled, keep the affinity entry even if the affinity channel is disabled or no longer usable for the current group/model. Leave it off to delete the entry and select another channel.'

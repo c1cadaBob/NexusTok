@@ -1,7 +1,7 @@
 // 本文件测试渠道亲和性（Channel Affinity）的模板覆盖与重试跳过功能，包括：
 // - 参数覆盖模板的合并逻辑（无模板时跳过、有模板时合并且基础参数优先）
 // - operations 字段的合并（模板操作追加到基础操作列表之后）
-// - 重试跳过判断逻辑（上下文标记或规则元数据中的 SkipRetry 标志）
+// - 重试跳过判断逻辑（仅新鲜亲和绑定实际参与本次选路时生效）
 // - Codex CLI 场景下的端到端模板传递（缓存命中、请求头透传、参数覆盖生效）
 package service
 
@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/c1cada/NexusTok/common"
+	"github.com/c1cada/NexusTok/constant"
 	relaycommon "github.com/c1cada/NexusTok/relay/common"
 	"github.com/c1cada/NexusTok/setting/operation_setting"
 	"github.com/gin-gonic/gin"
@@ -136,9 +138,8 @@ func TestApplyChannelAffinityOverrideTemplate_MergeOperations(t *testing.T) {
 
 // TestShouldSkipRetryAfterChannelAffinityFailure 测试重试跳过判断函数的各种场景：
 // - nil 上下文时返回 false
-// - 上下文中显式设置了跳过重试标记时返回 true
-// - 规则元数据中 SkipRetry 为 true 时返回 true
-// - 规则元数据中 SkipRetry 为 false 时返回 false
+// - 新鲜亲和绑定实际参与本次选路且规则开启 SkipRetry 时返回 true
+// - 超时绕过、缓存未命中或仅匹配模板时不会阻断全渠道重试
 func TestShouldSkipRetryAfterChannelAffinityFailure(t *testing.T) {
 	tests := []struct {
 		name string
@@ -153,25 +154,26 @@ func TestShouldSkipRetryAfterChannelAffinityFailure(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "explicit skip retry flag in context",
+			name: "explicit flag without fresh affinity binding is ignored",
 			ctx: func() *gin.Context {
 				ctx := buildChannelAffinityTemplateContextForTest(channelAffinityMeta{
 					RuleName:   "rule-explicit-flag",
-					SkipRetry:  false,
+					SkipRetry:  true,
 					UsingGroup: "default",
 					ModelName:  "gpt-5",
 				})
 				ctx.Set(ginKeyChannelAffinitySkipRetry, true)
 				return ctx
 			},
-			want: true,
+			want: false,
 		},
 		{
-			name: "fallback to matched rule meta",
+			name: "fresh affinity binding uses skip retry rule",
 			ctx: func() *gin.Context {
 				return buildChannelAffinityTemplateContextForTest(channelAffinityMeta{
 					RuleName:   "rule-skip-retry",
 					SkipRetry:  true,
+					Used:       true,
 					UsingGroup: "default",
 					ModelName:  "gpt-5",
 				})
@@ -179,11 +181,27 @@ func TestShouldSkipRetryAfterChannelAffinityFailure(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "no flag and no skip retry meta",
+			name: "stale affinity bypass does not skip retry",
+			ctx: func() *gin.Context {
+				return buildChannelAffinityTemplateContextForTest(channelAffinityMeta{
+					RuleName:     "rule-stale",
+					SkipRetry:    true,
+					Used:         false,
+					Bypassed:     true,
+					BypassReason: "stale_bypassed",
+					UsingGroup:   "default",
+					ModelName:    "gpt-5",
+				})
+			},
+			want: false,
+		},
+		{
+			name: "rule without skip retry",
 			ctx: func() *gin.Context {
 				return buildChannelAffinityTemplateContextForTest(channelAffinityMeta{
 					RuleName:   "rule-no-skip-retry",
 					SkipRetry:  false,
+					Used:       true,
 					UsingGroup: "default",
 					ModelName:  "gpt-5",
 				})
@@ -236,7 +254,10 @@ func TestGetPreferredChannelByAffinity_RequestHeaderKeySource(t *testing.T) {
 	affinityValue := fmt.Sprintf("header-hit-%d", time.Now().UnixNano())
 	cacheKeySuffix := buildChannelAffinityCacheKeySuffix(rule, "gpt-5", "default", affinityValue)
 	cache := getChannelAffinityCache()
-	require.NoError(t, cache.SetWithTTL(cacheKeySuffix, 9528, time.Minute))
+	require.NoError(t, cache.SetWithTTL(cacheKeySuffix, channelAffinityBinding{
+		ChannelID:     9528,
+		LastSuccessAt: time.Now().Unix(),
+	}, time.Minute))
 	t.Cleanup(func() {
 		_, _ = cache.DeleteMany([]string{cacheKeySuffix})
 	})
@@ -265,6 +286,155 @@ func TestGetPreferredChannelByAffinity_RequestHeaderKeySource(t *testing.T) {
 	require.Equal(t, buildChannelAffinityKeyHint(affinityValue), meta.KeyHint)
 }
 
+// TestGetPreferredChannelByAffinityHonorsRequestIntervalWindow 覆盖亲和性连续请求窗口。
+//
+// 窗口以本次请求进入分发链路的时间为基准：小于 60 秒继续返回亲和渠道；恰好
+// 60 秒和超过 60 秒都必须绕过亲和限制。绕过后规则元数据仍要保留，确保参数模板
+// 继续生效；旧 v2 整数缓存也不能被误认为新的新鲜绑定。
+func TestGetPreferredChannelByAffinityHonorsRequestIntervalWindow(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	setting := operation_setting.GetChannelAffinitySetting()
+	require.NotNil(t, setting)
+	originalRules := append([]operation_setting.ChannelAffinityRule(nil), setting.Rules...)
+	originalInterval := setting.MaxRequestIntervalSeconds
+	t.Cleanup(func() {
+		setting.Rules = originalRules
+		setting.MaxRequestIntervalSeconds = originalInterval
+	})
+
+	rule := operation_setting.ChannelAffinityRule{
+		Name:       "request-interval-window",
+		ModelRegex: []string{"^gpt-5$"},
+		PathRegex:  []string{"/v1/chat/completions"},
+		KeySources: []operation_setting.ChannelAffinityKeySource{
+			{Type: "request_header", Key: "X-Affinity-Key"},
+		},
+		TTLSeconds:         60,
+		SkipRetryOnFailure: true,
+		IncludeUsingGroup:  true,
+		IncludeRuleName:    true,
+		ParamOverrideTemplate: map[string]interface{}{
+			"top_p": 0.9,
+		},
+	}
+	setting.Rules = append([]operation_setting.ChannelAffinityRule{rule}, originalRules...)
+	setting.MaxRequestIntervalSeconds = 60
+
+	cache := getChannelAffinityCache()
+	requestStart := time.Unix(common.GetTimestamp(), 0)
+	testCases := []struct {
+		name         string
+		elapsed      int64
+		wantFound    bool
+		bypassReason string
+	}{
+		{name: "fresh binding at 30 seconds", elapsed: 30, wantFound: true},
+		{name: "binding at exactly 60 seconds is stale", elapsed: 60, bypassReason: "stale_bypassed"},
+		{name: "binding older than 60 seconds is stale", elapsed: 61, bypassReason: "stale_bypassed"},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			affinityValue := fmt.Sprintf("interval-%d-%d", testCase.elapsed, time.Now().UnixNano())
+			cacheKeySuffix := buildChannelAffinityCacheKeySuffix(rule, "gpt-5", "default", affinityValue)
+			require.NoError(t, cache.SetWithTTL(cacheKeySuffix, channelAffinityBinding{
+				ChannelID:     9529,
+				LastSuccessAt: requestStart.Unix() - testCase.elapsed,
+			}, time.Minute))
+			t.Cleanup(func() {
+				_, _ = cache.DeleteMany([]string{cacheKeySuffix})
+			})
+
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			ctx.Request.Header.Set("X-Affinity-Key", affinityValue)
+			common.SetContextKey(ctx, constant.ContextKeyRequestObservedStartTime, requestStart)
+
+			channelID, found := GetPreferredChannelByAffinity(ctx, "gpt-5", "default")
+			require.Equal(t, testCase.wantFound, found)
+			if testCase.wantFound {
+				require.Equal(t, 9529, channelID)
+			} else {
+				require.Zero(t, channelID)
+			}
+
+			meta, ok := getChannelAffinityMeta(ctx)
+			require.True(t, ok)
+			require.Equal(t, testCase.elapsed, meta.RequestIntervalSeconds)
+			require.Equal(t, 60, meta.MaxRequestIntervalSeconds)
+			require.Equal(t, testCase.bypassReason, meta.BypassReason)
+			require.Equal(t, !testCase.wantFound, meta.Bypassed)
+
+			merged, applied := ApplyChannelAffinityOverrideTemplate(ctx, map[string]interface{}{})
+			require.True(t, applied)
+			require.Equal(t, 0.9, merged["top_p"])
+		})
+	}
+
+	t.Run("cache miss and legacy binding do not constrain selection", func(t *testing.T) {
+		affinityValue := fmt.Sprintf("legacy-only-%d", time.Now().UnixNano())
+		cacheKeySuffix := buildChannelAffinityCacheKeySuffix(rule, "gpt-5", "default", affinityValue)
+		legacyCache := getChannelAffinityLegacyCache()
+		require.NoError(t, legacyCache.SetWithTTL(cacheKeySuffix, 9530, time.Minute))
+		t.Cleanup(func() {
+			_, _ = legacyCache.DeleteMany([]string{cacheKeySuffix})
+		})
+
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		ctx.Request.Header.Set("X-Affinity-Key", affinityValue)
+		common.SetContextKey(ctx, constant.ContextKeyRequestObservedStartTime, requestStart)
+
+		channelID, found := GetPreferredChannelByAffinity(ctx, "gpt-5", "default")
+		require.False(t, found)
+		require.Zero(t, channelID)
+		meta, ok := getChannelAffinityMeta(ctx)
+		require.True(t, ok)
+		require.True(t, meta.Bypassed)
+		require.Equal(t, "cache_miss", meta.BypassReason)
+
+		merged, applied := ApplyChannelAffinityOverrideTemplate(ctx, map[string]interface{}{})
+		require.True(t, applied)
+		require.Equal(t, 0.9, merged["top_p"])
+	})
+}
+
+// TestRecordChannelAffinityWritesLastSuccessAt 验证只有成功处理路径会写入新的亲和绑定。
+//
+// GetPreferredChannelByAffinity 只读取缓存，不会改变绑定时间；RecordChannelAffinity 是
+// 请求成功后的唯一写入点，因此失败请求没有调用它时不会续期连续请求窗口。
+func TestRecordChannelAffinityWritesLastSuccessAt(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cacheKeySuffix := fmt.Sprintf("record-success-%d", time.Now().UnixNano())
+	ctx := buildChannelAffinityTemplateContextForTest(channelAffinityMeta{
+		CacheKey:       channelAffinityCacheNamespace + ":" + cacheKeySuffix,
+		CacheKeySuffix: cacheKeySuffix,
+		TTLSeconds:     60,
+		RuleName:       "record-success",
+	})
+	cache := getChannelAffinityCache()
+	require.NoError(t, cache.SetWithTTL(cacheKeySuffix, channelAffinityBinding{
+		ChannelID:     9531,
+		LastSuccessAt: common.GetTimestamp() - 45,
+	}, time.Minute))
+	t.Cleanup(func() {
+		_, _ = cache.DeleteMany([]string{cacheKeySuffix})
+	})
+
+	beforeSuccess := common.GetTimestamp()
+	RecordChannelAffinity(ctx, 9532)
+
+	binding, found, err := cache.Get(cacheKeySuffix)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, 9532, binding.ChannelID)
+	require.GreaterOrEqual(t, binding.LastSuccessAt, beforeSuccess)
+}
+
 // TestClearCurrentChannelAffinityCache 测试当前请求命中的亲和缓存清理能力。
 // 当亲和渠道已经禁用或不再可用时，分发层会调用该函数清理本次命中的缓存键，
 // 同时清除跳过重试标记，让后续请求可以重新选择健康渠道。
@@ -274,16 +444,24 @@ func TestClearCurrentChannelAffinityCache(t *testing.T) {
 	cacheKeySuffix := fmt.Sprintf("codex cli trace:default:clear-current-%d", time.Now().UnixNano())
 	cacheKeyFull := channelAffinityCacheNamespace + ":" + cacheKeySuffix
 	cache := getChannelAffinityCache()
-	require.NoError(t, cache.SetWithTTL(cacheKeySuffix, 9527, time.Minute))
+	legacyCache := getChannelAffinityLegacyCache()
+	require.NoError(t, cache.SetWithTTL(cacheKeySuffix, channelAffinityBinding{
+		ChannelID:     9527,
+		LastSuccessAt: time.Now().Unix(),
+	}, time.Minute))
+	require.NoError(t, legacyCache.SetWithTTL(cacheKeySuffix, 9527, time.Minute))
 	t.Cleanup(func() {
 		_, _ = cache.DeleteMany([]string{cacheKeySuffix})
+		_, _ = legacyCache.DeleteMany([]string{cacheKeySuffix})
 	})
 
 	ctx := buildChannelAffinityTemplateContextForTest(channelAffinityMeta{
-		CacheKey:   cacheKeyFull,
-		TTLSeconds: 60,
-		RuleName:   "codex cli trace",
-		SkipRetry:  true,
+		CacheKey:       cacheKeyFull,
+		CacheKeySuffix: cacheKeySuffix,
+		TTLSeconds:     60,
+		RuleName:       "codex cli trace",
+		SkipRetry:      true,
+		Used:           true,
 	})
 	require.True(t, ShouldSkipRetryAfterChannelAffinityFailure(ctx))
 
@@ -292,6 +470,9 @@ func TestClearCurrentChannelAffinityCache(t *testing.T) {
 	_, found, err := cache.Get(cacheKeySuffix)
 	require.NoError(t, err)
 	require.False(t, found)
+	_, legacyFound, legacyErr := legacyCache.Get(cacheKeySuffix)
+	require.NoError(t, legacyErr)
+	require.False(t, legacyFound)
 	require.False(t, ShouldSkipRetryAfterChannelAffinityFailure(ctx))
 }
 
@@ -337,7 +518,10 @@ func TestChannelAffinityHitCodexTemplatePassHeadersEffective(t *testing.T) {
 	cacheKeySuffix := buildChannelAffinityCacheKeySuffix(*codexRule, "gpt-5", "default", affinityValue)
 
 	cache := getChannelAffinityCache()
-	require.NoError(t, cache.SetWithTTL(cacheKeySuffix, 9527, time.Minute))
+	require.NoError(t, cache.SetWithTTL(cacheKeySuffix, channelAffinityBinding{
+		ChannelID:     9527,
+		LastSuccessAt: time.Now().Unix(),
+	}, time.Minute))
 	t.Cleanup(func() {
 		_, _ = cache.DeleteMany([]string{cacheKeySuffix})
 	})

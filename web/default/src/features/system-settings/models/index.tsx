@@ -80,6 +80,7 @@ const defaultModelSettings: ModelSettings = {
   'channel_affinity_setting.keep_on_channel_disabled': false,
   'channel_affinity_setting.max_entries': 100000,
   'channel_affinity_setting.default_ttl_seconds': 3600,
+  'channel_affinity_setting.max_request_interval_seconds': 60,
   'channel_affinity_setting.rules': '[]',
   'model_deployment.ionet.api_key': '',
   'model_deployment.ionet.enabled': false,

@@ -3071,6 +3071,7 @@
     "Max concurrency": "Max concurrency",
     "Max Disk Cache Size (MB)": "Max Disk Cache Size (MB)",
     "Max Entries": "Max Entries",
+    "Max request interval (seconds)": "Max request interval (seconds)",
     "Max output": "Max output",
     "Max Requests (incl. failures)": "Max Requests (incl. failures)",
     "Max Requests (including failures)": "Max Requests (including failures)",

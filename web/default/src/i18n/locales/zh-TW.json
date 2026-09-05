@@ -3071,6 +3071,7 @@
     "Max concurrency": "最大併發",
     "Max Disk Cache Size (MB)": "磁盤緩存最大總量 (MB)",
     "Max Entries": "最大條目數",
+    "Max request interval (seconds)": "最大請求間隔（秒）",
     "Max output": "最大輸出",
     "Max Requests (incl. failures)": "最大請求數（包括失敗）",
     "Max Requests (including failures)": "最大請求數（包括失敗）",

@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"fmt"
+	"math"
 	"math/rand"
 	"sort"
 	"strings"
@@ -45,8 +46,10 @@ func AddExcludedRoutingCandidate(c *gin.Context, candidate *model.RoutingCandida
 
 // SelectRoutingCandidate 执行统一密钥级调度。
 //
-// 选择流程：先收集当前 group/model/path 下的结构性候选，再按四级字典序找出最高层；
-// 健康度、策略域和同层 tie-break 只在这一层内生效，低层候选不会因为其他变量反超。
+// 选择流程：先收集当前 group/model/path 下的结构性候选，再按前三层调度值找出最高层；
+// 同层候选都具备真实转换倍率时，优先选择倍率最低的同步密钥。只要混入没有成本元
+// 数据的手动渠道、Multi-Key 或历史账号，就回退既有权重策略，避免未知成本被错误当作
+// 高成本而从候选集中剔除。健康度、策略域和同层 tie-break 只在最终候选集合内生效。
 // 旧的 CacheGetRandomSatisfiedChannel 保留为兜底路径。
 func SelectRoutingCandidate(param *RetryParam) (*model.RoutingCandidate, string, error) {
 	if param == nil {
@@ -108,9 +111,10 @@ func selectRoutingCandidateInGroup(param *RetryParam, usingGroup string) (*model
 
 // SelectRoutingCandidateForChannel 只在指定渠道的剩余密钥级候选中选择。
 //
-// Relay 失败重试需要先尝试同渠道内的其它 key/account，确认该渠道的候选真的
-// 耗尽后才进入渠道级降级。本函数复用统一候选的结构性过滤、动态过滤和同层策略，
-// 但额外限制 channel_id，避免同层全局加权把请求提前切到其它渠道。
+// 该函数仅用于新鲜渠道亲和命中的首次尝试：亲和规则把首次候选限制在已绑定的
+// channel_id 内，但仍复用统一候选的结构性过滤、动态过滤和成本排序。真实上游
+// 失败后不再调用本函数，而是排除失败候选后回到 SelectRoutingCandidate 执行全渠道
+// 选择，避免同渠道备用凭证优先于其他渠道的更低成本候选。
 func SelectRoutingCandidateForChannel(param *RetryParam, channelID int) (*model.RoutingCandidate, string, error) {
 	if param == nil {
 		return nil, "", errors.New("retry param is nil")
@@ -169,25 +173,37 @@ func usableRoutingCandidatesInGroup(param *RetryParam, usingGroup string) ([]*mo
 }
 
 func selectRoutingCandidateByStrategy(usingGroup string, modelName string, candidates []*model.RoutingCandidate) *model.RoutingCandidate {
-	// TTFT 冷却需要在静态层裁剪前生效，这样高优先级但持续慢的渠道
-	// 才不会阻塞已有健康样本的低层快渠道。没有任何健康候选时保留全部候选，
-	// 确保性能缓存异常或全渠道变慢时仍然有可用 fallback。
+	// 首包冷却属于动态可用性过滤，不是静态成本或优先级层级。这里先排除已有
+	// 明确慢首包样本的候选，保留旧行为：高优先级渠道持续慢时，健康渠道仍可接管；
+	// 如果所有候选都处于冷却期，则回退到完整集合，避免观测异常导致无渠道可用。
 	ttftHealthy := bestRoutingTTFTCandidates(usingGroup, modelName, candidates)
 	if len(ttftHealthy) == 0 {
 		ttftHealthy = candidates
 	}
-	layerCandidates := bestRoutingScheduleCandidates(ttftHealthy)
+
+	layerCandidates := bestRoutingPriorityLayerCandidates(ttftHealthy)
 	if len(layerCandidates) == 0 {
 		return nil
 	}
-	healthy := make([]*model.RoutingCandidate, 0, len(layerCandidates))
-	for _, candidate := range layerCandidates {
+	costCandidates := bestRoutingConvertedRatioCandidates(layerCandidates)
+	if len(costCandidates) == 0 {
+		return nil
+	}
+	weightCandidates := bestRoutingCredentialWeightCandidates(costCandidates)
+	if len(weightCandidates) == 0 {
+		return nil
+	}
+
+	// 转换倍率相同或缺失时，密钥权重仍然是稳定的兼容排序层；经过静态排序
+	// 后再应用渠道健康状态，避免同层中的失败渠道反复被选中。
+	healthy := make([]*model.RoutingCandidate, 0, len(weightCandidates))
+	for _, candidate := range weightCandidates {
 		if candidate != nil && IsChannelRoutingHealthy(usingGroup, modelName, candidate.ChannelID) {
 			healthy = append(healthy, candidate)
 		}
 	}
 	if len(healthy) == 0 {
-		healthy = leastDegradedRoutingCandidates(usingGroup, modelName, layerCandidates)
+		healthy = leastDegradedRoutingCandidates(usingGroup, modelName, weightCandidates)
 	}
 	if len(healthy) == 0 {
 		return nil
@@ -219,13 +235,13 @@ func bestRoutingTTFTCandidates(group, modelName string, candidates []*model.Rout
 	return result
 }
 
-func bestRoutingScheduleCandidates(candidates []*model.RoutingCandidate) []*model.RoutingCandidate {
+func bestRoutingPriorityLayerCandidates(candidates []*model.RoutingCandidate) []*model.RoutingCandidate {
 	var best *model.RoutingCandidate
 	for _, candidate := range candidates {
 		if candidate == nil {
 			continue
 		}
-		if best == nil || candidate.Schedule.Compare(best.Schedule) > 0 {
+		if best == nil || candidate.Schedule.ComparePriorityLayer(best.Schedule) > 0 {
 			best = candidate
 		}
 	}
@@ -234,11 +250,70 @@ func bestRoutingScheduleCandidates(candidates []*model.RoutingCandidate) []*mode
 	}
 	result := make([]*model.RoutingCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
-		if candidate != nil && candidate.Schedule.SameLayer(best.Schedule) {
+		if candidate != nil && candidate.Schedule.SamePriorityLayer(best.Schedule) {
 			result = append(result, candidate)
 		}
 	}
 	return result
+}
+
+func bestRoutingConvertedRatioCandidates(candidates []*model.RoutingCandidate) []*model.RoutingCandidate {
+	if len(candidates) == 0 {
+		return nil
+	}
+	minRatio := math.MaxFloat64
+	for _, candidate := range candidates {
+		if !routingCandidateHasValidConvertedRatio(candidate) {
+			// 旧同步数据、普通手动渠道和 Multi-Key 不一定有可比较的成本元数据。
+			// 这时不能把它们视为“无限成本”并过滤掉；整个同层回退到原有权重调度，
+			// 保证升级前可选的凭证仍具有相同的竞争机会。
+			return candidates
+		}
+		if candidate.ConvertedRatio < minRatio {
+			minRatio = candidate.ConvertedRatio
+		}
+	}
+	const epsilon = 1e-12
+	result := make([]*model.RoutingCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if routingCandidateHasValidConvertedRatio(candidate) && math.Abs(candidate.ConvertedRatio-minRatio) <= epsilon {
+			result = append(result, candidate)
+		}
+	}
+	return result
+}
+
+// bestRoutingCredentialWeightCandidates 在优先级与转换倍率都相同或缺失时，保留
+// 密钥权重最高的候选。这样手动渠道、multi-key 和没有成本元数据的历史账号仍沿用
+// 原有权重策略；同步账号的低转换倍率则已经在上一层优先胜出。
+func bestRoutingCredentialWeightCandidates(candidates []*model.RoutingCandidate) []*model.RoutingCandidate {
+	bestWeight := -1
+	for _, candidate := range candidates {
+		if candidate == nil {
+			continue
+		}
+		if candidate.Schedule.CredentialWeight > bestWeight {
+			bestWeight = candidate.Schedule.CredentialWeight
+		}
+	}
+	if bestWeight < 0 {
+		return nil
+	}
+	result := make([]*model.RoutingCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate != nil && candidate.Schedule.CredentialWeight == bestWeight {
+			result = append(result, candidate)
+		}
+	}
+	return result
+}
+
+func routingCandidateHasValidConvertedRatio(candidate *model.RoutingCandidate) bool {
+	return candidate != nil &&
+		candidate.HasConvertedRatio &&
+		candidate.ConvertedRatio > 0 &&
+		!math.IsNaN(candidate.ConvertedRatio) &&
+		!math.IsInf(candidate.ConvertedRatio, 0)
 }
 
 func leastDegradedRoutingCandidates(group, modelName string, candidates []*model.RoutingCandidate) []*model.RoutingCandidate {
@@ -533,6 +608,10 @@ func AppendRoutingCandidateAdminInfo(c *gin.Context, adminInfo map[string]interf
 		"credential_priority": candidate.Schedule.CredentialPriority,
 		"credential_weight":   candidate.Schedule.CredentialWeight,
 		"policy_domain":       candidate.PolicyDomain,
+	}
+	if candidate.HasConvertedRatio {
+		info["has_converted_ratio"] = true
+		info["converted_ratio"] = candidate.ConvertedRatio
 	}
 	if candidate.MultiKeyIndex > 0 || candidate.Kind == model.RoutingCredentialKindMultiKey {
 		info["multi_key_index"] = candidate.MultiKeyIndex

@@ -505,3 +505,239 @@ func TestSelectRoutingCandidateForChannelPrefersSyncedManagedWeight(t *testing.T
 	require.Equal(t, cheap.Id, candidate.ChannelAccountID)
 	require.Equal(t, 150, candidate.Schedule.CredentialWeight)
 }
+
+// TestSelectRoutingCandidatePrefersLowestConvertedRatioAcrossChannels 验证同一调度层的
+// 同步账号按真实转换倍率升序选择，而不是继续由旧的密钥权重决定胜负。失败候选进入
+// 请求级排除集后，下一次选择必须从全渠道剩余候选中继续按最低倍率选择。
+func TestSelectRoutingCandidatePrefersLowestConvertedRatioAcrossChannels(t *testing.T) {
+	db := setupChannelAccountSelectTestDB(t)
+	priority := int64(10)
+	weight := uint(100)
+	channels := []model.Channel{
+		{
+			Type:          constant.ChannelTypeOpenAI,
+			Status:        common.ChannelStatusEnabled,
+			Name:          "expensive-synced-channel",
+			Models:        "gpt-route",
+			Group:         "default",
+			Priority:      &priority,
+			Weight:        &weight,
+			OtherSettings: `{"upstream_account_sync":{"platform":"new-api","base_url":"https://upstream.example"}}`,
+			ChannelInfo: model.ChannelInfo{
+				CredentialMode:     constant.ChannelCredentialModeAccountPool,
+				AccountPoolEnabled: true,
+			},
+		},
+		{
+			Type:          constant.ChannelTypeOpenAI,
+			Status:        common.ChannelStatusEnabled,
+			Name:          "cheap-synced-channel",
+			Models:        "gpt-route",
+			Group:         "default",
+			Priority:      &priority,
+			Weight:        &weight,
+			OtherSettings: `{"upstream_account_sync":{"platform":"new-api","base_url":"https://upstream.example"}}`,
+			ChannelInfo: model.ChannelInfo{
+				CredentialMode:     constant.ChannelCredentialModeAccountPool,
+				AccountPoolEnabled: true,
+			},
+		},
+	}
+	require.NoError(t, db.Create(&channels).Error)
+
+	expensive := model.ChannelAccount{
+		ChannelId:     channels[0].Id,
+		Name:          "expensive-high-weight-key",
+		Key:           "sk-expensive",
+		Status:        common.ChannelStatusEnabled,
+		Models:        "gpt-route",
+		AccessGroups:  "default",
+		Priority:      1,
+		Weight:        100,
+		OtherSettings: `{"upstream_account_sync":{"platform":"new-api","base_url":"https://upstream.example","ratio_conversion":1.2}}`,
+	}
+	cheap := model.ChannelAccount{
+		ChannelId:     channels[1].Id,
+		Name:          "cheap-low-weight-key",
+		Key:           "sk-cheap",
+		Status:        common.ChannelStatusEnabled,
+		Models:        "gpt-route",
+		AccessGroups:  "default",
+		Priority:      1,
+		Weight:        10,
+		OtherSettings: `{"upstream_account_sync":{"platform":"new-api","base_url":"https://upstream.example","ratio_conversion":0.5}}`,
+	}
+	require.NoError(t, db.Create(&expensive).Error)
+	require.NoError(t, db.Create(&cheap).Error)
+
+	ctx := newRoutingSelectTestContext()
+	first, selectedGroup, err := SelectRoutingCandidate(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-route",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.Equal(t, "default", selectedGroup)
+	require.NotNil(t, first)
+	require.Equal(t, channels[1].Id, first.ChannelID)
+	require.Equal(t, cheap.Id, first.ChannelAccountID)
+	require.True(t, first.HasConvertedRatio)
+	require.InDelta(t, 0.5, first.ConvertedRatio, 0.000001)
+
+	serviceExcluded := first.Clone()
+	AddExcludedRoutingCandidate(ctx, serviceExcluded)
+	second, _, err := SelectRoutingCandidate(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-route",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, second)
+	require.Equal(t, channels[0].Id, second.ChannelID)
+	require.Equal(t, expensive.Id, second.ChannelAccountID)
+}
+
+// TestSelectRoutingCandidateDoesNotLetCostOverrideHigherPriorityLayers 验证转换倍率只在
+// 渠道优先级、渠道权重和密钥优先级均相同后生效，低成本候选不能跨层级反超。
+func TestSelectRoutingCandidateDoesNotLetCostOverrideHigherPriorityLayers(t *testing.T) {
+	tests := []struct {
+		name        string
+		highChannel model.Channel
+		lowChannel  model.Channel
+		highAccount model.ChannelAccount
+		lowAccount  model.ChannelAccount
+	}{
+		{
+			name: "channel priority remains first",
+			highChannel: model.Channel{
+				Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled, Name: "higher-channel-priority",
+				Models: "gpt-route", Group: "default", Priority: routingSelectTestPriority(2), Weight: routingSelectTestWeight(1),
+				OtherSettings: `{"upstream_account_sync":{"platform":"new-api","base_url":"https://upstream.example"}}`,
+				ChannelInfo:   model.ChannelInfo{CredentialMode: constant.ChannelCredentialModeAccountPool, AccountPoolEnabled: true},
+			},
+			lowChannel: model.Channel{
+				Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled, Name: "lower-channel-priority",
+				Models: "gpt-route", Group: "default", Priority: routingSelectTestPriority(1), Weight: routingSelectTestWeight(100),
+				OtherSettings: `{"upstream_account_sync":{"platform":"new-api","base_url":"https://upstream.example"}}`,
+				ChannelInfo:   model.ChannelInfo{CredentialMode: constant.ChannelCredentialModeAccountPool, AccountPoolEnabled: true},
+			},
+			highAccount: model.ChannelAccount{Name: "high-priority-costly", Key: "sk-high-priority", Status: common.ChannelStatusEnabled, Models: "gpt-route", AccessGroups: "default", Priority: 1, Weight: 1, OtherSettings: `{"upstream_account_sync":{"ratio_conversion":2}}`},
+			lowAccount:  model.ChannelAccount{Name: "low-priority-cheap", Key: "sk-low-priority", Status: common.ChannelStatusEnabled, Models: "gpt-route", AccessGroups: "default", Priority: 99, Weight: 100, OtherSettings: `{"upstream_account_sync":{"ratio_conversion":0.1}}`},
+		},
+		{
+			name: "channel weight remains second",
+			highChannel: model.Channel{
+				Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled, Name: "higher-channel-weight",
+				Models: "gpt-route", Group: "default", Priority: routingSelectTestPriority(1), Weight: routingSelectTestWeight(100),
+				OtherSettings: `{"upstream_account_sync":{"platform":"new-api","base_url":"https://upstream.example"}}`,
+				ChannelInfo:   model.ChannelInfo{CredentialMode: constant.ChannelCredentialModeAccountPool, AccountPoolEnabled: true},
+			},
+			lowChannel: model.Channel{
+				Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled, Name: "lower-channel-weight",
+				Models: "gpt-route", Group: "default", Priority: routingSelectTestPriority(1), Weight: routingSelectTestWeight(1),
+				OtherSettings: `{"upstream_account_sync":{"platform":"new-api","base_url":"https://upstream.example"}}`,
+				ChannelInfo:   model.ChannelInfo{CredentialMode: constant.ChannelCredentialModeAccountPool, AccountPoolEnabled: true},
+			},
+			highAccount: model.ChannelAccount{Name: "high-weight-costly", Key: "sk-high-weight", Status: common.ChannelStatusEnabled, Models: "gpt-route", AccessGroups: "default", Priority: 1, Weight: 1, OtherSettings: `{"upstream_account_sync":{"ratio_conversion":2}}`},
+			lowAccount:  model.ChannelAccount{Name: "low-weight-cheap", Key: "sk-low-weight", Status: common.ChannelStatusEnabled, Models: "gpt-route", AccessGroups: "default", Priority: 99, Weight: 100, OtherSettings: `{"upstream_account_sync":{"ratio_conversion":0.1}}`},
+		},
+		{
+			name: "credential priority remains third",
+			highChannel: model.Channel{
+				Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled, Name: "higher-credential-priority",
+				Models: "gpt-route", Group: "default", Priority: routingSelectTestPriority(1), Weight: routingSelectTestWeight(100),
+				OtherSettings: `{"upstream_account_sync":{"platform":"new-api","base_url":"https://upstream.example"}}`,
+				ChannelInfo:   model.ChannelInfo{CredentialMode: constant.ChannelCredentialModeAccountPool, AccountPoolEnabled: true},
+			},
+			lowChannel: model.Channel{
+				Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled, Name: "lower-credential-priority",
+				Models: "gpt-route", Group: "default", Priority: routingSelectTestPriority(1), Weight: routingSelectTestWeight(100),
+				OtherSettings: `{"upstream_account_sync":{"platform":"new-api","base_url":"https://upstream.example"}}`,
+				ChannelInfo:   model.ChannelInfo{CredentialMode: constant.ChannelCredentialModeAccountPool, AccountPoolEnabled: true},
+			},
+			highAccount: model.ChannelAccount{Name: "high-credential-costly", Key: "sk-high-credential", Status: common.ChannelStatusEnabled, Models: "gpt-route", AccessGroups: "default", Priority: 2, Weight: 1, OtherSettings: `{"upstream_account_sync":{"ratio_conversion":2}}`},
+			lowAccount:  model.ChannelAccount{Name: "low-credential-cheap", Key: "sk-low-credential", Status: common.ChannelStatusEnabled, Models: "gpt-route", AccessGroups: "default", Priority: 1, Weight: 100, OtherSettings: `{"upstream_account_sync":{"ratio_conversion":0.1}}`},
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			db := setupChannelAccountSelectTestDB(t)
+			require.NoError(t, db.Create(&testCase.highChannel).Error)
+			require.NoError(t, db.Create(&testCase.lowChannel).Error)
+			testCase.highAccount.ChannelId = testCase.highChannel.Id
+			testCase.lowAccount.ChannelId = testCase.lowChannel.Id
+			require.NoError(t, db.Create(&testCase.highAccount).Error)
+			require.NoError(t, db.Create(&testCase.lowAccount).Error)
+
+			candidate, _, err := SelectRoutingCandidate(&RetryParam{
+				Ctx:        newRoutingSelectTestContext(),
+				TokenGroup: "default",
+				ModelName:  "gpt-route",
+				Retry:      common.GetPointer(0),
+			})
+			require.NoError(t, err)
+			require.NotNil(t, candidate)
+			require.Equal(t, testCase.highChannel.Id, candidate.ChannelID)
+			require.Equal(t, testCase.highAccount.Id, candidate.ChannelAccountID)
+		})
+	}
+}
+
+// TestSelectRoutingCandidateUsesWeightFallbackForMissingConvertedRatio 验证同层存在无成本
+// 元数据的候选时继续使用原有密钥权重。这样普通手动账号、Multi-Key 与历史同步数据
+// 不会因为无法比较真实成本而被新版调度静默排除。
+func TestSelectRoutingCandidateUsesWeightFallbackForMissingConvertedRatio(t *testing.T) {
+	db := setupChannelAccountSelectTestDB(t)
+	channel := model.Channel{
+		Type:          constant.ChannelTypeOpenAI,
+		Status:        common.ChannelStatusEnabled,
+		Name:          "mixed-cost-metadata-channel",
+		Models:        "gpt-route",
+		Group:         "default",
+		Priority:      routingSelectTestPriority(1),
+		Weight:        routingSelectTestWeight(100),
+		OtherSettings: `{"upstream_account_sync":{"platform":"new-api","base_url":"https://upstream.example"}}`,
+		ChannelInfo: model.ChannelInfo{
+			CredentialMode:     constant.ChannelCredentialModeAccountPool,
+			AccountPoolEnabled: true,
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+	knownCost := model.ChannelAccount{
+		ChannelId:     channel.Id,
+		Name:          "known-cheap-key",
+		Key:           "sk-known-cheap",
+		Status:        common.ChannelStatusEnabled,
+		Models:        "gpt-route",
+		AccessGroups:  "default",
+		Priority:      1,
+		Weight:        10,
+		OtherSettings: `{"upstream_account_sync":{"ratio_conversion":0.1}}`,
+	}
+	legacyManual := model.ChannelAccount{
+		ChannelId:    channel.Id,
+		Name:         "legacy-manual-key",
+		Key:          "sk-legacy-manual",
+		Status:       common.ChannelStatusEnabled,
+		Models:       "gpt-route",
+		AccessGroups: "default",
+		Priority:     1,
+		Weight:       100,
+	}
+	require.NoError(t, db.Create(&knownCost).Error)
+	require.NoError(t, db.Create(&legacyManual).Error)
+
+	candidate, _, err := SelectRoutingCandidate(&RetryParam{
+		Ctx:        newRoutingSelectTestContext(),
+		TokenGroup: "default",
+		ModelName:  "gpt-route",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, candidate)
+	require.Equal(t, legacyManual.Id, candidate.ChannelAccountID)
+	require.False(t, candidate.HasConvertedRatio)
+}

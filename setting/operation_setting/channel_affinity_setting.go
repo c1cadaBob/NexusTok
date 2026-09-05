@@ -8,6 +8,8 @@ package operation_setting
 
 import "github.com/c1cada/NexusTok/setting/config"
 
+const defaultChannelAffinityMaxRequestIntervalSeconds = 60
+
 // ChannelAffinityKeySource 定义亲和性键的提取来源
 type ChannelAffinityKeySource struct {
 	// Type 键来源类型，可选值：
@@ -68,8 +70,22 @@ type ChannelAffinitySetting struct {
 	MaxEntries int `json:"max_entries"`
 	// DefaultTTLSeconds 默认的亲和性绑定过期时间（秒）
 	DefaultTTLSeconds int `json:"default_ttl_seconds"`
+	// MaxRequestIntervalSeconds 控制亲和性绑定的最大连续请求间隔。
+	// 同一亲和值上一次成功请求距离当前请求小于该窗口时，才允许继续使用亲和渠道；
+	// 大于等于该窗口时，本次请求直接回到全渠道候选选择。旧配置缺失或配置为非正数时
+	// 使用 60 秒，避免历史配置升级后出现无限亲和。
+	MaxRequestIntervalSeconds int `json:"max_request_interval_seconds"`
 	// Rules 亲和性规则列表
 	Rules []ChannelAffinityRule `json:"rules"`
+}
+
+// NormalizedMaxRequestIntervalSeconds 返回亲和性请求间隔窗口。
+// 配置缺失、为 0 或负数时统一回退 60 秒，使旧配置和异常配置都具备明确边界。
+func (setting ChannelAffinitySetting) NormalizedMaxRequestIntervalSeconds() int {
+	if setting.MaxRequestIntervalSeconds <= 0 {
+		return defaultChannelAffinityMaxRequestIntervalSeconds
+	}
+	return setting.MaxRequestIntervalSeconds
 }
 
 // codexCliPassThroughHeaders Codex CLI 需要透传的 HTTP Header 列表
@@ -120,11 +136,12 @@ func buildPassHeaderTemplate(headers []string) map[string]interface{} {
 
 // channelAffinitySetting 是全局渠道亲和性配置实例，默认包含 Codex CLI 和 Claude CLI 两条规则
 var channelAffinitySetting = ChannelAffinitySetting{
-	Enabled:               true,    // 默认启用
-	SwitchOnSuccess:       true,    // 仅在请求成功时更新绑定
-	KeepOnChannelDisabled: false,   // 亲和渠道不可用时默认清理缓存，避免反复命中过期渠道
-	MaxEntries:            100_000, // 最大缓存 10 万条
-	DefaultTTLSeconds:     3600,    // 默认 TTL 1 小时
+	Enabled:                   true,                                            // 默认启用
+	SwitchOnSuccess:           true,                                            // 仅在请求成功时更新绑定
+	KeepOnChannelDisabled:     false,                                           // 亲和渠道不可用时默认清理缓存，避免反复命中过期渠道
+	MaxEntries:                100_000,                                         // 最大缓存 10 万条
+	DefaultTTLSeconds:         3600,                                            // 默认 TTL 1 小时
+	MaxRequestIntervalSeconds: defaultChannelAffinityMaxRequestIntervalSeconds, // 连续请求亲和窗口 60 秒
 	Rules: []ChannelAffinityRule{
 		{
 			// Codex CLI 追踪规则：匹配所有 gpt-* 模型的 /v1/responses 请求

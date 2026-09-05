@@ -137,8 +137,8 @@ func PrepareRelayChannelContext(c *gin.Context) (*model.Channel, bool) {
 //
 // 账号池渠道可能因为所有账号正在冷却、并发已满或已被当前请求排除而在 setup
 // 阶段返回“无可用 Key”。这属于该渠道的局部不可用，不能直接终止请求；自动选路
-// 场景下应排除当前渠道并重新按优先级/权重选下一个渠道。管理员指定渠道请求仍
-// 保持原有单渠道调试语义。
+// 场景下应排除当前失败候选，再按全渠道统一候选选择下一次尝试。管理员指定渠道
+// 请求仍保持原有单渠道调试语义。
 func setupSelectedChannelWithFallback(
 	c *gin.Context,
 	channel *model.Channel,
@@ -160,7 +160,7 @@ func setupSelectedChannelWithFallback(
 				return channel, setupErr
 			}
 			service.AddExcludedRoutingCandidate(c, candidate)
-			nextCandidate, nextErr := selectRoutingCandidateForSetupRetry(c, modelRequest, candidate)
+			nextCandidate, nextErr := selectRoutingCandidateForSetupRetry(c, modelRequest)
 			if nextErr != nil {
 				return channel, nextErr
 			}
@@ -249,27 +249,8 @@ func routingCandidateFromContext(c *gin.Context, channelID int) *model.RoutingCa
 	return candidate.Clone()
 }
 
-func selectRoutingCandidateForSetupRetry(c *gin.Context, modelRequest *ModelRequest, current *model.RoutingCandidate) (*model.RoutingCandidate, *types.NexusTokError) {
+func selectRoutingCandidateForSetupRetry(c *gin.Context, modelRequest *ModelRequest) (*model.RoutingCandidate, *types.NexusTokError) {
 	usingGroup := service.RoutingGroupFromContext(c)
-	if current != nil && current.Kind != model.RoutingCredentialKindSingleKey {
-		if sameChannelCandidate, _, err := service.SelectRoutingCandidateForChannel(&service.RetryParam{
-			Ctx:         c,
-			ModelName:   modelRequest.Model,
-			TokenGroup:  usingGroup,
-			RequestPath: relaycommon.EffectiveRequestPath(c),
-			Retry:       common.GetPointer(0),
-		}, current.ChannelID); err != nil {
-			return nil, types.NewError(
-				fmt.Errorf("获取分组 %s 下模型 %s 的同渠道备用密钥候选失败：%s", usingGroup, modelRequest.Model, err.Error()),
-				types.ErrorCodeGetChannelFailed,
-				types.ErrOptionWithStatusCode(http.StatusServiceUnavailable),
-				types.ErrOptionWithSkipRetry(),
-			)
-		} else if sameChannelCandidate != nil {
-			common.SetContextKey(c, constant.ContextKeyRoutingCandidate, sameChannelCandidate.Clone())
-			return sameChannelCandidate, nil
-		}
-	}
 	candidate, selectGroup, err := service.SelectRoutingCandidate(&service.RetryParam{
 		Ctx:         c,
 		ModelName:   modelRequest.Model,
@@ -302,6 +283,29 @@ func selectRelayChannelForSetupRetry(
 	modelRequest *ModelRequest,
 ) (*model.Channel, *types.NexusTokError) {
 	usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+	candidate, candidateSelectGroup, candidateErr := service.SelectRoutingCandidate(&service.RetryParam{
+		Ctx:         c,
+		ModelName:   modelRequest.Model,
+		TokenGroup:  usingGroup,
+		RequestPath: relaycommon.EffectiveRequestPath(c),
+		Retry:       common.GetPointer(0),
+	})
+	if candidateErr != nil {
+		return nil, types.NewError(
+			fmt.Errorf("获取分组 %s 下模型 %s 的可用密钥候选失败：%s", candidateSelectGroup, modelRequest.Model, candidateErr.Error()),
+			types.ErrorCodeGetChannelFailed,
+			types.ErrOptionWithStatusCode(http.StatusServiceUnavailable),
+			types.ErrOptionWithSkipRetry(),
+		)
+	}
+	if candidate != nil {
+		if channel, channelErr := model.CacheGetChannel(candidate.ChannelID); channelErr == nil && channel != nil {
+			common.SetContextKey(c, constant.ContextKeyRoutingCandidate, candidate.Clone())
+			return channel, nil
+		}
+		service.AddExcludedRoutingCandidate(c, candidate)
+	}
+
 	channel, selectGroup, err := service.CacheGetRandomSatisfiedChannel(&service.RetryParam{
 		Ctx:         c,
 		ModelName:   modelRequest.Model,
@@ -388,9 +392,9 @@ func selectRelayChannel(c *gin.Context, modelRequest *ModelRequest, shouldSelect
 	}
 
 	// ========== 渠道亲和性（Channel Affinity）优先选择 ==========
-	// 如果之前对该模型的成功请求使用过某个渠道，优先在该渠道内按统一候选规则选择
-	// 具体 key/account。这样亲和性只提供“优先尝试同渠道”的约束，不会绕过密钥级
-	// 优先级、同步托管权重和后续失败降级机制。
+	// 如果同一亲和值最近一次成功请求仍处于亲和窗口内，优先在亲和渠道内按统一
+	// 候选规则选择具体 key/account。缓存缺失或窗口过期时只保留规则模板能力，
+	// 本次请求直接进入全渠道候选选择。
 	if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
 		affinityUsable := false
 		preferred, err := model.CacheGetChannel(preferredChannelID)
@@ -461,12 +465,11 @@ func selectRelayChannel(c *gin.Context, modelRequest *ModelRequest, shouldSelect
 	return channel, true
 }
 
-// selectAffinityRoutingCandidate 在亲和命中的渠道内选择一个统一路由候选。
+// selectAffinityRoutingCandidate 在新鲜亲和命中的渠道内选择一个统一路由候选。
 //
-// 亲和性不能直接绕过统一调度：同步上游平台账号的最低倍率会被转换为账号
-// weight，multi-key 和账号池也都有各自的候选级排除与轮询语义。这里先把
-// 亲和命中收敛到“指定 channel_id 的候选选择”，后续 setup / relay 失败时
-// 才能继续按同渠道换 key、候选耗尽后再降级到其他渠道的顺序运行。
+// 亲和性不能直接绕过统一调度：同步上游平台账号的最低转换倍率、multi-key、
+// 渠道账号池和全局账号池都要继续参与候选级过滤。这里仅把首次尝试收敛到指定
+// channel_id；真实上游失败后会排除当前候选，并回到全渠道统一候选选择。
 func selectAffinityRoutingCandidate(c *gin.Context, modelRequest *ModelRequest, preferred *model.Channel, usingGroup string) (*model.RoutingCandidate, string, bool) {
 	if c == nil || modelRequest == nil || preferred == nil || preferred.Id <= 0 {
 		return nil, "", false

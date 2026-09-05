@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/c1cada/NexusTok/common"
@@ -37,9 +38,10 @@ func (key RoutingCandidateKey) String() string {
 	return fmt.Sprintf("%d:%s:%d:%d:%d:%d", key.ChannelID, key.Kind, key.MultiKeyIndex, key.ChannelAccountID, key.PoolGroupID, key.PoolAccountID)
 }
 
-// RoutingSchedule 保存渠道与凭证的四级字典序调度值。
-// 比较顺序固定为：channel_priority > channel_weight > credential_priority > credential_weight。
-// 这里只保存原始字段，不再提前折叠成合成分数，避免低层候选借助别的变量反超高层候选。
+// RoutingSchedule 保存渠道与凭证的调度值。
+// 前三层 channel_priority、channel_weight、credential_priority 决定候选层级；
+// credential_weight 只作为转换倍率相同或缺失时的兼容兜底，避免历史权重让高成本
+// 同步密钥反超低成本同步密钥。
 type RoutingSchedule struct {
 	ChannelPriority    int64 `json:"channel_priority"`
 	ChannelWeight      int   `json:"channel_weight"`
@@ -97,26 +99,61 @@ func (schedule RoutingSchedule) Compare(other RoutingSchedule) int {
 	return 0
 }
 
+// ComparePriorityLayer 只比较不会被成本策略打破的前三层调度值。
+//
+// 返回值含义：
+//   - 1：当前层级更高
+//   - 0：两个层级相同
+//   - -1：当前层级更低
+func (schedule RoutingSchedule) ComparePriorityLayer(other RoutingSchedule) int {
+	if schedule.ChannelPriority != other.ChannelPriority {
+		if schedule.ChannelPriority > other.ChannelPriority {
+			return 1
+		}
+		return -1
+	}
+	if schedule.ChannelWeight != other.ChannelWeight {
+		if schedule.ChannelWeight > other.ChannelWeight {
+			return 1
+		}
+		return -1
+	}
+	if schedule.CredentialPriority != other.CredentialPriority {
+		if schedule.CredentialPriority > other.CredentialPriority {
+			return 1
+		}
+		return -1
+	}
+	return 0
+}
+
 // SameLayer 判断两个调度值是否完全相同。
 func (schedule RoutingSchedule) SameLayer(other RoutingSchedule) bool {
 	return schedule.Compare(other) == 0
+}
+
+// SamePriorityLayer 判断两个调度值是否处于相同的候选层级。
+func (schedule RoutingSchedule) SamePriorityLayer(other RoutingSchedule) bool {
+	return schedule.ComparePriorityLayer(other) == 0
 }
 
 // RoutingCandidate 是统一调度层使用的非敏感候选元数据。
 // Group/Model 是该候选被索引的能力域；PolicyDomain/Policy 用于在同一策略域内保留
 // 原有 multi-key、渠道账号池或全局账号池的调度语义。
 type RoutingCandidate struct {
-	ChannelID        int                   `json:"channel_id"`
-	Kind             RoutingCredentialKind `json:"kind"`
-	MultiKeyIndex    int                   `json:"multi_key_index,omitempty"`
-	ChannelAccountID int                   `json:"channel_account_id,omitempty"`
-	PoolGroupID      int                   `json:"pool_group_id,omitempty"`
-	PoolAccountID    int                   `json:"pool_account_id,omitempty"`
-	Group            string                `json:"group"`
-	Model            string                `json:"model"`
-	PolicyDomain     string                `json:"policy_domain"`
-	Policy           string                `json:"policy"`
-	Schedule         RoutingSchedule       `json:"schedule"`
+	ChannelID         int                   `json:"channel_id"`
+	Kind              RoutingCredentialKind `json:"kind"`
+	MultiKeyIndex     int                   `json:"multi_key_index,omitempty"`
+	ChannelAccountID  int                   `json:"channel_account_id,omitempty"`
+	PoolGroupID       int                   `json:"pool_group_id,omitempty"`
+	PoolAccountID     int                   `json:"pool_account_id,omitempty"`
+	Group             string                `json:"group"`
+	Model             string                `json:"model"`
+	PolicyDomain      string                `json:"policy_domain"`
+	Policy            string                `json:"policy"`
+	Schedule          RoutingSchedule       `json:"schedule"`
+	ConvertedRatio    float64               `json:"converted_ratio,omitempty"`
+	HasConvertedRatio bool                  `json:"has_converted_ratio,omitempty"`
 }
 
 // CandidateKey 返回该候选的请求级排除标识。
@@ -375,8 +412,72 @@ func addChannelAccountRoutingCandidates(index map[string]map[string][]*RoutingCa
 			Policy:           strings.TrimSpace(channel.GetAccountPoolMode()),
 			Schedule:         NewRoutingSchedule(channel.GetPriority(), channel.GetWeight(), account.Priority, positiveRoutingWeight(account.Weight)),
 		}
+		if channel.HasUpstreamAccountSyncMetadata() {
+			if ratio, ok := routingConvertedRatioFromAccountSettings(account.OtherSettings); ok {
+				candidate.ConvertedRatio = ratio
+				candidate.HasConvertedRatio = true
+			}
+		}
 		addRoutingCandidateForValues(index, candidate, groups, models)
 	}
+}
+
+type routingAccountSyncCostMetadata struct {
+	GroupRatio      *float64           `json:"group_ratio,omitempty"`
+	ModelRatios     map[string]float64 `json:"model_ratios,omitempty"`
+	EffectiveRatio  float64            `json:"effective_ratio,omitempty"`
+	RatioConversion float64            `json:"ratio_conversion,omitempty"`
+}
+
+// routingConvertedRatioFromAccountSettings 从同步账号 metadata 中读取真实成本倍率。
+// 该函数只解析 ratio_conversion / effective_ratio / group_ratio / model_ratios 这些
+// 非敏感成本字段，不读取明文 Key、key_digest、external_id 或 OAuth 凭据。字段优先级
+// 与渠道列表最低倍率展示保持一致，保证调度和后台观测看到的是同一种成本口径。
+func routingConvertedRatioFromAccountSettings(settings string) (float64, bool) {
+	if strings.TrimSpace(settings) == "" {
+		return 0, false
+	}
+	var data map[string]any
+	if err := common.UnmarshalJsonStr(settings, &data); err != nil {
+		return 0, false
+	}
+	raw, ok := data["upstream_account_sync"]
+	if !ok {
+		return 0, false
+	}
+	bytes, err := common.Marshal(raw)
+	if err != nil {
+		return 0, false
+	}
+	var metadata routingAccountSyncCostMetadata
+	if err := common.Unmarshal(bytes, &metadata); err != nil {
+		return 0, false
+	}
+	if validRoutingConvertedRatio(metadata.RatioConversion) {
+		return metadata.RatioConversion, true
+	}
+	if validRoutingConvertedRatio(metadata.EffectiveRatio) {
+		return metadata.EffectiveRatio, true
+	}
+	if metadata.GroupRatio != nil && validRoutingConvertedRatio(*metadata.GroupRatio) {
+		return *metadata.GroupRatio, true
+	}
+	var minimum float64
+	found := false
+	for _, ratio := range metadata.ModelRatios {
+		if !validRoutingConvertedRatio(ratio) {
+			continue
+		}
+		if !found || ratio < minimum {
+			minimum = ratio
+			found = true
+		}
+	}
+	return minimum, found
+}
+
+func validRoutingConvertedRatio(value float64) bool {
+	return value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
 func addPoolAccountRoutingCandidates(index map[string]map[string][]*RoutingCandidate, channel *Channel, group *AccountPoolGroup, accounts []*PoolAccount) {

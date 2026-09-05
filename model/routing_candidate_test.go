@@ -291,6 +291,58 @@ func TestRoutingScheduleComparesLexicographically(t *testing.T) {
 	require.True(t, channelPriorityWins.SameLayer(NewRoutingSchedule(3, 0, 0, 0)))
 }
 
+// TestRoutingConvertedRatioFromAccountSettings 验证同步密钥成本字段的兼容读取顺序。
+// 新数据优先使用 ratio_conversion；历史数据依次回退 effective_ratio、group_ratio
+// 和 model_ratios 中的最小有效倍率。解析过程只读取这些成本字段，不依赖任何凭据。
+func TestRoutingConvertedRatioFromAccountSettings(t *testing.T) {
+	tests := []struct {
+		name     string
+		settings string
+		want     float64
+		found    bool
+	}{
+		{
+			name:     "ratio conversion has highest priority",
+			settings: `{"upstream_account_sync":{"ratio_conversion":0.35,"effective_ratio":0.8,"group_ratio":0.2,"model_ratios":{"gpt-a":0.1}}}`,
+			want:     0.35,
+			found:    true,
+		},
+		{
+			name:     "legacy effective ratio fallback",
+			settings: `{"upstream_account_sync":{"effective_ratio":0.6,"group_ratio":0.2,"model_ratios":{"gpt-a":0.1}}}`,
+			want:     0.6,
+			found:    true,
+		},
+		{
+			name:     "legacy group ratio fallback",
+			settings: `{"upstream_account_sync":{"group_ratio":0.2,"model_ratios":{"gpt-a":0.1}}}`,
+			want:     0.2,
+			found:    true,
+		},
+		{
+			name:     "legacy model ratios use minimum valid value",
+			settings: `{"upstream_account_sync":{"model_ratios":{"gpt-a":1.2,"gpt-b":0.4,"gpt-c":0}}}`,
+			want:     0.4,
+			found:    true,
+		},
+		{
+			name:     "missing or invalid values are not comparable",
+			settings: `{"upstream_account_sync":{"ratio_conversion":0,"model_ratios":{"gpt-a":-1}}}`,
+			found:    false,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			ratio, found := routingConvertedRatioFromAccountSettings(testCase.settings)
+			require.Equal(t, testCase.found, found)
+			if found {
+				require.InDelta(t, testCase.want, ratio, 0.000001)
+			}
+		})
+	}
+}
+
 func modelAccountPoolAuthTypeAPIKeyForTest() string {
 	return AccountPoolAuthTypeAPIKey
 }

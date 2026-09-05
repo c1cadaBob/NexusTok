@@ -3071,6 +3071,7 @@
     "Max concurrency": "最大同時実行数",
     "Max Disk Cache Size (MB)": "ディスクキャッシュ最大容量 (MB)",
     "Max Entries": "最大エントリ数",
+    "Max request interval (seconds)": "最大リクエスト間隔（秒）",
     "Max output": "最大出力",
     "Max Requests (incl. failures)": "最大リクエスト数（失敗を含む）",
     "Max Requests (including failures)": "最大リクエスト数（失敗を含む）",

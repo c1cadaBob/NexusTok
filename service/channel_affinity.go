@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/c1cada/NexusTok/common"
+	"github.com/c1cada/NexusTok/constant"
 	"github.com/c1cada/NexusTok/dto"
 	"github.com/c1cada/NexusTok/pkg/cachex"
 	"github.com/c1cada/NexusTok/setting/operation_setting"
@@ -31,19 +32,24 @@ import (
 )
 
 const (
-	ginKeyChannelAffinityCacheKey   = "channel_affinity_cache_key"             // Gin 上下文键：缓存键
-	ginKeyChannelAffinityTTLSeconds = "channel_affinity_ttl_seconds"           // Gin 上下文键：TTL 秒数
-	ginKeyChannelAffinityMeta       = "channel_affinity_meta"                  // Gin 上下文键：亲和性元数据
-	ginKeyChannelAffinityLogInfo    = "channel_affinity_log_info"              // Gin 上下文键：日志信息
-	ginKeyChannelAffinitySkipRetry  = "channel_affinity_skip_retry_on_failure" // Gin 上下文键：失败时跳过重试
+	ginKeyChannelAffinityCacheKey    = "channel_affinity_cache_key"             // Gin 上下文键：缓存键
+	ginKeyChannelAffinityCacheSuffix = "channel_affinity_cache_key_suffix"      // Gin 上下文键：不含命名空间的缓存键后缀
+	ginKeyChannelAffinityTTLSeconds  = "channel_affinity_ttl_seconds"           // Gin 上下文键：TTL 秒数
+	ginKeyChannelAffinityMeta        = "channel_affinity_meta"                  // Gin 上下文键：亲和性元数据
+	ginKeyChannelAffinityLogInfo     = "channel_affinity_log_info"              // Gin 上下文键：日志信息
+	ginKeyChannelAffinitySkipRetry   = "channel_affinity_skip_retry_on_failure" // Gin 上下文键：失败时跳过重试
 
-	channelAffinityCacheNamespace           = "nexustok:channel_affinity:v2"                   // 渠道亲和性缓存的 Redis 命名空间
+	channelAffinityLegacyCacheNamespace     = "nexustok:channel_affinity:v2"                   // 旧版整型亲和缓存命名空间，仅用于运维清理
+	channelAffinityCacheNamespace           = "nexustok:channel_affinity:v3"                   // 渠道亲和性结构体缓存的 Redis 命名空间
 	channelAffinityUsageCacheStatsNamespace = "nexustok:channel_affinity_usage_cache_stats:v2" // 使用统计缓存的 Redis 命名空间
 )
 
 var (
-	channelAffinityCacheOnce sync.Once                // 确保缓存只初始化一次
-	channelAffinityCache     *cachex.HybridCache[int] // 渠道亲和性混合缓存（Redis + 内存）
+	channelAffinityCacheOnce sync.Once                                   // 确保新版缓存只初始化一次
+	channelAffinityCache     *cachex.HybridCache[channelAffinityBinding] // 渠道亲和性混合缓存（Redis + 内存）
+
+	channelAffinityLegacyCacheOnce sync.Once                // 确保旧版缓存只初始化一次
+	channelAffinityLegacyCache     *cachex.HybridCache[int] // 旧版整型亲和缓存，仅用于清理 v2 遗留键
 
 	channelAffinityUsageCacheStatsOnce  sync.Once                                              // 确保使用统计缓存只初始化一次
 	channelAffinityUsageCacheStatsCache *cachex.HybridCache[ChannelAffinityUsageCacheCounters] // 使用统计混合缓存
@@ -51,22 +57,38 @@ var (
 	channelAffinityRegexCache sync.Map // 正则表达式缓存，避免重复编译
 )
 
+// channelAffinityBinding 是新版亲和缓存值。
+// 只记录非敏感 channel_id 与“上一次成功请求回写时间”，请求开始时用它判断亲和
+// 绑定是否仍处于连续请求窗口；失败请求不会写入这里，因此不会续期窗口。
+type channelAffinityBinding struct {
+	ChannelID     int   `json:"channel_id"`
+	LastSuccessAt int64 `json:"last_success_at"`
+}
+
 // channelAffinityMeta 存储渠道亲和性的匹配元数据。
 // 在请求处理过程中存储在 Gin 上下文中，用于后续的缓存写入和日志记录。
 type channelAffinityMeta struct {
-	CacheKey       string                 // 完整的缓存键
-	TTLSeconds     int                    // 缓存过期时间（秒）
-	RuleName       string                 // 匹配的规则名称
-	SkipRetry      bool                   // 失败时是否跳过重试
-	ParamTemplate  map[string]interface{} // 参数覆盖模板
-	KeySourceType  string                 // 亲和值来源类型（gjson/context_int/context_string）
-	KeySourceKey   string                 // 亲和值来源键（上下文键名）
-	KeySourcePath  string                 // 亲和值来源路径（gjson 路径）
-	KeyHint        string                 // 亲和值的简短提示（用于日志）
-	KeyFingerprint string                 // 亲和值的指纹（SHA1 前 8 位）
-	UsingGroup     string                 // 使用的分组标识
-	ModelName      string                 // 请求的模型名称
-	RequestPath    string                 // 请求路径
+	CacheKey                  string                 // 完整的缓存键
+	CacheKeySuffix            string                 // 不含命名空间的缓存键后缀，便于新旧命名空间同时清理
+	TTLSeconds                int                    // 缓存过期时间（秒）
+	RuleName                  string                 // 匹配的规则名称
+	SkipRetry                 bool                   // 失败时是否跳过重试
+	Used                      bool                   // 本次请求是否实际被新鲜亲和绑定约束
+	Bypassed                  bool                   // 本次请求是否因窗口过期等原因绕过亲和限制
+	BypassReason              string                 // 绕过原因，如 cache_miss/stale_bypassed
+	BindingChannelID          int                    // 缓存中记录的渠道 ID
+	LastSuccessAt             int64                  // 缓存中记录的上一次成功请求时间
+	RequestIntervalSeconds    int64                  // 当前请求距离上一次成功回写的秒数
+	MaxRequestIntervalSeconds int                    // 当前使用的亲和新鲜度窗口秒数
+	ParamTemplate             map[string]interface{} // 参数覆盖模板
+	KeySourceType             string                 // 亲和值来源类型（gjson/context_int/context_string）
+	KeySourceKey              string                 // 亲和值来源键（上下文键名）
+	KeySourcePath             string                 // 亲和值来源路径（gjson 路径）
+	KeyHint                   string                 // 亲和值的简短提示（用于日志）
+	KeyFingerprint            string                 // 亲和值的指纹（SHA1 前 8 位）
+	UsingGroup                string                 // 使用的分组标识
+	ModelName                 string                 // 请求的模型名称
+	RequestPath               string                 // 请求路径
 }
 
 // ChannelAffinityStatsContext 存储渠道亲和性的统计上下文。
@@ -96,9 +118,10 @@ type ChannelAffinityCacheStats struct {
 	CacheAlgo     string         `json:"cache_algo"`     // 缓存淘汰算法（如 LRU）
 }
 
-// getChannelAffinityCache 获取渠道亲和性混合缓存实例（懒初始化）。
-// 使用 Redis 作为持久化后端，内存 LRU 作为热缓存。
-func getChannelAffinityCache() *cachex.HybridCache[int] {
+// getChannelAffinityCache 获取新版渠道亲和性混合缓存实例（懒初始化）。
+// 使用 Redis 作为持久化后端，内存 LRU 作为热缓存；缓存值包含渠道 ID 与
+// 上一次成功请求时间，确保亲和窗口按成功请求续期，而不是按失败请求或读取续期。
+func getChannelAffinityCache() *cachex.HybridCache[channelAffinityBinding] {
 	channelAffinityCacheOnce.Do(func() {
 		setting := operation_setting.GetChannelAffinitySetting()
 		capacity := setting.MaxEntries
@@ -110,8 +133,43 @@ func getChannelAffinityCache() *cachex.HybridCache[int] {
 			defaultTTLSeconds = 3600
 		}
 
-		channelAffinityCache = cachex.NewHybridCache[int](cachex.HybridCacheConfig[int]{
+		channelAffinityCache = cachex.NewHybridCache[channelAffinityBinding](cachex.HybridCacheConfig[channelAffinityBinding]{
 			Namespace: cachex.Namespace(channelAffinityCacheNamespace),
+			Redis:     common.RDB,
+			RedisEnabled: func() bool {
+				return common.RedisEnabled && common.RDB != nil
+			},
+			RedisCodec: cachex.JSONCodec[channelAffinityBinding]{},
+			Memory: func() *hot.HotCache[string, channelAffinityBinding] {
+				return hot.NewHotCache[string, channelAffinityBinding](hot.LRU, capacity).
+					WithTTL(time.Duration(defaultTTLSeconds) * time.Second).
+					WithJanitor().
+					Build()
+			},
+		})
+	})
+	return channelAffinityCache
+}
+
+// getChannelAffinityLegacyCache 获取旧版整型亲和缓存实例。
+// 新路由逻辑不会读取 v2 整型值，避免旧 Redis 数据被误判为新鲜绑定；保留该实例
+// 仅用于清理当前请求、按规则清理和全量清理，降低升级后的运维困惑。
+func getChannelAffinityLegacyCache() *cachex.HybridCache[int] {
+	channelAffinityLegacyCacheOnce.Do(func() {
+		setting := operation_setting.GetChannelAffinitySetting()
+		capacity := 100_000
+		defaultTTLSeconds := 3600
+		if setting != nil {
+			if setting.MaxEntries > 0 {
+				capacity = setting.MaxEntries
+			}
+			if setting.DefaultTTLSeconds > 0 {
+				defaultTTLSeconds = setting.DefaultTTLSeconds
+			}
+		}
+
+		channelAffinityLegacyCache = cachex.NewHybridCache[int](cachex.HybridCacheConfig[int]{
+			Namespace: cachex.Namespace(channelAffinityLegacyCacheNamespace),
 			Redis:     common.RDB,
 			RedisEnabled: func() bool {
 				return common.RedisEnabled && common.RDB != nil
@@ -125,7 +183,7 @@ func getChannelAffinityCache() *cachex.HybridCache[int] {
 			},
 		})
 	})
-	return channelAffinityCache
+	return channelAffinityLegacyCache
 }
 
 // GetChannelAffinityCacheStats 获取渠道亲和性缓存的统计信息。
@@ -220,6 +278,7 @@ func GetChannelAffinityCacheStats() ChannelAffinityCacheStats {
 // ClearChannelAffinityCacheAll 清空所有渠道亲和性缓存。
 // 返回被删除的缓存条目数。
 func ClearChannelAffinityCacheAll() int {
+	deleted := 0
 	cache := getChannelAffinityCache()
 	keys, err := cache.Keys()
 	if err != nil {
@@ -227,11 +286,27 @@ func ClearChannelAffinityCacheAll() int {
 		keys = nil
 	}
 	if len(keys) > 0 {
-		if _, err := cache.DeleteMany(keys); err != nil {
+		if res, err := cache.DeleteMany(keys); err != nil {
 			common.SysError(fmt.Sprintf("channel affinity cache delete many failed: err=%v", err))
+		} else {
+			deleted += countDeletedCacheKeys(res)
 		}
 	}
-	return len(keys)
+
+	legacyCache := getChannelAffinityLegacyCache()
+	legacyKeys, legacyErr := legacyCache.Keys()
+	if legacyErr != nil {
+		common.SysError(fmt.Sprintf("legacy channel affinity cache list keys failed: err=%v", legacyErr))
+		legacyKeys = nil
+	}
+	if len(legacyKeys) > 0 {
+		if res, err := legacyCache.DeleteMany(legacyKeys); err != nil {
+			common.SysError(fmt.Sprintf("legacy channel affinity cache delete many failed: err=%v", err))
+		} else {
+			deleted += countDeletedCacheKeys(res)
+		}
+	}
+	return deleted
 }
 
 // ClearChannelAffinityCacheByRuleName 按规则名清空渠道亲和性缓存。
@@ -270,12 +345,30 @@ func ClearChannelAffinityCacheByRuleName(ruleName string) (int, error) {
 		return 0, fmt.Errorf("该规则未启用 include_rule_name，无法按规则清空缓存")
 	}
 
+	deleted := 0
 	cache := getChannelAffinityCache()
-	deleted, err := cache.DeleteByPrefix(ruleName)
+	currentDeleted, err := cache.DeleteByPrefix(ruleName)
 	if err != nil {
 		return 0, err
 	}
+	deleted += currentDeleted
+
+	legacyDeleted, legacyErr := getChannelAffinityLegacyCache().DeleteByPrefix(ruleName)
+	if legacyErr != nil {
+		return deleted, legacyErr
+	}
+	deleted += legacyDeleted
 	return deleted, nil
+}
+
+func countDeletedCacheKeys(deleted map[string]bool) int {
+	count := 0
+	for _, ok := range deleted {
+		if ok {
+			count++
+		}
+	}
+	return count
 }
 
 // matchAnyRegexCached 使用缓存的正则表达式匹配字符串。
@@ -396,27 +489,41 @@ func buildChannelAffinityCacheKeySuffix(rule operation_setting.ChannelAffinityRu
 
 // setChannelAffinityContext 将渠道亲和性元数据存储到 Gin 上下文中。
 func setChannelAffinityContext(c *gin.Context, meta channelAffinityMeta) {
+	if c == nil {
+		return
+	}
 	c.Set(ginKeyChannelAffinityCacheKey, meta.CacheKey)
+	c.Set(ginKeyChannelAffinityCacheSuffix, meta.CacheKeySuffix)
 	c.Set(ginKeyChannelAffinityTTLSeconds, meta.TTLSeconds)
 	c.Set(ginKeyChannelAffinityMeta, meta)
 }
 
 // getChannelAffinityContext 从 Gin 上下文中获取渠道亲和性的缓存键和 TTL。
-func getChannelAffinityContext(c *gin.Context) (string, int, bool) {
+func getChannelAffinityContext(c *gin.Context) (string, string, int, bool) {
+	if c == nil {
+		return "", "", 0, false
+	}
 	keyAny, ok := c.Get(ginKeyChannelAffinityCacheKey)
 	if !ok {
-		return "", 0, false
+		return "", "", 0, false
 	}
 	key, ok := keyAny.(string)
 	if !ok || key == "" {
-		return "", 0, false
+		return "", "", 0, false
+	}
+	suffix := ""
+	if suffixAny, ok := c.Get(ginKeyChannelAffinityCacheSuffix); ok {
+		suffix, _ = suffixAny.(string)
+	}
+	if suffix == "" {
+		suffix = strings.TrimPrefix(key, channelAffinityCacheNamespace+":")
 	}
 	ttlAny, ok := c.Get(ginKeyChannelAffinityTTLSeconds)
 	if !ok {
-		return key, 0, true
+		return key, suffix, 0, true
 	}
 	ttlSeconds, _ := ttlAny.(int)
-	return key, ttlSeconds, true
+	return key, suffix, ttlSeconds, true
 }
 
 // getChannelAffinityMeta 从 Gin 上下文中获取渠道亲和性元数据。
@@ -488,6 +595,22 @@ func buildChannelAffinityKeyHint(s string) string {
 	return s[:4] + "..." + s[len(s)-4:]
 }
 
+// channelAffinityRequestStartTimestamp 返回本次请求开始的 Unix 秒时间。
+//
+// Channel Affinity 的连续请求窗口必须从请求进入分发链路时开始计算，而不是从
+// 选择到候选渠道的中间时刻开始计算。前者由 Distribute 预先写入 observed 时间，
+// 对于单元测试或复用 PrepareRelayChannelContext 的调用方，则依次回退到请求开始
+// 时间和当前时间，保证未接入标准中间件链路时仍可正常工作。
+func channelAffinityRequestStartTimestamp(c *gin.Context) int64 {
+	if observedStart := common.GetContextKeyTime(c, constant.ContextKeyRequestObservedStartTime); !observedStart.IsZero() {
+		return observedStart.Unix()
+	}
+	if requestStart := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime); !requestStart.IsZero() {
+		return requestStart.Unix()
+	}
+	return common.GetTimestamp()
+}
+
 // cloneStringAnyMap 深拷贝 map[string]interface{}。
 // 避免修改原始 map 导致的副作用。
 func cloneStringAnyMap(src map[string]interface{}) map[string]interface{} {
@@ -555,6 +678,57 @@ func extractParamOperations(value interface{}) ([]interface{}, bool) {
 	}
 }
 
+// updateChannelAffinityMeta 更新 Gin 上下文中的亲和元数据。
+// GetPreferredChannelByAffinity 会先写入规则匹配信息，再根据缓存是否命中、是否过期
+// 补充运行态字段；后续模板覆盖、失败重试判断和日志都读取同一份元数据。
+func updateChannelAffinityMeta(c *gin.Context, meta channelAffinityMeta) {
+	if c == nil {
+		return
+	}
+	setChannelAffinityContext(c, meta)
+	c.Set(ginKeyChannelAffinityLogInfo, channelAffinityAdminInfo(meta, "", 0))
+}
+
+// channelAffinityAdminInfo 构造可写入日志的非敏感亲和信息。
+// 这里不会记录原始亲和值，只写入短提示和 SHA1 指纹，便于排查同一亲和值的窗口命中
+// 与绕过原因，同时避免日志中出现可恢复的用户请求内容。
+func channelAffinityAdminInfo(meta channelAffinityMeta, selectedGroup string, channelID int) map[string]interface{} {
+	info := map[string]interface{}{
+		"reason":                       meta.RuleName,
+		"rule_name":                    meta.RuleName,
+		"using_group":                  meta.UsingGroup,
+		"model":                        meta.ModelName,
+		"request_path":                 meta.RequestPath,
+		"key_source":                   meta.KeySourceType,
+		"key_key":                      meta.KeySourceKey,
+		"key_path":                     meta.KeySourcePath,
+		"key_hint":                     meta.KeyHint,
+		"key_fp":                       meta.KeyFingerprint,
+		"used":                         meta.Used,
+		"bypassed":                     meta.Bypassed,
+		"max_request_interval_seconds": meta.MaxRequestIntervalSeconds,
+	}
+	if selectedGroup != "" {
+		info["selected_group"] = selectedGroup
+	}
+	if channelID > 0 {
+		info["channel_id"] = channelID
+	}
+	if meta.BindingChannelID > 0 {
+		info["binding_channel_id"] = meta.BindingChannelID
+	}
+	if meta.BypassReason != "" {
+		info["bypass_reason"] = meta.BypassReason
+	}
+	if meta.LastSuccessAt > 0 {
+		info["last_success_at"] = meta.LastSuccessAt
+	}
+	if meta.RequestIntervalSeconds >= 0 {
+		info["request_interval_seconds"] = meta.RequestIntervalSeconds
+	}
+	return info
+}
+
 // appendChannelAffinityTemplateAdminInfo 将模板覆盖的管理信息追加到日志中。
 // 记录模板是否已应用、规则名、覆盖的参数数量等信息。
 func appendChannelAffinityTemplateAdminInfo(c *gin.Context, meta channelAffinityMeta) {
@@ -577,19 +751,9 @@ func appendChannelAffinityTemplateAdminInfo(c *gin.Context, meta channelAffinity
 			return
 		}
 	}
-	c.Set(ginKeyChannelAffinityLogInfo, map[string]interface{}{
-		"reason":            meta.RuleName,
-		"rule_name":         meta.RuleName,
-		"using_group":       meta.UsingGroup,
-		"model":             meta.ModelName,
-		"request_path":      meta.RequestPath,
-		"key_source":        meta.KeySourceType,
-		"key_key":           meta.KeySourceKey,
-		"key_path":          meta.KeySourcePath,
-		"key_hint":          meta.KeyHint,
-		"key_fp":            meta.KeyFingerprint,
-		"override_template": templateInfo,
-	})
+	info := channelAffinityAdminInfo(meta, "", 0)
+	info["override_template"] = templateInfo
+	c.Set(ginKeyChannelAffinityLogInfo, info)
 }
 
 // ApplyChannelAffinityOverrideTemplate 将渠道亲和性规则的参数覆盖模板合并到渠道参数中。
@@ -681,42 +845,88 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup 
 		if ttlSeconds <= 0 {
 			ttlSeconds = setting.DefaultTTLSeconds
 		}
+		maxRequestIntervalSeconds := setting.NormalizedMaxRequestIntervalSeconds()
 		cacheKeySuffix := buildChannelAffinityCacheKeySuffix(rule, modelName, usingGroup, affinityValue)
 		cacheKeyFull := channelAffinityCacheNamespace + ":" + cacheKeySuffix
-		setChannelAffinityContext(c, channelAffinityMeta{
-			CacheKey:       cacheKeyFull,
-			TTLSeconds:     ttlSeconds,
-			RuleName:       rule.Name,
-			SkipRetry:      rule.SkipRetryOnFailure,
-			ParamTemplate:  cloneStringAnyMap(rule.ParamOverrideTemplate),
-			KeySourceType:  strings.TrimSpace(usedSource.Type),
-			KeySourceKey:   strings.TrimSpace(usedSource.Key),
-			KeySourcePath:  strings.TrimSpace(usedSource.Path),
-			KeyHint:        buildChannelAffinityKeyHint(affinityValue),
-			KeyFingerprint: affinityFingerprint(affinityValue),
-			UsingGroup:     usingGroup,
-			ModelName:      modelName,
-			RequestPath:    path,
-		})
+		meta := channelAffinityMeta{
+			CacheKey:                  cacheKeyFull,
+			CacheKeySuffix:            cacheKeySuffix,
+			TTLSeconds:                ttlSeconds,
+			RuleName:                  rule.Name,
+			SkipRetry:                 rule.SkipRetryOnFailure,
+			RequestIntervalSeconds:    -1,
+			MaxRequestIntervalSeconds: maxRequestIntervalSeconds,
+			ParamTemplate:             cloneStringAnyMap(rule.ParamOverrideTemplate),
+			KeySourceType:             strings.TrimSpace(usedSource.Type),
+			KeySourceKey:              strings.TrimSpace(usedSource.Key),
+			KeySourcePath:             strings.TrimSpace(usedSource.Path),
+			KeyHint:                   buildChannelAffinityKeyHint(affinityValue),
+			KeyFingerprint:            affinityFingerprint(affinityValue),
+			UsingGroup:                usingGroup,
+			ModelName:                 modelName,
+			RequestPath:               path,
+		}
+		setChannelAffinityContext(c, meta)
 
 		cache := getChannelAffinityCache()
-		channelID, found, err := cache.Get(cacheKeySuffix)
+		binding, found, err := cache.Get(cacheKeySuffix)
 		if err != nil {
 			common.SysError(fmt.Sprintf("channel affinity cache get failed: key=%s, err=%v", cacheKeyFull, err))
+			meta.Bypassed = true
+			meta.BypassReason = "cache_error"
+			updateChannelAffinityMeta(c, meta)
 			return 0, false
 		}
-		if found {
-			return channelID, true
+		if !found {
+			meta.Bypassed = true
+			meta.BypassReason = "cache_miss"
+			updateChannelAffinityMeta(c, meta)
+			return 0, false
 		}
-		return 0, false
+
+		meta.BindingChannelID = binding.ChannelID
+		meta.LastSuccessAt = binding.LastSuccessAt
+		now := channelAffinityRequestStartTimestamp(c)
+		if binding.LastSuccessAt > 0 {
+			meta.RequestIntervalSeconds = now - binding.LastSuccessAt
+			if meta.RequestIntervalSeconds < 0 {
+				meta.RequestIntervalSeconds = 0
+			}
+		}
+		if binding.ChannelID <= 0 || binding.LastSuccessAt <= 0 {
+			meta.Bypassed = true
+			meta.BypassReason = "invalid_binding"
+			updateChannelAffinityMeta(c, meta)
+			return 0, false
+		}
+		if meta.RequestIntervalSeconds >= int64(maxRequestIntervalSeconds) {
+			meta.Bypassed = true
+			meta.BypassReason = "stale_bypassed"
+			updateChannelAffinityMeta(c, meta)
+			return 0, false
+		}
+
+		// 此处只说明存在新鲜绑定；真正完成亲和渠道选择后才由
+		// MarkChannelAffinityUsed 标记 used=true，避免渠道不可用时误触发
+		// skip_retry_on_failure 或记录成“已使用亲和”。
+		meta.Used = false
+		meta.Bypassed = false
+		meta.BypassReason = ""
+		updateChannelAffinityMeta(c, meta)
+		return binding.ChannelID, true
 	}
 	return 0, false
 }
 
 // ShouldSkipRetryAfterChannelAffinityFailure 判断渠道亲和性匹配失败后是否跳过重试。
-// 优先使用上下文中的显式标记，其次使用规则元数据中的 SkipRetry 标志。
+// skip_retry_on_failure 只在本次请求被“新鲜亲和绑定”实际约束到某个渠道时生效；
+// 缓存缺失、窗口过期或仅命中参数模板的请求都应继续走普通全渠道重试。
 func ShouldSkipRetryAfterChannelAffinityFailure(c *gin.Context) bool {
 	if c == nil {
+		return false
+	}
+	meta, ok := getChannelAffinityMeta(c)
+	if !ok || !meta.SkipRetry || !meta.Used || meta.Bypassed {
 		return false
 	}
 	v, ok := c.Get(ginKeyChannelAffinitySkipRetry)
@@ -726,11 +936,7 @@ func ShouldSkipRetryAfterChannelAffinityFailure(c *gin.Context) bool {
 			return b
 		}
 	}
-	meta, ok := getChannelAffinityMeta(c)
-	if !ok {
-		return false
-	}
-	return meta.SkipRetry
+	return true
 }
 
 // AllowChannelAffinityDegradationRetry 允许本次亲和命中在真实上游失败后继续降级重试。
@@ -765,16 +971,26 @@ func ClearCurrentChannelAffinityCache(c *gin.Context) bool {
 	if c == nil {
 		return false
 	}
-	cacheKey, _, ok := getChannelAffinityContext(c)
-	if !ok || cacheKey == "" {
+	cacheKey, cacheKeySuffix, _, ok := getChannelAffinityContext(c)
+	if !ok || (cacheKey == "" && cacheKeySuffix == "") {
 		return false
 	}
 
 	cache := getChannelAffinityCache()
-	deleted, err := cache.DeleteMany([]string{cacheKey})
+	deleted, err := cache.DeleteMany(nonEmptyStrings(cacheKeySuffix, cacheKey))
 	if err != nil {
 		common.SysError(fmt.Sprintf("channel affinity cache delete current failed: err=%v", err))
 		return false
+	}
+	legacyDeleted, legacyErr := getChannelAffinityLegacyCache().DeleteMany(nonEmptyStrings(cacheKeySuffix, cacheKey))
+	if legacyErr != nil {
+		common.SysError(fmt.Sprintf("legacy channel affinity cache delete current failed: err=%v", legacyErr))
+	}
+	if meta, ok := getChannelAffinityMeta(c); ok {
+		meta.Used = false
+		meta.Bypassed = true
+		meta.BypassReason = "affinity_channel_unusable"
+		updateChannelAffinityMeta(c, meta)
 	}
 	c.Set(ginKeyChannelAffinitySkipRetry, false)
 	for _, ok := range deleted {
@@ -782,7 +998,29 @@ func ClearCurrentChannelAffinityCache(c *gin.Context) bool {
 			return true
 		}
 	}
+	for _, ok := range legacyDeleted {
+		if ok {
+			return true
+		}
+	}
 	return false
+}
+
+func nonEmptyStrings(values ...string) []string {
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }
 
 // ShouldKeepChannelAffinityOnChannelDisabled 判断亲和渠道不可用时是否保留旧缓存。
@@ -807,22 +1045,12 @@ func MarkChannelAffinityUsed(c *gin.Context, selectedGroup string, channelID int
 	if !ok {
 		return
 	}
+	meta.Used = true
+	meta.Bypassed = false
+	meta.BypassReason = ""
+	updateChannelAffinityMeta(c, meta)
 	c.Set(ginKeyChannelAffinitySkipRetry, meta.SkipRetry)
-	info := map[string]interface{}{
-		"reason":         meta.RuleName,
-		"rule_name":      meta.RuleName,
-		"using_group":    meta.UsingGroup,
-		"selected_group": selectedGroup,
-		"model":          meta.ModelName,
-		"request_path":   meta.RequestPath,
-		"channel_id":     channelID,
-		"key_source":     meta.KeySourceType,
-		"key_key":        meta.KeySourceKey,
-		"key_path":       meta.KeySourcePath,
-		"key_hint":       meta.KeyHint,
-		"key_fp":         meta.KeyFingerprint,
-	}
-	c.Set(ginKeyChannelAffinityLogInfo, info)
+	c.Set(ginKeyChannelAffinityLogInfo, channelAffinityAdminInfo(meta, selectedGroup, channelID))
 }
 
 // AppendChannelAffinityAdminInfo 将渠道亲和性的管理信息追加到 adminInfo 中。
@@ -855,7 +1083,7 @@ func RecordChannelAffinity(c *gin.Context, channelID int) {
 			channelID = successChannelID
 		}
 	}
-	cacheKey, ttlSeconds, ok := getChannelAffinityContext(c)
+	cacheKey, cacheKeySuffix, ttlSeconds, ok := getChannelAffinityContext(c)
 	if !ok {
 		return
 	}
@@ -866,7 +1094,15 @@ func RecordChannelAffinity(c *gin.Context, channelID int) {
 		ttlSeconds = 3600
 	}
 	cache := getChannelAffinityCache()
-	if err := cache.SetWithTTL(cacheKey, channelID, time.Duration(ttlSeconds)*time.Second); err != nil {
+	key := cacheKeySuffix
+	if key == "" {
+		key = cacheKey
+	}
+	binding := channelAffinityBinding{
+		ChannelID:     channelID,
+		LastSuccessAt: common.GetTimestamp(),
+	}
+	if err := cache.SetWithTTL(key, binding, time.Duration(ttlSeconds)*time.Second); err != nil {
 		common.SysError(fmt.Sprintf("channel affinity cache set failed: key=%s, err=%v", cacheKey, err))
 	}
 }

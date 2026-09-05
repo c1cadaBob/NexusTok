@@ -405,10 +405,10 @@ func addUsedChannel(c *gin.Context, channelId int) {
 
 // markFailedCredentialForRetry 按失败粒度更新本次请求的排除集。
 //
-// 统一密钥级调度命中 multi-key、渠道账号或全局账号时，失败后应先排除当前
-// RoutingCandidate，让下一轮有机会继续留在同渠道内切到备用凭证。只有单 Key、
-// 未走统一候选的旧路径，或者当前渠道已经没有剩余候选时，才把整条 channel 加入
-// 请求级排除集并记录渠道级动态健康，避免同一个请求反复撞到已经耗尽的渠道。
+// 统一密钥级调度命中 multi-key、渠道账号或全局账号时，失败后先排除当前
+// RoutingCandidate，再由下一轮全渠道统一候选选择决定后续去向。只有当前渠道已
+// 经没有剩余候选时，才把整条 channel 加入请求级排除集并记录渠道级动态健康，
+// 避免缓存兜底路径再次命中已经耗尽的同一渠道。
 func markFailedCredentialForRetry(c *gin.Context, channel *model.Channel, relayInfo *relaycommon.RelayInfo, retryParam *service.RetryParam, err *types.NexusTokError) {
 	if c == nil || channel == nil || channel.Id <= 0 {
 		return
@@ -625,13 +625,6 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 		}
 		return channel, nil
 	}
-	if channel, setupErr, ok := trySetupRoutingCandidateRetryChannel(c, info, retryParam); ok {
-		return channel, setupErr
-	}
-	if channel, setupErr, ok := trySetupAccountPoolRetryChannel(c, info); ok {
-		return channel, setupErr
-	}
-
 	for attempt := 0; attempt < maxChannelSetupSelectionAttempts(); attempt++ {
 		candidate, selectGroup, candidateErr := service.SelectRoutingCandidate(retryParam)
 		if candidateErr == nil && candidate != nil {
@@ -694,50 +687,6 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 	return nil, types.NewError(fmt.Errorf("分组 %s 下模型 %s 的候选渠道均不可用（retry）", retryParam.TokenGroup, info.OriginModelName), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 }
 
-// trySetupRoutingCandidateRetryChannel 在密钥级失败后的下一轮优先复用当前渠道。
-//
-// 统一调度已经能把 multi-key、渠道账号和全局账号都表达成独立候选；Relay 真正
-// 调用失败后，应该先排除“当前候选”并尝试同渠道内剩余候选。只有这里找不到
-// 同渠道备用候选时，后续流程才会进入账号池旧兜底或全局渠道选择。
-func trySetupRoutingCandidateRetryChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam) (*model.Channel, *types.NexusTokError, bool) {
-	if c == nil || info == nil || retryParam == nil {
-		return nil, nil, false
-	}
-	current := routingCredentialCandidateFromContext(c, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
-	if current == nil || current.Kind == model.RoutingCredentialKindSingleKey {
-		return nil, nil, false
-	}
-	if !service.GetExcludedRoutingCandidateKeys(c)[current.CandidateKey().String()] {
-		return nil, nil, false
-	}
-	candidate, _, err := service.SelectRoutingCandidateForChannel(retryParam, current.ChannelID)
-	if err != nil || candidate == nil {
-		return nil, nil, false
-	}
-	selectedChannel, channelErr := model.CacheGetChannel(candidate.ChannelID)
-	if channelErr != nil || selectedChannel == nil {
-		return nil, nil, false
-	}
-	common.SetContextKey(c, constant.ContextKeyRoutingCandidate, candidate.Clone())
-	setupErr := middleware.SetupContextForRoutingCandidate(c, candidate, info.OriginModelName)
-	if setupErr != nil {
-		if shouldExcludeSetupFailedChannel(c, setupErr) {
-			service.AddExcludedRoutingCandidate(c, candidate)
-			return nil, nil, false
-		}
-		return nil, setupErr, true
-	}
-	if !channelAllowedForEndpointAutoConversion(c, selectedChannel) {
-		service.ReleaseSelectedChannelAccount(c)
-		service.ReleaseSelectedPoolAccount(c)
-		service.AddExcludedRoutingCandidate(c, candidate)
-		return nil, nil, false
-	}
-	info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
-	info.InitChannelMeta(c)
-	return selectedChannel, nil, true
-}
-
 // maxChannelSetupSelectionAttempts 限制单次 getChannel 内因 setup 失败而重选渠道的次数。
 //
 // 正常情况下排除集会让候选很快耗尽并返回“无可用渠道”；这里设置上限只是为了
@@ -761,61 +710,6 @@ func shouldExcludeSetupFailedChannel(c *gin.Context, err *types.NexusTokError) b
 		return false
 	}
 	return true
-}
-
-// trySetupAccountPoolRetryChannel 在账号失败后的重试中优先复用当前渠道，避免直接跳出账号池。
-func trySetupAccountPoolRetryChannel(c *gin.Context, info *relaycommon.RelayInfo) (*model.Channel, *types.NexusTokError, bool) {
-	if info == nil {
-		return nil, nil, false
-	}
-	retryChannelID := common.GetContextKeyInt(c, constant.ContextKeyChannelAccountRetryChannelId)
-	if retryChannelID <= 0 || (len(service.GetExcludedChannelAccountIds(c)) == 0 && len(service.GetExcludedPoolAccountIds(c)) == 0) {
-		return nil, nil, false
-	}
-	usingGroup := getAccountPoolRetryGroup(c, info)
-	if usingGroup == "" || !model.IsChannelEnabledForGroupModel(usingGroup, info.OriginModelName, retryChannelID) {
-		common.SetContextKey(c, constant.ContextKeyChannelAccountRetryChannelId, 0)
-		return nil, nil, false
-	}
-	channel, err := model.CacheGetChannel(retryChannelID)
-	if err != nil || channel == nil || channel.Status != common.ChannelStatusEnabled || !channel.IsAccountPoolEnabled() {
-		common.SetContextKey(c, constant.ContextKeyChannelAccountRetryChannelId, 0)
-		return nil, nil, false
-	}
-	setupErr := middleware.SetupContextForSelectedChannel(c, channel, info.OriginModelName)
-	if setupErr != nil {
-		if setupErr.GetErrorCode() == types.ErrorCodeChannelNoAvailableKey {
-			common.SetContextKey(c, constant.ContextKeyChannelAccountRetryChannelId, 0)
-			service.AddExcludedChannelId(c, retryChannelID)
-			return nil, nil, false
-		}
-		return nil, setupErr, true
-	}
-	if !channelAllowedForEndpointAutoConversion(c, channel) {
-		service.ReleaseSelectedChannelAccount(c)
-		service.ReleaseSelectedPoolAccount(c)
-		common.SetContextKey(c, constant.ContextKeyChannelAccountRetryChannelId, 0)
-		service.AddExcludedChannelId(c, retryChannelID)
-		return nil, nil, false
-	}
-	// 账号池账号失败后的第一次重试，应优先在同一渠道内切换账号。
-	info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
-	info.InitChannelMeta(c)
-	return channel, nil, true
-}
-
-// getAccountPoolRetryGroup 返回账号池重试应使用的实际分组。
-func getAccountPoolRetryGroup(c *gin.Context, info *relaycommon.RelayInfo) string {
-	if autoGroup := common.GetContextKeyString(c, constant.ContextKeyAutoGroup); autoGroup != "" {
-		return autoGroup
-	}
-	if usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup); usingGroup != "" && usingGroup != "auto" {
-		return usingGroup
-	}
-	if info != nil && info.UsingGroup != "auto" {
-		return info.UsingGroup
-	}
-	return ""
 }
 
 func channelAllowedForEndpointAutoConversion(c *gin.Context, channel *model.Channel) bool {
