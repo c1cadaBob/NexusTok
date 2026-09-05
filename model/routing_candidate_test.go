@@ -177,6 +177,104 @@ func TestRoutingCandidatesGenerateCredentialKindsAndSchedules(t *testing.T) {
 	require.Equal(t, 9, byKind[RoutingCredentialKindPoolAccount][0].Schedule.CredentialWeight)
 }
 
+func TestRoutingCandidatesUseAbilityScheduleForAccountPool(t *testing.T) {
+	db := setupRoutingCandidateTestDB(t, true)
+	channelPriority := int64(0)
+	channelWeight := uint(0)
+	channels := []Channel{
+		{
+			Id:       22,
+			Type:     constant.ChannelTypeOpenAI,
+			Status:   common.ChannelStatusEnabled,
+			Name:     "fast-account-pool",
+			Models:   "gpt-5.5",
+			Group:    "default",
+			Priority: &channelPriority,
+			Weight:   &channelWeight,
+			ChannelInfo: ChannelInfo{
+				CredentialMode:     constant.ChannelCredentialModeAccountPool,
+				AccountPoolEnabled: true,
+			},
+		},
+		{
+			Id:       27,
+			Type:     constant.ChannelTypeOpenAI,
+			Status:   common.ChannelStatusEnabled,
+			Name:     "slow-account-pool",
+			Models:   "gpt-5.5",
+			Group:    "default",
+			Priority: &channelPriority,
+			Weight:   &channelWeight,
+			ChannelInfo: ChannelInfo{
+				CredentialMode:     constant.ChannelCredentialModeAccountPool,
+				AccountPoolEnabled: true,
+			},
+		},
+	}
+	require.NoError(t, db.Create(&channels).Error)
+	require.NoError(t, db.Create(&[]ChannelAccount{
+		{
+			ChannelId: 22,
+			Name:      "fast-key",
+			Key:       "sk-fast",
+			Status:    common.ChannelStatusEnabled,
+			Models:    "gpt-5.5",
+			Group:     "default",
+			Priority:  0,
+			Weight:    120,
+		},
+		{
+			ChannelId: 27,
+			Name:      "slow-key",
+			Key:       "sk-slow",
+			Status:    common.ChannelStatusEnabled,
+			Models:    "gpt-5.5",
+			Group:     "default",
+			Priority:  1,
+			Weight:    200,
+		},
+	}).Error)
+
+	priorityOne := int64(1)
+	priorityZero := int64(0)
+	require.NoError(t, db.Create(&[]Ability{
+		{
+			Group:     "default",
+			Model:     "gpt-5.5",
+			ChannelId: 22,
+			Enabled:   true,
+			Priority:  &priorityOne,
+			Weight:    220,
+		},
+		{
+			Group:     "default",
+			Model:     "gpt-5.5",
+			ChannelId: 27,
+			Enabled:   true,
+			Priority:  &priorityZero,
+			Weight:    50,
+		},
+	}).Error)
+
+	InitChannelCache()
+	candidates, err := GetRoutingCandidatesWithExclusions("default", "gpt-5.5", "", nil, nil)
+	require.NoError(t, err)
+	require.Len(t, candidates, 2)
+
+	byChannel := map[int]*RoutingCandidate{}
+	for _, candidate := range candidates {
+		byChannel[candidate.ChannelID] = candidate
+	}
+	require.EqualValues(t, 1, byChannel[22].Schedule.ChannelPriority)
+	require.Equal(t, 220, byChannel[22].Schedule.ChannelWeight)
+	require.EqualValues(t, 0, byChannel[22].Schedule.CredentialPriority)
+	require.Equal(t, 120, byChannel[22].Schedule.CredentialWeight)
+	require.EqualValues(t, 0, byChannel[27].Schedule.ChannelPriority)
+	require.Equal(t, 50, byChannel[27].Schedule.ChannelWeight)
+	require.EqualValues(t, 1, byChannel[27].Schedule.CredentialPriority)
+	require.Equal(t, 200, byChannel[27].Schedule.CredentialWeight)
+}
+
 func TestRoutingScheduleComparesLexicographically(t *testing.T) {
 	channelPriorityWins := NewRoutingSchedule(3, 0, 0, 0)
 	lowerChannelPriority := NewRoutingSchedule(2, 999, 999, 999)

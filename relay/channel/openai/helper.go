@@ -12,8 +12,6 @@ import (
 	"github.com/c1cada/NexusTok/service"
 	"github.com/c1cada/NexusTok/types"
 
-	"github.com/samber/lo"
-
 	"github.com/gin-gonic/gin"
 )
 
@@ -266,9 +264,8 @@ func processCompletions(streamResp string, streamItems []string, responseTextBui
 //   - model: 模型名称
 //   - usage: token 使用量信息（如果上游返回了有效的 usage）
 //
-// 当最后一个数据项包含有效的 usage 信息时：
-//   - 标记 containStreamUsage 为 true
-//   - 判断是否需要发送最后一个响应（当 choice 中包含实际内容时才发送）
+// 当最后一个数据项包含有效的 usage 信息时，会标记 containStreamUsage 为 true。
+// 是否向下游发送该数据项由流扫描阶段决定，避免即时转发模式下在结束时重复写出。
 //
 // 参数:
 //   - lastStreamData: 最后一个流式数据项的 JSON 字符串
@@ -278,15 +275,12 @@ func processCompletions(streamResp string, streamItems []string, responseTextBui
 //   - model: 模型名称的指针（会被更新）
 //   - usage: usage 对象的指针（会被更新）
 //   - containStreamUsage: 是否包含流式 usage 的指针（会被更新）
-//   - info: 中继信息
-//   - shouldSendLastResp: 是否应发送最后一个响应的指针（会被更新）
 //
 // 返回:
 //   - error: 解析失败时的错误
 func handleLastResponse(lastStreamData string, responseId *string, createAt *int64,
 	systemFingerprint *string, model *string, usage **dto.Usage,
-	containStreamUsage *bool, info *relaycommon.RelayInfo,
-	shouldSendLastResp *bool) error {
+	containStreamUsage *bool) error {
 
 	var lastStreamResponse dto.ChatCompletionsStreamResponse
 	if err := common.Unmarshal(common.StringToByteSlice(lastStreamData), &lastStreamResponse); err != nil {
@@ -301,14 +295,34 @@ func handleLastResponse(lastStreamData string, responseId *string, createAt *int
 	if service.ValidUsage(lastStreamResponse.Usage) {
 		*containStreamUsage = true
 		*usage = lastStreamResponse.Usage
-		if !info.ShouldIncludeUsage {
-			*shouldSendLastResp = lo.SomeBy(lastStreamResponse.Choices, func(choice dto.ChatCompletionsStreamResponseChoice) bool {
-				return choice.Delta.GetContentString() != "" || choice.Delta.GetReasoningContent() != ""
-			})
-		}
 	}
 
 	return nil
+}
+
+// shouldForwardOpenAIStreamData 判断 OpenAI 格式的当前 SSE 数据是否需要立即发送。
+//
+// 旧的延迟转发逻辑会在最后处理 usage-only 数据包：调用方没有请求 usage 时，不向
+// 下游发送纯 usage chunk。即时转发必须在收到该 chunk 的当下保持同一语义；转换或
+// 解析失败时仍交给后续处理报告错误，不能因为过滤逻辑吞掉异常上游数据。
+func shouldForwardOpenAIStreamData(info *relaycommon.RelayInfo, data string) bool {
+	if info == nil || info.RelayFormat != types.RelayFormatOpenAI || info.ShouldIncludeUsage {
+		return true
+	}
+
+	var streamResponse dto.ChatCompletionsStreamResponse
+	if err := common.Unmarshal(common.StringToByteSlice(data), &streamResponse); err != nil {
+		return true
+	}
+	if !service.ValidUsage(streamResponse.Usage) {
+		return true
+	}
+	for _, choice := range streamResponse.Choices {
+		if choice.Delta.GetContentString() != "" || choice.Delta.GetReasoningContent() != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // HandleFinalResponse 根据输出格式处理并发送最终的流式响应。
@@ -343,12 +357,7 @@ func HandleFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, lastStream
 
 	switch info.RelayFormat {
 	case types.RelayFormatOpenAI:
-		if info.ShouldIncludeUsage && !containStreamUsage {
-			response := helper.GenerateFinalUsageResponse(responseId, createAt, model, *usage)
-			response.SetSystemFingerprint(systemFingerprint)
-			helper.ObjectData(c, response)
-		}
-		helper.Done(c)
+		handleOpenAIFinalResponse(c, info, responseId, createAt, model, systemFingerprint, usage, containStreamUsage)
 
 	case types.RelayFormatClaude:
 		var streamResponse dto.ChatCompletionsStreamResponse
@@ -394,6 +403,40 @@ func HandleFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, lastStream
 		c.Render(-1, common.CustomEvent{Data: "data: " + string(geminiResponseStr)})
 		_ = helper.FlushWriter(c)
 	}
+}
+
+// HandleFinalResponseAfterForwardedStream 处理已逐条写出上游 SSE 后的结束逻辑。
+//
+// OaiStreamHandler 会在每个数据包到达时立即转换并 Flush，因此 Claude 和 Gemini 的
+// 终止事件已经由对应转换器写出。这里仅补充 OpenAI 的 usage/[DONE]，以及记录 Claude
+// 最终 usage，避免重新转换最后一个 chunk 导致重复的 message_stop 或 finishReason。
+func HandleFinalResponseAfterForwardedStream(c *gin.Context, info *relaycommon.RelayInfo,
+	responseId string, createAt int64, model string, systemFingerprint string,
+	usage *dto.Usage, containStreamUsage bool) {
+	if info == nil {
+		return
+	}
+
+	switch info.RelayFormat {
+	case types.RelayFormatOpenAI:
+		handleOpenAIFinalResponse(c, info, responseId, createAt, model, systemFingerprint, usage, containStreamUsage)
+	case types.RelayFormatClaude:
+		if info.ClaudeConvertInfo != nil {
+			info.ClaudeConvertInfo.Usage = usage
+		}
+	}
+}
+
+// handleOpenAIFinalResponse 补充 OpenAI 流的最终 usage 和 [DONE] 标记。
+func handleOpenAIFinalResponse(c *gin.Context, info *relaycommon.RelayInfo,
+	responseId string, createAt int64, model string, systemFingerprint string,
+	usage *dto.Usage, containStreamUsage bool) {
+	if info.ShouldIncludeUsage && !containStreamUsage {
+		response := helper.GenerateFinalUsageResponse(responseId, createAt, model, *usage)
+		response.SetSystemFingerprint(systemFingerprint)
+		helper.ObjectData(c, response)
+	}
+	helper.Done(c)
 }
 
 // sendResponsesStreamData 转发 Responses API 的流式数据到客户端。

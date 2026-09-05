@@ -154,3 +154,29 @@ func TestRoutingTTFTConfigRejectsInvalidValues(t *testing.T) {
 	require.Equal(t, time.Duration(routingTTFTCooldownDefaultSeconds)*time.Second, cooldown)
 	require.Equal(t, routingTTFTMinSamplesDefault, minSamples)
 }
+
+func TestRoutingTTFTConfigUsesFastDefaults(t *testing.T) {
+	clearRoutingTTFTHealthCacheForTest(t)
+	t.Setenv(routingTTFTThresholdEnv, "")
+	t.Setenv(routingTTFTCooldownEnv, "")
+	t.Setenv(routingTTFTMinSamplesEnv, "")
+
+	threshold, cooldown, minSamples := routingTTFTConfig()
+	require.EqualValues(t, 800, threshold)
+	require.Equal(t, 90*time.Second, cooldown)
+	require.Equal(t, 2, minSamples)
+}
+
+func TestRoutingCandidateTTFTCoolsAfterTwoSlowDefaultSamples(t *testing.T) {
+	clearRoutingTTFTHealthCacheForTest(t)
+	t.Setenv(routingTTFTThresholdEnv, "")
+	t.Setenv(routingTTFTCooldownEnv, "")
+	t.Setenv(routingTTFTMinSamplesEnv, "")
+
+	candidate := newTTFTRoutingCandidate(91, 0)
+	RecordRoutingCandidateTTFTSample("default", "gpt-fast-route", candidate, 800)
+	require.True(t, IsRoutingCandidateTTFTHealthy("default", "gpt-fast-route", candidate))
+
+	RecordRoutingCandidateTTFTSample("default", "gpt-fast-route", candidate, 800)
+	require.False(t, IsRoutingCandidateTTFTHealthy("default", "gpt-fast-route", candidate))
+}

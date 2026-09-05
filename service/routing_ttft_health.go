@@ -18,9 +18,9 @@ const (
 	routingTTFTHealthNamespace = "nexustok:routing_ttft_health:v1"
 	routingTTFTHealthCacheTTL  = 30 * time.Minute
 
-	routingTTFTThresholdDefaultMs     = 8000
-	routingTTFTCooldownDefaultSeconds = 600
-	routingTTFTMinSamplesDefault      = 3
+	routingTTFTThresholdDefaultMs     = 800
+	routingTTFTCooldownDefaultSeconds = 90
+	routingTTFTMinSamplesDefault      = 2
 	routingTTFTEWMAAlpha              = 0.35
 	routingTTFTThresholdEnv           = "ROUTING_TTFT_THRESHOLD_MS"
 	routingTTFTCooldownEnv            = "ROUTING_TTFT_COOLDOWN_SECONDS"

@@ -7,12 +7,14 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/constant"
 	"github.com/c1cada/NexusTok/dto"
 	"github.com/c1cada/NexusTok/middleware"
 	"github.com/c1cada/NexusTok/model"
+	relaycommon "github.com/c1cada/NexusTok/relay/common"
 	"github.com/c1cada/NexusTok/service"
 	"github.com/c1cada/NexusTok/setting/operation_setting"
 	"github.com/c1cada/NexusTok/setting/ratio_setting"
@@ -131,6 +133,137 @@ func TestRelayRetriesToNextChannelAccountAfterSyncedKeyFailure(t *testing.T) {
 	require.Equal(t, common.ChannelStatusEnabled, firstStored.Status)
 	require.Contains(t, firstStored.LastError, "synced key rejected")
 	require.True(t, service.GetExcludedChannelAccountIds(c)[firstStored.Id])
+}
+
+func TestRelayAutomaticallyRetries503WithRetryTimesZeroToNextChannelAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupRelayRetryFallbackTestState(t)
+	common.RetryTimes = 0
+
+	var mu sync.Mutex
+	seenKeys := make([]string, 0, 2)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+		auth := r.Header.Get("Authorization")
+		mu.Lock()
+		seenKeys = append(seenKeys, auth)
+		mu.Unlock()
+		if auth == "Bearer sk-account-fail" {
+			w.Header().Set("Retry-After", "60")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":{"message":"Service temporarily unavailable","type":"server_error","code":"service_unavailable"}}`))
+			return
+		}
+		require.Equal(t, "Bearer sk-account-ok", auth)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-service-unavailable-ok","object":"chat.completion","created":1,"model":"gpt-retry-relay","choices":[{"index":0,"message":{"role":"assistant","content":"account-fallback-ok-after-503"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer upstream.Close()
+
+	channel := createRelayRetryFallbackAccountPoolChannel(t, 1, "service-unavailable-account-channel")
+	createRelayRetryFallbackChannelAccount(t, channel.Id, "first", "sk-account-fail", upstream.URL, 20, 100)
+	createRelayRetryFallbackChannelAccount(t, channel.Id, "second", "sk-account-ok", upstream.URL, 10, 100)
+	model.InitChannelCache()
+
+	body := []byte(`{"model":"gpt-retry-relay","messages":[{"role":"user","content":"ping"}]}`)
+	c, recorder := newRelayRetryFallbackRequestContext(t, "/v1/chat/completions", body)
+	require.Nil(t, middleware.SetupContextForSelectedChannel(c, channel, "gpt-retry-relay"))
+
+	Relay(c, types.RelayFormatOpenAI)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "account-fallback-ok-after-503")
+	require.Equal(t, []string{"1", "1"}, c.GetStringSlice("use_channel"))
+	require.Empty(t, service.GetExcludedChannelIds(c))
+	require.Len(t, service.GetExcludedChannelAccountIds(c), 1)
+	require.Equal(t, []string{"Bearer sk-account-fail", "Bearer sk-account-ok"}, seenKeys)
+
+	var firstStored model.ChannelAccount
+	require.NoError(t, model.DB.Where("channel_id = ? AND name = ?", channel.Id, "first").First(&firstStored).Error)
+	require.True(t, firstStored.OverloadUntil > common.GetTimestamp())
+	require.Contains(t, firstStored.LastError, "Service temporarily unavailable")
+	require.True(t, service.GetExcludedChannelAccountIds(c)[firstStored.Id])
+}
+
+func TestShouldRetryRelayStopsAfterDownstreamWrite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	_, _ = c.Writer.Write([]byte("already-sent"))
+	relayInfo := &relaycommon.RelayInfo{
+		StartTime:         time.Now().Add(-time.Second),
+		FirstResponseTime: time.Now(),
+	}
+	err := types.NewOpenAIError(errors.New("Service temporarily unavailable"), types.ErrorCodeBadResponseStatusCode, http.StatusServiceUnavailable)
+
+	require.False(t, shouldRetryRelay(c, relayInfo, err, 0))
+}
+
+func TestRelayDoesNotAutomaticallyRetry503ForSpecificChannel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupRelayRetryFallbackTestState(t)
+	common.RetryTimes = 0
+
+	var hits int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":{"message":"Service temporarily unavailable","type":"server_error","code":"service_unavailable"}}`))
+	}))
+	defer upstream.Close()
+
+	channel := createRelayRetryFallbackChannel(t, 1, "specific-service-unavailable-channel", upstream.URL, 20)
+	createRelayRetryFallbackChannel(t, 2, "fallback", upstream.URL, 10)
+	model.InitChannelCache()
+
+	body := []byte(`{"model":"gpt-retry-relay","messages":[{"role":"user","content":"ping"}]}`)
+	c, recorder := newRelayRetryFallbackRequestContext(t, "/v1/chat/completions", body)
+	c.Set("specific_channel_id", "1")
+	require.Nil(t, middleware.SetupContextForSelectedChannel(c, channel, "gpt-retry-relay"))
+
+	Relay(c, types.RelayFormatOpenAI)
+
+	require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "Service temporarily unavailable")
+	require.Equal(t, []string{"1"}, c.GetStringSlice("use_channel"))
+	require.Equal(t, 1, hits)
+}
+
+func TestRelayAutomatic503RetriesStopAfterTwoExtraAttempts(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupRelayRetryFallbackTestState(t)
+	common.RetryTimes = 0
+
+	fail := func(label string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			require.Equal(t, "/v1/chat/completions", r.URL.Path)
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":{"message":"Service temporarily unavailable ` + label + `","type":"server_error","code":"service_unavailable"}}`))
+		}
+	}
+	firstUpstream := httptest.NewServer(fail("first"))
+	defer firstUpstream.Close()
+	secondUpstream := httptest.NewServer(fail("second"))
+	defer secondUpstream.Close()
+	thirdUpstream := httptest.NewServer(fail("third"))
+	defer thirdUpstream.Close()
+
+	first := createRelayRetryFallbackChannel(t, 1, "first-service-unavailable-channel", firstUpstream.URL, 30)
+	createRelayRetryFallbackChannel(t, 2, "second-service-unavailable-channel", secondUpstream.URL, 20)
+	createRelayRetryFallbackChannel(t, 3, "third-service-unavailable-channel", thirdUpstream.URL, 10)
+	model.InitChannelCache()
+
+	body := []byte(`{"model":"gpt-retry-relay","messages":[{"role":"user","content":"ping"}]}`)
+	c, recorder := newRelayRetryFallbackRequestContext(t, "/v1/chat/completions", body)
+	require.Nil(t, middleware.SetupContextForSelectedChannel(c, first, "gpt-retry-relay"))
+
+	Relay(c, types.RelayFormatOpenAI)
+
+	require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "Service temporarily unavailable third")
+	require.Equal(t, []string{"1", "2", "3"}, c.GetStringSlice("use_channel"))
+	require.Equal(t, []int{1, 2, 3}, service.GetExcludedChannelIds(c))
 }
 
 func TestRelayRetriesToNextMultiKeyCandidateBeforeChannelFallback(t *testing.T) {
@@ -484,6 +617,21 @@ func setupRelayRetryFallbackTestState(t *testing.T) {
 		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(string(oldModelRatioJSON)))
 		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(string(oldGroupRatioJSON)))
 	})
+}
+
+func newRelayRetryFallbackRequestContext(t *testing.T, path string, body []byte) (*gin.Context, *httptest.ResponseRecorder) {
+	t.Helper()
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	storage, err := common.CreateBodyStorage(body)
+	require.NoError(t, err)
+	c.Set(common.KeyBodyStorage, storage)
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	setRelayRetryFallbackRequestContext(c)
+	return c, recorder
 }
 
 func seedRelayRetryAffinity(t *testing.T, headerValue string, channelID int) {

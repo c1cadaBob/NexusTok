@@ -38,7 +38,8 @@ func ProcessPoolAccountError(c *gin.Context, channelError types.ChannelError, er
 	ExcludePoolAccountForRequest(c, channelError.PoolAccountId)
 	common.SetContextKey(c, constant.ContextKeyChannelAccountRetryChannelId, channelError.ChannelId)
 
-	reason := err.ErrorWithStatusCode()
+	// 全局账号池错误同样会写入状态和审计记录，统一使用脱敏后的描述。
+	reason := err.MaskSensitiveErrorWithStatusCode()
 	recordPoolAccountUsageFailure(c, channelError, err, reason)
 	before, _ := model.GetPoolAccountById(channelError.PoolAccountId)
 	updates := map[string]interface{}{
@@ -61,7 +62,9 @@ func ProcessPoolAccountError(c *gin.Context, channelError types.ChannelError, er
 		updates["disabled_reason"] = reason
 		updates["next_retry_time"] = updates["rate_limited_until"]
 	} else if isChannelAccountOverloadError(err) {
-		updates["overload_until"] = common.GetTimestamp() + int64(defaultChannelAccountOverloadCooldown.Seconds())
+		// 与渠道账号池保持一致：503 使用更短的默认冷却，并在上游给出
+		// Retry-After 时严格遵循它，避免立即重新命中同一失效账号。
+		updates["overload_until"] = retryAfterUntil(err.RetryAfter, channelAccountOverloadCooldown(err))
 		updates["disabled_reason"] = reason
 		updates["next_retry_time"] = updates["overload_until"]
 	}

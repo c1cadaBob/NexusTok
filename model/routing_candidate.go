@@ -145,12 +145,105 @@ func (candidate *RoutingCandidate) Clone() *RoutingCandidate {
 
 var routingCandidateCache map[string]map[string][]*RoutingCandidate
 
+// routingAbilitySchedule 保存指定 group/model/channel 能力记录的调度值。
+//
+// 账号池渠道的模型级 priority/weight 可能与 channels 表不同。统一候选必须使用
+// Ability 的值，否则后台调整模型路由后，账号池候选仍会按旧的渠道级值选路。
+type routingAbilitySchedule struct {
+	Enabled  bool
+	Priority int64
+	Weight   int
+}
+
 // buildRoutingCandidateCache 构建非敏感密钥级候选缓存。
 // 缓存只存 ID、策略域和调度值；明文 key、OAuth credential 等敏感字段仍在 setup 阶段按 ID 读取。
 func buildRoutingCandidateCache(channels []*Channel) map[string]map[string][]*RoutingCandidate {
 	accountsByChannel := loadEnabledChannelAccountsByChannel()
 	poolGroups, poolAccountsByGroup := loadEnabledPoolRoutingSources()
-	return buildRoutingCandidateIndex(channels, accountsByChannel, poolGroups, poolAccountsByGroup)
+	index := buildRoutingCandidateIndex(channels, accountsByChannel, poolGroups, poolAccountsByGroup)
+	return applyRoutingAbilitySchedules(index, loadRoutingAbilitySchedules())
+}
+
+// loadRoutingAbilitySchedules 读取能力表中的模型级调度配置。
+//
+// 渠道缓存会在启动和热刷新时重建，因此每次构建都重新读取 Ability，确保后台
+// 修改模型能力的 priority/weight 后，统一密钥路由能同步使用最新配置。
+func loadRoutingAbilitySchedules() map[string]map[string]map[int]routingAbilitySchedule {
+	schedules := make(map[string]map[string]map[int]routingAbilitySchedule)
+	var abilities []*Ability
+	if err := DB.Find(&abilities).Error; err != nil {
+		return schedules
+	}
+	for _, ability := range abilities {
+		if ability == nil || strings.TrimSpace(ability.Group) == "" ||
+			strings.TrimSpace(ability.Model) == "" || ability.ChannelId <= 0 {
+			continue
+		}
+		group := strings.TrimSpace(ability.Group)
+		modelName := strings.TrimSpace(ability.Model)
+		if _, ok := schedules[group]; !ok {
+			schedules[group] = make(map[string]map[int]routingAbilitySchedule)
+		}
+		if _, ok := schedules[group][modelName]; !ok {
+			schedules[group][modelName] = make(map[int]routingAbilitySchedule)
+		}
+		priority := int64(0)
+		if ability.Priority != nil {
+			priority = *ability.Priority
+		}
+		schedules[group][modelName][ability.ChannelId] = routingAbilitySchedule{
+			Enabled:  ability.Enabled,
+			Priority: priority,
+			Weight:   int(ability.Weight),
+		}
+	}
+	return schedules
+}
+
+// applyRoutingAbilitySchedules 将 Ability 的模型级调度覆盖到密钥级候选。
+//
+// 候选生成先按渠道/账号的结构构建，再在这里按候选自身的 group/model 精确匹配
+// Ability。这样无需改变账号池、多 Key 的候选展开逻辑，同时能过滤明确禁用的
+// Ability；没有对应 Ability 的历史候选继续回退到渠道级字段。
+func applyRoutingAbilitySchedules(
+	index map[string]map[string][]*RoutingCandidate,
+	schedules map[string]map[string]map[int]routingAbilitySchedule,
+) map[string]map[string][]*RoutingCandidate {
+	if len(index) == 0 || len(schedules) == 0 {
+		return index
+	}
+	for group, modelCandidates := range index {
+		for modelName, candidates := range modelCandidates {
+			scheduled := make([]*RoutingCandidate, 0, len(candidates))
+			for _, candidate := range candidates {
+				if candidate == nil {
+					continue
+				}
+				groupSchedules := schedules[group]
+				modelSchedules := groupSchedules[modelName]
+				schedule, exists := modelSchedules[candidate.ChannelID]
+				if !exists {
+					// 精确候选可能来自通配模型/分组能力；没有精确 Ability 时
+					// 保留原有渠道级调度，避免历史配置突然失去候选。
+					scheduled = append(scheduled, candidate)
+					continue
+				}
+				if !schedule.Enabled {
+					continue
+				}
+				clone := candidate.Clone()
+				clone.Schedule = NewRoutingSchedule(
+					schedule.Priority,
+					schedule.Weight,
+					candidate.Schedule.CredentialPriority,
+					candidate.Schedule.CredentialWeight,
+				)
+				scheduled = append(scheduled, clone)
+			}
+			modelCandidates[modelName] = scheduled
+		}
+	}
+	return index
 }
 
 func loadEnabledChannelAccountsByChannel() map[int][]*ChannelAccount {

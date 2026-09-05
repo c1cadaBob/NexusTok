@@ -29,8 +29,9 @@ import (
 
 // 默认的冷却时间常量
 const (
-	defaultChannelAccountRateLimitCooldown = 5 * time.Minute  // 速率限制（429）的默认冷却时间
-	defaultChannelAccountOverloadCooldown  = 10 * time.Minute // 过载（529）的默认冷却时间
+	defaultChannelAccountRateLimitCooldown          = 5 * time.Minute  // 速率限制（429）的默认冷却时间
+	defaultChannelAccountOverloadCooldown           = 10 * time.Minute // 过载（529）的默认冷却时间
+	defaultChannelAccountServiceUnavailableCooldown = time.Minute      // 服务暂不可用（503）的默认冷却时间
 )
 
 // ProcessChannelAccountError 处理渠道账户请求错误
@@ -38,7 +39,7 @@ const (
 // 处理策略：
 // - 认证失败（401/403）或无效 Key：自动禁用账户（如果 AutoBan 为 true）
 // - 速率限制（429）：设置 rate_limited_until 冷却时间
-// - 过载（529 或包含 "overload"）：设置 overload_until 冷却时间
+// - 过载（529、503 或包含 "overload"/"temporarily unavailable"）：设置 overload_until 冷却时间
 // 参数:
 //   - c: Gin 请求上下文
 //   - channelError: 渠道错误信息，包含渠道 ID 和账户 ID
@@ -52,7 +53,9 @@ func ProcessChannelAccountError(c *gin.Context, channelError types.ChannelError,
 	// 设置重试渠道 ID，便于后续重试逻辑
 	common.SetContextKey(c, constant.ContextKeyChannelAccountRetryChannelId, channelError.ChannelId)
 
-	reason := err.ErrorWithStatusCode()
+	// 账号错误会持久化并在后台展示。通用脱敏无法识别所有自定义 Key 格式，
+	// 因此还要按当前账号的实际凭据精确替换，避免上游正文意外回显密钥。
+	reason := sanitizeChannelAccountErrorReason(channelError.ChannelId, channelError.ChannelAccountId, err)
 	if processSyncedChannelAccountError(c, channelError, err, reason) {
 		return
 	}
@@ -73,8 +76,9 @@ func ProcessChannelAccountError(c *gin.Context, channelError types.ChannelError,
 		updates["rate_limited_until"] = retryAfterUntil(err.RetryAfter, defaultChannelAccountRateLimitCooldown)
 		updates["disabled_reason"] = reason
 	} else if isChannelAccountOverloadError(err) {
-		// 过载：设置较短的冷却时间
-		updates["overload_until"] = common.GetTimestamp() + int64(defaultChannelAccountOverloadCooldown.Seconds())
+		// 上游暂不可用：优先尊重 Retry-After。503 的默认冷却应短于 529，
+		// 让单个临时异常账号快速退出调度，也能在短时间后自动恢复探测。
+		updates["overload_until"] = retryAfterUntil(err.RetryAfter, channelAccountOverloadCooldown(err))
 		updates["disabled_reason"] = reason
 	}
 
@@ -192,6 +196,32 @@ func ConsumeSyncedChannelAccountAutoDisabledRetrySignal(c *gin.Context) bool {
 	return true
 }
 
+// sanitizeChannelAccountErrorReason 为渠道账号状态持久化生成脱敏错误描述。
+//
+// 上游可能把 Authorization、query 参数或账号 Key 原样拼进错误正文。先使用统一掩码，
+// 再用数据库中当前账号的完整 Key 精确替换，最后限制长度，避免后台状态字段保存敏感
+// 信息或异常长的 HTML/JSON 错误页。
+func sanitizeChannelAccountErrorReason(channelID int, accountID int, err *types.NexusTokError) string {
+	if err == nil {
+		return ""
+	}
+	reason := strings.TrimSpace(err.MaskSensitiveErrorWithStatusCode())
+	if accountID > 0 {
+		if account, loadErr := model.GetChannelAccountById(channelID, accountID); loadErr == nil && account != nil {
+			if key := strings.TrimSpace(account.Key); key != "" {
+				reason = strings.ReplaceAll(reason, key, "[redacted-key]")
+			}
+		}
+	}
+	if reason == "" {
+		reason = "渠道账号请求失败"
+	}
+	if len([]rune(reason)) > 240 {
+		return string([]rune(reason)[:240]) + "..."
+	}
+	return reason
+}
+
 func shouldCountSyncedChannelAccountFailure(err *types.NexusTokError) bool {
 	if err == nil {
 		return false
@@ -279,6 +309,7 @@ func shouldDisableChannelAccount(err *types.NexusTokError) bool {
 // isChannelAccountOverloadError 判断错误是否为过载错误
 // 以下情况视为过载：
 // - HTTP 529 状态码（服务过载）
+// - HTTP 503 或明确的服务暂不可用错误
 // - 错误信息中包含 "overload"（不区分大小写）
 // 参数:
 //   - err: 错误详情
@@ -292,7 +323,35 @@ func isChannelAccountOverloadError(err *types.NexusTokError) bool {
 	if err.StatusCode == 529 {
 		return true
 	}
+	if isChannelAccountServiceUnavailableError(err) {
+		return true
+	}
 	return strings.Contains(strings.ToLower(err.Error()), "overload")
+}
+
+// isChannelAccountServiceUnavailableError 判断错误是否表示上游服务暂不可用。
+//
+// 部分兼容网关会丢失 HTTP 状态码，仅保留错误正文，因此同时识别 503 和文本特征。
+func isChannelAccountServiceUnavailableError(err *types.NexusTokError) bool {
+	if err == nil {
+		return false
+	}
+	if err.StatusCode == http.StatusServiceUnavailable {
+		return true
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "service temporarily unavailable") ||
+		strings.Contains(message, "service unavailable")
+}
+
+// channelAccountOverloadCooldown 为过载类错误选择默认冷却时长。
+//
+// 503 通常表示短暂不可用，不应复用 529 的十分钟冷却；其它过载错误仍保持原有策略。
+func channelAccountOverloadCooldown(err *types.NexusTokError) time.Duration {
+	if isChannelAccountServiceUnavailableError(err) {
+		return defaultChannelAccountServiceUnavailableCooldown
+	}
+	return defaultChannelAccountOverloadCooldown
 }
 
 // retryAfterUntil 根据 Retry-After 响应头计算冷却结束时间

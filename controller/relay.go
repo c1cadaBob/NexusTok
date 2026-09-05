@@ -287,8 +287,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
 
-	// 重试循环
-	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+	// 重试循环。
+	//
+	// RetryTimes 仍然表示管理员显式配置的通用重试次数；即使其为 0，
+	// 上游明确返回 503 服务暂不可用时，也允许在尚未向下游写出任何数据前
+	// 最多切换两个候选。这样账号池可以先切备用账号，再降级到其它健康渠道，
+	// 又不会把生成请求变成无边界重试。
+	retryLimit := relayRetryLimit()
+	for ; retryParam.GetRetry() <= retryLimit; retryParam.IncreaseRetry() {
 		relayInfo.RetryIndex = retryParam.GetRetry()
 
 		// 选择渠道
@@ -364,7 +370,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 
 		// 判断是否应该重试
-		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
+		if !shouldRetryRelay(c, relayInfo, newAPIError, retryParam.GetRetry()) {
 			break
 		}
 	}
@@ -844,6 +850,70 @@ func endpointAutoConversionNoCompatibleChannelError(info *relaycommon.RelayInfo)
 		http.StatusBadRequest,
 		types.ErrOptionWithSkipRetry(),
 	)
+}
+
+const automaticServiceUnavailableRetryTimes = 2
+
+// relayRetryLimit 返回中继循环的最大重试索引。
+//
+// 503 自动切换只会在 shouldRetryRelay 中针对首响应前的临时不可用错误放行；
+// 这里保留两个额外槽位，确保 RetryTimes=0 时循环仍有机会选择备用凭证或渠道。
+func relayRetryLimit() int {
+	if common.RetryTimes > automaticServiceUnavailableRetryTimes {
+		return common.RetryTimes
+	}
+	return automaticServiceUnavailableRetryTimes
+}
+
+// shouldRetryRelay 判断文本/Responses 中继是否可以进入下一次尝试。
+//
+// 下游已经写出任何字节后，后续重试会导致两个上游响应混合或重复生成，因此无论
+// 是否配置 RetryTimes 都必须停止。配置型重试继续沿用 shouldRetry 的已有规则；
+// 额外的内建容错只覆盖 HTTP 503 或明确的“服务暂不可用”错误。
+func shouldRetryRelay(c *gin.Context, relayInfo *relaycommon.RelayInfo, openaiErr *types.NexusTokError, retryIndex int) bool {
+	if relayInfo == nil || c == nil || openaiErr == nil {
+		return false
+	}
+	if c.Writer != nil && c.Writer.Written() {
+		return false
+	}
+	if relayInfo.HasSendResponse() {
+		return false
+	}
+	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
+		return false
+	}
+	if types.IsSkipRetryError(openaiErr) {
+		return false
+	}
+	if _, ok := c.Get("specific_channel_id"); ok {
+		return false
+	}
+
+	configuredRemaining := common.RetryTimes - retryIndex
+	if shouldRetry(c, openaiErr, configuredRemaining) {
+		return true
+	}
+	if retryIndex >= automaticServiceUnavailableRetryTimes {
+		return false
+	}
+	return isServiceUnavailableForAutomaticFailover(openaiErr)
+}
+
+// isServiceUnavailableForAutomaticFailover 识别可安全触发内建候选切换的上游临时不可用错误。
+//
+// 这里刻意不把所有 5xx 纳入范围。生成类 POST 不能因为模糊的服务器错误被随意重放，
+// 当前只处理生产环境已经观测到、语义明确的 503 Service Unavailable。
+func isServiceUnavailableForAutomaticFailover(openaiErr *types.NexusTokError) bool {
+	if openaiErr == nil {
+		return false
+	}
+	if openaiErr.StatusCode == http.StatusServiceUnavailable {
+		return true
+	}
+	message := strings.ToLower(openaiErr.Error())
+	return strings.Contains(message, "service temporarily unavailable") ||
+		strings.Contains(message, "service unavailable")
 }
 
 func shouldRetry(c *gin.Context, openaiErr *types.NexusTokError, retryTimes int) bool {

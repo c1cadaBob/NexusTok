@@ -141,7 +141,7 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 //
 //  1. 验证响应有效性
 //  2. 使用 StreamScannerHandler 逐行扫描 SSE 数据：
-//     - 将上一行数据通过 HandleStreamFormat 发送给客户端（延迟一行发送）
+//     - 每条数据到达后立即通过 HandleStreamFormat 发送给客户端
 //     - 累积所有流式数据项用于后续 token 统计
 //     - 对音频模型特殊处理：保存倒数第二个数据项用于提取 usage
 //  3. 音频模型特殊处理：
@@ -150,7 +150,7 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 //  4. 处理最后一个数据项：
 //     - 提取响应 ID、创建时间、系统指纹、模型名称等元数据
 //     - 提取 token 使用量信息
-//  5. 发送最后一个响应（如果需要）
+//  5. 根据输出格式补充最终 usage 与结束帧
 //  6. 计算 token 使用量：
 //     - 如果上游未返回 usage，则根据累积的文本内容估算
 //     - 每个工具调用额外计算 7 个 token
@@ -189,20 +189,25 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	isAudioModel := strings.Contains(strings.ToLower(model), "audio")
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
-		if lastStreamData != "" {
-			if err := HandleStreamFormat(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
-				common.SysLog("error handling stream format: " + err.Error())
-				sr.Error(err)
-			}
+		if len(data) == 0 {
+			return
 		}
-		if len(data) > 0 {
-			// 对音频模型，保存倒数第二个stream data
-			if isAudioModel && lastStreamData != "" {
-				secondLastStreamData = lastStreamData
-			}
 
-			lastStreamData = data
-			streamItems = append(streamItems, data)
+		// 先保存上一个事件的快照，再立即转发当前事件。旧实现会等待下一条 SSE
+		// 才输出上一条数据，首字被人为延迟一个上游事件间隔；这里保留末事件元数据，
+		// 但不再牺牲首事件的输出时机。
+		if isAudioModel && lastStreamData != "" {
+			secondLastStreamData = lastStreamData
+		}
+		lastStreamData = data
+		streamItems = append(streamItems, data)
+
+		if !shouldForwardOpenAIStreamData(info, data) {
+			return
+		}
+		if err := HandleStreamFormat(c, info, data, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
+			common.SysLog("error handling stream format: " + err.Error())
+			sr.Error(err)
 		}
 	})
 
@@ -224,17 +229,11 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 		}
 	}
 
-	// 处理最后的响应
-	shouldSendLastResp := true
+	// 处理最后的响应。所有上游事件已在收到时写出，末事件仅用于提取 usage、
+	// 元数据和最终结束帧，不能再次原样发送。
 	if err := handleLastResponse(lastStreamData, &responseId, &createAt, &systemFingerprint, &model, &usage,
-		&containStreamUsage, info, &shouldSendLastResp); err != nil {
+		&containStreamUsage); err != nil {
 		logger.LogError(c, fmt.Sprintf("error handling last response: %s, lastStreamData: [%s]", err.Error(), lastStreamData))
-	}
-
-	if info.RelayFormat == types.RelayFormatOpenAI {
-		if shouldSendLastResp {
-			_ = sendStreamData(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent)
-		}
 	}
 
 	// 处理token计算
@@ -249,7 +248,7 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 
 	applyUsagePostProcessing(info, usage, common.StringToByteSlice(lastStreamData))
 
-	HandleFinalResponse(c, info, lastStreamData, responseId, createAt, model, systemFingerprint, usage, containStreamUsage)
+	HandleFinalResponseAfterForwardedStream(c, info, responseId, createAt, model, systemFingerprint, usage, containStreamUsage)
 
 	return usage, nil
 }
