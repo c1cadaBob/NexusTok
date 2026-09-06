@@ -33,7 +33,12 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { formatBillingCurrencyFromUSD } from '@/lib/currency'
-import { formatLogQuota, formatTokens, formatUseTime } from '@/lib/format'
+import {
+  formatLogQuota,
+  formatTimestampToDate,
+  formatTokens,
+  formatUseTime,
+} from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { Button } from '@/components/ui/button'
@@ -170,6 +175,40 @@ function formatAuditValue(value: unknown): string {
   } catch {
     return String(value)
   }
+}
+
+function routingCredentialKindLabel(
+  kind: string | undefined,
+  t: (key: string) => string
+): string {
+  if (kind === 'single_key') return t('Single Key')
+  if (kind === 'multi_key') return t('Multi-Key')
+  if (kind === 'channel_account') return t('Channel Account')
+  if (kind === 'pool_account') return t('Pool Account')
+  return kind || '-'
+}
+
+function routingReasonLabel(
+  reason: string | undefined,
+  t: (key: string) => string
+): string {
+  const labels: Record<string, string> = {
+    channel_affinity: 'Channel affinity binding',
+    lowest_converted_ratio: 'Lowest converted ratio',
+    weight_fallback: 'Weight fallback',
+    cache_error: 'Affinity cache error',
+    cache_miss: 'Affinity cache miss',
+    invalid_binding: 'Invalid affinity binding',
+    stale_bypassed: 'Affinity window expired',
+    candidate_excluded: 'Candidate already excluded',
+    candidate_not_supported: 'Candidate does not support request',
+    candidate_unavailable: 'Candidate unavailable',
+    channel_disabled: 'Channel disabled',
+    channel_health_cooldown: 'Channel health cooldown',
+    candidate_ttft_cooldown: 'Candidate TTFT cooldown',
+  }
+  const label = reason ? labels[reason] : undefined
+  return label ? t(label) : reason || '-'
 }
 
 function BillingBreakdown(props: {
@@ -477,6 +516,10 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const showAdminIp =
     !!props.log.ip && (showTiming || (props.isAdmin && isTopup))
   const adminInfo = other?.admin_info
+  const affinity = props.isAdmin ? adminInfo?.channel_affinity : undefined
+  const routingCandidate = props.isAdmin
+    ? adminInfo?.routing_candidate
+    : undefined
   const quotaSaturation = props.isAdmin
     ? adminInfo?.quota_saturation
     : undefined
@@ -727,6 +770,171 @@ export function DetailsDialog(props: DetailsDialogProps) {
                 />
               )}
             </div>
+
+            {/* 候选级亲和诊断仅向管理员展示，不包含 API Key、Token 或凭据摘要。 */}
+            {affinity && (
+              <DetailSection label={t('Channel Affinity')}>
+                <DetailRow
+                  label={t('Rule')}
+                  value={affinity.rule_name || '-'}
+                />
+                <DetailRow
+                  label={t('Status')}
+                  value={
+                    affinity.used
+                      ? t('Used')
+                      : affinity.bypassed
+                        ? t('Bypassed')
+                        : t('Matched')
+                  }
+                />
+                <DetailRow
+                  label={t('Type')}
+                  value={routingCredentialKindLabel(affinity.binding_kind, t)}
+                />
+                {affinity.binding_channel_id != null &&
+                  affinity.binding_channel_id > 0 && (
+                    <DetailRow
+                      label={t('Channel ID')}
+                      value={`#${affinity.binding_channel_id}`}
+                      mono
+                    />
+                  )}
+                {affinity.binding_channel_account_id != null &&
+                  affinity.binding_channel_account_id > 0 && (
+                    <DetailRow
+                      label={t('Channel Account')}
+                      value={`#${affinity.binding_channel_account_id}`}
+                      mono
+                    />
+                  )}
+                {affinity.binding_pool_group_id != null &&
+                  affinity.binding_pool_group_id > 0 && (
+                    <DetailRow
+                      label={t('Pool Group')}
+                      value={`#${affinity.binding_pool_group_id}`}
+                      mono
+                    />
+                  )}
+                {affinity.binding_pool_account_id != null &&
+                  affinity.binding_pool_account_id > 0 && (
+                    <DetailRow
+                      label={t('Pool Account')}
+                      value={`#${affinity.binding_pool_account_id}`}
+                      mono
+                    />
+                  )}
+                {affinity.binding_kind === 'multi_key' &&
+                  affinity.binding_multi_key_index != null && (
+                    <DetailRow
+                      label={t('Multi-Key Index')}
+                      value={String(affinity.binding_multi_key_index)}
+                      mono
+                    />
+                  )}
+                {affinity.bypass_reason && (
+                  <DetailRow
+                    label={t('Bypass Reason')}
+                    value={routingReasonLabel(affinity.bypass_reason, t)}
+                  />
+                )}
+                {affinity.last_success_at != null &&
+                  affinity.last_success_at > 0 && (
+                    <DetailRow
+                      label={t('Last Success')}
+                      value={formatTimestampToDate(affinity.last_success_at)}
+                      mono
+                    />
+                  )}
+                {affinity.request_interval_seconds != null && (
+                  <DetailRow
+                    label={t('Request Interval')}
+                    value={`${affinity.request_interval_seconds}s`}
+                    mono
+                  />
+                )}
+                {affinity.max_request_interval_seconds != null && (
+                  <DetailRow
+                    label={t('Affinity Window')}
+                    value={`${affinity.max_request_interval_seconds}s`}
+                    mono
+                  />
+                )}
+              </DetailSection>
+            )}
+
+            {/* 统一候选调度详情用于解释最终选路结果与成本排序。 */}
+            {routingCandidate && (
+              <DetailSection label={t('Routing Candidate')}>
+                {routingCandidate.candidate_id && (
+                  <DetailRow
+                    label={t('Candidate ID')}
+                    value={routingCandidate.candidate_id}
+                    mono
+                  />
+                )}
+                <DetailRow
+                  label={t('Type')}
+                  value={routingCredentialKindLabel(
+                    routingCandidate.kind,
+                    t
+                  )}
+                />
+                <DetailRow
+                  label={t('Ability Priority')}
+                  value={String(
+                    routingCandidate.ability_priority ??
+                      routingCandidate.channel_priority ??
+                      '-'
+                  )}
+                  mono
+                />
+                <DetailRow
+                  label={t('Ability Weight')}
+                  value={String(
+                    routingCandidate.ability_weight ??
+                      routingCandidate.channel_weight ??
+                      '-'
+                  )}
+                  mono
+                />
+                <DetailRow
+                  label={t('Credential Priority')}
+                  value={String(routingCandidate.credential_priority ?? '-')}
+                  mono
+                />
+                <DetailRow
+                  label={t('Credential Weight')}
+                  value={String(routingCandidate.credential_weight ?? '-')}
+                  mono
+                />
+                <DetailRow
+                  label={t('Converted Ratio')}
+                  value={
+                    routingCandidate.has_converted_ratio &&
+                    routingCandidate.converted_ratio != null
+                      ? `${formatRatio(routingCandidate.converted_ratio)}x`
+                      : '-'
+                  }
+                  mono
+                />
+                <DetailRow
+                  label={t('Cost Metadata')}
+                  value={
+                    routingCandidate.cost_missing
+                      ? t('Missing')
+                      : t('Available')
+                  }
+                />
+                <DetailRow
+                  label={t('Selection Reason')}
+                  value={routingReasonLabel(
+                    routingCandidate.selection_reason,
+                    t
+                  )}
+                />
+              </DetailSection>
+            )}
 
             {/* 请求转换链（仅管理员，退款日志不展示） */}
             {showConversion && (

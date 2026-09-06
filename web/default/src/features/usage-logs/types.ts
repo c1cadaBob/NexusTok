@@ -90,6 +90,42 @@ export interface ChannelAffinityInfo {
   key_hint?: string
   key_fp?: string
   using_group?: string
+  binding_kind?: string
+  binding_channel_id?: number
+  binding_channel_account_id?: number
+  binding_pool_group_id?: number
+  binding_pool_account_id?: number
+  binding_multi_key_index?: number
+  used?: boolean
+  bypassed?: boolean
+  bypass_reason?: string
+  last_success_at?: number
+  request_interval_seconds?: number
+  max_request_interval_seconds?: number
+}
+
+/**
+ * 管理日志中的统一路由候选诊断信息，只包含不可恢复凭据的 ID 与调度元数据。
+ */
+export interface RoutingCandidateInfo {
+  kind?: string
+  candidate_id?: string
+  channel_id?: number
+  multi_key_index?: number
+  channel_account_id?: number
+  pool_group_id?: number
+  pool_account_id?: number
+  ability_priority?: number
+  ability_weight?: number
+  channel_priority?: number
+  channel_weight?: number
+  credential_priority?: number
+  credential_weight?: number
+  converted_ratio?: number
+  has_converted_ratio?: boolean
+  cost_missing?: boolean
+  selection_reason?: string
+  policy_domain?: string
 }
 
 export interface LogOtherData {
@@ -126,6 +162,7 @@ export interface LogOtherData {
     // 上游成本换算倍率，仅管理员日志可见，用于前端计算“标准计费基准 × 倍率”的成本列。
     ratio_conversion?: number
     channel_affinity?: ChannelAffinityInfo
+    routing_candidate?: RoutingCandidateInfo
     // 充值审计字段（type=1，仅管理员可见）
     payment_method?: string
     callback_payment_method?: string

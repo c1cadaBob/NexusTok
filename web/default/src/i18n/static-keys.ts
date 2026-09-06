@@ -396,6 +396,21 @@ export const STATIC_I18N_KEYS = [
   'Configure channel affinity (sticky routing) rules',
   'Max request interval (seconds)',
 
+  // 候选级亲和与统一选路日志中的动态原因标签
+  'Channel affinity binding',
+  'Lowest converted ratio',
+  'Weight fallback',
+  'Affinity cache error',
+  'Affinity cache miss',
+  'Invalid affinity binding',
+  'Affinity window expired',
+  'Candidate already excluded',
+  'Candidate does not support request',
+  'Candidate unavailable',
+  'Channel disabled',
+  'Channel health cooldown',
+  'Candidate TTFT cooldown',
+
   // Models constants
   'Exact Match',
   'Prefix Match',

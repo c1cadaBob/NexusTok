@@ -483,6 +483,45 @@ func TestRecordRoutingCandidateAffinityPreservesCredentialIdentity(t *testing.T)
 	}
 }
 
+// TestRecordRoutingCandidateAffinityWithoutSwitchOnSuccess 验证关闭成功切换时，
+// 首次请求仍会建立候选绑定，但后续降级成功不得覆盖已有的不同候选。
+func TestRecordRoutingCandidateAffinityWithoutSwitchOnSuccess(t *testing.T) {
+	setting := operation_setting.GetChannelAffinitySetting()
+	require.NotNil(t, setting)
+	previousEnabled := setting.Enabled
+	previousSwitchOnSuccess := setting.SwitchOnSuccess
+	setting.Enabled = true
+	setting.SwitchOnSuccess = false
+	t.Cleanup(func() {
+		setting.Enabled = previousEnabled
+		setting.SwitchOnSuccess = previousSwitchOnSuccess
+	})
+
+	cacheKeySuffix := fmt.Sprintf("record-without-switch-%d", time.Now().UnixNano())
+	ctx := buildChannelAffinityTemplateContextForTest(channelAffinityMeta{
+		CacheKey:       channelAffinityCacheNamespace + ":" + cacheKeySuffix,
+		CacheKeySuffix: cacheKeySuffix,
+		TTLSeconds:     60,
+		RuleName:       "record-without-switch",
+	})
+	cache := getChannelAffinityCache()
+	t.Cleanup(func() { _, _ = cache.DeleteMany([]string{cacheKeySuffix}) })
+
+	first := &model.RoutingCandidate{ChannelID: 9701, Kind: model.RoutingCredentialKindChannelAccount, ChannelAccountID: 164}
+	fallback := &model.RoutingCandidate{ChannelID: 9702, Kind: model.RoutingCredentialKindChannelAccount, ChannelAccountID: 10}
+	RecordRoutingCandidateAffinity(ctx, first)
+	binding, found, err := cache.Get(cacheKeySuffix)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, first.CandidateKey(), binding.CandidateKey())
+
+	RecordRoutingCandidateAffinity(ctx, fallback)
+	binding, found, err = cache.Get(cacheKeySuffix)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, first.CandidateKey(), binding.CandidateKey())
+}
+
 // TestClearCurrentChannelAffinityCache 测试当前请求命中的亲和缓存清理能力。
 // 当亲和渠道已经禁用或不再可用时，分发层会调用该函数清理本次命中的缓存键，
 // 同时清除跳过重试标记，让后续请求可以重新选择健康渠道。
@@ -529,6 +568,33 @@ func TestClearCurrentChannelAffinityCache(t *testing.T) {
 	require.NoError(t, v3Err)
 	require.False(t, v3Found)
 	require.False(t, ShouldSkipRetryAfterChannelAffinityFailure(ctx))
+}
+
+// TestMarkChannelAffinityBypassedKeepsSpecificReason 验证缓存清理写入的聚合原因
+// 会被分发层随后识别出的具体候选原因覆盖，管理日志不得退化为模糊诊断。
+func TestMarkChannelAffinityBypassedKeepsSpecificReason(t *testing.T) {
+	ctx := buildChannelAffinityTemplateContextForTest(channelAffinityMeta{
+		CacheKey:        channelAffinityCacheNamespace + ":reason-test",
+		CacheKeySuffix:  "reason-test",
+		RuleName:        "reason-test",
+		Used:            true,
+		BindingChannelID: 9527,
+		BindingKind:      model.RoutingCredentialKindSingleKey,
+	})
+
+	ClearCurrentChannelAffinityCache(ctx)
+	MarkChannelAffinityBypassed(ctx, "channel_health_cooldown")
+
+	meta, ok := getChannelAffinityMeta(ctx)
+	require.True(t, ok)
+	require.True(t, meta.Bypassed)
+	require.False(t, meta.Used)
+	require.Equal(t, "channel_health_cooldown", meta.BypassReason)
+	anyInfo, ok := ctx.Get(ginKeyChannelAffinityLogInfo)
+	require.True(t, ok)
+	info, ok := anyInfo.(map[string]interface{})
+	require.True(t, ok)
+	require.Equal(t, "channel_health_cooldown", info["bypass_reason"])
 }
 
 // TestShouldKeepChannelAffinityOnChannelDisabled 测试亲和渠道不可用时的保留开关。
