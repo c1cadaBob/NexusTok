@@ -6132,6 +6132,20 @@
     "Reuse the last successful key when the request matches an affinity rule.": "Reuse the last successful key when the request matches an affinity rule.",
     "Save TTFT settings": "Save TTFT settings",
     "Temporarily avoid candidates with repeated slow first-token latency while keeping a fallback available.": "Temporarily avoid candidates with repeated slow first-token latency while keeping a fallback available.",
-    "TTFT threshold (ms)": "TTFT threshold (ms)"
+    "TTFT threshold (ms)": "TTFT threshold (ms)",
+    "Consecutive Errors": "Consecutive Errors",
+    "Error Summary": "Error Summary",
+    "Error Type": "Error Type",
+    "Error Window": "Error Window",
+    "First Request ID": "First Request ID",
+    "Last Request ID": "Last Request ID",
+    "Network timeout or connection interruption; check proxy links and upstream stability.": "Network timeout or connection interruption; check proxy links and upstream stability.",
+    "Possible Cause": "Possible Cause",
+    "Request Path": "Request Path",
+    "Sample Request IDs": "Sample Request IDs",
+    "Upstream authentication failed; check key validity and model permissions.": "Upstream authentication failed; check key validity and model permissions.",
+    "Upstream gateway error or timeout; check the provider, proxy, and channel health.": "Upstream gateway error or timeout; check the provider, proxy, and channel health.",
+    "Upstream or channel error; check channel configuration and upstream response details.": "Upstream or channel error; check channel configuration and upstream response details.",
+    "Upstream rate limit or quota limit was triggered; check provider quota and throttling.": "Upstream rate limit or quota limit was triggered; check provider quota and throttling."
   }
 }

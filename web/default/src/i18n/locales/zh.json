@@ -6132,6 +6132,20 @@
     "Reuse the last successful key when the request matches an affinity rule.": "当请求命中亲和规则时，复用上一次成功的密钥。",
     "Save TTFT settings": "保存 TTFT 设置",
     "Temporarily avoid candidates with repeated slow first-token latency while keeping a fallback available.": "当候选连续出现较慢首包延迟时临时避开，同时保留可回退的候选。",
-    "TTFT threshold (ms)": "TTFT 阈值（毫秒）"
+    "TTFT threshold (ms)": "TTFT 阈值（毫秒）",
+    "Consecutive Errors": "连续错误",
+    "Error Summary": "错误摘要",
+    "Error Type": "错误类型",
+    "Error Window": "错误时间窗口",
+    "First Request ID": "首个请求 ID",
+    "Last Request ID": "最后请求 ID",
+    "Network timeout or connection interruption; check proxy links and upstream stability.": "网络超时或连接中断；请检查代理链路和上游稳定性。",
+    "Possible Cause": "可能原因",
+    "Request Path": "请求路径",
+    "Sample Request IDs": "样例请求 ID",
+    "Upstream authentication failed; check key validity and model permissions.": "上游鉴权失败；请检查密钥有效性和模型权限。",
+    "Upstream gateway error or timeout; check the provider, proxy, and channel health.": "上游网关异常或超时；请检查提供商、代理和渠道健康状态。",
+    "Upstream or channel error; check channel configuration and upstream response details.": "上游或渠道错误；请检查渠道配置和上游响应详情。",
+    "Upstream rate limit or quota limit was triggered; check provider quota and throttling.": "触发了上游限流或额度限制；请检查提供商额度和频控。"
   }
 }

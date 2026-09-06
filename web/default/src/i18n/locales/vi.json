@@ -6132,6 +6132,20 @@
     "Reuse the last successful key when the request matches an affinity rule.": "Tái sử dụng khóa thành công gần nhất khi yêu cầu khớp với quy tắc bám dính.",
     "Save TTFT settings": "Lưu cài đặt TTFT",
     "Temporarily avoid candidates with repeated slow first-token latency while keeping a fallback available.": "Tạm thời tránh các ứng viên có độ trễ token đầu tiên chậm lặp lại, đồng thời vẫn giữ phương án dự phòng.",
-    "TTFT threshold (ms)": "Ngưỡng TTFT (ms)"
+    "TTFT threshold (ms)": "Ngưỡng TTFT (ms)",
+    "Consecutive Errors": "Lỗi liên tiếp",
+    "Error Summary": "Tóm tắt lỗi",
+    "Error Type": "Loại lỗi",
+    "Error Window": "Khoảng thời gian lỗi",
+    "First Request ID": "ID yêu cầu đầu tiên",
+    "Last Request ID": "ID yêu cầu cuối",
+    "Network timeout or connection interruption; check proxy links and upstream stability.": "Hết thời gian mạng hoặc gián đoạn kết nối; hãy kiểm tra tuyến proxy và độ ổn định upstream.",
+    "Possible Cause": "Nguyên nhân có thể",
+    "Request Path": "Đường dẫn yêu cầu",
+    "Sample Request IDs": "ID yêu cầu mẫu",
+    "Upstream authentication failed; check key validity and model permissions.": "Xác thực upstream thất bại; hãy kiểm tra hiệu lực khóa và quyền của mô hình.",
+    "Upstream gateway error or timeout; check the provider, proxy, and channel health.": "Lỗi gateway hoặc timeout upstream; hãy kiểm tra nhà cung cấp, proxy và trạng thái kênh.",
+    "Upstream or channel error; check channel configuration and upstream response details.": "Lỗi upstream hoặc kênh; hãy kiểm tra cấu hình kênh và chi tiết phản hồi upstream.",
+    "Upstream rate limit or quota limit was triggered; check provider quota and throttling.": "Đã kích hoạt giới hạn tần suất hoặc hạn mức upstream; hãy kiểm tra hạn mức nhà cung cấp và throttling."
   }
 }

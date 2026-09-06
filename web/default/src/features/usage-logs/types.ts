@@ -47,6 +47,7 @@ export interface CommonFilters {
  * Common logs specific filters
  */
 export interface CommonLogFilters extends CommonFilters {
+  type?: string
   model?: string
   token?: string
   group?: string
@@ -129,6 +130,20 @@ export interface RoutingCandidateInfo {
 }
 
 export interface LogOtherData {
+  error_group?: {
+    grouped?: boolean
+    count?: number
+    start_at?: number
+    end_at?: number
+    first_request_id?: string
+    last_request_id?: string
+    sample_request_ids?: string[]
+    error_signature?: string
+    analysis?: string
+  }
+  error_type?: string
+  error_code?: string
+  status_code?: number | string
   channel_test?: {
     status?: 'success' | 'failed' | 'error' | string
     model?: string
@@ -366,6 +381,7 @@ export interface TaskLog {
 export interface GetLogsParams {
   p?: number
   page_size?: number
+  type?: number
   username?: string
   token_name?: string
   model_name?: string

@@ -29,6 +29,8 @@ import {
 } from '../api'
 import {
   LOG_TYPES,
+  LOG_TYPE_ALL_VALUE,
+  LOG_TYPE_ENUM,
   DISPLAYABLE_LOG_TYPES,
   TIMING_LOG_TYPES,
 } from '../constants'
@@ -89,6 +91,17 @@ export function getDefaultTimeRange(): { start: Date; end: Date } {
  */
 function timestampToSeconds(ms: number): number {
   return Math.floor(ms / 1000)
+}
+
+function normalizeAPILogTypeFilter(value: unknown): number | undefined {
+  const rawValue = Array.isArray(value) ? value[0] : value
+  const text = String(rawValue ?? '').trim()
+  if (!text || text === LOG_TYPE_ALL_VALUE) return undefined
+  const logType = Number(text)
+  if (logType === LOG_TYPE_ENUM.CONSUME || logType === LOG_TYPE_ENUM.ERROR) {
+    return logType
+  }
+  return undefined
 }
 
 /**
@@ -182,9 +195,11 @@ export function buildApiParams(config: {
   const { page, pageSize, searchParams, columnFilters = [], isAdmin } = config
 
   // Build base params from search params
+  const logType = normalizeAPILogTypeFilter(searchParams.type)
   const params: GetLogsParams = {
     p: page,
     page_size: pageSize,
+    ...(logType ? { type: logType } : {}),
     ...(searchParams.model ? { model_name: String(searchParams.model) } : {}),
     ...(searchParams.token ? { token_name: String(searchParams.token) } : {}),
     ...(searchParams.group ? { group: String(searchParams.group) } : {}),

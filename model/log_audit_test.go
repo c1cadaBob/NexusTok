@@ -161,6 +161,25 @@ func TestLogQueriesSeparateConsumeAndAuditEntries(t *testing.T) {
 	require.Len(t, consumeLogs, 1)
 	require.Equal(t, LogTypeConsume, consumeLogs[0].Type)
 
+	apiLogs, apiTotal, err := GetAPICallLogs(LogTypeUnknown, 0, 0, "", "", "", 0, 20, 0, "", "", "")
+	require.NoError(t, err)
+	require.Equal(t, int64(2), apiTotal)
+	require.Len(t, apiLogs, 2)
+	require.Equal(t, []int{LogTypeError, LogTypeConsume}, []int{apiLogs[0].Type, apiLogs[1].Type})
+
+	errorLogs, errorTotal, err := GetAPICallLogs(LogTypeError, 0, 0, "", "", "", 0, 20, 0, "", "", "")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), errorTotal)
+	require.Len(t, errorLogs, 1)
+	require.Equal(t, LogTypeError, errorLogs[0].Type)
+	require.Equal(t, float64(1), parseErrorGroupForTest(t, errorLogs[0])["count"])
+
+	consumeOnlyLogs, consumeOnlyTotal, err := GetAPICallLogs(LogTypeConsume, 0, 0, "", "", "", 0, 20, 0, "", "", "")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), consumeOnlyTotal)
+	require.Len(t, consumeOnlyLogs, 1)
+	require.Equal(t, LogTypeConsume, consumeOnlyLogs[0].Type)
+
 	userLogs, userTotal, err := GetUserConsumeLogs(1, 0, 0, "", "", 0, 20, "", "", "")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), userTotal)
@@ -181,22 +200,167 @@ func TestLogQueriesSeparateConsumeAndAuditEntries(t *testing.T) {
 	}
 }
 
+func TestAPICallErrorGroupsMergeConsecutiveSameKeyAndContent(t *testing.T) {
+	setupLogAuditTestDB(t)
+
+	require.NoError(t, LOG_DB.Create(&[]Log{
+		newErrorGroupTestLog(100, "req-100", "upstream 502", "candidate-a", "bad_gateway", 502),
+		newErrorGroupTestLog(101, "req-101", "upstream 502", "candidate-a", "bad_gateway", 502),
+		newErrorGroupTestLog(102, "req-102", "upstream 502", "candidate-a", "bad_gateway", 502),
+	}).Error)
+
+	logs, total, err := GetAPICallLogs(LogTypeError, 0, 0, "", "", "", 0, 20, 0, "", "", "")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, logs, 1)
+
+	errorGroup := parseErrorGroupForTest(t, logs[0])
+	require.Equal(t, true, errorGroup["grouped"])
+	require.Equal(t, float64(3), errorGroup["count"])
+	require.Equal(t, float64(100), errorGroup["start_at"])
+	require.Equal(t, float64(102), errorGroup["end_at"])
+	require.Equal(t, "req-100", errorGroup["first_request_id"])
+	require.Equal(t, "req-102", errorGroup["last_request_id"])
+	require.Equal(t, "Upstream gateway error or timeout; check the provider, proxy, and channel health.", errorGroup["analysis"])
+}
+
+func TestAPICallErrorGroupsSplitWhenConsumeInterrupts(t *testing.T) {
+	setupLogAuditTestDB(t)
+
+	require.NoError(t, LOG_DB.Create(&[]Log{
+		newErrorGroupTestLog(100, "req-100", "upstream 502", "candidate-a", "bad_gateway", 502),
+		newErrorGroupTestLog(101, "req-101", "upstream 502", "candidate-a", "bad_gateway", 502),
+		newConsumeGroupTestLog(102, "req-102-ok"),
+		newErrorGroupTestLog(103, "req-103", "upstream 502", "candidate-a", "bad_gateway", 502),
+		newErrorGroupTestLog(104, "req-104", "upstream 502", "candidate-a", "bad_gateway", 502),
+	}).Error)
+
+	logs, total, err := GetAPICallLogs(LogTypeError, 0, 0, "", "", "", 0, 20, 0, "", "", "")
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
+	require.Len(t, logs, 2)
+	require.Equal(t, float64(2), parseErrorGroupForTest(t, logs[0])["count"])
+	require.Equal(t, float64(103), parseErrorGroupForTest(t, logs[0])["start_at"])
+	require.Equal(t, float64(2), parseErrorGroupForTest(t, logs[1])["count"])
+	require.Equal(t, float64(100), parseErrorGroupForTest(t, logs[1])["start_at"])
+}
+
+func TestAPICallErrorGroupsSplitByContentAndCredential(t *testing.T) {
+	setupLogAuditTestDB(t)
+
+	require.NoError(t, LOG_DB.Create(&[]Log{
+		newErrorGroupTestLog(100, "req-100", "upstream 502", "candidate-a", "bad_gateway", 502),
+		newErrorGroupTestLog(101, "req-101", "upstream 502", "candidate-a", "bad_gateway", 502),
+		newErrorGroupTestLog(102, "req-102", "upstream auth", "candidate-a", "unauthorized", 401),
+		newErrorGroupTestLog(103, "req-103", "upstream 502", "candidate-a", "bad_gateway", 502),
+		newErrorGroupTestLog(104, "req-104", "upstream 502", "candidate-b", "bad_gateway", 502),
+	}).Error)
+
+	logs, total, err := GetAPICallLogs(LogTypeError, 0, 0, "", "", "", 0, 20, 0, "", "", "")
+	require.NoError(t, err)
+	require.Equal(t, int64(4), total)
+	require.Len(t, logs, 4)
+	require.Equal(t, float64(1), parseErrorGroupForTest(t, logs[0])["count"])
+	require.Equal(t, float64(1), parseErrorGroupForTest(t, logs[1])["count"])
+	require.Equal(t, float64(1), parseErrorGroupForTest(t, logs[2])["count"])
+	require.Equal(t, float64(2), parseErrorGroupForTest(t, logs[3])["count"])
+}
+
+func TestUserAPICallErrorLogsKeepSummaryAndStripAdminInfo(t *testing.T) {
+	setupLogAuditTestDB(t)
+
+	require.NoError(t, LOG_DB.Create(&[]Log{
+		newErrorGroupTestLog(100, "req-100", "upstream 502", "candidate-a", "bad_gateway", 502),
+		newErrorGroupTestLog(101, "req-101", "upstream 502", "candidate-a", "bad_gateway", 502),
+	}).Error)
+
+	logs, total, err := GetUserAPICallLogs(1, LogTypeError, 0, 0, "", "", 0, 20, "", "", "")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, logs, 1)
+
+	other, err := common.StrToMap(logs[0].Other)
+	require.NoError(t, err)
+	_, hasAdminInfo := other["admin_info"]
+	require.False(t, hasAdminInfo)
+	require.Equal(t, float64(502), other["status_code"])
+	require.Equal(t, "/v1/responses", other["request_path"])
+	require.Equal(t, float64(2), other["error_group"].(map[string]interface{})["count"])
+}
+
+func newErrorGroupTestLog(createdAt int64, requestId string, content string, candidateId string, errorCode string, statusCode int) Log {
+	return Log{
+		UserId:    1,
+		Username:  "alice",
+		Type:      LogTypeError,
+		TokenId:   7,
+		TokenName: "prod-key",
+		ModelName: "gpt-5.5",
+		ChannelId: 27,
+		Group:     "default",
+		Content:   content,
+		CreatedAt: createdAt,
+		RequestId: requestId,
+		Other: common.MapToJsonStr(map[string]interface{}{
+			"request_path": "/v1/responses",
+			"error_type":   "upstream_error",
+			"error_code":   errorCode,
+			"status_code":  statusCode,
+			"admin_info": map[string]interface{}{
+				"routing_candidate": map[string]interface{}{
+					"candidate_id": candidateId,
+				},
+			},
+		}),
+	}
+}
+
+func newConsumeGroupTestLog(createdAt int64, requestId string) Log {
+	return Log{
+		UserId:    1,
+		Username:  "alice",
+		Type:      LogTypeConsume,
+		TokenId:   7,
+		TokenName: "prod-key",
+		ModelName: "gpt-5.5",
+		ChannelId: 27,
+		Group:     "default",
+		CreatedAt: createdAt,
+		RequestId: requestId,
+		Other: common.MapToJsonStr(map[string]interface{}{
+			"request_path": "/v1/responses",
+		}),
+	}
+}
+
+func parseErrorGroupForTest(t *testing.T, log *Log) map[string]interface{} {
+	t.Helper()
+	other, err := common.StrToMap(log.Other)
+	require.NoError(t, err)
+	errorGroup, ok := other["error_group"].(map[string]interface{})
+	require.True(t, ok)
+	return errorGroup
+}
+
 func setupLogAuditTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
 	oldDB := DB
 	oldLogDB := LOG_DB
 	oldRedisEnabled := common.RedisEnabled
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&User{}, &Log{}))
+	require.NoError(t, db.AutoMigrate(&User{}, &Channel{}, &Log{}))
 	DB = db
 	LOG_DB = db
 	common.RedisEnabled = false
+	common.MemoryCacheEnabled = false
 	t.Cleanup(func() {
 		DB = oldDB
 		LOG_DB = oldLogDB
 		common.RedisEnabled = oldRedisEnabled
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
 	})
 
 	return db

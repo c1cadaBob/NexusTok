@@ -19,7 +19,7 @@ For commercial licensing, please contact support@c1cada.dev
 /**
  * Utility functions for usage logs filters
  */
-import { LOG_CATEGORY_LABELS } from '../constants'
+import { LOG_CATEGORY_LABELS, LOG_TYPE_ALL_VALUE } from '../constants'
 import type {
   LogCategory,
   LogFilters,
@@ -51,6 +51,9 @@ export function buildSearchParams(
       const commonFilters = filters as CommonLogFilters
       return {
         ...baseParams,
+        ...(commonFilters.type && commonFilters.type !== LOG_TYPE_ALL_VALUE
+          ? { type: commonFilters.type }
+          : {}),
         ...(commonFilters.model && { model: commonFilters.model }),
         ...(commonFilters.token && { token: commonFilters.token }),
         ...(commonFilters.group && { group: commonFilters.group }),

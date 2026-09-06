@@ -6132,6 +6132,20 @@
     "Reuse the last successful key when the request matches an affinity rule.": "Reuse the last successful key when the request matches an affinity rule.",
     "Save TTFT settings": "Save TTFT settings",
     "Temporarily avoid candidates with repeated slow first-token latency while keeping a fallback available.": "Temporarily avoid candidates with repeated slow first-token latency while keeping a fallback available.",
-    "TTFT threshold (ms)": "TTFT threshold (ms)"
+    "TTFT threshold (ms)": "TTFT threshold (ms)",
+    "Consecutive Errors": "連續錯誤",
+    "Error Summary": "錯誤摘要",
+    "Error Type": "錯誤類型",
+    "Error Window": "錯誤時間窗口",
+    "First Request ID": "第一個請求 ID",
+    "Last Request ID": "最後請求 ID",
+    "Network timeout or connection interruption; check proxy links and upstream stability.": "網路逾時或連線中斷；請檢查代理鏈路和上游穩定性。",
+    "Possible Cause": "可能原因",
+    "Request Path": "請求路徑",
+    "Sample Request IDs": "範例請求 ID",
+    "Upstream authentication failed; check key validity and model permissions.": "上游驗證失敗；請檢查密鑰有效性和模型權限。",
+    "Upstream gateway error or timeout; check the provider, proxy, and channel health.": "上游閘道異常或逾時；請檢查提供者、代理和渠道健康狀態。",
+    "Upstream or channel error; check channel configuration and upstream response details.": "上游或渠道錯誤；請檢查渠道配置和上游回應詳情。",
+    "Upstream rate limit or quota limit was triggered; check provider quota and throttling.": "已觸發上游限流或額度限制；請檢查提供者額度和頻控。"
   }
 }

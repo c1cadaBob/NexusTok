@@ -129,6 +129,26 @@ function buildTypeDetailSegments(
     return [{ text: t('Async task refund') }]
   }
 
+  if (log.type === 5) {
+    const count = other?.error_group?.count ?? 1
+    const statusCode = other?.status_code ? String(other.status_code) : ''
+    const countText =
+      count > 1 ? `${count} ${t('Consecutive Errors')}` : t('Error')
+    const segments: DetailSegment[] = [
+      {
+        text: statusCode ? `HTTP ${statusCode} · ${countText}` : countText,
+        danger: true,
+      },
+    ]
+    if (other?.error_code) {
+      segments.push({ text: String(other.error_code), muted: true })
+    }
+    if (other?.error_group?.analysis) {
+      segments.push({ text: t(other.error_group.analysis), muted: true })
+    }
+    return segments
+  }
+
   if (log.type !== 2) return []
 
   const isViolation = isViolationFeeLog(other)

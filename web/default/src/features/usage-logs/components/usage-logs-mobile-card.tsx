@@ -223,6 +223,7 @@ function CommonLogsCard<TData>({
   const channelTestTitle = getChannelTestTitle(other, t)
   const channelTestState = getChannelTestState(other)
   const channelTestAccount = getChannelTestAccountLabel(other)
+  const errorGroupCount = other?.error_group?.count ?? 0
 
   return (
     <div className='flex min-w-0 flex-col gap-2.5'>
@@ -250,6 +251,12 @@ function CommonLogsCard<TData>({
           cell={cells.get('channel')}
           valueClassName='[&_.flex-col]:max-w-none'
         />
+        {rowData?.type === LOG_TYPE_ENUM.ERROR && errorGroupCount > 1 && (
+          <div className='bg-destructive/5 text-destructive col-span-2 flex min-w-0 items-center justify-between gap-2 rounded-md px-2 py-1.5 text-xs leading-tight font-medium'>
+            <span>{t('Consecutive Errors')}</span>
+            <span className='font-mono'>{errorGroupCount}</span>
+          </div>
+        )}
         {channelTestTitle && (
           <div
             className={cn(

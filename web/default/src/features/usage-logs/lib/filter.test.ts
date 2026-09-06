@@ -39,6 +39,7 @@ describe('buildSearchParams', () => {
     const params = buildSearchParams(
       {
         channel: '101',
+        type: '5',
         model: 'gpt-4o',
       },
       'common'
@@ -46,6 +47,20 @@ describe('buildSearchParams', () => {
 
     assert.equal(params.channel, '101')
     assert.equal(params.channel_id, undefined)
+    assert.equal(params.type, '5')
+    assert.equal(params.model, 'gpt-4o')
+  })
+
+  test('普通日志全部类型不写入 type 参数', () => {
+    const params = buildSearchParams(
+      {
+        type: '0',
+        model: 'gpt-4o',
+      },
+      'common'
+    )
+
+    assert.equal(params.type, undefined)
     assert.equal(params.model, 'gpt-4o')
   })
 })

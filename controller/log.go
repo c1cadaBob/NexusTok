@@ -16,6 +16,7 @@
 package controller
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -27,8 +28,8 @@ import (
 
 // GetAllLogs 管理员查询所有 API 调用日志。
 //
-// 消费类型在模型层固定为 LogTypeConsume。保留旧版 type 查询参数的兼容接收，但不再
-// 使用它筛选，防止使用日志重新混入管理审计、充值、退款和系统记录。
+// type 参数只允许 0/空、2、5：默认展示消费与错误两类 API 调用日志；2 只看消费，
+// 5 只看错误。其它日志类型由审计或充值相关页面负责，不能混入使用记录。
 //
 // 查询参数：
 //   - start_timestamp: 开始时间戳
@@ -40,8 +41,14 @@ import (
 //   - group: 用户组
 //   - request_id: 请求 ID
 //   - upstream_request_id: 上游请求 ID
+//   - type: 日志类型筛选（0/空=全部 API 调用，2=消费，5=错误）
 func GetAllLogs(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
+	logType, err := parseAPICallLogType(c)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
 	username := c.Query("username")
@@ -51,7 +58,7 @@ func GetAllLogs(c *gin.Context) {
 	group := c.Query("group")
 	requestId := c.Query("request_id")
 	upstreamRequestId := c.Query("upstream_request_id")
-	logs, total, err := model.GetConsumeLogs(startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, requestId, upstreamRequestId)
+	logs, total, err := model.GetAPICallLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, requestId, upstreamRequestId)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -64,7 +71,8 @@ func GetAllLogs(c *gin.Context) {
 
 // GetUserLogs 查询当前用户的 API 调用日志。
 //
-// 只能查询当前登录用户的消费记录；管理审计和成功登录记录统一由管理员审计页查看。
+// 普通用户与管理员使用同一套 type 语义和连续错误聚合规则，但模型层会在返回前移除
+// 仅管理员可见的渠道账号、候选凭据和审计字段。
 //
 // 查询参数：
 //   - start_timestamp: 开始时间戳
@@ -74,9 +82,15 @@ func GetAllLogs(c *gin.Context) {
 //   - group: 用户组
 //   - request_id: 请求 ID
 //   - upstream_request_id: 上游请求 ID
+//   - type: 日志类型筛选（0/空=全部 API 调用，2=消费，5=错误）
 func GetUserLogs(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	userId := c.GetInt("id")
+	logType, err := parseAPICallLogType(c)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
 	tokenName := c.Query("token_name")
@@ -84,7 +98,7 @@ func GetUserLogs(c *gin.Context) {
 	group := c.Query("group")
 	requestId := c.Query("request_id")
 	upstreamRequestId := c.Query("upstream_request_id")
-	logs, total, err := model.GetUserConsumeLogs(userId, startTimestamp, endTimestamp, modelName, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), group, requestId, upstreamRequestId)
+	logs, total, err := model.GetUserAPICallLogs(userId, logType, startTimestamp, endTimestamp, modelName, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), group, requestId, upstreamRequestId)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -93,6 +107,18 @@ func GetUserLogs(c *gin.Context) {
 	pageInfo.SetItems(logs)
 	common.ApiSuccess(c, pageInfo)
 	return
+}
+
+func parseAPICallLogType(c *gin.Context) (int, error) {
+	rawType := c.Query("type")
+	if rawType == "" {
+		return model.LogTypeUnknown, nil
+	}
+	logType, err := strconv.Atoi(rawType)
+	if err != nil || !model.IsAPICallLogTypeFilterSupported(logType) {
+		return model.LogTypeUnknown, errors.New("不支持的使用记录类型")
+	}
+	return logType, nil
 }
 
 // GetAuditLogs 查询管理操作和成功登录审计记录。

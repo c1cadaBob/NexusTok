@@ -28,6 +28,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -116,6 +117,45 @@ type Log struct {
 	RequestId         string `json:"request_id,omitempty" gorm:"type:varchar(64);index:idx_logs_request_id;default:''"`
 	UpstreamRequestId string `json:"upstream_request_id,omitempty" gorm:"type:varchar(128);index:idx_logs_upstream_request_id;default:''"`
 	Other             string `json:"other"`
+}
+
+type apiLogQueryFilter struct {
+	StartTimestamp    int64
+	EndTimestamp      int64
+	ModelName         string
+	Username          string
+	TokenName         string
+	Channel           int
+	Group             string
+	RequestId         string
+	UpstreamRequestId string
+}
+
+type apiErrorGroup struct {
+	Grouped        bool     `json:"grouped"`
+	Count          int      `json:"count"`
+	StartAt        int64    `json:"start_at"`
+	EndAt          int64    `json:"end_at"`
+	FirstRequestId string   `json:"first_request_id,omitempty"`
+	LastRequestId  string   `json:"last_request_id,omitempty"`
+	SampleRequests []string `json:"sample_request_ids,omitempty"`
+	ErrorSignature string   `json:"error_signature,omitempty"`
+	Analysis       string   `json:"analysis,omitempty"`
+}
+
+type apiErrorSignature struct {
+	UserId              int
+	TokenId             int
+	TokenName           string
+	ChannelId           int
+	ModelName           string
+	Group               string
+	RequestPath         string
+	ErrorType           string
+	ErrorCode           string
+	StatusCode          string
+	Content             string
+	CredentialSignature string
 }
 
 // 日志类型值会持久化到数据库，禁止使用 iota，避免新增类型时意外改变历史含义。
@@ -650,6 +690,35 @@ func GetConsumeLogs(startTimestamp int64, endTimestamp int64, modelName string, 
 	)
 }
 
+// IsAPICallLogTypeFilterSupported 判断使用记录页面允许使用的日志类型筛选值。
+//
+// type=0 或空值表示 API 调用日志全部视角，仅包含消费日志和错误日志；type=2、type=5
+// 分别表示只看消费或只看错误。这里故意不开放充值、管理、系统和登录类型，避免旧版
+// type 查询参数重新把审计类记录混入使用记录页面。
+func IsAPICallLogTypeFilterSupported(logType int) bool {
+	return logType == LogTypeUnknown || logType == LogTypeConsume || logType == LogTypeError
+}
+
+// GetAPICallLogs 查询管理员使用记录页面的 API 调用日志。
+//
+// 默认展示消费日志与错误日志；错误日志会按“查询结果中的连续请求序列”做相邻重复合并。
+// 过滤 Error 时仍会把同一查询范围内的 Consume 记录作为分段边界读取，确保中间成功请求
+// 会打断前后两段相同错误，避免把非连续故障误合并为一次事件。
+func GetAPICallLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
+	filter := apiLogQueryFilter{
+		StartTimestamp:    startTimestamp,
+		EndTimestamp:      endTimestamp,
+		ModelName:         modelName,
+		Username:          username,
+		TokenName:         tokenName,
+		Channel:           channel,
+		Group:             group,
+		RequestId:         requestId,
+		UpstreamRequestId: upstreamRequestId,
+	}
+	return getAPICallLogs(0, false, logType, filter, startIdx, num, false)
+}
+
 // GetAuditLogs 查询管理员操作和成功登录审计记录。
 //
 // 两种类型均使用结构化 Other 字段记录操作者、操作参数和登录元数据。查询范围在模型层
@@ -724,6 +793,98 @@ func getAllLogsByTypes(logTypes []int, startTimestamp int64, endTimestamp int64,
 		return nil, 0, err
 	}
 
+	if err = fillLogChannelNames(logs); err != nil {
+		return logs, total, err
+	}
+
+	return logs, total, err
+}
+
+const logSearchCountLimit = 10000
+
+func getAPICallLogs(userId int, filterByUser bool, displayLogType int, filter apiLogQueryFilter, startIdx int, num int, userView bool) (logs []*Log, total int64, err error) {
+	if !IsAPICallLogTypeFilterSupported(displayLogType) {
+		return nil, 0, errors.New("不支持的使用记录类型")
+	}
+
+	// 聚合需要知道错误之间是否夹着成功消费记录，因此底层查询始终读取消费+错误两类
+	// API 调用日志；displayLogType 只在聚合后控制最终返回哪些展示行。
+	tx := LOG_DB.Where("logs.type IN ?", []int{LogTypeConsume, LogTypeError})
+	if filterByUser {
+		tx = tx.Where("logs.user_id = ?", userId)
+	}
+	if tx, err = applyAPILogQueryFilters(tx, filter); err != nil {
+		return nil, 0, err
+	}
+
+	order := "logs.created_at desc, logs.id desc"
+	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		order = clickHouseLogOrder("logs.")
+	}
+
+	var rawLogs []*Log
+	if err = tx.Order(order).Limit(logSearchCountLimit).Find(&rawLogs).Error; err != nil {
+		if userView {
+			common.SysError("failed to search user api logs: " + err.Error())
+			return nil, 0, errors.New("查询日志失败")
+		}
+		return nil, 0, err
+	}
+
+	mergedLogs := mergeAPICallErrorGroups(rawLogs, displayLogType)
+	total = int64(len(mergedLogs))
+	if startIdx >= len(mergedLogs) {
+		logs = []*Log{}
+	} else {
+		endIdx := startIdx + num
+		if endIdx > len(mergedLogs) {
+			endIdx = len(mergedLogs)
+		}
+		logs = mergedLogs[startIdx:endIdx]
+	}
+
+	if err = fillLogChannelNames(logs); err != nil {
+		return logs, total, err
+	}
+	if userView {
+		formatUserLogs(logs, startIdx)
+	}
+	return logs, total, nil
+}
+
+func applyAPILogQueryFilters(tx *gorm.DB, filter apiLogQueryFilter) (*gorm.DB, error) {
+	var err error
+	if tx, err = applyExplicitLogTextFilter(tx, "logs.model_name", filter.ModelName); err != nil {
+		return nil, err
+	}
+	if tx, err = applyExplicitLogTextFilter(tx, "logs.username", filter.Username); err != nil {
+		return nil, err
+	}
+	if filter.TokenName != "" {
+		tx = tx.Where("logs.token_name = ?", filter.TokenName)
+	}
+	if filter.RequestId != "" {
+		tx = tx.Where("logs.request_id = ?", filter.RequestId)
+	}
+	if filter.UpstreamRequestId != "" {
+		tx = tx.Where("logs.upstream_request_id = ?", filter.UpstreamRequestId)
+	}
+	if filter.StartTimestamp != 0 {
+		tx = tx.Where("logs.created_at >= ?", filter.StartTimestamp)
+	}
+	if filter.EndTimestamp != 0 {
+		tx = tx.Where("logs.created_at <= ?", filter.EndTimestamp)
+	}
+	if filter.Channel != 0 {
+		tx = tx.Where("logs.channel_id = ?", filter.Channel)
+	}
+	if filter.Group != "" {
+		tx = tx.Where("logs."+logGroupCol+" = ?", filter.Group)
+	}
+	return tx, nil
+}
+
+func fillLogChannelNames(logs []*Log) error {
 	channelIds := types.NewSet[int]()
 	for _, log := range logs {
 		if log.ChannelId != 0 {
@@ -731,43 +892,258 @@ func getAllLogsByTypes(logTypes []int, startTimestamp int64, endTimestamp int64,
 		}
 	}
 
-	if channelIds.Len() > 0 {
-		var channels []struct {
-			Id   int    `gorm:"column:id"`
-			Name string `gorm:"column:name"`
-		}
-		if common.MemoryCacheEnabled {
-			// 优先从内存缓存读取渠道名称，减少后台日志列表的数据库查询。
-			for _, channelId := range channelIds.Items() {
-				if cacheChannel, err := CacheGetChannel(channelId); err == nil {
-					channels = append(channels, struct {
-						Id   int    `gorm:"column:id"`
-						Name string `gorm:"column:name"`
-					}{
-						Id:   channelId,
-						Name: cacheChannel.Name,
-					})
-				}
-			}
-		} else {
-			// 未启用缓存时批量查询渠道名称，避免按日志逐条查询。
-			if err = DB.Table("channels").Select("id, name").Where("id IN ?", channelIds.Items()).Find(&channels).Error; err != nil {
-				return logs, total, err
+	if channelIds.Len() == 0 {
+		return nil
+	}
+
+	var channels []struct {
+		Id   int    `gorm:"column:id"`
+		Name string `gorm:"column:name"`
+	}
+	if common.MemoryCacheEnabled {
+		// 优先从内存缓存读取渠道名称，减少后台日志列表的数据库查询。
+		for _, channelId := range channelIds.Items() {
+			if cacheChannel, err := CacheGetChannel(channelId); err == nil {
+				channels = append(channels, struct {
+					Id   int    `gorm:"column:id"`
+					Name string `gorm:"column:name"`
+				}{
+					Id:   channelId,
+					Name: cacheChannel.Name,
+				})
 			}
 		}
-		channelMap := make(map[int]string, len(channels))
-		for _, channel := range channels {
-			channelMap[channel.Id] = channel.Name
+	} else {
+		// 未启用缓存时批量查询渠道名称，避免按日志逐条查询。
+		if err := DB.Table("channels").Select("id, name").Where("id IN ?", channelIds.Items()).Find(&channels).Error; err != nil {
+			return err
 		}
-		for i := range logs {
-			logs[i].ChannelName = channelMap[logs[i].ChannelId]
+	}
+	channelMap := make(map[int]string, len(channels))
+	for _, channel := range channels {
+		channelMap[channel.Id] = channel.Name
+	}
+	for i := range logs {
+		logs[i].ChannelName = channelMap[logs[i].ChannelId]
+	}
+	return nil
+}
+
+func mergeAPICallErrorGroups(rawLogs []*Log, displayLogType int) []*Log {
+	merged := make([]*Log, 0, len(rawLogs))
+	var current []*Log
+	var currentSignature apiErrorSignature
+
+	flushErrorGroup := func() {
+		if len(current) == 0 {
+			return
+		}
+		if shouldDisplayAPILogType(displayLogType, LogTypeError) {
+			merged = append(merged, buildAPICallErrorGroupLog(current, currentSignature))
+		}
+		current = nil
+		currentSignature = apiErrorSignature{}
+	}
+
+	for _, log := range rawLogs {
+		if log.Type != LogTypeError {
+			flushErrorGroup()
+			if shouldDisplayAPILogType(displayLogType, log.Type) {
+				merged = append(merged, log)
+			}
+			continue
+		}
+
+		signature := buildAPIErrorSignature(log)
+		if len(current) == 0 || apiErrorSignatureEqual(currentSignature, signature) {
+			current = append(current, log)
+			currentSignature = signature
+			continue
+		}
+
+		flushErrorGroup()
+		current = append(current, log)
+		currentSignature = signature
+	}
+	flushErrorGroup()
+
+	return merged
+}
+
+func shouldDisplayAPILogType(displayLogType int, logType int) bool {
+	return displayLogType == LogTypeUnknown || displayLogType == logType
+}
+
+func buildAPICallErrorGroupLog(group []*Log, signature apiErrorSignature) *Log {
+	// 使用最新一条错误作为代表行，避免改变表格中的模型、渠道、Token 和耗时等主字段语义。
+	representative := *group[0]
+	oldest := group[len(group)-1]
+	newest := group[0]
+	requestSamples := make([]string, 0, min(len(group), 5))
+	for _, item := range group {
+		if item.RequestId == "" {
+			continue
+		}
+		requestSamples = append(requestSamples, item.RequestId)
+		if len(requestSamples) >= 5 {
+			break
 		}
 	}
 
-	return logs, total, err
+	otherMap, _ := common.StrToMap(representative.Other)
+	if otherMap == nil {
+		otherMap = map[string]interface{}{}
+	}
+	otherMap["error_group"] = apiErrorGroup{
+		Grouped:        len(group) > 1,
+		Count:          len(group),
+		StartAt:        oldest.CreatedAt,
+		EndAt:          newest.CreatedAt,
+		FirstRequestId: oldest.RequestId,
+		LastRequestId:  newest.RequestId,
+		SampleRequests: requestSamples,
+		ErrorSignature: compactAPIErrorSignature(signature),
+		Analysis:       analyzeAPIError(signature),
+	}
+	representative.Other = common.MapToJsonStr(otherMap)
+	return &representative
 }
 
-const logSearchCountLimit = 10000
+func buildAPIErrorSignature(log *Log) apiErrorSignature {
+	otherMap, _ := common.StrToMap(log.Other)
+	requestPath := stringFromLogValue(otherMap["request_path"])
+	adminInfo, _ := mapFromAny(otherMap["admin_info"])
+
+	return apiErrorSignature{
+		UserId:              log.UserId,
+		TokenId:             log.TokenId,
+		TokenName:           log.TokenName,
+		ChannelId:           log.ChannelId,
+		ModelName:           log.ModelName,
+		Group:               log.Group,
+		RequestPath:         requestPath,
+		ErrorType:           stringFromLogValue(otherMap["error_type"]),
+		ErrorCode:           stringFromLogValue(otherMap["error_code"]),
+		StatusCode:          stringFromLogValue(otherMap["status_code"]),
+		Content:             strings.TrimSpace(log.Content),
+		CredentialSignature: buildCredentialSignature(adminInfo),
+	}
+}
+
+func apiErrorSignatureEqual(left apiErrorSignature, right apiErrorSignature) bool {
+	return left.UserId == right.UserId &&
+		apiErrorTokenKey(left) == apiErrorTokenKey(right) &&
+		left.ChannelId == right.ChannelId &&
+		left.ModelName == right.ModelName &&
+		left.Group == right.Group &&
+		left.RequestPath == right.RequestPath &&
+		left.ErrorType == right.ErrorType &&
+		left.ErrorCode == right.ErrorCode &&
+		left.StatusCode == right.StatusCode &&
+		left.Content == right.Content &&
+		left.CredentialSignature == right.CredentialSignature
+}
+
+func apiErrorTokenKey(signature apiErrorSignature) string {
+	if signature.TokenId > 0 {
+		return "token_id:" + strconv.Itoa(signature.TokenId)
+	}
+	return "token_name:" + signature.TokenName
+}
+
+func buildCredentialSignature(adminInfo map[string]any) string {
+	if len(adminInfo) == 0 {
+		return ""
+	}
+	if routingCandidate, ok := mapFromAny(adminInfo["routing_candidate"]); ok {
+		if candidateId := stringFromLogValue(routingCandidate["candidate_id"]); candidateId != "" {
+			return "candidate:" + candidateId
+		}
+	}
+	if poolAccountId := stringFromLogValue(adminInfo["pool_account_id"]); poolAccountId != "" && poolAccountId != "0" {
+		return "pool_account:" + poolAccountId
+	}
+	if channelAccountId := stringFromLogValue(adminInfo["channel_account_id"]); channelAccountId != "" && channelAccountId != "0" {
+		return "channel_account:" + channelAccountId
+	}
+	if isTruthyLogValue(adminInfo["is_multi_key"]) {
+		return "multi_key:" + stringFromLogValue(adminInfo["multi_key_index"])
+	}
+	if credentialMode := stringFromLogValue(adminInfo["credential_mode"]); credentialMode != "" {
+		return "credential_mode:" + credentialMode
+	}
+	return ""
+}
+
+func compactAPIErrorSignature(signature apiErrorSignature) string {
+	parts := []string{
+		"status=" + signature.StatusCode,
+		"code=" + signature.ErrorCode,
+		"type=" + signature.ErrorType,
+		"path=" + signature.RequestPath,
+		"credential=" + signature.CredentialSignature,
+	}
+	return strings.Join(parts, "|")
+}
+
+func analyzeAPIError(signature apiErrorSignature) string {
+	statusCode, _ := strconv.Atoi(signature.StatusCode)
+	lowerText := strings.ToLower(strings.Join([]string{signature.Content, signature.ErrorCode, signature.ErrorType}, " "))
+	switch {
+	case statusCode == 502 || statusCode == 504:
+		return "Upstream gateway error or timeout; check the provider, proxy, and channel health."
+	case statusCode == 401 || statusCode == 403:
+		return "Upstream authentication failed; check key validity and model permissions."
+	case statusCode == 429:
+		return "Upstream rate limit or quota limit was triggered; check provider quota and throttling."
+	case strings.Contains(lowerText, "timeout") || strings.Contains(lowerText, "timed out") || strings.Contains(lowerText, "connection reset") || strings.Contains(lowerText, "eof"):
+		return "Network timeout or connection interruption; check proxy links and upstream stability."
+	default:
+		return "Upstream or channel error; check channel configuration and upstream response details."
+	}
+}
+
+func stringFromLogValue(value any) string {
+	switch v := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(v)
+	case int:
+		return strconv.Itoa(v)
+	case int64:
+		return strconv.FormatInt(v, 10)
+	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return ""
+		}
+		if math.Trunc(v) == v {
+			return strconv.FormatInt(int64(v), 10)
+		}
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case bool:
+		return strconv.FormatBool(v)
+	default:
+		return strings.TrimSpace(fmt.Sprint(v))
+	}
+}
+
+func isTruthyLogValue(value any) bool {
+	switch v := value.(type) {
+	case bool:
+		return v
+	case string:
+		return strings.EqualFold(strings.TrimSpace(v), "true") || strings.TrimSpace(v) == "1"
+	case int:
+		return v != 0
+	case int64:
+		return v != 0
+	case float64:
+		return v != 0
+	default:
+		return false
+	}
+}
 
 // GetUserConsumeLogs 查询当前用户的 API 调用消费日志。
 //
@@ -787,6 +1163,23 @@ func GetUserConsumeLogs(userId int, startTimestamp int64, endTimestamp int64, mo
 		requestId,
 		upstreamRequestId,
 	)
+}
+
+// GetUserAPICallLogs 查询当前用户可见的 API 调用日志。
+//
+// 用户视角与管理员视角使用同一套连续错误聚合规则，但返回前会执行脱敏，确保普通用户
+// 只能看到可定位自身请求的错误摘要，不能看到渠道账号、候选凭据和管理员审计信息。
+func GetUserAPICallLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
+	filter := apiLogQueryFilter{
+		StartTimestamp:    startTimestamp,
+		EndTimestamp:      endTimestamp,
+		ModelName:         modelName,
+		TokenName:         tokenName,
+		Group:             group,
+		RequestId:         requestId,
+		UpstreamRequestId: upstreamRequestId,
+	}
+	return getAPICallLogs(userId, true, logType, filter, startIdx, num, true)
 }
 
 func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {

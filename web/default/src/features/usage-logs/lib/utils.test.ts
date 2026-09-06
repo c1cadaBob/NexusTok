@@ -21,7 +21,7 @@ import { describe, test } from 'node:test'
 import { buildApiParams, buildBaseParams } from './utils'
 
 describe('buildApiParams', () => {
-  test('不再发送 type 参数，使用日志由后端固定为消费日志', () => {
+  test('默认不发送 type 参数，使用记录由后端返回全部 API 调用日志', () => {
     const params = buildApiParams({
       page: 1,
       pageSize: 100,
@@ -32,6 +32,17 @@ describe('buildApiParams', () => {
     assert.equal(params.p, 1)
     assert.equal(params.page_size, 100)
     assert.equal('type' in params, false)
+  })
+
+  test('选择错误日志时发送 type=5 参数', () => {
+    const params = buildApiParams({
+      page: 1,
+      pageSize: 20,
+      searchParams: { type: '5' },
+      isAdmin: true,
+    })
+
+    assert.equal(params.type, 5)
   })
 })
 

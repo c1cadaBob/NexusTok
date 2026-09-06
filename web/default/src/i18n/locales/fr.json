@@ -6132,6 +6132,20 @@
     "Reuse the last successful key when the request matches an affinity rule.": "Réutilise la dernière clé ayant réussi lorsque la requête correspond à une règle d’affinité.",
     "Save TTFT settings": "Enregistrer les paramètres TTFT",
     "Temporarily avoid candidates with repeated slow first-token latency while keeping a fallback available.": "Évite temporairement les candidats présentant à plusieurs reprises une latence lente du premier token, tout en conservant un repli disponible.",
-    "TTFT threshold (ms)": "Seuil TTFT (ms)"
+    "TTFT threshold (ms)": "Seuil TTFT (ms)",
+    "Consecutive Errors": "Erreurs consécutives",
+    "Error Summary": "Résumé de l’erreur",
+    "Error Type": "Type d’erreur",
+    "Error Window": "Fenêtre d’erreur",
+    "First Request ID": "ID de la première requête",
+    "Last Request ID": "ID de la dernière requête",
+    "Network timeout or connection interruption; check proxy links and upstream stability.": "Délai réseau ou interruption de connexion ; vérifiez les liens proxy et la stabilité en amont.",
+    "Possible Cause": "Cause probable",
+    "Request Path": "Chemin de requête",
+    "Sample Request IDs": "IDs de requêtes exemples",
+    "Upstream authentication failed; check key validity and model permissions.": "Échec de l’authentification en amont ; vérifiez la validité de la clé et les permissions du modèle.",
+    "Upstream gateway error or timeout; check the provider, proxy, and channel health.": "Erreur de passerelle ou délai d’attente en amont ; vérifiez le fournisseur, le proxy et l’état du canal.",
+    "Upstream or channel error; check channel configuration and upstream response details.": "Erreur en amont ou du canal ; vérifiez la configuration du canal et les détails de la réponse en amont.",
+    "Upstream rate limit or quota limit was triggered; check provider quota and throttling.": "Limite de débit ou de quota en amont déclenchée ; vérifiez le quota fournisseur et le throttling."
   }
 }

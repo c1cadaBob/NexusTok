@@ -498,6 +498,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const isViolation = isViolationFeeLog(other)
   const isRefund = props.log.type === 6
   const isConsume = props.log.type === 2
+  const isError = props.log.type === 5
   const isTopup = props.log.type === 1
   const isManage = props.log.type === 3
   const isLogin = props.log.type === 7
@@ -516,6 +517,69 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const showAdminIp =
     !!props.log.ip && (showTiming || (props.isAdmin && isTopup))
   const adminInfo = other?.admin_info
+  const errorGroup = other?.error_group
+  const errorWindow =
+    errorGroup?.start_at || errorGroup?.end_at
+      ? `${formatTimestampToDate(errorGroup.start_at)} → ${formatTimestampToDate(errorGroup.end_at)}`
+      : ''
+  const errorSummaryFields = isError
+    ? ([
+        other?.status_code != null && {
+          label: t('Status Code'),
+          value: String(other.status_code),
+          mono: true,
+        },
+        other?.error_code && {
+          label: t('Error Code'),
+          value: String(other.error_code),
+          mono: true,
+        },
+        other?.error_type && {
+          label: t('Error Type'),
+          value: String(other.error_type),
+          mono: true,
+        },
+        other?.request_path && {
+          label: t('Request Path'),
+          value: String(other.request_path),
+          mono: true,
+        },
+        {
+          label: t('Consecutive Errors'),
+          value: String(errorGroup?.count ?? 1),
+          mono: true,
+        },
+        errorWindow && {
+          label: t('Error Window'),
+          value: errorWindow,
+          mono: true,
+        },
+        errorGroup?.first_request_id && {
+          label: t('First Request ID'),
+          value: errorGroup.first_request_id,
+          mono: true,
+        },
+        errorGroup?.last_request_id && {
+          label: t('Last Request ID'),
+          value: errorGroup.last_request_id,
+          mono: true,
+        },
+        Array.isArray(errorGroup?.sample_request_ids) &&
+          errorGroup.sample_request_ids.length > 0 && {
+            label: t('Sample Request IDs'),
+            value: errorGroup.sample_request_ids.join(', '),
+            mono: true,
+          },
+        errorGroup?.analysis && {
+          label: t('Possible Cause'),
+          value: t(errorGroup.analysis),
+        },
+      ].filter(Boolean) as Array<{
+        label: string
+        value: string
+        mono?: boolean
+      }>)
+    : []
   const affinity = props.isAdmin ? adminInfo?.channel_affinity : undefined
   const routingCandidate = props.isAdmin
     ? adminInfo?.routing_candidate
@@ -770,6 +834,24 @@ export function DetailsDialog(props: DetailsDialogProps) {
                 />
               )}
             </div>
+
+            {/* 错误请求摘要：普通用户只看脱敏定位信息，管理员在下方继续看完整路由诊断。 */}
+            {isError && errorSummaryFields.length > 0 && (
+              <DetailSection
+                icon={<AlertTriangle className='size-3.5' aria-hidden='true' />}
+                label={t('Error Summary')}
+                variant='danger'
+              >
+                {errorSummaryFields.map((field) => (
+                  <DetailRow
+                    key={field.label}
+                    label={field.label}
+                    value={field.value}
+                    mono={field.mono}
+                  />
+                ))}
+              </DetailSection>
+            )}
 
             {/* 候选级亲和诊断仅向管理员展示，不包含 API Key、Token 或凭据摘要。 */}
             {affinity && (

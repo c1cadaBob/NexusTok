@@ -6132,6 +6132,20 @@
     "Reuse the last successful key when the request matches an affinity rule.": "Повторно используйте последний успешно сработавший ключ, когда запрос соответствует правилу привязки.",
     "Save TTFT settings": "Сохранить настройки TTFT",
     "Temporarily avoid candidates with repeated slow first-token latency while keeping a fallback available.": "Временно избегайте кандидатов с повторяющейся медленной задержкой первого токена, сохраняя доступный запасной вариант.",
-    "TTFT threshold (ms)": "Порог TTFT (мс)"
+    "TTFT threshold (ms)": "Порог TTFT (мс)",
+    "Consecutive Errors": "Последовательные ошибки",
+    "Error Summary": "Сводка ошибки",
+    "Error Type": "Тип ошибки",
+    "Error Window": "Окно ошибки",
+    "First Request ID": "ID первого запроса",
+    "Last Request ID": "ID последнего запроса",
+    "Network timeout or connection interruption; check proxy links and upstream stability.": "Тайм-аут сети или разрыв соединения; проверьте прокси-цепочку и стабильность вышестоящего сервиса.",
+    "Possible Cause": "Возможная причина",
+    "Request Path": "Путь запроса",
+    "Sample Request IDs": "Примеры ID запросов",
+    "Upstream authentication failed; check key validity and model permissions.": "Ошибка аутентификации у вышестоящего сервиса; проверьте действительность ключа и права модели.",
+    "Upstream gateway error or timeout; check the provider, proxy, and channel health.": "Ошибка шлюза или тайм-аут вышестоящего сервиса; проверьте провайдера, прокси и состояние канала.",
+    "Upstream or channel error; check channel configuration and upstream response details.": "Ошибка вышестоящего сервиса или канала; проверьте конфигурацию канала и детали ответа.",
+    "Upstream rate limit or quota limit was triggered; check provider quota and throttling.": "Сработало ограничение скорости или квоты вышестоящего сервиса; проверьте квоту провайдера и throttling."
   }
 }

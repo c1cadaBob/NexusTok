@@ -29,10 +29,15 @@ import {
 import { useAdminPermission } from '@/hooks/use-admin-permission'
 import { Button } from '@/components/ui/button'
 import {
+  NativeSelect,
+  NativeSelectOption,
+} from '@/components/ui/native-select'
+import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { LOG_TYPE_ALL_VALUE, LOG_TYPE_FILTERS } from '../constants'
 import { buildSearchParams } from '../lib/filter'
 import { getDefaultTimeRange } from '../lib/utils'
 import type { CommonLogFilters } from '../types'
@@ -56,6 +61,7 @@ function buildSearchSourceKey(values: {
   startTime?: unknown
   endTime?: unknown
   channel?: unknown
+  type?: unknown
   model?: unknown
   token?: unknown
   group?: unknown
@@ -67,6 +73,7 @@ function buildSearchSourceKey(values: {
     values.startTime,
     values.endTime,
     values.channel,
+    values.type,
     values.model,
     values.token,
     values.group,
@@ -102,6 +109,7 @@ export function CommonLogsFilterBar<TData>(
       startTime: searchParams.startTime,
       endTime: searchParams.endTime,
       channel: searchParams.channel,
+      type: searchParams.type,
       model: searchParams.model,
       token: searchParams.token,
       group: searchParams.group,
@@ -115,6 +123,7 @@ export function CommonLogsFilterBar<TData>(
         : start,
       endTime: searchParams.endTime ? new Date(searchParams.endTime) : end,
       channel: searchParams.channel || undefined,
+      type: searchParams.type || LOG_TYPE_ALL_VALUE,
       model: searchParams.model || undefined,
       token: searchParams.token || undefined,
       group: searchParams.group || undefined,
@@ -130,6 +139,7 @@ export function CommonLogsFilterBar<TData>(
     searchParams.startTime,
     searchParams.endTime,
     searchParams.channel,
+    searchParams.type,
     searchParams.model,
     searchParams.token,
     searchParams.group,
@@ -201,6 +211,8 @@ export function CommonLogsFilterBar<TData>(
     [handleApply]
   )
 
+  const hasTypeFilter = (filters.type || LOG_TYPE_ALL_VALUE) !== LOG_TYPE_ALL_VALUE
+
   const hasExpandedFilters =
     !!filters.token ||
     !!filters.username ||
@@ -209,7 +221,7 @@ export function CommonLogsFilterBar<TData>(
     !!filters.upstreamRequestId
 
   const hasAdditionalFilters =
-    !!filters.model || !!filters.group || hasExpandedFilters
+    hasTypeFilter || !!filters.model || !!filters.group || hasExpandedFilters
 
   const sensitiveType = sensitiveVisible ? 'text' : 'password'
 
@@ -257,6 +269,22 @@ export function CommonLogsFilterBar<TData>(
         onChange={(e) => handleChange('model', e.target.value)}
         onKeyDown={handleKeyDown}
       />
+    </LogsFilterField>
+  )
+  const typeFilter = (
+    <LogsFilterField className='sm:w-[150px]'>
+      <NativeSelect
+        size='sm'
+        aria-label={t('Log Type')}
+        value={filters.type || LOG_TYPE_ALL_VALUE}
+        onChange={(e) => handleChange('type', e.target.value)}
+      >
+        {LOG_TYPE_FILTERS.map((type) => (
+          <NativeSelectOption key={type.value} value={type.value}>
+            {t(type.label)}
+          </NativeSelectOption>
+        ))}
+      </NativeSelect>
     </LogsFilterField>
   )
   const groupFilter = (
@@ -335,6 +363,7 @@ export function CommonLogsFilterBar<TData>(
       primaryFilters={
         <>
           {dateRangeFilter}
+          {typeFilter}
           {modelFilter}
           {groupFilter}
         </>
@@ -344,12 +373,13 @@ export function CommonLogsFilterBar<TData>(
       mobileFilters={
         <>
           {modelFilter}
+          {typeFilter}
           {groupFilter}
           {advancedFilters}
         </>
       }
       mobileFilterCount={
-        [filters.model, filters.group].filter(Boolean).length +
+        [hasTypeFilter ? filters.type : undefined, filters.model, filters.group].filter(Boolean).length +
         advancedFilterCount
       }
       hasAdvancedActiveFilters={hasExpandedFilters}
