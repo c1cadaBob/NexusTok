@@ -145,6 +145,79 @@ func SelectRoutingCandidateForChannel(param *RetryParam, channelID int) (*model.
 	return selectRoutingCandidateByStrategy(usingGroup, param.ModelName, sameChannel), usingGroup, nil
 }
 
+// SelectRoutingCandidateForAffinity 恢复并校验缓存绑定的具体候选。
+// 亲和首次尝试不参与随机、成本或账号池策略重选：只有 CandidateKey 完全一致且当前
+// 仍满足 group/model/path、启用状态与健康约束时才返回；否则调用方直接进入全渠道选择。
+func SelectRoutingCandidateForAffinity(param *RetryParam, binding *model.RoutingCandidate) (*model.RoutingCandidate, string, string, error) {
+	if param == nil {
+		return nil, "", "invalid_binding", errors.New("retry param is nil")
+	}
+	if binding == nil || !binding.CandidateKey().Valid() {
+		return nil, param.TokenGroup, "invalid_binding", nil
+	}
+	groups := []string{param.TokenGroup}
+	if param.TokenGroup == "auto" {
+		userGroup := common.GetContextKeyString(param.Ctx, constant.ContextKeyUserGroup)
+		groups = GetUserAutoGroup(userGroup)
+	}
+	for _, usingGroup := range groups {
+		if usingGroup == "" || usingGroup == "auto" {
+			continue
+		}
+		candidate, reason, err := findAffinityRoutingCandidateInGroup(param, usingGroup, binding.CandidateKey())
+		if err != nil {
+			return nil, usingGroup, "candidate_lookup_error", err
+		}
+		if candidate == nil {
+			if reason != "candidate_not_supported" {
+				return nil, usingGroup, reason, nil
+			}
+			continue
+		}
+		if param.TokenGroup == "auto" {
+			common.SetContextKey(param.Ctx, constant.ContextKeyAutoGroup, usingGroup)
+		}
+		return candidate, usingGroup, "", nil
+	}
+	return nil, param.TokenGroup, "candidate_not_supported", nil
+}
+
+func findAffinityRoutingCandidateInGroup(param *RetryParam, usingGroup string, bindingKey model.RoutingCandidateKey) (*model.RoutingCandidate, string, error) {
+	if excluded := GetExcludedRoutingCandidateKeys(param.Ctx); excluded[bindingKey.String()] {
+		return nil, "candidate_excluded", nil
+	}
+	candidates, err := model.GetRoutingCandidatesWithExclusions(usingGroup, param.ModelName, param.RequestPath, nil, nil)
+	if err != nil {
+		return nil, "candidate_lookup_error", err
+	}
+	var matched *model.RoutingCandidate
+	for _, candidate := range candidates {
+		if candidate != nil && candidate.CandidateKey() == bindingKey {
+			matched = candidate
+			break
+		}
+	}
+	if matched == nil {
+		return nil, "candidate_not_supported", nil
+	}
+	channel, err := model.CacheGetChannel(matched.ChannelID)
+	if err != nil || channel == nil || channel.Status != common.ChannelStatusEnabled {
+		return nil, "channel_disabled", nil
+	}
+	if !model.RoutingCandidateDynamicAllowed(matched, channel, usingGroup, param.ModelName) {
+		return nil, "candidate_unavailable", nil
+	}
+	if !IsChannelRoutingHealthy(usingGroup, param.ModelName, matched.ChannelID) {
+		return nil, "channel_health_cooldown", nil
+	}
+	if !IsRoutingCandidateTTFTHealthy(usingGroup, param.ModelName, matched) {
+		return nil, "candidate_ttft_cooldown", nil
+	}
+	selected := matched.Clone()
+	selected.SelectionReason = "channel_affinity"
+	return selected, "", nil
+}
+
 func usableRoutingCandidatesInGroup(param *RetryParam, usingGroup string) ([]*model.RoutingCandidate, error) {
 	excludedChannels := GetExcludedChannelIds(param.Ctx)
 	excludedCandidates := GetExcludedRoutingCandidateKeys(param.Ctx)
@@ -220,7 +293,16 @@ func selectRoutingCandidateByStrategy(usingGroup string, modelName string, candi
 	}
 
 	domainWinners := pickRoutingPolicyDomainCandidates(usingGroup, modelName, healthy)
-	return pickRoutingCandidateByLayerWeight(domainWinners)
+	selected := pickRoutingCandidateByLayerWeight(domainWinners)
+	if selected == nil {
+		return nil
+	}
+	if routingCandidateHasValidConvertedRatio(selected) {
+		selected.SelectionReason = "lowest_converted_ratio"
+	} else {
+		selected.SelectionReason = "weight_fallback"
+	}
+	return selected
 }
 
 // bestRoutingTTFTCandidates 过滤处于首包冷却期的密钥级候选。
@@ -263,15 +345,14 @@ func bestRoutingConvertedRatioCandidates(candidates []*model.RoutingCandidate) [
 	}
 	minRatio := math.MaxFloat64
 	for _, candidate := range candidates {
-		if !routingCandidateHasValidConvertedRatio(candidate) {
-			// 旧同步数据、普通手动渠道和 Multi-Key 不一定有可比较的成本元数据。
-			// 这时不能把它们视为“无限成本”并过滤掉；整个同层回退到原有权重调度，
-			// 保证升级前可选的凭证仍具有相同的竞争机会。
-			return candidates
-		}
-		if candidate.ConvertedRatio < minRatio {
+		if routingCandidateHasValidConvertedRatio(candidate) && candidate.ConvertedRatio < minRatio {
 			minRatio = candidate.ConvertedRatio
 		}
+	}
+	if minRatio == math.MaxFloat64 {
+		// 整个优先级层都没有成本数据时才回退历史权重策略。只要同层存在已知倍率，
+		// 缺失元数据的候选就不能反过来压过已知低成本候选。
+		return candidates
 	}
 	const epsilon = 1e-12
 	result := make([]*model.RoutingCandidate, 0, len(candidates))
@@ -602,11 +683,16 @@ func AppendRoutingCandidateAdminInfo(c *gin.Context, adminInfo map[string]interf
 	}
 	info := map[string]interface{}{
 		"kind":                string(candidate.Kind),
+		"candidate_id":        candidate.CandidateKey().String(),
 		"channel_id":          candidate.ChannelID,
+		"ability_priority":    candidate.Schedule.ChannelPriority,
+		"ability_weight":      candidate.Schedule.ChannelWeight,
 		"channel_priority":    candidate.Schedule.ChannelPriority,
 		"channel_weight":      candidate.Schedule.ChannelWeight,
 		"credential_priority": candidate.Schedule.CredentialPriority,
 		"credential_weight":   candidate.Schedule.CredentialWeight,
+		"cost_missing":        !routingCandidateHasValidConvertedRatio(candidate),
+		"selection_reason":    candidate.SelectionReason,
 		"policy_domain":       candidate.PolicyDomain,
 	}
 	if candidate.HasConvertedRatio {

@@ -34,6 +34,48 @@ func TestShouldRetryDoesNotRetrySpecificChannelForChannelError(t *testing.T) {
 	require.False(t, shouldRetry(c, err, 1))
 }
 
+// TestMarkRelayUpstreamCompleted 验证亲和成功回写依赖明确的上游完成状态。
+// timeout、scanner_error、panic、ping_fail 与未完成 client_gone 即使已经写出 HTTP 200，
+// 也不得把请求标记为成功；done/eof 和非流式完整响应可以标记。
+func TestMarkRelayUpstreamCompleted(t *testing.T) {
+	testCases := []struct {
+		name       string
+		isStream   bool
+		endReason  relaycommon.StreamEndReason
+		softError  bool
+		wantMarked bool
+	}{
+		{name: "non stream", wantMarked: true},
+		{name: "stream done", isStream: true, endReason: relaycommon.StreamEndReasonDone, wantMarked: true},
+		{name: "stream eof", isStream: true, endReason: relaycommon.StreamEndReasonEOF, wantMarked: true},
+		{name: "done with soft error", isStream: true, endReason: relaycommon.StreamEndReasonDone, softError: true},
+		{name: "client gone", isStream: true, endReason: relaycommon.StreamEndReasonClientGone},
+		{name: "timeout", isStream: true, endReason: relaycommon.StreamEndReasonTimeout},
+		{name: "scanner error", isStream: true, endReason: relaycommon.StreamEndReasonScannerErr},
+		{name: "panic", isStream: true, endReason: relaycommon.StreamEndReasonPanic},
+		{name: "ping fail", isStream: true, endReason: relaycommon.StreamEndReasonPingFail},
+		{name: "unfinished", isStream: true, endReason: relaycommon.StreamEndReasonNone},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			info := &relaycommon.RelayInfo{IsStream: testCase.isStream}
+			if testCase.isStream {
+				info.StreamStatus = relaycommon.NewStreamStatus()
+				if testCase.endReason != relaycommon.StreamEndReasonNone {
+					info.StreamStatus.SetEndReason(testCase.endReason, nil)
+				}
+				if testCase.softError {
+					info.StreamStatus.RecordError("上游流包含软错误")
+				}
+			}
+
+			markRelayUpstreamCompleted(ctx, info)
+			require.Equal(t, testCase.wantMarked, common.GetContextKeyBool(ctx, constant.ContextKeyUpstreamCompleted))
+		})
+	}
+}
+
 func TestRelayRetriesToNextChannelAfterChannelFailure(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupRelayRetryFallbackTestState(t)

@@ -305,6 +305,14 @@ func selectRelayChannelForSetupRetry(
 		}
 		service.AddExcludedRoutingCandidate(c, candidate)
 	}
+	if len(service.GetExcludedRoutingCandidateKeys(c)) > 0 {
+		return nil, types.NewError(
+			fmt.Errorf("分组 %s 下模型 %s 的剩余密钥级候选不存在", candidateSelectGroup, modelRequest.Model),
+			types.ErrorCodeGetChannelFailed,
+			types.ErrOptionWithStatusCode(http.StatusServiceUnavailable),
+			types.ErrOptionWithSkipRetry(),
+		)
+	}
 
 	channel, selectGroup, err := service.CacheGetRandomSatisfiedChannel(&service.RetryParam{
 		Ctx:         c,
@@ -391,33 +399,32 @@ func selectRelayChannel(c *gin.Context, modelRequest *ModelRequest, shouldSelect
 		}
 	}
 
-	// ========== 渠道亲和性（Channel Affinity）优先选择 ==========
-	// 如果同一亲和值最近一次成功请求仍处于亲和窗口内，优先在亲和渠道内按统一
-	// 候选规则选择具体 key/account。缓存缺失或窗口过期时只保留规则模板能力，
-	// 本次请求直接进入全渠道候选选择。
-	if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
-		affinityUsable := false
-		preferred, err := model.CacheGetChannel(preferredChannelID)
-		if err == nil && preferred != nil {
-			if !service.IsChannelRoutingHealthy(usingGroup, modelRequest.Model, preferred.Id) {
-				// 亲和渠道处于动态冷却期时，允许健康候选接管本次请求，
-				// 避免“亲和”把已知故障渠道硬锁回来。
-			} else if preferred.Status != common.ChannelStatusEnabled {
-				// 亲和性渠道已禁用时直接回到统一选路，避免缓存命中导致对话中断。
-			} else if !channelSupportsRequestPath(preferred, relaycommon.EffectiveRequestPath(c)) {
-				// Advanced Custom 渠道可能只配置了部分入口路径。
-				// 模型能力匹配但 path 不匹配时不能复用亲和性渠道，否则会把
-				// /v1/responses、Gemini native 等请求打到错误 route。
-			} else if candidate, candidateGroup, ok := selectAffinityRoutingCandidate(c, modelRequest, preferred, usingGroup); ok {
+	// ========== 候选级亲和性（Channel Affinity）优先选择 ==========
+	// 新鲜 v4 绑定只允许首次尝试命中完全相同的具体 key/account。候选不存在、被禁用、
+	// 不支持当前模型或处于动态冷却时，将它加入请求级排除集后直接执行全渠道选路；
+	// 不能在绑定渠道内部重新抽取备用凭证，否则亲和命中仍会表现为频繁换 Key。
+	if binding, found := service.GetPreferredRoutingCandidateByAffinity(c, modelRequest.Model, usingGroup); found {
+		candidate, candidateGroup, bypassReason, candidateErr := service.SelectRoutingCandidateForAffinity(&service.RetryParam{
+			Ctx:         c,
+			ModelName:   modelRequest.Model,
+			TokenGroup:  usingGroup,
+			RequestPath: relaycommon.EffectiveRequestPath(c),
+			Retry:       common.GetPointer(0),
+		}, binding)
+		if candidateErr == nil && candidate != nil {
+			if preferred, channelErr := model.CacheGetChannel(candidate.ChannelID); channelErr == nil && preferred != nil {
 				selectGroup = candidateGroup
 				channel = preferred
-				affinityUsable = true
 				common.SetContextKey(c, constant.ContextKeyRoutingCandidate, candidate.Clone())
-				service.MarkChannelAffinityUsed(c, candidateGroup, preferred.Id)
+				service.MarkRoutingCandidateAffinityUsed(c, candidateGroup, candidate)
 			}
 		}
-		if !affinityUsable && !service.ShouldKeepChannelAffinityOnChannelDisabled() {
-			service.ClearCurrentChannelAffinityCache(c)
+		if channel == nil {
+			service.AddExcludedRoutingCandidate(c, binding)
+			if !service.ShouldKeepChannelAffinityOnChannelDisabled() {
+				service.ClearCurrentChannelAffinityCache(c)
+			}
+			service.MarkChannelAffinityBypassed(c, bypassReason)
 		}
 	}
 
@@ -437,7 +444,7 @@ func selectRelayChannel(c *gin.Context, modelRequest *ModelRequest, shouldSelect
 				common.SetContextKey(c, constant.ContextKeyRoutingCandidate, candidate.Clone())
 			}
 		}
-		if channel == nil {
+		if channel == nil && len(service.GetExcludedRoutingCandidateKeys(c)) == 0 {
 			channel, selectGroup, err = service.CacheGetRandomSatisfiedChannel(&service.RetryParam{
 				Ctx:         c,
 				ModelName:   modelRequest.Model,
@@ -534,14 +541,60 @@ func channelSupportsRequestPath(channel *model.Channel, requestPath string) bool
 	return config != nil && config.SupportsPath(requestPath)
 }
 
-// RecordRelayChannelAffinityIfSucceeded 在请求成功后记录渠道亲和性。
-//
-// 该函数独立出来，是为了让标准中间件链和测试入口都能在成功时复用相同的亲和性记录规则。
-func RecordRelayChannelAffinityIfSucceeded(c *gin.Context, channel *model.Channel) {
-	if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
-		service.RecordChannelAffinity(c, channel.Id)
-		service.RecordChannelRoutingSuccessFromContext(c, channel)
+// RecordRelayChannelAffinityIfSucceeded 只在 Relay 明确完成后记录最终候选亲和。
+// HTTP 200 可能已在流式首包时写出，不能证明上游完整结束；最终渠道与候选也可能因
+// 重试发生变化，因此必须从当前上下文读取，而不能使用中间件进入时捕获的初始渠道。
+func RecordRelayChannelAffinityIfSucceeded(c *gin.Context, initialChannel *model.Channel) {
+	if c == nil || !common.GetContextKeyBool(c, constant.ContextKeyUpstreamCompleted) {
+		return
 	}
+	channelID := common.GetContextKeyInt(c, constant.ContextKeyChannelId)
+	if channelID <= 0 && initialChannel != nil {
+		channelID = initialChannel.Id
+	}
+	candidate := routingCandidateFromContext(c, channelID)
+	if candidate == nil {
+		candidate = routingCandidateFromSelectedCredentialContext(c, channelID)
+	}
+	if candidate != nil {
+		service.RecordRoutingCandidateAffinity(c, candidate)
+	}
+	if finalChannel, err := model.CacheGetChannel(channelID); err == nil && finalChannel != nil {
+		service.RecordChannelRoutingSuccessFromContext(c, finalChannel)
+	} else if initialChannel != nil && initialChannel.Id == channelID {
+		service.RecordChannelRoutingSuccessFromContext(c, initialChannel)
+	}
+}
+
+// routingCandidateFromSelectedCredentialContext 为旧的渠道级兜底选路补全候选身份。
+// 该对象仍只包含非敏感 ID/索引；后续所有正常统一选路都会直接从 RoutingCandidate 获取。
+func routingCandidateFromSelectedCredentialContext(c *gin.Context, channelID int) *model.RoutingCandidate {
+	if c == nil || channelID <= 0 {
+		return nil
+	}
+	if common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey) {
+		return &model.RoutingCandidate{
+			ChannelID:     channelID,
+			Kind:          model.RoutingCredentialKindMultiKey,
+			MultiKeyIndex: common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex),
+		}
+	}
+	if poolAccountID := common.GetContextKeyInt(c, constant.ContextKeyPoolAccountId); poolAccountID > 0 {
+		return &model.RoutingCandidate{
+			ChannelID:     channelID,
+			Kind:          model.RoutingCredentialKindPoolAccount,
+			PoolGroupID:   common.GetContextKeyInt(c, constant.ContextKeyPoolGroupId),
+			PoolAccountID: poolAccountID,
+		}
+	}
+	if channelAccountID := common.GetContextKeyInt(c, constant.ContextKeyChannelAccountId); channelAccountID > 0 {
+		return &model.RoutingCandidate{
+			ChannelID:        channelID,
+			Kind:             model.RoutingCredentialKindChannelAccount,
+			ChannelAccountID: channelAccountID,
+		}
+	}
+	return &model.RoutingCandidate{ChannelID: channelID, Kind: model.RoutingCredentialKindSingleKey}
 }
 
 // getModelFromRequest 从请求体中读取模型信息

@@ -38,6 +38,26 @@ func (key RoutingCandidateKey) String() string {
 	return fmt.Sprintf("%d:%s:%d:%d:%d:%d", key.ChannelID, key.Kind, key.MultiKeyIndex, key.ChannelAccountID, key.PoolGroupID, key.PoolAccountID)
 }
 
+// Valid 校验候选标识是否包含对应类型所需的非敏感定位字段。
+// Multi-Key 的索引从 0 开始，因此只拒绝负数；账号候选则必须携带正数 ID。
+func (key RoutingCandidateKey) Valid() bool {
+	if key.ChannelID <= 0 {
+		return false
+	}
+	switch key.Kind {
+	case RoutingCredentialKindSingleKey:
+		return true
+	case RoutingCredentialKindMultiKey:
+		return key.MultiKeyIndex >= 0
+	case RoutingCredentialKindChannelAccount:
+		return key.ChannelAccountID > 0
+	case RoutingCredentialKindPoolAccount:
+		return key.PoolGroupID > 0 && key.PoolAccountID > 0
+	default:
+		return false
+	}
+}
+
 // RoutingSchedule 保存渠道与凭证的调度值。
 // 前三层 channel_priority、channel_weight、credential_priority 决定候选层级；
 // credential_weight 只作为转换倍率相同或缺失时的兼容兜底，避免历史权重让高成本
@@ -154,6 +174,7 @@ type RoutingCandidate struct {
 	Schedule          RoutingSchedule       `json:"schedule"`
 	ConvertedRatio    float64               `json:"converted_ratio,omitempty"`
 	HasConvertedRatio bool                  `json:"has_converted_ratio,omitempty"`
+	SelectionReason   string                `json:"selection_reason,omitempty"`
 }
 
 // CandidateKey 返回该候选的请求级排除标识。

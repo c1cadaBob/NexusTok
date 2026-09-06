@@ -506,6 +506,54 @@ func TestSelectRoutingCandidateForChannelPrefersSyncedManagedWeight(t *testing.T
 	require.Equal(t, 150, candidate.Schedule.CredentialWeight)
 }
 
+// TestSelectRoutingCandidateForAffinityKeepsExactChannelAccount 验证新鲜候选亲和不会在
+// 同一渠道内按成本或权重重新选择账号；只有缓存绑定的 ChannelAccount 才能被返回。
+func TestSelectRoutingCandidateForAffinityKeepsExactChannelAccount(t *testing.T) {
+	db := setupChannelAccountSelectTestDB(t)
+	channel := model.Channel{
+		Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled,
+		Name: "candidate-affinity-channel", Models: "gpt-route", Group: "default",
+		Priority: routingSelectTestPriority(10), Weight: routingSelectTestWeight(100),
+		OtherSettings: `{"upstream_account_sync":{"platform":"new-api","base_url":"https://upstream.example"}}`,
+		ChannelInfo:   model.ChannelInfo{CredentialMode: constant.ChannelCredentialModeAccountPool, AccountPoolEnabled: true},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+	bound := model.ChannelAccount{
+		ChannelId: channel.Id, Name: "bound-key", Key: "sk-bound", Status: common.ChannelStatusEnabled,
+		Models: "gpt-route", AccessGroups: "default", Priority: 1, Weight: 10,
+		OtherSettings: `{"upstream_account_sync":{"ratio_conversion":0.5}}`,
+	}
+	cheaper := model.ChannelAccount{
+		ChannelId: channel.Id, Name: "cheaper-key", Key: "sk-cheaper", Status: common.ChannelStatusEnabled,
+		Models: "gpt-route", AccessGroups: "default", Priority: 1, Weight: 100,
+		OtherSettings: `{"upstream_account_sync":{"ratio_conversion":0.05}}`,
+	}
+	require.NoError(t, db.Create(&bound).Error)
+	require.NoError(t, db.Create(&cheaper).Error)
+
+	ctx := newRoutingSelectTestContext()
+	binding := &model.RoutingCandidate{
+		ChannelID: channel.Id, Kind: model.RoutingCredentialKindChannelAccount, ChannelAccountID: bound.Id,
+	}
+	candidate, selectedGroup, reason, err := SelectRoutingCandidateForAffinity(&RetryParam{
+		Ctx: ctx, TokenGroup: "default", ModelName: "gpt-route", Retry: common.GetPointer(0),
+	}, binding)
+	require.NoError(t, err)
+	require.Empty(t, reason)
+	require.Equal(t, "default", selectedGroup)
+	require.NotNil(t, candidate)
+	require.Equal(t, bound.Id, candidate.ChannelAccountID)
+	require.NotEqual(t, cheaper.Id, candidate.ChannelAccountID)
+
+	AddExcludedRoutingCandidate(ctx, candidate)
+	candidate, _, reason, err = SelectRoutingCandidateForAffinity(&RetryParam{
+		Ctx: ctx, TokenGroup: "default", ModelName: "gpt-route", Retry: common.GetPointer(0),
+	}, binding)
+	require.NoError(t, err)
+	require.Nil(t, candidate)
+	require.Equal(t, "candidate_excluded", reason)
+}
+
 // TestSelectRoutingCandidatePrefersLowestConvertedRatioAcrossChannels 验证同一调度层的
 // 同步账号按真实转换倍率升序选择，而不是继续由旧的密钥权重决定胜负。失败候选进入
 // 请求级排除集后，下一次选择必须从全渠道剩余候选中继续按最低倍率选择。
@@ -686,10 +734,9 @@ func TestSelectRoutingCandidateDoesNotLetCostOverrideHigherPriorityLayers(t *tes
 	}
 }
 
-// TestSelectRoutingCandidateUsesWeightFallbackForMissingConvertedRatio 验证同层存在无成本
-// 元数据的候选时继续使用原有密钥权重。这样普通手动账号、Multi-Key 与历史同步数据
-// 不会因为无法比较真实成本而被新版调度静默排除。
-func TestSelectRoutingCandidateUsesWeightFallbackForMissingConvertedRatio(t *testing.T) {
+// TestSelectRoutingCandidatePrefersKnownCostWhenPeerMetadataMissing 验证同层只要存在有效成本，
+// 缺失成本的历史候选就不能凭借更高权重反超；仅整层无成本时才允许权重兜底。
+func TestSelectRoutingCandidatePrefersKnownCostWhenPeerMetadataMissing(t *testing.T) {
 	db := setupChannelAccountSelectTestDB(t)
 	channel := model.Channel{
 		Type:          constant.ChannelTypeOpenAI,
@@ -738,6 +785,7 @@ func TestSelectRoutingCandidateUsesWeightFallbackForMissingConvertedRatio(t *tes
 	})
 	require.NoError(t, err)
 	require.NotNil(t, candidate)
-	require.Equal(t, legacyManual.Id, candidate.ChannelAccountID)
-	require.False(t, candidate.HasConvertedRatio)
+	require.Equal(t, knownCost.Id, candidate.ChannelAccountID)
+	require.True(t, candidate.HasConvertedRatio)
+	require.InDelta(t, 0.1, candidate.ConvertedRatio, 0.000001)
 }

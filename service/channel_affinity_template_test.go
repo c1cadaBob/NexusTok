@@ -15,6 +15,7 @@ import (
 
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/constant"
+	"github.com/c1cada/NexusTok/model"
 	relaycommon "github.com/c1cada/NexusTok/relay/common"
 	"github.com/c1cada/NexusTok/setting/operation_setting"
 	"github.com/gin-gonic/gin"
@@ -256,6 +257,7 @@ func TestGetPreferredChannelByAffinity_RequestHeaderKeySource(t *testing.T) {
 	cache := getChannelAffinityCache()
 	require.NoError(t, cache.SetWithTTL(cacheKeySuffix, channelAffinityBinding{
 		ChannelID:     9528,
+		Kind:          model.RoutingCredentialKindSingleKey,
 		LastSuccessAt: time.Now().Unix(),
 	}, time.Minute))
 	t.Cleanup(func() {
@@ -330,6 +332,7 @@ func TestGetPreferredChannelByAffinityHonorsRequestIntervalWindow(t *testing.T) 
 		bypassReason string
 	}{
 		{name: "fresh binding at 30 seconds", elapsed: 30, wantFound: true},
+		{name: "fresh binding at 59 seconds", elapsed: 59, wantFound: true},
 		{name: "binding at exactly 60 seconds is stale", elapsed: 60, bypassReason: "stale_bypassed"},
 		{name: "binding older than 60 seconds is stale", elapsed: 61, bypassReason: "stale_bypassed"},
 	}
@@ -340,6 +343,7 @@ func TestGetPreferredChannelByAffinityHonorsRequestIntervalWindow(t *testing.T) 
 			cacheKeySuffix := buildChannelAffinityCacheKeySuffix(rule, "gpt-5", "default", affinityValue)
 			require.NoError(t, cache.SetWithTTL(cacheKeySuffix, channelAffinityBinding{
 				ChannelID:     9529,
+				Kind:          model.RoutingCredentialKindSingleKey,
 				LastSuccessAt: requestStart.Unix() - testCase.elapsed,
 			}, time.Minute))
 			t.Cleanup(func() {
@@ -378,8 +382,14 @@ func TestGetPreferredChannelByAffinityHonorsRequestIntervalWindow(t *testing.T) 
 		cacheKeySuffix := buildChannelAffinityCacheKeySuffix(rule, "gpt-5", "default", affinityValue)
 		legacyCache := getChannelAffinityLegacyCache()
 		require.NoError(t, legacyCache.SetWithTTL(cacheKeySuffix, 9530, time.Minute))
+		v3Cache := getChannelAffinityV3Cache()
+		require.NoError(t, v3Cache.SetWithTTL(cacheKeySuffix, channelAffinityV3Binding{
+			ChannelID:     9530,
+			LastSuccessAt: requestStart.Unix(),
+		}, time.Minute))
 		t.Cleanup(func() {
 			_, _ = legacyCache.DeleteMany([]string{cacheKeySuffix})
+			_, _ = v3Cache.DeleteMany([]string{cacheKeySuffix})
 		})
 
 		recorder := httptest.NewRecorder()
@@ -419,6 +429,7 @@ func TestRecordChannelAffinityWritesLastSuccessAt(t *testing.T) {
 	cache := getChannelAffinityCache()
 	require.NoError(t, cache.SetWithTTL(cacheKeySuffix, channelAffinityBinding{
 		ChannelID:     9531,
+		Kind:          model.RoutingCredentialKindSingleKey,
 		LastSuccessAt: common.GetTimestamp() - 45,
 	}, time.Minute))
 	t.Cleanup(func() {
@@ -435,6 +446,43 @@ func TestRecordChannelAffinityWritesLastSuccessAt(t *testing.T) {
 	require.GreaterOrEqual(t, binding.LastSuccessAt, beforeSuccess)
 }
 
+// TestRecordRoutingCandidateAffinityPreservesCredentialIdentity 验证 v4 回写保存具体凭证身份。
+// 每种候选只包含不可恢复凭据的 ID/索引，缓存中不得出现 API Key 或摘要字段。
+func TestRecordRoutingCandidateAffinityPreservesCredentialIdentity(t *testing.T) {
+	testCases := []struct {
+		name      string
+		candidate *model.RoutingCandidate
+	}{
+		{name: "single key", candidate: &model.RoutingCandidate{ChannelID: 9601, Kind: model.RoutingCredentialKindSingleKey}},
+		{name: "multi key", candidate: &model.RoutingCandidate{ChannelID: 9602, Kind: model.RoutingCredentialKindMultiKey, MultiKeyIndex: 0}},
+		{name: "channel account", candidate: &model.RoutingCandidate{ChannelID: 9603, Kind: model.RoutingCredentialKindChannelAccount, ChannelAccountID: 164}},
+		{name: "pool account", candidate: &model.RoutingCandidate{ChannelID: 9604, Kind: model.RoutingCredentialKindPoolAccount, PoolGroupID: 7, PoolAccountID: 29}},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			cacheKeySuffix := fmt.Sprintf("record-candidate-%s-%d", testCase.name, time.Now().UnixNano())
+			ctx := buildChannelAffinityTemplateContextForTest(channelAffinityMeta{
+				CacheKey:       channelAffinityCacheNamespace + ":" + cacheKeySuffix,
+				CacheKeySuffix: cacheKeySuffix,
+				TTLSeconds:     60,
+				RuleName:       "record-candidate",
+			})
+			cache := getChannelAffinityCache()
+			t.Cleanup(func() { _, _ = cache.DeleteMany([]string{cacheKeySuffix}) })
+
+			beforeSuccess := common.GetTimestamp()
+			RecordRoutingCandidateAffinity(ctx, testCase.candidate)
+
+			binding, found, err := cache.Get(cacheKeySuffix)
+			require.NoError(t, err)
+			require.True(t, found)
+			require.Equal(t, testCase.candidate.CandidateKey(), binding.CandidateKey())
+			require.GreaterOrEqual(t, binding.LastSuccessAt, beforeSuccess)
+		})
+	}
+}
+
 // TestClearCurrentChannelAffinityCache 测试当前请求命中的亲和缓存清理能力。
 // 当亲和渠道已经禁用或不再可用时，分发层会调用该函数清理本次命中的缓存键，
 // 同时清除跳过重试标记，让后续请求可以重新选择健康渠道。
@@ -445,14 +493,18 @@ func TestClearCurrentChannelAffinityCache(t *testing.T) {
 	cacheKeyFull := channelAffinityCacheNamespace + ":" + cacheKeySuffix
 	cache := getChannelAffinityCache()
 	legacyCache := getChannelAffinityLegacyCache()
+	v3Cache := getChannelAffinityV3Cache()
 	require.NoError(t, cache.SetWithTTL(cacheKeySuffix, channelAffinityBinding{
 		ChannelID:     9527,
+		Kind:          model.RoutingCredentialKindSingleKey,
 		LastSuccessAt: time.Now().Unix(),
 	}, time.Minute))
 	require.NoError(t, legacyCache.SetWithTTL(cacheKeySuffix, 9527, time.Minute))
+	require.NoError(t, v3Cache.SetWithTTL(cacheKeySuffix, channelAffinityV3Binding{ChannelID: 9527, LastSuccessAt: time.Now().Unix()}, time.Minute))
 	t.Cleanup(func() {
 		_, _ = cache.DeleteMany([]string{cacheKeySuffix})
 		_, _ = legacyCache.DeleteMany([]string{cacheKeySuffix})
+		_, _ = v3Cache.DeleteMany([]string{cacheKeySuffix})
 	})
 
 	ctx := buildChannelAffinityTemplateContextForTest(channelAffinityMeta{
@@ -473,6 +525,9 @@ func TestClearCurrentChannelAffinityCache(t *testing.T) {
 	_, legacyFound, legacyErr := legacyCache.Get(cacheKeySuffix)
 	require.NoError(t, legacyErr)
 	require.False(t, legacyFound)
+	_, v3Found, v3Err := v3Cache.Get(cacheKeySuffix)
+	require.NoError(t, v3Err)
+	require.False(t, v3Found)
 	require.False(t, ShouldSkipRetryAfterChannelAffinityFailure(ctx))
 }
 
@@ -520,6 +575,7 @@ func TestChannelAffinityHitCodexTemplatePassHeadersEffective(t *testing.T) {
 	cache := getChannelAffinityCache()
 	require.NoError(t, cache.SetWithTTL(cacheKeySuffix, channelAffinityBinding{
 		ChannelID:     9527,
+		Kind:          model.RoutingCredentialKindSingleKey,
 		LastSuccessAt: time.Now().Unix(),
 	}, time.Minute))
 	t.Cleanup(func() {

@@ -23,6 +23,7 @@ import (
 	"github.com/c1cada/NexusTok/common"
 	"github.com/c1cada/NexusTok/constant"
 	"github.com/c1cada/NexusTok/dto"
+	"github.com/c1cada/NexusTok/model"
 	"github.com/c1cada/NexusTok/pkg/cachex"
 	"github.com/c1cada/NexusTok/setting/operation_setting"
 	"github.com/c1cada/NexusTok/types"
@@ -40,7 +41,8 @@ const (
 	ginKeyChannelAffinitySkipRetry   = "channel_affinity_skip_retry_on_failure" // Gin 上下文键：失败时跳过重试
 
 	channelAffinityLegacyCacheNamespace     = "nexustok:channel_affinity:v2"                   // 旧版整型亲和缓存命名空间，仅用于运维清理
-	channelAffinityCacheNamespace           = "nexustok:channel_affinity:v3"                   // 渠道亲和性结构体缓存的 Redis 命名空间
+	channelAffinityV3CacheNamespace         = "nexustok:channel_affinity:v3"                   // 旧版渠道级亲和缓存命名空间，仅用于运维清理
+	channelAffinityCacheNamespace           = "nexustok:channel_affinity:v4"                   // 候选级亲和缓存命名空间
 	channelAffinityUsageCacheStatsNamespace = "nexustok:channel_affinity_usage_cache_stats:v2" // 使用统计缓存的 Redis 命名空间
 )
 
@@ -50,6 +52,8 @@ var (
 
 	channelAffinityLegacyCacheOnce sync.Once                // 确保旧版缓存只初始化一次
 	channelAffinityLegacyCache     *cachex.HybridCache[int] // 旧版整型亲和缓存，仅用于清理 v2 遗留键
+	channelAffinityV3CacheOnce     sync.Once
+	channelAffinityV3Cache         *cachex.HybridCache[channelAffinityV3Binding] // 旧版渠道级缓存，仅用于清理 v3 遗留键
 
 	channelAffinityUsageCacheStatsOnce  sync.Once                                              // 确保使用统计缓存只初始化一次
 	channelAffinityUsageCacheStatsCache *cachex.HybridCache[ChannelAffinityUsageCacheCounters] // 使用统计混合缓存
@@ -57,38 +61,77 @@ var (
 	channelAffinityRegexCache sync.Map // 正则表达式缓存，避免重复编译
 )
 
-// channelAffinityBinding 是新版亲和缓存值。
-// 只记录非敏感 channel_id 与“上一次成功请求回写时间”，请求开始时用它判断亲和
-// 绑定是否仍处于连续请求窗口；失败请求不会写入这里，因此不会续期窗口。
+// channelAffinityBinding 是 v4 候选级亲和缓存值。
+// 字段与 RoutingCandidateKey 一一对应，只保存不可恢复凭据的 ID 和索引；API Key、
+// Token、Cookie、key_digest 与 OAuth credential 均不得进入该缓存。
 type channelAffinityBinding struct {
+	ChannelID        int                         `json:"channel_id"`
+	Kind             model.RoutingCredentialKind `json:"kind"`
+	MultiKeyIndex    int                         `json:"multi_key_index,omitempty"`
+	ChannelAccountID int                         `json:"channel_account_id,omitempty"`
+	PoolGroupID      int                         `json:"pool_group_id,omitempty"`
+	PoolAccountID    int                         `json:"pool_account_id,omitempty"`
+	LastSuccessAt    int64                       `json:"last_success_at"`
+}
+
+type channelAffinityV3Binding struct {
 	ChannelID     int   `json:"channel_id"`
 	LastSuccessAt int64 `json:"last_success_at"`
+}
+
+func (binding channelAffinityBinding) CandidateKey() model.RoutingCandidateKey {
+	return model.RoutingCandidateKey{
+		ChannelID:        binding.ChannelID,
+		Kind:             binding.Kind,
+		MultiKeyIndex:    binding.MultiKeyIndex,
+		ChannelAccountID: binding.ChannelAccountID,
+		PoolGroupID:      binding.PoolGroupID,
+		PoolAccountID:    binding.PoolAccountID,
+	}
+}
+
+func newChannelAffinityBinding(candidate *model.RoutingCandidate, lastSuccessAt int64) channelAffinityBinding {
+	key := candidate.CandidateKey()
+	return channelAffinityBinding{
+		ChannelID:        key.ChannelID,
+		Kind:             key.Kind,
+		MultiKeyIndex:    key.MultiKeyIndex,
+		ChannelAccountID: key.ChannelAccountID,
+		PoolGroupID:      key.PoolGroupID,
+		PoolAccountID:    key.PoolAccountID,
+		LastSuccessAt:    lastSuccessAt,
+	}
 }
 
 // channelAffinityMeta 存储渠道亲和性的匹配元数据。
 // 在请求处理过程中存储在 Gin 上下文中，用于后续的缓存写入和日志记录。
 type channelAffinityMeta struct {
-	CacheKey                  string                 // 完整的缓存键
-	CacheKeySuffix            string                 // 不含命名空间的缓存键后缀，便于新旧命名空间同时清理
-	TTLSeconds                int                    // 缓存过期时间（秒）
-	RuleName                  string                 // 匹配的规则名称
-	SkipRetry                 bool                   // 失败时是否跳过重试
-	Used                      bool                   // 本次请求是否实际被新鲜亲和绑定约束
-	Bypassed                  bool                   // 本次请求是否因窗口过期等原因绕过亲和限制
-	BypassReason              string                 // 绕过原因，如 cache_miss/stale_bypassed
-	BindingChannelID          int                    // 缓存中记录的渠道 ID
-	LastSuccessAt             int64                  // 缓存中记录的上一次成功请求时间
-	RequestIntervalSeconds    int64                  // 当前请求距离上一次成功回写的秒数
-	MaxRequestIntervalSeconds int                    // 当前使用的亲和新鲜度窗口秒数
-	ParamTemplate             map[string]interface{} // 参数覆盖模板
-	KeySourceType             string                 // 亲和值来源类型（gjson/context_int/context_string）
-	KeySourceKey              string                 // 亲和值来源键（上下文键名）
-	KeySourcePath             string                 // 亲和值来源路径（gjson 路径）
-	KeyHint                   string                 // 亲和值的简短提示（用于日志）
-	KeyFingerprint            string                 // 亲和值的指纹（SHA1 前 8 位）
-	UsingGroup                string                 // 使用的分组标识
-	ModelName                 string                 // 请求的模型名称
-	RequestPath               string                 // 请求路径
+	CacheKey                  string                      // 完整的缓存键
+	CacheKeySuffix            string                      // 不含命名空间的缓存键后缀，便于新旧命名空间同时清理
+	TTLSeconds                int                         // 缓存过期时间（秒）
+	RuleName                  string                      // 匹配的规则名称
+	SkipRetry                 bool                        // 失败时是否跳过重试
+	Used                      bool                        // 本次请求是否实际被新鲜亲和绑定约束
+	Bypassed                  bool                        // 本次请求是否因窗口过期等原因绕过亲和限制
+	BypassReason              string                      // 绕过原因，如 cache_miss/stale_bypassed
+	BindingChannelID          int                         // 缓存中记录的渠道 ID
+	BindingKind               model.RoutingCredentialKind // 缓存中记录的候选类型
+	BindingMultiKeyIndex      int                         // 缓存中记录的 Multi-Key 索引
+	BindingChannelAccountID   int                         // 缓存中记录的渠道账号 ID
+	BindingPoolGroupID        int                         // 缓存中记录的全局账号池分组 ID
+	BindingPoolAccountID      int                         // 缓存中记录的全局账号池账号 ID
+	LastSuccessAt             int64                       // 缓存中记录的上一次成功请求时间
+	RequestIntervalSeconds    int64                       // 当前请求距离上一次成功回写的秒数
+	MaxRequestIntervalSeconds int                         // 当前使用的亲和新鲜度窗口秒数
+	ParamTemplate             map[string]interface{}      // 参数覆盖模板
+	KeySourceType             string                      // 亲和值来源类型（gjson/context_int/context_string）
+	KeySourceKey              string                      // 亲和值来源键（上下文键名）
+	KeySourcePath             string                      // 亲和值来源路径（gjson 路径）
+	KeyHint                   string                      // 亲和值的简短提示（用于日志）
+	KeyFingerprint            string                      // 亲和值的指纹（SHA1 前 8 位）
+	UsingGroup                string                      // 使用的分组标识
+	ModelName                 string                      // 请求的模型名称
+	RequestPath               string                      // 请求路径
 }
 
 // ChannelAffinityStatsContext 存储渠道亲和性的统计上下文。
@@ -184,6 +227,39 @@ func getChannelAffinityLegacyCache() *cachex.HybridCache[int] {
 		})
 	})
 	return channelAffinityLegacyCache
+}
+
+// getChannelAffinityV3Cache 仅用于清理升级前的渠道级绑定。
+// 新选路绝不读取 v3，避免把缺少具体凭证身份的旧值错误迁移成候选亲和。
+func getChannelAffinityV3Cache() *cachex.HybridCache[channelAffinityV3Binding] {
+	channelAffinityV3CacheOnce.Do(func() {
+		setting := operation_setting.GetChannelAffinitySetting()
+		capacity := 100_000
+		defaultTTLSeconds := 3600
+		if setting != nil {
+			if setting.MaxEntries > 0 {
+				capacity = setting.MaxEntries
+			}
+			if setting.DefaultTTLSeconds > 0 {
+				defaultTTLSeconds = setting.DefaultTTLSeconds
+			}
+		}
+		channelAffinityV3Cache = cachex.NewHybridCache[channelAffinityV3Binding](cachex.HybridCacheConfig[channelAffinityV3Binding]{
+			Namespace: cachex.Namespace(channelAffinityV3CacheNamespace),
+			Redis:     common.RDB,
+			RedisEnabled: func() bool {
+				return common.RedisEnabled && common.RDB != nil
+			},
+			RedisCodec: cachex.JSONCodec[channelAffinityV3Binding]{},
+			Memory: func() *hot.HotCache[string, channelAffinityV3Binding] {
+				return hot.NewHotCache[string, channelAffinityV3Binding](hot.LRU, capacity).
+					WithTTL(time.Duration(defaultTTLSeconds) * time.Second).
+					WithJanitor().
+					Build()
+			},
+		})
+	})
+	return channelAffinityV3Cache
 }
 
 // GetChannelAffinityCacheStats 获取渠道亲和性缓存的统计信息。
@@ -306,6 +382,20 @@ func ClearChannelAffinityCacheAll() int {
 			deleted += countDeletedCacheKeys(res)
 		}
 	}
+
+	v3Cache := getChannelAffinityV3Cache()
+	v3Keys, v3Err := v3Cache.Keys()
+	if v3Err != nil {
+		common.SysError(fmt.Sprintf("legacy v3 channel affinity cache list keys failed: err=%v", v3Err))
+		v3Keys = nil
+	}
+	if len(v3Keys) > 0 {
+		if res, err := v3Cache.DeleteMany(v3Keys); err != nil {
+			common.SysError(fmt.Sprintf("legacy v3 channel affinity cache delete many failed: err=%v", err))
+		} else {
+			deleted += countDeletedCacheKeys(res)
+		}
+	}
 	return deleted
 }
 
@@ -358,6 +448,11 @@ func ClearChannelAffinityCacheByRuleName(ruleName string) (int, error) {
 		return deleted, legacyErr
 	}
 	deleted += legacyDeleted
+	v3Deleted, v3Err := getChannelAffinityV3Cache().DeleteByPrefix(ruleName)
+	if v3Err != nil {
+		return deleted, v3Err
+	}
+	deleted += v3Deleted
 	return deleted, nil
 }
 
@@ -706,6 +801,12 @@ func channelAffinityAdminInfo(meta channelAffinityMeta, selectedGroup string, ch
 		"key_fp":                       meta.KeyFingerprint,
 		"used":                         meta.Used,
 		"bypassed":                     meta.Bypassed,
+		"binding_kind":                 string(meta.BindingKind),
+		"binding_channel_id":           meta.BindingChannelID,
+		"binding_channel_account_id":   meta.BindingChannelAccountID,
+		"binding_pool_group_id":        meta.BindingPoolGroupID,
+		"binding_pool_account_id":      meta.BindingPoolAccountID,
+		"binding_multi_key_index":      meta.BindingMultiKeyIndex,
 		"max_request_interval_seconds": meta.MaxRequestIntervalSeconds,
 	}
 	if selectedGroup != "" {
@@ -713,9 +814,6 @@ func channelAffinityAdminInfo(meta channelAffinityMeta, selectedGroup string, ch
 	}
 	if channelID > 0 {
 		info["channel_id"] = channelID
-	}
-	if meta.BindingChannelID > 0 {
-		info["binding_channel_id"] = meta.BindingChannelID
 	}
 	if meta.BypassReason != "" {
 		info["bypass_reason"] = meta.BypassReason
@@ -783,8 +881,9 @@ func ApplyChannelAffinityOverrideTemplate(c *gin.Context, paramOverride map[stri
 	return mergedParam, true
 }
 
-// GetPreferredChannelByAffinity 根据渠道亲和性规则查找优选的渠道 ID。
-// 这是渠道亲和性的核心入口函数。
+// GetPreferredRoutingCandidateByAffinity 根据亲和规则读取新鲜的候选级绑定。
+// 这是 v4 亲和选路的核心入口，只返回不含凭据的 RoutingCandidateKey 字段；候选当前
+// 是否存在、是否支持模型以及动态健康状态由统一候选选择层继续校验。
 // 遍历所有配置的规则，按顺序匹配：
 // 1. 模型正则匹配
 // 2. 路径正则匹配
@@ -799,12 +898,12 @@ func ApplyChannelAffinityOverrideTemplate(c *gin.Context, paramOverride map[stri
 //   - usingGroup: 使用的分组标识
 //
 // 返回：
-//   - int: 优选的渠道 ID（0 表示未找到）
-//   - bool: 是否找到优选渠道
-func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup string) (int, bool) {
+//   - *model.RoutingCandidate: 缓存中绑定的具体候选
+//   - bool: 是否存在仍处于连续请求窗口内的有效 v4 绑定
+func GetPreferredRoutingCandidateByAffinity(c *gin.Context, modelName string, usingGroup string) (*model.RoutingCandidate, bool) {
 	setting := operation_setting.GetChannelAffinitySetting()
 	if setting == nil || !setting.Enabled {
-		return 0, false
+		return nil, false
 	}
 	path := ""
 	if c != nil && c.Request != nil && c.Request.URL != nil {
@@ -875,16 +974,21 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup 
 			meta.Bypassed = true
 			meta.BypassReason = "cache_error"
 			updateChannelAffinityMeta(c, meta)
-			return 0, false
+			return nil, false
 		}
 		if !found {
 			meta.Bypassed = true
 			meta.BypassReason = "cache_miss"
 			updateChannelAffinityMeta(c, meta)
-			return 0, false
+			return nil, false
 		}
 
 		meta.BindingChannelID = binding.ChannelID
+		meta.BindingKind = binding.Kind
+		meta.BindingMultiKeyIndex = binding.MultiKeyIndex
+		meta.BindingChannelAccountID = binding.ChannelAccountID
+		meta.BindingPoolGroupID = binding.PoolGroupID
+		meta.BindingPoolAccountID = binding.PoolAccountID
 		meta.LastSuccessAt = binding.LastSuccessAt
 		now := channelAffinityRequestStartTimestamp(c)
 		if binding.LastSuccessAt > 0 {
@@ -893,17 +997,17 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup 
 				meta.RequestIntervalSeconds = 0
 			}
 		}
-		if binding.ChannelID <= 0 || binding.LastSuccessAt <= 0 {
+		if !binding.CandidateKey().Valid() || binding.LastSuccessAt <= 0 {
 			meta.Bypassed = true
 			meta.BypassReason = "invalid_binding"
 			updateChannelAffinityMeta(c, meta)
-			return 0, false
+			return nil, false
 		}
 		if meta.RequestIntervalSeconds >= int64(maxRequestIntervalSeconds) {
 			meta.Bypassed = true
 			meta.BypassReason = "stale_bypassed"
 			updateChannelAffinityMeta(c, meta)
-			return 0, false
+			return nil, false
 		}
 
 		// 此处只说明存在新鲜绑定；真正完成亲和渠道选择后才由
@@ -913,9 +1017,27 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup 
 		meta.Bypassed = false
 		meta.BypassReason = ""
 		updateChannelAffinityMeta(c, meta)
-		return binding.ChannelID, true
+		key := binding.CandidateKey()
+		return &model.RoutingCandidate{
+			ChannelID:        key.ChannelID,
+			Kind:             key.Kind,
+			MultiKeyIndex:    key.MultiKeyIndex,
+			ChannelAccountID: key.ChannelAccountID,
+			PoolGroupID:      key.PoolGroupID,
+			PoolAccountID:    key.PoolAccountID,
+		}, true
 	}
-	return 0, false
+	return nil, false
+}
+
+// GetPreferredChannelByAffinity 是旧调用方的内部兼容包装。
+// 新分发逻辑必须使用 GetPreferredRoutingCandidateByAffinity，避免再次退化为渠道级绑定。
+func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup string) (int, bool) {
+	candidate, found := GetPreferredRoutingCandidateByAffinity(c, modelName, usingGroup)
+	if !found || candidate == nil {
+		return 0, false
+	}
+	return candidate.ChannelID, true
 }
 
 // ShouldSkipRetryAfterChannelAffinityFailure 判断渠道亲和性匹配失败后是否跳过重试。
@@ -986,6 +1108,10 @@ func ClearCurrentChannelAffinityCache(c *gin.Context) bool {
 	if legacyErr != nil {
 		common.SysError(fmt.Sprintf("legacy channel affinity cache delete current failed: err=%v", legacyErr))
 	}
+	v3Deleted, v3Err := getChannelAffinityV3Cache().DeleteMany(nonEmptyStrings(cacheKeySuffix, cacheKey))
+	if v3Err != nil {
+		common.SysError(fmt.Sprintf("legacy v3 channel affinity cache delete current failed: err=%v", v3Err))
+	}
 	if meta, ok := getChannelAffinityMeta(c); ok {
 		meta.Used = false
 		meta.Bypassed = true
@@ -999,6 +1125,11 @@ func ClearCurrentChannelAffinityCache(c *gin.Context) bool {
 		}
 	}
 	for _, ok := range legacyDeleted {
+		if ok {
+			return true
+		}
+	}
+	for _, ok := range v3Deleted {
 		if ok {
 			return true
 		}
@@ -1053,6 +1184,35 @@ func MarkChannelAffinityUsed(c *gin.Context, selectedGroup string, channelID int
 	c.Set(ginKeyChannelAffinityLogInfo, channelAffinityAdminInfo(meta, selectedGroup, channelID))
 }
 
+// MarkRoutingCandidateAffinityUsed 标记候选级亲和已实际约束本次首次尝试。
+// 日志中的绑定字段来自缓存，最终 channel_id 则用于和降级后的真实成功候选对照。
+func MarkRoutingCandidateAffinityUsed(c *gin.Context, selectedGroup string, candidate *model.RoutingCandidate) {
+	if candidate == nil || !candidate.CandidateKey().Valid() {
+		return
+	}
+	MarkChannelAffinityUsed(c, selectedGroup, candidate.ChannelID)
+}
+
+// MarkChannelAffinityBypassed 记录新鲜绑定未能用于本次请求的具体原因。
+// 原绑定不会在这里刷新；是否删除仍由 keep_on_channel_disabled 与调用方策略决定。
+func MarkChannelAffinityBypassed(c *gin.Context, reason string) {
+	if c == nil {
+		return
+	}
+	meta, ok := getChannelAffinityMeta(c)
+	if !ok {
+		return
+	}
+	meta.Used = false
+	meta.Bypassed = true
+	meta.BypassReason = strings.TrimSpace(reason)
+	if meta.BypassReason == "" {
+		meta.BypassReason = "candidate_unavailable"
+	}
+	updateChannelAffinityMeta(c, meta)
+	c.Set(ginKeyChannelAffinitySkipRetry, false)
+}
+
 // AppendChannelAffinityAdminInfo 将渠道亲和性的管理信息追加到 adminInfo 中。
 // 用于管理界面展示渠道亲和性的匹配详情。
 func AppendChannelAffinityAdminInfo(c *gin.Context, adminInfo map[string]interface{}) {
@@ -1066,22 +1226,15 @@ func AppendChannelAffinityAdminInfo(c *gin.Context, adminInfo map[string]interfa
 	adminInfo["channel_affinity"] = anyInfo
 }
 
-// RecordChannelAffinity 记录渠道亲和性绑定。
-// 在请求成功后调用，将当前请求绑定的渠道 ID 写入缓存，
-// 使得后续相同亲和值的请求能路由到同一渠道。
-// 如果启用了 SwitchOnSuccess，使用实际成功的渠道 ID 而非初始选择的。
-func RecordChannelAffinity(c *gin.Context, channelID int) {
-	if channelID <= 0 {
+// RecordRoutingCandidateAffinity 记录最终明确成功的候选级亲和绑定。
+// SwitchOnSuccess 关闭时，已有绑定不会被降级成功候选覆盖；首次无绑定请求仍会建立绑定。
+func RecordRoutingCandidateAffinity(c *gin.Context, candidate *model.RoutingCandidate) {
+	if candidate == nil || !candidate.CandidateKey().Valid() {
 		return
 	}
 	setting := operation_setting.GetChannelAffinitySetting()
 	if setting == nil || !setting.Enabled {
 		return
-	}
-	if setting.SwitchOnSuccess && c != nil {
-		if successChannelID := c.GetInt("channel_id"); successChannelID > 0 {
-			channelID = successChannelID
-		}
 	}
 	cacheKey, cacheKeySuffix, ttlSeconds, ok := getChannelAffinityContext(c)
 	if !ok {
@@ -1098,13 +1251,24 @@ func RecordChannelAffinity(c *gin.Context, channelID int) {
 	if key == "" {
 		key = cacheKey
 	}
-	binding := channelAffinityBinding{
-		ChannelID:     channelID,
-		LastSuccessAt: common.GetTimestamp(),
+	if !setting.SwitchOnSuccess {
+		if existing, found, err := cache.Get(key); err == nil && found && existing.CandidateKey().Valid() && existing.CandidateKey() != candidate.CandidateKey() {
+			return
+		}
 	}
+	binding := newChannelAffinityBinding(candidate, common.GetTimestamp())
 	if err := cache.SetWithTTL(key, binding, time.Duration(ttlSeconds)*time.Second); err != nil {
 		common.SysError(fmt.Sprintf("channel affinity cache set failed: key=%s, err=%v", cacheKey, err))
 	}
+}
+
+// RecordChannelAffinity 保留给尚未迁移的内部调用与测试。
+// 它只能表达普通单 Key 渠道；生产 Relay 成功路径必须调用候选级接口。
+func RecordChannelAffinity(c *gin.Context, channelID int) {
+	RecordRoutingCandidateAffinity(c, &model.RoutingCandidate{
+		ChannelID: channelID,
+		Kind:      model.RoutingCredentialKindSingleKey,
+	})
 }
 
 // ChannelAffinityUsageCacheStats 表示渠道亲和性使用缓存的统计信息。

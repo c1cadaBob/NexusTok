@@ -286,6 +286,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	}
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
+	common.SetContextKey(c, constant.ContextKeyUpstreamCompleted, false)
 
 	// 重试循环。
 	//
@@ -296,12 +297,19 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	retryLimit := relayRetryLimit()
 	for ; retryParam.GetRetry() <= retryLimit; retryParam.IncreaseRetry() {
 		relayInfo.RetryIndex = retryParam.GetRetry()
+		common.SetContextKey(c, constant.ContextKeyUpstreamCompleted, false)
 
 		// 选择渠道
 		channel, channelErr := getChannel(c, relayInfo, retryParam)
 		if channelErr != nil {
 			logger.LogError(c, channelErr.Error())
-			newAPIError = channelErr
+			// 候选耗尽是选路终止原因，不应覆盖已经返回给本次请求的明确上游错误；
+			// 否则用户只能看到泛化的“无候选”，丢失真实的 503/429/超时诊断。
+			if relayInfo.LastError != nil {
+				newAPIError = relayInfo.LastError
+			} else {
+				newAPIError = channelErr
+			}
 			break
 		}
 
@@ -337,6 +345,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		// 请求成功，退出重试循环
 		if newAPIError == nil {
+			markRelayUpstreamCompleted(c, relayInfo)
 			service.MarkSelectedChannelAccountRequestSuccess(c)
 			// 释放选中的账号
 			service.ReleaseSelectedChannelAccount(c)
@@ -388,6 +397,20 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			perfmetrics.RecordRelaySample(relayInfo, false, 0)
 		})
 	}
+}
+
+// markRelayUpstreamCompleted 将最终一次 handler 的完整结束状态写入请求上下文。
+// 非流式 handler 返回 nil 即代表上游响应已完整解析；流式请求必须额外满足明确的
+// done/eof/handler_stop 且没有软错误，HTTP 状态码不参与该判定。
+func markRelayUpstreamCompleted(c *gin.Context, relayInfo *relaycommon.RelayInfo) {
+	if c == nil || relayInfo == nil {
+		return
+	}
+	upstreamCompleted := !relayInfo.IsStream
+	if relayInfo.IsStream {
+		upstreamCompleted = relayInfo.StreamStatus.IsUpstreamCompleted()
+	}
+	common.SetContextKey(c, constant.ContextKeyUpstreamCompleted, upstreamCompleted)
 }
 
 var upgrader = websocket.Upgrader{
@@ -650,6 +673,14 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 				info.InitChannelMeta(c)
 				return selectedChannel, nil
 			}
+		}
+
+		if len(service.GetExcludedRoutingCandidateKeys(c)) > 0 {
+			return nil, types.NewError(
+				fmt.Errorf("分组 %s 下模型 %s 的剩余密钥级候选不存在（retry）", selectGroup, info.OriginModelName),
+				types.ErrorCodeGetChannelFailed,
+				types.ErrOptionWithSkipRetry(),
+			)
 		}
 
 		channel, selectGroup, err := service.CacheGetRandomSatisfiedChannel(retryParam)

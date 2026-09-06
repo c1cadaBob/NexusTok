@@ -138,6 +138,13 @@ func (s *StreamStatus) IsNormalEnd() bool {
 		s.EndReason == StreamEndReasonHandlerStop
 }
 
+// IsUpstreamCompleted 判断流是否收到明确完整结束信号且处理过程没有软错误。
+// done、正常 EOF 与 handler 主动完成都代表上游生命周期已经结束；timeout、
+// scanner_error、panic、ping_fail 和未完成的 client_gone 均返回 false。
+func (s *StreamStatus) IsUpstreamCompleted() bool {
+	return s != nil && s.IsNormalEnd() && !s.HasErrors()
+}
+
 // IsClientGone 判断流是否因为下游请求上下文被取消而中断。
 //
 // 该判断只认明确的 client_gone 结束原因，不根据错误文本猜测，避免把上游
