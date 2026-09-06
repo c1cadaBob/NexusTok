@@ -280,7 +280,7 @@ docker compose logs --tail=200 nexustok
 
 - 旧机和新机的备份文件 SHA-256 一致；
 - 目标数据库表结构、关键记录数和抽样内容通过校验；
-- /api/status 返回成功，管理员登录和实际 API 请求均正常；
+- /api/status 返回成功；管理员登录、渠道调用和实际上游请求还需由业务人员完成最终验收；
 - 新机日志无持续数据库、Redis、权限或迁移错误；
 - 回滚备份、配置快照和本手册已归档；
 - 确认旧机停止写入后，才允许下线旧机或删除旧备份。
@@ -297,7 +297,9 @@ docker compose logs --tail=200 nexustok
    - nexustok-data.tgz: b63c3f4ed7ba5c08727cd8c3f2466f4153e02c4c00681009e28316c6f5595f32
 
 5. 新服务器 SSH 端口为 12276；已完成备份上传、SHA-256 复核、PostgreSQL 重建与恢复，以及 /data 归档恢复。
-6. 新机 nexustok 容器已启动并报告 healthy，外部 http://38.76.219.101:3030/api/status 返回 HTTP 200；恢复后 PostgreSQL 仍为 39 张表，关键记录数与旧机一致：users=1、channels=25、tokens=3、logs=22447、options=32、setups=1。
+6. 新机 nexustok 容器已启动并报告 healthy，外部 http://38.76.219.101:3030/api/status 返回 HTTP 200；恢复后 PostgreSQL 仍为 39 张表，关键记录数与旧机备份时一致：users=1、channels=25、tokens=3、logs=22447、options=32、setups=1。应用启动后的健康检查又产生了 1 条日志，当前 logs 为 22448，属于正常运行增量。
 7. 新机恢复前快照保留在 /root/nexustok-pre-migration-20260906-054245/，可按第 8 节回滚。
 
 本次未删除旧机备份、Docker 卷或原始数据。浏览器 MCP 因当前环境没有运行 127.0.0.1:9222 Chrome 实例而无法调用；已使用 SSH、Docker、PostgreSQL 和外部 HTTP 请求完成等价验证。
+
+数据迁移本身已完成；管理员登录、渠道调用和上游 API 成功率属于业务验收，应在新机上使用实际账号和测试渠道再确认。
