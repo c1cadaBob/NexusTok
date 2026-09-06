@@ -136,7 +136,8 @@ sha256sum /root/nexustok.sqlite3
 Redis 通常是缓存，不应代替数据库迁移。只有确认其中包含必须保留的队列/会话时才迁移：
 
 ~~~bash
-redis-cli -h 127.0.0.1 -p 6379 -a "$REDIS_PASSWORD" --rdb /root/redis.rdb
+export REDISCLI_AUTH="$REDIS_PASSWORD"
+redis-cli -h 127.0.0.1 -p 6379 --rdb /root/redis.rdb
 sha256sum /root/redis.rdb
 ~~~
 
@@ -159,11 +160,11 @@ sha256sum /root/nexustok-data.tgz /root/nexustok-logs.tgz 2>/dev/null || true
 在运维机执行，使用 rsync 的校验模式和临时文件：
 
 ~~~bash
-rsync -avP --checksum --partial --inplace \
+rsync -avP --checksum --partial \
   -e "ssh -p $OLD_SSH_PORT" \
   root@$OLD_HOST:/root/nexustok-*.dump "$BACKUP_DIR/"
 
-rsync -avP --checksum --partial --inplace \
+rsync -avP --checksum --partial \
   -e "ssh -p $OLD_SSH_PORT" \
   root@$OLD_HOST:/root/nexustok-data.tgz "$BACKUP_DIR/"
 
@@ -173,7 +174,7 @@ sha256sum "$BACKUP_DIR"/*
 更稳妥的做法是先从旧机下载到运维机，再上传新机，避免旧机直接向新机暴露 SSH。传输完成后再执行：
 
 ~~~bash
-rsync -avP --checksum --partial --inplace \
+rsync -avP --checksum --partial \
   -e "ssh -p $NEW_SSH_PORT" \
   "$BACKUP_DIR/" root@$NEW_HOST:/root/nexustok-migration/
 ~~~
@@ -271,4 +272,3 @@ docker compose logs --tail=200 nexustok
 - 新机日志无持续数据库、Redis、权限或迁移错误；
 - 回滚备份、配置快照和本手册已归档；
 - 确认旧机停止写入后，才允许下线旧机或删除旧备份。
-
