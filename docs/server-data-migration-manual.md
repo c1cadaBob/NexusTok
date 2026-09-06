@@ -14,6 +14,8 @@
 
 旧机与新机当前暴露的应用标识不同，不能未经确认直接复制数据库数据目录。旧机实际 NexusTok 容器为 nexustok，使用 nexustok-postgres 的 PostgreSQL 15 数据库（39 张业务表），并挂载 /opt/nexustok/data 到容器 /data；旧机同时存在 new-api 及另一组 PostgreSQL/Redis 容器，这些不属于本次 NexusTok 迁移范围。
 
+本次旧机核对还发现 /opt/nexustok/data/nexustok.db 虽然包含 39 张 SQLite 表，但运行中的 NexusTok 容器明确通过 SQL_DSN 连接 PostgreSQL，且 PostgreSQL 与 SQLite 的关键记录数不同（例如 channels 为 25/23、logs 为 22447/3874）。因此 PostgreSQL 逻辑备份是本次业务数据的权威来源，SQLite 只作为 /data 文件归档保留，不能在新机覆盖 PostgreSQL。
+
 ## 2. 前置条件
 
 在新机完成以下准备：
@@ -120,9 +122,9 @@ sha256sum /root/nexustok-*.sql | tail -1
 
 执行后按提示输入密码；不要使用 -p密码。
 
-### 4.5 SQLite
+### 4.5 SQLite（仅在清单确认应用确实使用 SQLite 时恢复）
 
-SQLite 必须先停止写入，再使用一致性备份：
+SQLite 必须先停止写入，再使用一致性备份。若应用的 SQL_DSN 已指向 PostgreSQL，不要将此文件导入或覆盖目标数据库：
 
 ~~~bash
 sqlite3 /实际清单中的路径/nexustok.db ".backup '/root/nexustok.sqlite3'"
