@@ -12,7 +12,7 @@
 | HTTP 应用 | 80 为 Caddy 测试页，3000 为 New API | 3030 为 NexusTok，/api/status 返回 200 |
 | 可执行迁移 | 暂不可执行，缺少旧机认证 | 暂不可执行，SSH 服务/端口需先开放 |
 
-旧机与新机当前暴露的应用标识不同，不能未经确认直接复制数据库数据目录。必须先确认旧机实际数据库类型、数据库名、Redis 是否启用，以及旧机应用是否确实承载需要迁移的 NexusTok 数据。
+旧机与新机当前暴露的应用标识不同，不能未经确认直接复制数据库数据目录。旧机实际 NexusTok 容器为 nexustok，使用 nexustok-postgres 的 PostgreSQL 15 数据库（39 张业务表），并挂载 /opt/nexustok/data 到容器 /data；旧机同时存在 new-api 及另一组 PostgreSQL/Redis 容器，这些不属于本次 NexusTok 迁移范围。
 
 ## 2. 前置条件
 
@@ -157,7 +157,7 @@ sha256sum /root/nexustok-data.tgz /root/nexustok-logs.tgz 2>/dev/null || true
 
 ## 5. 传输备份
 
-在运维机执行，使用 rsync 的校验模式和临时文件：
+在运维机执行，优先使用 rsync 的校验模式和临时文件：
 
 ~~~bash
 rsync -avP --checksum --partial \
@@ -168,6 +168,16 @@ rsync -avP --checksum --partial \
   -e "ssh -p $OLD_SSH_PORT" \
   root@$OLD_HOST:/root/nexustok-data.tgz "$BACKUP_DIR/"
 
+sha256sum "$BACKUP_DIR"/*
+~~~
+
+如果旧机没有安装 rsync，使用 SSH tar 流式传输，避免在远端安装额外软件：
+
+~~~bash
+mkdir -p "$BACKUP_DIR"
+ssh -p "$OLD_SSH_PORT" root@"$OLD_HOST" \
+  'tar -C /root/nexustok-migration-YYYYMMDD-HHMMSS -czf - .' \
+  | tar -xzf - -C "$BACKUP_DIR"
 sha256sum "$BACKUP_DIR"/*
 ~~~
 
