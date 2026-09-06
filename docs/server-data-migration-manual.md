@@ -34,7 +34,7 @@ ss -lntp | grep -E ':(22|2222|22022)\b'
 ufw allow 22/tcp 2>/dev/null || true
 ~~~
 
-新机若 SSH 使用非 22 端口，将下文的 NEW_SSH_PORT 替换为实际端口。
+新机若 SSH 使用非 22 端口，将下文的 NEW_SSH_PORT 替换为实际端口。本次新机实际 SSH 端口为 12276。
 
 ## 3. 只做一次的清单核对
 
@@ -64,7 +64,7 @@ find /opt /srv /data -maxdepth 3 -type f \
 export OLD_HOST=118.31.248.175
 export NEW_HOST=38.76.219.101
 export OLD_SSH_PORT=22
-export NEW_SSH_PORT=22
+export NEW_SSH_PORT=12276
 export BACKUP_DIR=/var/backups/nexustok-$(date +%Y%m%d-%H%M%S)
 mkdir -p "$BACKUP_DIR"
 chmod 700 "$BACKUP_DIR"
@@ -296,8 +296,8 @@ docker compose logs --tail=200 nexustok
    - nexustok.dump: b2206fdc3e5c95ef07d0330223730503d6b7da00f770c6fed6a804dd819c55c2
    - nexustok-data.tgz: b63c3f4ed7ba5c08727cd8c3f2466f4153e02c4c00681009e28316c6f5595f32
 
-尚未执行的步骤：
+5. 新服务器 SSH 端口为 12276；已完成备份上传、SHA-256 复核、PostgreSQL 重建与恢复，以及 /data 归档恢复。
+6. 新机 nexustok 容器已启动并报告 healthy，外部 http://38.76.219.101:3030/api/status 返回 HTTP 200；恢复后 PostgreSQL 仍为 39 张表，关键记录数与旧机一致：users=1、channels=25、tokens=3、logs=22447、options=32、setups=1。
+7. 新机恢复前快照保留在 /root/nexustok-pre-migration-20260906-054245/，可按第 8 节回滚。
 
-- 新服务器 SSH 连接仍返回 Connection refused，因此没有上传、覆盖或恢复任何新机数据。
-- 未删除旧机备份、Docker 卷或原始数据。
-- 新机 SSH 恢复后，应从上述已校验备份继续执行第 5 节和第 6 节，不需要重新扫描旧机文件系统。
+本次未删除旧机备份、Docker 卷或原始数据。浏览器 MCP 因当前环境没有运行 127.0.0.1:9222 Chrome 实例而无法调用；已使用 SSH、Docker、PostgreSQL 和外部 HTTP 请求完成等价验证。
