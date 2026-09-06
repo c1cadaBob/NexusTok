@@ -284,3 +284,20 @@ docker compose logs --tail=200 nexustok
 - 新机日志无持续数据库、Redis、权限或迁移错误；
 - 回滚备份、配置快照和本手册已归档；
 - 确认旧机停止写入后，才允许下线旧机或删除旧备份。
+
+## 附录 A：本次已执行操作记录
+
+本次已在旧服务器执行并完成：
+
+1. 使用旧机 root 账户登录；确认实际密码字面值为 BBh@20050305，消息中的反斜杠为转义符。
+2. 确认 nexustok 容器使用 nexustok-postgres 的 PostgreSQL 15，宿主端口映射为 3008 -> 3030。
+3. 短暂停止 nexustok，生成 PostgreSQL 自定义格式备份和 /opt/nexustok/data 压缩归档，随后重新启动 nexustok。
+4. 备份目录为 /root/nexustok-migration-20260906-132033；文件已下载到运维机 /var/backups/nexustok-20260906-132033/，并完成 SHA-256 比对：
+   - nexustok.dump: b2206fdc3e5c95ef07d0330223730503d6b7da00f770c6fed6a804dd819c55c2
+   - nexustok-data.tgz: b63c3f4ed7ba5c08727cd8c3f2466f4153e02c4c00681009e28316c6f5595f32
+
+尚未执行的步骤：
+
+- 新服务器 SSH 连接仍返回 Connection refused，因此没有上传、覆盖或恢复任何新机数据。
+- 未删除旧机备份、Docker 卷或原始数据。
+- 新机 SSH 恢复后，应从上述已校验备份继续执行第 5 节和第 6 节，不需要重新扫描旧机文件系统。
