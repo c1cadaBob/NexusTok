@@ -11,6 +11,7 @@ import (
 	"github.com/c1cada/NexusTok/model"
 	"github.com/c1cada/NexusTok/pkg/cachex"
 	relaycommon "github.com/c1cada/NexusTok/relay/common"
+	"github.com/c1cada/NexusTok/setting/operation_setting"
 	"github.com/samber/hot"
 )
 
@@ -68,11 +69,24 @@ func getRoutingTTFTHealthCache() *cachex.HybridCache[RoutingCandidateTTFTState] 
 }
 
 // routingTTFTConfig 读取 TTFT 动态降级参数。
-// 使用环境变量是为了让阈值和冷却时间可以在不改数据库结构的情况下按部署调整。
+// 系统 option 是主来源；旧环境变量仅在配置仍为默认值时作为兼容 fallback，
+// 这样历史部署可以继续通过环境变量覆盖默认行为，而管理员保存后的自定义值优先。
 func routingTTFTConfig() (thresholdMs int64, cooldown time.Duration, minSamples int) {
-	thresholdMs = int64(common.GetEnvOrDefault(routingTTFTThresholdEnv, routingTTFTThresholdDefaultMs))
-	cooldownSeconds := common.GetEnvOrDefault(routingTTFTCooldownEnv, routingTTFTCooldownDefaultSeconds)
-	minSamples = common.GetEnvOrDefault(routingTTFTMinSamplesEnv, routingTTFTMinSamplesDefault)
+	setting := operation_setting.GetRoutingTTFTSetting()
+	thresholdValue := setting.ThresholdMs
+	cooldownSeconds := setting.CooldownSeconds
+	minSamplesValue := setting.MinSamples
+	if thresholdValue == routingTTFTThresholdDefaultMs {
+		thresholdValue = common.GetEnvOrDefault(routingTTFTThresholdEnv, thresholdValue)
+	}
+	if cooldownSeconds == routingTTFTCooldownDefaultSeconds {
+		cooldownSeconds = common.GetEnvOrDefault(routingTTFTCooldownEnv, cooldownSeconds)
+	}
+	if minSamplesValue == routingTTFTMinSamplesDefault {
+		minSamplesValue = common.GetEnvOrDefault(routingTTFTMinSamplesEnv, minSamplesValue)
+	}
+	thresholdMs = int64(thresholdValue)
+	minSamples = minSamplesValue
 	if thresholdMs <= 0 {
 		thresholdMs = routingTTFTThresholdDefaultMs
 	}
@@ -127,6 +141,9 @@ func getRoutingCandidateTTFTState(group, modelName string, candidate *model.Rout
 
 // IsRoutingCandidateTTFTHealthy 判断候选是否处于慢首包冷却期。
 func IsRoutingCandidateTTFTHealthy(group, modelName string, candidate *model.RoutingCandidate) bool {
+	if !operation_setting.GetRoutingTTFTSetting().Enabled {
+		return true
+	}
 	state := getRoutingCandidateTTFTState(group, modelName, candidate)
 	return state.CooldownUntil <= time.Now().Unix()
 }

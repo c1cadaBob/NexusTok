@@ -82,6 +82,11 @@ const defaultModelSettings: ModelSettings = {
   'channel_affinity_setting.default_ttl_seconds': 3600,
   'channel_affinity_setting.max_request_interval_seconds': 60,
   'channel_affinity_setting.rules': '[]',
+  'routing_ttft_setting.enabled': true,
+  'routing_ttft_setting.apply_to_affinity': true,
+  'routing_ttft_setting.threshold_ms': 800,
+  'routing_ttft_setting.cooldown_seconds': 90,
+  'routing_ttft_setting.min_samples': 2,
   'model_deployment.ionet.api_key': '',
   'model_deployment.ionet.enabled': false,
 }

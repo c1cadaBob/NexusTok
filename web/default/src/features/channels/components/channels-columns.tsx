@@ -236,16 +236,6 @@ function PriorityCell({ channel }: { channel: Channel }) {
   // Regular channel row - editable
   return (
     <div className='flex min-w-0 flex-col items-start gap-1'>
-      {channel.ability_priority != null && channel.ability_model && (
-        <StatusBadge
-          label={`${channel.ability_model}: ${channel.ability_priority}`}
-          size='sm'
-          variant='neutral'
-          copyable={false}
-          title={`${t('Effective model priority')} · ${channel.ability_group || t('All groups')}`}
-          className='max-w-full font-mono'
-        />
-      )}
       <NumericSpinnerInput
         value={priority ?? 0}
         onChange={(value) => {
@@ -304,16 +294,6 @@ function WeightCell({ channel }: { channel: Channel }) {
   // Regular channel row - editable
   return (
     <div className='flex min-w-0 flex-col items-start gap-1'>
-      {channel.ability_weight != null && channel.ability_model && (
-        <StatusBadge
-          label={`${channel.ability_model}: ${channel.ability_weight}`}
-          size='sm'
-          variant='neutral'
-          copyable={false}
-          title={`${t('Effective model weight')} · ${channel.ability_group || t('All groups')}`}
-          className='max-w-full font-mono'
-        />
-      )}
       <NumericSpinnerInput
         value={weight ?? 0}
         onChange={(value) => {

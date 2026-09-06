@@ -357,6 +357,11 @@ export type ModelSettings = {
   'channel_affinity_setting.default_ttl_seconds': number
   'channel_affinity_setting.max_request_interval_seconds': number
   'channel_affinity_setting.rules': string
+  'routing_ttft_setting.enabled': boolean
+  'routing_ttft_setting.apply_to_affinity': boolean
+  'routing_ttft_setting.threshold_ms': number
+  'routing_ttft_setting.cooldown_seconds': number
+  'routing_ttft_setting.min_samples': number
   'model_deployment.ionet.api_key': string
   'model_deployment.ionet.enabled': boolean
 }

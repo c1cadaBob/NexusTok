@@ -6118,6 +6118,20 @@
     "Zero retention": "零数据保留",
     "Zhipu": "智谱",
     "Zhipu V4": "智谱 V4",
-    "Zoom": "缩放"
+    "Zoom": "缩放",
+    "A candidate enters cooling after the configured minimum number of samples reaches the latency threshold. Cooling is automatically removed after healthy samples.": "当样本数达到配置的最小值且延迟达到阈值后，候选会进入冷却；在后续样本恢复健康后会自动解除冷却。",
+    "Also filter cooled candidates during channel affinity hits.": "在渠道亲和命中时也过滤处于冷却的候选。",
+    "Apply TTFT cooling to key switching": "将 TTFT 冷却应用到切换密钥",
+    "Candidate first-token latency cooling": "候选首包延迟冷却",
+    "Configure channel affinity and candidate first-token latency protection.": "配置渠道亲和性和候选首包延迟保护。",
+    "Cooling duration (seconds)": "冷却时长（秒）",
+    "Enable TTFT protection": "启用 TTFT 保护",
+    "Key Switching": "密钥切换",
+    "Keep slow candidates out of normal routing during cooling.": "在冷却期间将较慢候选排除在常规路由之外。",
+    "Minimum samples": "最小样本数",
+    "Reuse the last successful key when the request matches an affinity rule.": "当请求命中亲和规则时，复用上一次成功的密钥。",
+    "Save TTFT settings": "保存 TTFT 设置",
+    "Temporarily avoid candidates with repeated slow first-token latency while keeping a fallback available.": "当候选连续出现较慢首包延迟时临时避开，同时保留可回退的候选。",
+    "TTFT threshold (ms)": "TTFT 阈值（毫秒）"
   }
 }

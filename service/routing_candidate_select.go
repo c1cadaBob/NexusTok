@@ -13,6 +13,7 @@ import (
 	"github.com/c1cada/NexusTok/logger"
 	"github.com/c1cada/NexusTok/model"
 	"github.com/c1cada/NexusTok/setting"
+	"github.com/c1cada/NexusTok/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 )
 
@@ -210,7 +211,8 @@ func findAffinityRoutingCandidateInGroup(param *RetryParam, usingGroup string, b
 	if !IsChannelRoutingHealthy(usingGroup, param.ModelName, matched.ChannelID) {
 		return nil, "channel_health_cooldown", nil
 	}
-	if !IsRoutingCandidateTTFTHealthy(usingGroup, param.ModelName, matched) {
+	if operation_setting.GetRoutingTTFTSetting().ApplyToAffinity &&
+		!IsRoutingCandidateTTFTHealthy(usingGroup, param.ModelName, matched) {
 		return nil, "candidate_ttft_cooldown", nil
 	}
 	selected := matched.Clone()

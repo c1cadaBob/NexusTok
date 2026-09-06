@@ -6117,7 +6117,21 @@
     "Your Turnstile site key": "あなたのTurnstileサイトキー",
     "Zero retention": "データ保持なし",
     "Zhipu": "Zhipu",
-    "Zhipu V4": "Zhipu V 4",
-    "Zoom": "ズーム"
+    "Zhipu V4": "Zhipu V4",
+    "Zoom": "ズーム",
+    "A candidate enters cooling after the configured minimum number of samples reaches the latency threshold. Cooling is automatically removed after healthy samples.": "候補は、設定した最小サンプル数に達したうえで遅延しきい値を満たすとクールダウンに入ります。健全なサンプルが続くと自動的に解除されます。",
+    "Also filter cooled candidates during channel affinity hits.": "チャネルアフィニティ一致時にもクールダウン中の候補を除外します。",
+    "Apply TTFT cooling to key switching": "TTFT クールダウンをキースイッチングに適用",
+    "Candidate first-token latency cooling": "候補の先頭トークン遅延クールダウン",
+    "Configure channel affinity and candidate first-token latency protection.": "チャネルアフィニティと候補の先頭トークン遅延保護を設定します。",
+    "Cooling duration (seconds)": "クールダウン時間（秒）",
+    "Enable TTFT protection": "TTFT 保護を有効化",
+    "Key Switching": "キースイッチング",
+    "Keep slow candidates out of normal routing during cooling.": "クールダウン中は遅い候補を通常ルーティングから除外します。",
+    "Minimum samples": "最小サンプル数",
+    "Reuse the last successful key when the request matches an affinity rule.": "リクエストがアフィニティルールに一致したときは、最後に成功したキーを再利用します。",
+    "Save TTFT settings": "TTFT 設定を保存",
+    "Temporarily avoid candidates with repeated slow first-token latency while keeping a fallback available.": "先頭トークン遅延が繰り返し遅い候補を一時的に避けつつ、フォールバック候補は残します。",
+    "TTFT threshold (ms)": "TTFT しきい値（ms）"
   }
 }

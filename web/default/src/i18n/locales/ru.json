@@ -6118,6 +6118,20 @@
     "Zero retention": "Без хранения данных",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Масштаб",
+    "A candidate enters cooling after the configured minimum number of samples reaches the latency threshold. Cooling is automatically removed after healthy samples.": "Кандидат переходит в охлаждение после достижения порога задержки при заданном минимальном числе сэмплов. Охлаждение автоматически снимается после хороших сэмплов.",
+    "Also filter cooled candidates during channel affinity hits.": "Также фильтровать охлаждаемые кандидаты при срабатывании привязки канала.",
+    "Apply TTFT cooling to key switching": "Применять охлаждение TTFT к переключению ключей",
+    "Candidate first-token latency cooling": "Охлаждение кандидатов по задержке первого токена",
+    "Configure channel affinity and candidate first-token latency protection.": "Настройте привязку канала и защиту кандидатов от задержки первого токена.",
+    "Cooling duration (seconds)": "Длительность охлаждения (секунды)",
+    "Enable TTFT protection": "Включить защиту TTFT",
+    "Key Switching": "Переключение ключей",
+    "Keep slow candidates out of normal routing during cooling.": "Не допускать медленных кандидатов в обычную маршрутизацию во время охлаждения.",
+    "Minimum samples": "Минимальное число сэмплов",
+    "Reuse the last successful key when the request matches an affinity rule.": "Повторно используйте последний успешно сработавший ключ, когда запрос соответствует правилу привязки.",
+    "Save TTFT settings": "Сохранить настройки TTFT",
+    "Temporarily avoid candidates with repeated slow first-token latency while keeping a fallback available.": "Временно избегайте кандидатов с повторяющейся медленной задержкой первого токена, сохраняя доступный запасной вариант.",
+    "TTFT threshold (ms)": "Порог TTFT (мс)"
   }
 }

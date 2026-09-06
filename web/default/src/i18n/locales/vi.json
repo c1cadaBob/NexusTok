@@ -6118,6 +6118,20 @@
     "Zero retention": "Không lưu dữ liệu",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Thu phóng",
+    "A candidate enters cooling after the configured minimum number of samples reaches the latency threshold. Cooling is automatically removed after healthy samples.": "Một ứng viên sẽ vào trạng thái làm mát sau khi số mẫu tối thiểu được cấu hình đạt ngưỡng độ trễ. Trạng thái này sẽ tự động được gỡ bỏ sau khi có các mẫu khỏe.",
+    "Also filter cooled candidates during channel affinity hits.": "Cũng lọc các ứng viên đang làm mát khi khớp độ bám kênh.",
+    "Apply TTFT cooling to key switching": "Áp dụng làm mát TTFT cho chuyển khóa",
+    "Candidate first-token latency cooling": "Làm mát độ trễ token đầu tiên của ứng viên",
+    "Configure channel affinity and candidate first-token latency protection.": "Cấu hình độ bám kênh và bảo vệ độ trễ token đầu tiên của ứng viên.",
+    "Cooling duration (seconds)": "Thời gian làm mát (giây)",
+    "Enable TTFT protection": "Bật bảo vệ TTFT",
+    "Key Switching": "Chuyển khóa",
+    "Keep slow candidates out of normal routing during cooling.": "Loại các ứng viên chậm ra khỏi định tuyến bình thường trong thời gian làm mát.",
+    "Minimum samples": "Số mẫu tối thiểu",
+    "Reuse the last successful key when the request matches an affinity rule.": "Tái sử dụng khóa thành công gần nhất khi yêu cầu khớp với quy tắc bám dính.",
+    "Save TTFT settings": "Lưu cài đặt TTFT",
+    "Temporarily avoid candidates with repeated slow first-token latency while keeping a fallback available.": "Tạm thời tránh các ứng viên có độ trễ token đầu tiên chậm lặp lại, đồng thời vẫn giữ phương án dự phòng.",
+    "TTFT threshold (ms)": "Ngưỡng TTFT (ms)"
   }
 }

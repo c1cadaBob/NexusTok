@@ -3,5 +3,19 @@
   "new-api": "new-api",
   "Refresh Token": "Refresh Token",
   "Session/Cookie": "Session/Cookie",
-  "sub2api": "sub2api"
+  "sub2api": "sub2api",
+  "A candidate enters cooling after the configured minimum number of samples reaches the latency threshold. Cooling is automatically removed after healthy samples.": "A candidate enters cooling after the configured minimum number of samples reaches the latency threshold. Cooling is automatically removed after healthy samples.",
+  "Also filter cooled candidates during channel affinity hits.": "Also filter cooled candidates during channel affinity hits.",
+  "Apply TTFT cooling to key switching": "Apply TTFT cooling to key switching",
+  "Candidate first-token latency cooling": "Candidate first-token latency cooling",
+  "Configure channel affinity and candidate first-token latency protection.": "Configure channel affinity and candidate first-token latency protection.",
+  "Cooling duration (seconds)": "Cooling duration (seconds)",
+  "Enable TTFT protection": "Enable TTFT protection",
+  "Key Switching": "Key Switching",
+  "Keep slow candidates out of normal routing during cooling.": "Keep slow candidates out of normal routing during cooling.",
+  "Minimum samples": "Minimum samples",
+  "Reuse the last successful key when the request matches an affinity rule.": "Reuse the last successful key when the request matches an affinity rule.",
+  "Save TTFT settings": "Save TTFT settings",
+  "Temporarily avoid candidates with repeated slow first-token latency while keeping a fallback available.": "Temporarily avoid candidates with repeated slow first-token latency while keeping a fallback available.",
+  "TTFT threshold (ms)": "TTFT threshold (ms)"
 }

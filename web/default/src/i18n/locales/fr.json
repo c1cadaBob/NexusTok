@@ -6118,6 +6118,20 @@
     "Zero retention": "Aucune rétention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "A candidate enters cooling after the configured minimum number of samples reaches the latency threshold. Cooling is automatically removed after healthy samples.": "Un candidat entre en refroidissement lorsque le nombre minimal d’échantillons configuré atteint le seuil de latence. Le refroidissement est automatiquement levé après des échantillons sains.",
+    "Also filter cooled candidates during channel affinity hits.": "Filtre également les candidats refroidis lors des correspondances d’affinité de canal.",
+    "Apply TTFT cooling to key switching": "Appliquer le refroidissement TTFT au changement de clé",
+    "Candidate first-token latency cooling": "Refroidissement de latence du premier token des candidats",
+    "Configure channel affinity and candidate first-token latency protection.": "Configurez l’affinité de canal et la protection contre la latence du premier token des candidats.",
+    "Cooling duration (seconds)": "Durée de refroidissement (secondes)",
+    "Enable TTFT protection": "Activer la protection TTFT",
+    "Key Switching": "Changement de clé",
+    "Keep slow candidates out of normal routing during cooling.": "Exclut les candidats lents du routage normal pendant le refroidissement.",
+    "Minimum samples": "Nombre minimal d’échantillons",
+    "Reuse the last successful key when the request matches an affinity rule.": "Réutilise la dernière clé ayant réussi lorsque la requête correspond à une règle d’affinité.",
+    "Save TTFT settings": "Enregistrer les paramètres TTFT",
+    "Temporarily avoid candidates with repeated slow first-token latency while keeping a fallback available.": "Évite temporairement les candidats présentant à plusieurs reprises une latence lente du premier token, tout en conservant un repli disponible.",
+    "TTFT threshold (ms)": "Seuil TTFT (ms)"
   }
 }
