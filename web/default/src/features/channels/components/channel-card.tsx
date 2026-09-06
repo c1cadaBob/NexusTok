@@ -178,8 +178,8 @@ function ChannelCardComponent({
           </div>
 
           <div className='grid shrink-0 grid-cols-[auto_auto] items-center gap-x-3 gap-y-1'>
-            <span className={labelClass}>{t('Channel Priority')}</span>
-            <span className={labelClass}>{t('Channel Weight')}</span>
+            <span className={labelClass}>{t('Routing Priority')}</span>
+            <span className={labelClass}>{t('Routing Weight')}</span>
             <div className='flex justify-start'>{priorityCell}</div>
             <div className='flex justify-start'>{weightCell}</div>
             <span className={cn('mt-2', labelClass)}>{t('Response')}</span>

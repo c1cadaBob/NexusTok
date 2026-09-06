@@ -6078,6 +6078,13 @@
     "Your Turnstile site key": "Khóa site Turnstile của bạn",
     "Zero retention": "Không lưu dữ liệu",
     "Zhipu": "Zhipu",
+    "All groups": "Tất cả nhóm",
+    "Channel default priority": "Độ ưu tiên mặc định của kênh",
+    "Channel default weight": "Trọng số mặc định của kênh",
+    "Effective model priority": "Độ ưu tiên model thực tế",
+    "Effective model weight": "Trọng số model thực tế",
+    "Routing Priority": "Độ ưu tiên định tuyến",
+    "Routing Weight": "Trọng số định tuyến",
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom"
   }

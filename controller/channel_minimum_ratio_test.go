@@ -16,8 +16,12 @@ type channelMinimumRatioListResponse struct {
 	Success bool `json:"success"`
 	Data    struct {
 		Items []struct {
-			ID           int      `json:"id"`
-			MinimumRatio *float64 `json:"minimum_ratio"`
+			ID              int      `json:"id"`
+			MinimumRatio    *float64 `json:"minimum_ratio"`
+			AbilityPriority *int64   `json:"ability_priority"`
+			AbilityWeight   *int     `json:"ability_weight"`
+			AbilityGroup    string   `json:"ability_group"`
+			AbilityModel    string   `json:"ability_model"`
 		} `json:"items"`
 		Total              int      `json:"total"`
 		MinimumRatioModels []string `json:"minimum_ratio_models"`
@@ -72,6 +76,11 @@ func TestGetAllChannelsSortsByMinimumRatioForSelectedModel(t *testing.T) {
 	createMinimumRatioListAccount(t, channelB.Id, 0.1, "claude-3-5-haiku")
 	createMinimumRatioListAccount(t, channelC.Id, 0.2, "gpt-*")
 	createMinimumRatioListAccountWithStatus(t, channelB.Id, common.ChannelStatusManuallyDisabled, 0.05, "gpt-5")
+	abilityPriority := int64(8)
+	require.NoError(t, db.Create(&model.Ability{
+		Group: "default", Model: "gpt-5", ChannelId: channelA.Id, Enabled: true,
+		Priority: &abilityPriority, Weight: 195,
+	}).Error)
 
 	var channelCount int64
 	require.NoError(t, db.Model(&model.Channel{}).Count(&channelCount).Error)
@@ -95,6 +104,10 @@ func TestGetAllChannelsSortsByMinimumRatioForSelectedModel(t *testing.T) {
 	require.Equal(t, channelA.Id, response.Data.Items[1].ID)
 	require.InDelta(t, 0.2, *response.Data.Items[0].MinimumRatio, 0.000001)
 	require.InDelta(t, 0.5, *response.Data.Items[1].MinimumRatio, 0.000001)
+	require.EqualValues(t, 8, *response.Data.Items[1].AbilityPriority)
+	require.Equal(t, 195, *response.Data.Items[1].AbilityWeight)
+	require.Equal(t, "default", response.Data.Items[1].AbilityGroup)
+	require.Equal(t, "gpt-5", response.Data.Items[1].AbilityModel)
 }
 
 func TestSearchChannelsReturnsMinimumRatioModels(t *testing.T) {

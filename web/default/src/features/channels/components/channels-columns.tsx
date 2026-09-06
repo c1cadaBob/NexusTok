@@ -235,13 +235,26 @@ function PriorityCell({ channel }: { channel: Channel }) {
 
   // Regular channel row - editable
   return (
-    <NumericSpinnerInput
-      value={priority ?? 0}
-      onChange={(value) => {
-        handleUpdateChannelField(channel.id, 'priority', value, queryClient)
-      }}
-      min={-999}
-    />
+    <div className='flex min-w-0 flex-col items-start gap-1'>
+      {channel.ability_priority != null && channel.ability_model && (
+        <StatusBadge
+          label={`${channel.ability_model}: ${channel.ability_priority}`}
+          size='sm'
+          variant='neutral'
+          copyable={false}
+          title={`${t('Effective model priority')} · ${channel.ability_group || t('All groups')}`}
+          className='max-w-full font-mono'
+        />
+      )}
+      <NumericSpinnerInput
+        value={priority ?? 0}
+        onChange={(value) => {
+          handleUpdateChannelField(channel.id, 'priority', value, queryClient)
+        }}
+        min={-999}
+        aria-label={t('Channel default priority')}
+      />
+    </div>
   )
 }
 
@@ -290,13 +303,26 @@ function WeightCell({ channel }: { channel: Channel }) {
 
   // Regular channel row - editable
   return (
-    <NumericSpinnerInput
-      value={weight ?? 0}
-      onChange={(value) => {
-        handleUpdateChannelField(channel.id, 'weight', value, queryClient)
-      }}
-      min={0}
-    />
+    <div className='flex min-w-0 flex-col items-start gap-1'>
+      {channel.ability_weight != null && channel.ability_model && (
+        <StatusBadge
+          label={`${channel.ability_model}: ${channel.ability_weight}`}
+          size='sm'
+          variant='neutral'
+          copyable={false}
+          title={`${t('Effective model weight')} · ${channel.ability_group || t('All groups')}`}
+          className='max-w-full font-mono'
+        />
+      )}
+      <NumericSpinnerInput
+        value={weight ?? 0}
+        onChange={(value) => {
+          handleUpdateChannelField(channel.id, 'weight', value, queryClient)
+        }}
+        min={0}
+        aria-label={t('Channel default weight')}
+      />
+    </div>
   )
 }
 
@@ -1113,11 +1139,11 @@ export function useChannelsColumns({
     // 优先级列
     {
       accessorKey: 'priority',
-      meta: { label: t('Channel Priority'), mobileHidden: true },
+      meta: { label: t('Routing Priority'), mobileHidden: true },
       header: ({ column }) => (
         <DataTableColumnHeader
           column={column}
-          title={t('Channel Priority')}
+          title={t('Routing Priority')}
         />
       ),
       cell: ({ row }) => <PriorityCell channel={row.original} />,
@@ -1127,8 +1153,8 @@ export function useChannelsColumns({
     // 权重列
     {
       accessorKey: 'weight',
-      meta: { label: t('Channel Weight'), mobileHidden: true },
-      header: t('Channel Weight'),
+      meta: { label: t('Routing Weight'), mobileHidden: true },
+      header: t('Routing Weight'),
       cell: ({ row }) => <WeightCell channel={row.original} />,
       size: 90,
       enableSorting: false,

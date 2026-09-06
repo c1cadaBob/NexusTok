@@ -6078,6 +6078,13 @@
     "Your Turnstile site key": "您的 Turnstile 站點密鑰",
     "Zero retention": "零數據保留",
     "Zhipu": "智譜",
+    "All groups": "全部群組",
+    "Channel default priority": "渠道預設優先級",
+    "Channel default weight": "渠道預設權重",
+    "Effective model priority": "實際模型級優先級",
+    "Effective model weight": "實際模型級權重",
+    "Routing Priority": "選路優先級",
+    "Routing Weight": "選路權重",
     "Zhipu V4": "智譜 V4",
     "Zoom": "縮放"
   }

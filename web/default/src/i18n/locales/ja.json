@@ -6078,6 +6078,13 @@
     "Your Turnstile site key": "あなたのTurnstileサイトキー",
     "Zero retention": "データ保持なし",
     "Zhipu": "Zhipu",
+    "All groups": "すべてのグループ",
+    "Channel default priority": "チャネルのデフォルト優先度",
+    "Channel default weight": "チャネルのデフォルト重み",
+    "Effective model priority": "実際のモデル優先度",
+    "Effective model weight": "実際のモデル重み",
+    "Routing Priority": "ルーティング優先度",
+    "Routing Weight": "ルーティング重み",
     "Zhipu V4": "Zhipu V 4",
     "Zoom": "ズーム"
   }

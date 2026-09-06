@@ -128,6 +128,7 @@ func GetAllChannels(c *gin.Context) {
 	enableTagMode, _ := strconv.ParseBool(c.Query("tag_mode"))
 	statusParam := c.Query("status")
 	minimumRatioModel := strings.TrimSpace(c.Query("minimum_ratio_model"))
+	abilityGroup := strings.TrimSpace(c.Query("group"))
 	// statusFilter: -1 all, 1 enabled, 0 disabled (include auto & manual)
 	statusFilter := parseStatusFilter(statusParam)
 	// type filter
@@ -218,6 +219,7 @@ func GetAllChannels(c *gin.Context) {
 		clearChannelInfo(datum)
 	}
 	model.AttachChannelAccountStats(channelData)
+	attachChannelAbilitySchedules(channelData, abilityGroup, minimumRatioModel)
 	if err := upstreamaccount.AttachChannelAssetDisplays(channelData); err != nil {
 		common.SysLog("failed to attach upstream asset displays: " + err.Error())
 	}
@@ -251,6 +253,12 @@ func GetAllChannels(c *gin.Context) {
 func attachChannelMinimumRatios(channels []*model.Channel, minimumRatioModel string) {
 	if err := upstreamaccount.AttachChannelMinimumRatiosForModel(channels, minimumRatioModel); err != nil {
 		common.SysLog("failed to attach channel minimum ratios: " + err.Error())
+	}
+}
+
+func attachChannelAbilitySchedules(channels []*model.Channel, group string, modelName string) {
+	if err := model.AttachChannelAbilitySchedules(channels, group, modelName); err != nil {
+		common.SysLog("failed to attach channel ability schedules: " + err.Error())
 	}
 }
 
@@ -473,6 +481,7 @@ func SearchChannels(c *gin.Context) {
 		clearChannelInfo(datum)
 	}
 	model.AttachChannelAccountStats(pagedData)
+	attachChannelAbilitySchedules(pagedData, group, minimumRatioModel)
 	if err := upstreamaccount.AttachChannelAssetDisplays(pagedData); err != nil {
 		common.SysLog("failed to attach upstream asset displays: " + err.Error())
 	}

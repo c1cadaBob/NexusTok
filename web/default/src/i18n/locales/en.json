@@ -6078,6 +6078,13 @@
     "Your Turnstile site key": "Your Turnstile site key",
     "Zero retention": "Zero retention",
     "Zhipu": "Zhipu",
+    "All groups": "All groups",
+    "Channel default priority": "Channel default priority",
+    "Channel default weight": "Channel default weight",
+    "Effective model priority": "Effective model priority",
+    "Effective model weight": "Effective model weight",
+    "Routing Priority": "Routing Priority",
+    "Routing Weight": "Routing Weight",
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom"
   }

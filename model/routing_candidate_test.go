@@ -51,6 +51,35 @@ func setupRoutingCandidateTestDB(t *testing.T, memoryCache bool) *gorm.DB {
 	return db
 }
 
+// TestAttachChannelAbilitySchedulesShowsActualModelWeights 验证后台展示使用模型级 Ability
+// 调度值，并在未指定分组时稳定选择每个渠道优先级、权重最高的启用记录。
+func TestAttachChannelAbilitySchedulesShowsActualModelWeights(t *testing.T) {
+	db := setupRoutingCandidateTestDB(t, false)
+	channels := []*Channel{{Id: 1}, {Id: 2}}
+	highPriority := int64(8)
+	lowPriority := int64(3)
+	require.NoError(t, db.Create(&[]Ability{
+		{Group: "default", Model: "gpt-5.5", ChannelId: 1, Enabled: true, Priority: &highPriority, Weight: 195},
+		{Group: "vip", Model: "gpt-5.5", ChannelId: 1, Enabled: true, Priority: &lowPriority, Weight: 250},
+		{Group: "default", Model: "gpt-5.5", ChannelId: 2, Enabled: true, Priority: &lowPriority, Weight: 194},
+		{Group: "default", Model: "gpt-5.5", ChannelId: 3, Enabled: false, Priority: &highPriority, Weight: 999},
+	}).Error)
+
+	require.NoError(t, AttachChannelAbilitySchedules(channels, "", "gpt-5.5"))
+	require.NotNil(t, channels[0].AbilityPriority)
+	require.EqualValues(t, 8, *channels[0].AbilityPriority)
+	require.Equal(t, 195, *channels[0].AbilityWeight)
+	require.Equal(t, "default", channels[0].AbilityGroup)
+	require.Equal(t, "gpt-5.5", channels[0].AbilityModel)
+	require.Equal(t, 194, *channels[1].AbilityWeight)
+
+	channels = []*Channel{{Id: 1}}
+	require.NoError(t, AttachChannelAbilitySchedules(channels, "vip", "gpt-5.5"))
+	require.EqualValues(t, 3, *channels[0].AbilityPriority)
+	require.Equal(t, 250, *channels[0].AbilityWeight)
+	require.Equal(t, "vip", channels[0].AbilityGroup)
+}
+
 func TestRoutingCandidatesGenerateCredentialKindsAndSchedules(t *testing.T) {
 	db := setupRoutingCandidateTestDB(t, true)
 	channels := []Channel{

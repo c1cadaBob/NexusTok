@@ -89,6 +89,58 @@ func GetAllEnableAbilities() []Ability {
 	return abilities
 }
 
+// AttachChannelAbilitySchedules 为渠道列表附加指定模型实际参与选路的 Ability 调度值。
+// 指定 group 时精确匹配；未指定时按 priority、weight 降序取每个渠道的最强启用能力。
+// 所有字段仅用于 API 展示，不写入 channels 表，也不改变统一候选缓存的调度结果。
+func AttachChannelAbilitySchedules(channels []*Channel, group string, modelName string) error {
+	modelName = strings.TrimSpace(modelName)
+	if len(channels) == 0 || modelName == "" {
+		return nil
+	}
+	channelByID := make(map[int]*Channel, len(channels))
+	channelIDs := make([]int, 0, len(channels))
+	for _, channel := range channels {
+		if channel == nil || channel.Id <= 0 {
+			continue
+		}
+		channelByID[channel.Id] = channel
+		channelIDs = append(channelIDs, channel.Id)
+	}
+	if len(channelIDs) == 0 {
+		return nil
+	}
+	query := DB.Where("enabled = ? AND model = ? AND channel_id IN ?", true, modelName, channelIDs)
+	if group = strings.TrimSpace(group); group != "" {
+		query = query.Where(commonGroupCol+" = ?", group)
+	}
+	var abilities []Ability
+	if err := query.Order("priority DESC").Order("weight DESC").Order(commonGroupCol + " ASC").Find(&abilities).Error; err != nil {
+		return err
+	}
+	attached := make(map[int]struct{}, len(abilities))
+	for i := range abilities {
+		ability := &abilities[i]
+		channel := channelByID[ability.ChannelId]
+		if channel == nil {
+			continue
+		}
+		if _, exists := attached[ability.ChannelId]; exists {
+			continue
+		}
+		priority := int64(0)
+		if ability.Priority != nil {
+			priority = *ability.Priority
+		}
+		weight := int(ability.Weight)
+		channel.AbilityPriority = &priority
+		channel.AbilityWeight = &weight
+		channel.AbilityGroup = ability.Group
+		channel.AbilityModel = ability.Model
+		attached[ability.ChannelId] = struct{}{}
+	}
+	return nil
+}
+
 // getPriority 获取指定分组和模型在第 retry 次重试时应使用的优先级值
 // 优先级按降序排列，retry=0 使用最高优先级，retry=1 使用次高优先级，以此类推
 // 当 retry 超过可用优先级数量时，使用最低优先级

@@ -72,6 +72,10 @@ type Channel struct {
 
 	ChannelAccountStats map[string]int64 `json:"channel_account_stats,omitempty" gorm:"-"` // 渠道账号统计
 	MinimumRatio        *float64         `json:"minimum_ratio,omitempty" gorm:"-"`         // 渠道内所有账号的最低换算倍率，仅用于列表展示与排序
+	AbilityPriority     *int64           `json:"ability_priority,omitempty" gorm:"-"`      // 所选模型实际参与路由的 Ability 优先级
+	AbilityWeight       *int             `json:"ability_weight,omitempty" gorm:"-"`        // 所选模型实际参与路由的 Ability 权重
+	AbilityGroup        string           `json:"ability_group,omitempty" gorm:"-"`         // Ability 对应分组
+	AbilityModel        string           `json:"ability_model,omitempty" gorm:"-"`         // Ability 对应模型
 
 	// 以下字段只在同步渠道 API 响应阶段填充，不写入数据库。
 	UpstreamBalanceUSD       *float64 `json:"upstream_balance_usd,omitempty" gorm:"-"`
