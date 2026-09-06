@@ -111,10 +111,16 @@ func AttachChannelAbilitySchedules(channels []*Channel, group string, modelName 
 	}
 	query := DB.Where("enabled = ? AND model = ? AND channel_id IN ?", true, modelName, channelIDs)
 	if group = strings.TrimSpace(group); group != "" {
-		query = query.Where(commonGroupCol+" = ?", group)
+		// group 是跨数据库保留字，交给 GORM 按当前方言引用，避免依赖
+		// InitDB 是否已提前初始化 commonGroupCol。
+		query = query.Where(clause.Eq{Column: clause.Column{Name: "group"}, Value: group})
 	}
 	var abilities []Ability
-	if err := query.Order("priority DESC").Order("weight DESC").Order(commonGroupCol + " ASC").Find(&abilities).Error; err != nil {
+	if err := query.
+		Order(clause.OrderByColumn{Column: clause.Column{Name: "priority"}, Desc: true}).
+		Order(clause.OrderByColumn{Column: clause.Column{Name: "weight"}, Desc: true}).
+		Order(clause.OrderByColumn{Column: clause.Column{Name: "group"}}).
+		Find(&abilities).Error; err != nil {
 		return err
 	}
 	attached := make(map[int]struct{}, len(abilities))
