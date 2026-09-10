@@ -6146,6 +6146,9 @@
     "Upstream authentication failed; check key validity and model permissions.": "Échec de l’authentification en amont ; vérifiez la validité de la clé et les permissions du modèle.",
     "Upstream gateway error or timeout; check the provider, proxy, and channel health.": "Erreur de passerelle ou délai d’attente en amont ; vérifiez le fournisseur, le proxy et l’état du canal.",
     "Upstream or channel error; check channel configuration and upstream response details.": "Erreur en amont ou du canal ; vérifiez la configuration du canal et les détails de la réponse en amont.",
-    "Upstream rate limit or quota limit was triggered; check provider quota and throttling.": "Limite de débit ou de quota en amont déclenchée ; vérifiez le quota fournisseur et le throttling."
+    "Upstream rate limit or quota limit was triggered; check provider quota and throttling.": "Limite de débit ou de quota en amont déclenchée ; vérifiez le quota fournisseur et le throttling.",
+    "Upstream Error Analysis": "Analyse de l'erreur en amont",
+    "Upstream Error Body": "Corps de l'erreur en amont",
+    "Upstream Error Classification": "Classification de l'erreur en amont"
   }
 }

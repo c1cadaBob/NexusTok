@@ -137,6 +137,10 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 		return
 	}
 	CloseResponseBodyGracefully(resp)
+	// 无论调用方是否要求把正文拼进用户错误，都保留一份经过脱敏和截断的
+	// 上游诊断元数据。这样生产链路可以继续向用户返回安全的包装错误，
+	// 同时使用记录和管理员详情仍能看到“Your request was blocked.”这类关键线索。
+	attachUpstreamErrorDiagnostics(newApiErr, resp.StatusCode, responseBody)
 	var errResponse dto.GeneralErrorResponse
 	buildErrWithBody := func(message string) error {
 		if message == "" {
@@ -174,6 +178,151 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 		newApiErr.Err = buildErrWithBody(newApiErr.Error())
 	}
 	return
+}
+
+const (
+	// upstreamErrorDiagnosticsMetadataKey 是 NexusTokError.Metadata 中的内部诊断命名空间。
+	// 保留嵌套结构可以兼容 OpenRouter 等上游已有的 metadata 字段。
+	upstreamErrorDiagnosticsMetadataKey = "nexustok_diagnostics"
+	upstreamErrorBodyMaxRunes           = 1024
+)
+
+// attachUpstreamErrorDiagnostics 将上游响应正文转换为可安全持久化的诊断信息。
+//
+// 正文可能包含 API Key、Cookie、Authorization 或 HTML 错误页，因此先统一脱敏，
+// 再限制长度；该信息只写入错误元数据，不改变对客户端返回的错误文案。
+func attachUpstreamErrorDiagnostics(err *types.NexusTokError, statusCode int, body []byte) {
+	if err == nil {
+		return
+	}
+	bodyText := strings.TrimSpace(string(body))
+	bodyText = common.MaskSensitiveInfo(bodyText)
+	if len([]rune(bodyText)) > upstreamErrorBodyMaxRunes {
+		bodyText = string([]rune(bodyText)[:upstreamErrorBodyMaxRunes]) + "..."
+	}
+	diagnostics := map[string]any{
+		"status_code": statusCode,
+		"body":        bodyText,
+		"classification": classifyUpstreamError(
+			statusCode,
+			bodyText,
+		),
+	}
+	diagnostics["analysis"] = analyzeUpstreamErrorDiagnostics(
+		diagnostics["classification"].(string),
+		statusCode,
+		bodyText,
+	)
+
+	metadata := map[string]any{}
+	if len(err.Metadata) > 0 {
+		_ = common.Unmarshal(err.Metadata, &metadata)
+	}
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	metadata[upstreamErrorDiagnosticsMetadataKey] = diagnostics
+	if encoded, marshalErr := common.Marshal(metadata); marshalErr == nil {
+		err.Metadata = encoded
+	}
+}
+
+// readUpstreamErrorDiagnostics 从统一错误元数据中读取上游诊断信息。
+func readUpstreamErrorDiagnostics(err *types.NexusTokError) map[string]any {
+	if err == nil || len(err.Metadata) == 0 {
+		return nil
+	}
+	var metadata map[string]any
+	if common.Unmarshal(err.Metadata, &metadata) != nil || metadata == nil {
+		return nil
+	}
+	diagnostics, ok := metadata[upstreamErrorDiagnosticsMetadataKey].(map[string]any)
+	if !ok {
+		return nil
+	}
+	return diagnostics
+}
+
+// upstreamErrorDiagnosticsValue 返回指定错误诊断字段的字符串值。
+func upstreamErrorDiagnosticsValue(err *types.NexusTokError, key string) string {
+	diagnostics := readUpstreamErrorDiagnostics(err)
+	if diagnostics == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(diagnostics[key]))
+}
+
+// UpstreamErrorDiagnosticsValue 返回可安全写入日志的上游诊断字段。
+// controller 层只通过该只读入口访问诊断元数据，避免依赖内部 JSON 结构。
+func UpstreamErrorDiagnosticsValue(err *types.NexusTokError, key string) string {
+	return upstreamErrorDiagnosticsValue(err, key)
+}
+
+// classifyUpstreamError 按状态码和正文将上游错误归类。
+//
+// 403 “Your request was blocked.”通常是 WAF、路径策略或请求形态拦截，
+// 不能直接当作密钥失效；只有明确 invalid key/unauthorized 才进入密钥禁用流程。
+func classifyUpstreamError(statusCode int, body string) string {
+	lower := strings.ToLower(strings.TrimSpace(body))
+	switch {
+	case statusCode == http.StatusUnauthorized:
+		return "invalid_key"
+	case statusCode == http.StatusForbidden &&
+		(strings.Contains(lower, "invalid") && strings.Contains(lower, "key") ||
+			strings.Contains(lower, "unauthorized") ||
+			strings.Contains(lower, "incorrect api key") ||
+			strings.Contains(lower, "invalid api token")):
+		return "invalid_key"
+	case statusCode == http.StatusForbidden &&
+		(strings.Contains(lower, "blocked") ||
+			strings.Contains(lower, "waf") ||
+			strings.Contains(lower, "firewall") ||
+			strings.Contains(lower, "request was blocked")):
+		return "request_blocked"
+	case statusCode == http.StatusForbidden &&
+		(strings.Contains(lower, "endpoint") ||
+			strings.Contains(lower, "not allowed") ||
+			strings.Contains(lower, "unsupported path")):
+		return "endpoint_not_allowed"
+	case statusCode == http.StatusForbidden:
+		return "permission_denied"
+	case statusCode == http.StatusTooManyRequests:
+		return "rate_limit"
+	case statusCode == http.StatusBadGateway || statusCode == http.StatusGatewayTimeout:
+		return "gateway_error"
+	case strings.Contains(lower, "timeout") ||
+		strings.Contains(lower, "timed out") ||
+		strings.Contains(lower, "connection reset") ||
+		strings.Contains(lower, "eof"):
+		return "network_error"
+	default:
+		return "upstream_error"
+	}
+}
+
+// analyzeUpstreamErrorDiagnostics 生成面向日志详情的简要原因分析。
+func analyzeUpstreamErrorDiagnostics(classification string, statusCode int, body string) string {
+	switch classification {
+	case "invalid_key":
+		return "上游鉴权失败，检查密钥是否失效、过期或未被授权。"
+	case "request_blocked":
+		return "上游拦截了当前请求，可能与 WAF、请求路径、来源 IP 或请求形态有关；不应直接判定密钥失效。"
+	case "endpoint_not_allowed":
+		return "当前密钥或上游网关不允许访问该 API 端点，需核对 Responses/Chat 路径和渠道映射。"
+	case "permission_denied":
+		return "上游拒绝了当前模型或操作权限，检查账号权限、模型白名单和渠道策略。"
+	case "rate_limit":
+		return "上游触发限流或额度限制，检查供应商配额、频控和 Retry-After。"
+	case "gateway_error":
+		return "上游网关异常或超时，检查供应商、中转代理和渠道健康状态。"
+	case "network_error":
+		return "网络链路或中转代理连接不稳定，检查超时、连接重置和上游可达性。"
+	default:
+		if strings.TrimSpace(body) != "" {
+			return fmt.Sprintf("上游返回 HTTP %d，保留正文摘要供进一步定位。", statusCode)
+		}
+		return "上游或渠道请求异常，检查渠道配置和最近请求上下文。"
+	}
 }
 
 // ResetStatusCode 根据状态码映射配置重置错误的 HTTP 状态码。

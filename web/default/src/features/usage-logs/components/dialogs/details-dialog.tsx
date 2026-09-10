@@ -544,6 +544,20 @@ export function DetailsDialog(props: DetailsDialogProps) {
           value: String(other.request_path),
           mono: true,
         },
+        other?.upstream_error_classification && {
+          label: t('Upstream Error Classification'),
+          value: String(other.upstream_error_classification),
+          mono: true,
+        },
+        other?.upstream_error_body && {
+          label: t('Upstream Error Body'),
+          value: String(other.upstream_error_body),
+          mono: true,
+        },
+        other?.upstream_error_analysis && {
+          label: t('Upstream Error Analysis'),
+          value: String(other.upstream_error_analysis),
+        },
         {
           label: t('Consecutive Errors'),
           value: String(errorGroup?.count ?? 1),

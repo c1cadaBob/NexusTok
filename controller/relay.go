@@ -912,6 +912,18 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		other["error_type"] = err.GetErrorType()
 		other["error_code"] = err.GetErrorCode()
 		other["status_code"] = err.StatusCode
+		// 将上游正文摘要和分类写入使用记录，便于直接定位“Chat 正常但
+		// Responses 被拦截”这类端点维度问题；正文已经在 RelayErrorHandler
+		// 中完成脱敏和长度限制。
+		if upstreamBody := service.UpstreamErrorDiagnosticsValue(err, "body"); upstreamBody != "" {
+			other["upstream_error_body"] = upstreamBody
+		}
+		if classification := service.UpstreamErrorDiagnosticsValue(err, "classification"); classification != "" {
+			other["upstream_error_classification"] = classification
+		}
+		if analysis := service.UpstreamErrorDiagnosticsValue(err, "analysis"); analysis != "" {
+			other["upstream_error_analysis"] = analysis
+		}
 		other["channel_id"] = channelId
 		other["channel_name"] = c.GetString("channel_name")
 		other["channel_type"] = c.GetInt("channel_type")

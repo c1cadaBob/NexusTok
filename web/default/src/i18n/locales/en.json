@@ -6146,6 +6146,9 @@
     "Upstream authentication failed; check key validity and model permissions.": "Upstream authentication failed; check key validity and model permissions.",
     "Upstream gateway error or timeout; check the provider, proxy, and channel health.": "Upstream gateway error or timeout; check the provider, proxy, and channel health.",
     "Upstream or channel error; check channel configuration and upstream response details.": "Upstream or channel error; check channel configuration and upstream response details.",
-    "Upstream rate limit or quota limit was triggered; check provider quota and throttling.": "Upstream rate limit or quota limit was triggered; check provider quota and throttling."
+    "Upstream rate limit or quota limit was triggered; check provider quota and throttling.": "Upstream rate limit or quota limit was triggered; check provider quota and throttling.",
+    "Upstream Error Analysis": "Upstream Error Analysis",
+    "Upstream Error Body": "Upstream Error Body",
+    "Upstream Error Classification": "Upstream Error Classification"
   }
 }

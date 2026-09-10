@@ -32,6 +32,7 @@ const (
 	defaultChannelAccountRateLimitCooldown          = 5 * time.Minute  // 速率限制（429）的默认冷却时间
 	defaultChannelAccountOverloadCooldown           = 10 * time.Minute // 过载（529）的默认冷却时间
 	defaultChannelAccountServiceUnavailableCooldown = time.Minute      // 服务暂不可用（503）的默认冷却时间
+	defaultChannelAccountPolicyBlockCooldown        = time.Minute      // WAF/端点策略拦截的短暂冷却时间
 )
 
 // ProcessChannelAccountError 处理渠道账户请求错误
@@ -79,6 +80,11 @@ func ProcessChannelAccountError(c *gin.Context, channelError types.ChannelError,
 		// 上游暂不可用：优先尊重 Retry-After。503 的默认冷却应短于 529，
 		// 让单个临时异常账号快速退出调度，也能在短时间后自动恢复探测。
 		updates["overload_until"] = retryAfterUntil(err.RetryAfter, channelAccountOverloadCooldown(err))
+		updates["disabled_reason"] = reason
+	} else if isUpstreamPolicyBlockError(err) {
+		// WAF/端点策略拦截只做短暂冷却，不改变账号启用状态，避免把
+		// “当前请求形态不允许”误判成密钥永久失效。
+		updates["temp_disabled_until"] = retryAfterUntil(err.RetryAfter, defaultChannelAccountPolicyBlockCooldown)
 		updates["disabled_reason"] = reason
 	}
 
@@ -139,8 +145,19 @@ func processSyncedChannelAccountError(c *gin.Context, channelError types.Channel
 	errText := sanitizeSyncedChannelAccountError(reason, account)
 	if !shouldCountSyncedChannelAccountFailure(err) {
 		updates := map[string]interface{}{"last_error": errText}
+		// “Your request was blocked.”等 403 更可能是 WAF、端点或来源策略
+		// 拦截，不代表密钥失效。短暂移出调度即可，不能累计到自动禁用阈值。
+		if isUpstreamPolicyBlockError(err) {
+			updates["temp_disabled_until"] = retryAfterUntil(err.RetryAfter, defaultChannelAccountPolicyBlockCooldown)
+			updates["disabled_reason"] = errText
+		}
 		if updateErr := model.DB.Model(&model.ChannelAccount{}).Where("channel_id = ? AND id = ?", channelError.ChannelId, channelError.ChannelAccountId).Updates(updates).Error; updateErr != nil {
 			common.SysLog("failed to update synced channel account non-countable error: " + updateErr.Error())
+		}
+		if channelAccountErrorUpdatesAffectCapabilities(updates) {
+			_ = model.SyncChannelAccountPoolCapabilities(channelError.ChannelId, nil)
+			model.InitChannelCache()
+			ResetProxyClientCache()
 		}
 		return true
 	}
@@ -226,6 +243,11 @@ func shouldCountSyncedChannelAccountFailure(err *types.NexusTokError) bool {
 	if err == nil {
 		return false
 	}
+	// 403 的“blocked/endpoint not allowed/permission denied”是请求策略问题，
+	// 不能按密钥失效累计；只有明确 invalid_key 才进入同步密钥失败计数。
+	if err.StatusCode == http.StatusForbidden && !isInvalidUpstreamKeyError(err) {
+		return false
+	}
 	lowerMessage := strings.ToLower(err.Error())
 	if strings.Contains(lowerMessage, "client_gone") ||
 		strings.Contains(lowerMessage, "client disconnected") ||
@@ -297,13 +319,45 @@ func shouldDisableChannelAccount(err *types.NexusTokError) bool {
 	if err == nil {
 		return false
 	}
-	if err.StatusCode == http.StatusUnauthorized || err.StatusCode == http.StatusForbidden {
+	if err.StatusCode == http.StatusUnauthorized {
 		return true
+	}
+	if err.StatusCode == http.StatusForbidden {
+		return isInvalidUpstreamKeyError(err)
 	}
 	if err.GetErrorCode() == types.ErrorCodeChannelInvalidKey {
 		return true
 	}
 	return ShouldDisableChannel(err)
+}
+
+// upstreamErrorClassification 返回 RelayErrorHandler 写入的上游错误分类。
+func upstreamErrorClassification(err *types.NexusTokError) string {
+	return UpstreamErrorDiagnosticsValue(err, "classification")
+}
+
+// isInvalidUpstreamKeyError 判断 401/403 是否明确指向密钥失效。
+func isInvalidUpstreamKeyError(err *types.NexusTokError) bool {
+	if err == nil {
+		return false
+	}
+	if err.StatusCode == http.StatusUnauthorized {
+		return true
+	}
+	return err.StatusCode == http.StatusForbidden && upstreamErrorClassification(err) == "invalid_key"
+}
+
+// isUpstreamPolicyBlockError 判断是否属于不应禁用密钥的策略或端点拦截。
+func isUpstreamPolicyBlockError(err *types.NexusTokError) bool {
+	if err == nil {
+		return false
+	}
+	switch upstreamErrorClassification(err) {
+	case "request_blocked", "endpoint_not_allowed", "permission_denied":
+		return true
+	default:
+		return false
+	}
 }
 
 // isChannelAccountOverloadError 判断错误是否为过载错误

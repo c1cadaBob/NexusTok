@@ -6146,6 +6146,9 @@
     "Upstream authentication failed; check key validity and model permissions.": "Xác thực upstream thất bại; hãy kiểm tra hiệu lực khóa và quyền của mô hình.",
     "Upstream gateway error or timeout; check the provider, proxy, and channel health.": "Lỗi gateway hoặc timeout upstream; hãy kiểm tra nhà cung cấp, proxy và trạng thái kênh.",
     "Upstream or channel error; check channel configuration and upstream response details.": "Lỗi upstream hoặc kênh; hãy kiểm tra cấu hình kênh và chi tiết phản hồi upstream.",
-    "Upstream rate limit or quota limit was triggered; check provider quota and throttling.": "Đã kích hoạt giới hạn tần suất hoặc hạn mức upstream; hãy kiểm tra hạn mức nhà cung cấp và throttling."
+    "Upstream rate limit or quota limit was triggered; check provider quota and throttling.": "Đã kích hoạt giới hạn tần suất hoặc hạn mức upstream; hãy kiểm tra hạn mức nhà cung cấp và throttling.",
+    "Upstream Error Analysis": "Phân tích lỗi upstream",
+    "Upstream Error Body": "Nội dung lỗi upstream",
+    "Upstream Error Classification": "Phân loại lỗi upstream"
   }
 }

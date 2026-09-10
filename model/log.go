@@ -143,6 +143,8 @@ type apiErrorGroup struct {
 	Analysis       string   `json:"analysis,omitempty"`
 }
 
+const apiLogUpstreamBodyMaxRunes = 1024
+
 type apiErrorSignature struct {
 	UserId              int
 	TokenId             int
@@ -155,6 +157,8 @@ type apiErrorSignature struct {
 	ErrorCode           string
 	StatusCode          string
 	Content             string
+	UpstreamBody        string
+	Classification      string
 	CredentialSignature string
 }
 
@@ -224,6 +228,13 @@ func formatUserLogs(logs []*Log, startIdx int) {
 			delete(otherMap, "audit_info")
 			// delete(otherMap, "reject_reason")
 			delete(otherMap, "stream_status")
+			// 上游正文已经在写入时完成脱敏；这里再次限制长度，兼容旧日志
+			// 中可能存在的超长 HTML/JSON 错误页。
+			if body, ok := otherMap["upstream_error_body"].(string); ok {
+				if len([]rune(body)) > apiLogUpstreamBodyMaxRunes {
+					otherMap["upstream_error_body"] = string([]rune(body)[:apiLogUpstreamBodyMaxRunes]) + "..."
+				}
+			}
 		}
 		logs[i].Other = common.MapToJsonStr(otherMap)
 	}
@@ -1026,6 +1037,8 @@ func buildAPIErrorSignature(log *Log) apiErrorSignature {
 		ErrorCode:           stringFromLogValue(otherMap["error_code"]),
 		StatusCode:          stringFromLogValue(otherMap["status_code"]),
 		Content:             strings.TrimSpace(log.Content),
+		UpstreamBody:        stringFromLogValue(otherMap["upstream_error_body"]),
+		Classification:      stringFromLogValue(otherMap["upstream_error_classification"]),
 		CredentialSignature: buildCredentialSignature(adminInfo),
 	}
 }
@@ -1041,6 +1054,8 @@ func apiErrorSignatureEqual(left apiErrorSignature, right apiErrorSignature) boo
 		left.ErrorCode == right.ErrorCode &&
 		left.StatusCode == right.StatusCode &&
 		left.Content == right.Content &&
+		left.UpstreamBody == right.UpstreamBody &&
+		left.Classification == right.Classification &&
 		left.CredentialSignature == right.CredentialSignature
 }
 
@@ -1081,6 +1096,7 @@ func compactAPIErrorSignature(signature apiErrorSignature) string {
 		"code=" + signature.ErrorCode,
 		"type=" + signature.ErrorType,
 		"path=" + signature.RequestPath,
+		"classification=" + signature.Classification,
 		"credential=" + signature.CredentialSignature,
 	}
 	return strings.Join(parts, "|")
@@ -1089,6 +1105,24 @@ func compactAPIErrorSignature(signature apiErrorSignature) string {
 func analyzeAPIError(signature apiErrorSignature) string {
 	statusCode, _ := strconv.Atoi(signature.StatusCode)
 	lowerText := strings.ToLower(strings.Join([]string{signature.Content, signature.ErrorCode, signature.ErrorType}, " "))
+	if signature.Classification != "" {
+		switch signature.Classification {
+		case "request_blocked":
+			return "上游拦截了当前请求，可能与 WAF、请求路径、来源 IP 或请求形态有关；不应直接判定密钥失效。"
+		case "endpoint_not_allowed":
+			return "当前密钥或上游网关不允许访问该 API 端点，需核对 Responses/Chat 路径和渠道映射。"
+		case "invalid_key":
+			return "上游鉴权失败，检查密钥是否失效、过期或未被授权。"
+		case "permission_denied":
+			return "上游拒绝了当前模型或操作权限，检查账号权限、模型白名单和渠道策略。"
+		case "rate_limit":
+			return "上游触发限流或额度限制，检查供应商配额、频控和 Retry-After。"
+		case "gateway_error":
+			return "上游网关异常或超时，检查供应商、中转代理和渠道健康状态。"
+		case "network_error":
+			return "网络链路或中转代理连接不稳定，检查超时、连接重置和上游可达性。"
+		}
+	}
 	switch {
 	case statusCode == 502 || statusCode == 504:
 		return "Upstream gateway error or timeout; check the provider, proxy, and channel health."

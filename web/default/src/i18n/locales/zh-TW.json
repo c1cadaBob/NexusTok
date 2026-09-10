@@ -6146,6 +6146,9 @@
     "Upstream authentication failed; check key validity and model permissions.": "上游驗證失敗；請檢查密鑰有效性和模型權限。",
     "Upstream gateway error or timeout; check the provider, proxy, and channel health.": "上游閘道異常或逾時；請檢查提供者、代理和渠道健康狀態。",
     "Upstream or channel error; check channel configuration and upstream response details.": "上游或渠道錯誤；請檢查渠道配置和上游回應詳情。",
-    "Upstream rate limit or quota limit was triggered; check provider quota and throttling.": "已觸發上游限流或額度限制；請檢查提供者額度和頻控。"
+    "Upstream rate limit or quota limit was triggered; check provider quota and throttling.": "已觸發上游限流或額度限制；請檢查提供者額度和頻控。",
+    "Upstream Error Analysis": "上游錯誤分析",
+    "Upstream Error Body": "上游錯誤正文",
+    "Upstream Error Classification": "上游錯誤分類"
   }
 }

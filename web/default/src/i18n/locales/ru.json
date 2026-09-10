@@ -6146,6 +6146,9 @@
     "Upstream authentication failed; check key validity and model permissions.": "Ошибка аутентификации у вышестоящего сервиса; проверьте действительность ключа и права модели.",
     "Upstream gateway error or timeout; check the provider, proxy, and channel health.": "Ошибка шлюза или тайм-аут вышестоящего сервиса; проверьте провайдера, прокси и состояние канала.",
     "Upstream or channel error; check channel configuration and upstream response details.": "Ошибка вышестоящего сервиса или канала; проверьте конфигурацию канала и детали ответа.",
-    "Upstream rate limit or quota limit was triggered; check provider quota and throttling.": "Сработало ограничение скорости или квоты вышестоящего сервиса; проверьте квоту провайдера и throttling."
+    "Upstream rate limit or quota limit was triggered; check provider quota and throttling.": "Сработало ограничение скорости или квоты вышестоящего сервиса; проверьте квоту провайдера и throttling.",
+    "Upstream Error Analysis": "Анализ ошибки вышестоящего сервиса",
+    "Upstream Error Body": "Тело ошибки вышестоящего сервиса",
+    "Upstream Error Classification": "Классификация ошибки вышестоящего сервиса"
   }
 }

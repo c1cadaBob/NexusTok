@@ -144,6 +144,9 @@ export interface LogOtherData {
   error_type?: string
   error_code?: string
   status_code?: number | string
+  upstream_error_body?: string
+  upstream_error_classification?: string
+  upstream_error_analysis?: string
   channel_test?: {
     status?: 'success' | 'failed' | 'error' | string
     model?: string
