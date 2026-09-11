@@ -4,7 +4,7 @@ module github.com/c1cadaBob/NexusTok
 go 1.25.1
 
 require (
-	github.com/Calcium-Ion/go-epay v0.0.4
+	github.com/c1cadaBob/go-epay v0.0.4
 	github.com/abema/go-mp4 v1.4.1
 	github.com/andybalholm/brotli v1.2.0
 	github.com/anknown/ahocorasick v0.0.0-20190904063843-d75dbd5169c0
@@ -173,7 +173,7 @@ require (
 
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.46.0
-	github.com/QuantumNous/new-api/relaykit v0.0.0
+	github.com/c1cadaBob/NexusTok/relaykit v0.0.0
 )
 
-replace github.com/QuantumNous/new-api/relaykit => ./relaykit
+replace github.com/c1cadaBob/NexusTok/relaykit => ./relaykit
