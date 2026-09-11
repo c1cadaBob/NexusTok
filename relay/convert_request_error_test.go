@@ -1,0 +1,98 @@
+package relay
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/c1cadaBob/NexusTok/common"
+	relaycommon "github.com/c1cadaBob/NexusTok/relay/common"
+	"github.com/c1cadaBob/NexusTok/relay/helper"
+	"github.com/c1cadaBob/NexusTok/relaykit/dto"
+	kitreasoning "github.com/c1cadaBob/NexusTok/relaykit/relayconvert/reasoning"
+	"github.com/c1cadaBob/NexusTok/relaykit/types"
+	"github.com/c1cadaBob/NexusTok/service"
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestOptInSafeToolLossRejectedAsBadRequestWithAdminDiagnostics(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "gpt-4o",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "gpt-4o",
+			ChannelOtherSettings: dto.ChannelOtherSettings{
+				ToolLossPolicy: string(types.ConversionLossPolicySafe),
+			},
+		},
+	}
+
+	tools, err := common.Marshal([]map[string]any{{"codeExecution": map[string]any{}}})
+	require.NoError(t, err)
+	req := &dto.GeminiChatRequest{
+		Contents: []dto.GeminiChatContent{
+			{Role: "user", Parts: []dto.GeminiPart{{Text: "run this"}}},
+		},
+		Tools: tools,
+	}
+
+	result, convErr := service.ConvertRequest(c, info, types.RelayFormatOpenAI, req)
+	require.Error(t, convErr)
+	var loss *types.ConversionLossError
+	require.ErrorAs(t, convErr, &loss)
+	require.NotEmpty(t, loss.Diagnostics)
+	require.NotNil(t, result)
+
+	apiErr := newConvertRequestFailedError(c, info, convErr)
+	require.NotNil(t, apiErr)
+	assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+	assert.Equal(t, types.ErrorCodeConvertRequestFailed, apiErr.GetErrorCode())
+	assert.True(t, types.IsSkipRetryError(apiErr))
+
+	diagnostics := info.ConversionDiagnostics()
+	require.NotEmpty(t, diagnostics)
+	assert.True(t, hasHostDiagnosticCode(diagnostics, "unsupported_hosted_tool"))
+
+	other := service.GenerateTextOtherInfo(c, info, 1, 1, 1, 0, 0, 0, 1)
+	adminInfo, ok := other.Snapshot()["admin_info"].(map[string]any)
+	require.True(t, ok)
+	require.Contains(t, adminInfo, "conversion_diagnostics")
+}
+
+func TestUnknownModelModifierIsBadRequestWithoutRetry(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "m@thinkin:on",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "m@thinkin:on",
+		},
+	}
+	err := helper.ApplyReasoningModelSuffix(c, info)
+	require.Error(t, err)
+	require.True(t, kitreasoning.IsClientError(err))
+	assert.Contains(t, err.Error(), `unsupported model modifier "thinkin"`)
+	assert.Contains(t, err.Error(), "re:")
+
+	apiErr := newConvertRequestFailedError(c, info, err)
+	require.NotNil(t, apiErr)
+	assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+	assert.Equal(t, types.ErrorCodeConvertRequestFailed, apiErr.GetErrorCode())
+	assert.True(t, types.IsSkipRetryError(apiErr))
+}
+
+func hasHostDiagnosticCode(diagnostics []types.ConversionDiagnostic, code string) bool {
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code == code {
+			return true
+		}
+	}
+	return false
+}
