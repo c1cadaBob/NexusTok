@@ -443,7 +443,7 @@ func newAuditTestDatabase(t *testing.T, kind, dsn string) (*gorm.DB, string) {
 		return db, path
 	}
 	require.NotEmpty(t, dsn)
-	name := fmt.Sprintf("newapi_audit_%d", time.Now().UnixNano())
+	name := fmt.Sprintf("nexustok_audit_%d", time.Now().UnixNano())
 	var original, isolated gorm.Dialector
 	var newDSN string
 	if kind == "mysql" {

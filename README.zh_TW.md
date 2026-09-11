@@ -78,7 +78,7 @@
   --><a href="https://bda.pku.edu.cn/" target="_blank">
     <img src="./docs/images/pku.png" alt="北京大學" height="80" />
   </a><!--
-  --><a href="https://www.compshare.cn/?ytag=GPU_yy_gh_newapi" target="_blank">
+  --><a href="https://www.compshare.cn/?ytag=GPU_yy_gh_nexustok" target="_blank">
     <img src="./docs/images/ucloud.png" alt="UCloud 優刻得" height="80" />
   </a><!--
   --><a href="https://www.aliyun.com/" target="_blank">
@@ -155,7 +155,7 @@ docker run --name NexusTok -d --restart always \
 > [!WARNING]
 > 將本專案作為面向公眾的生成式 AI 服務或 API 轉售服務運營時，使用者應先完成備案、內容安全、實名、日誌留存、稅務、支付和上游授權等合規義務。
 
-📖 更多部署方式請參考 [部署指南](https://docs.newapi.pro/zh/docs/installation)
+📖 更多部署方式請參考 [部署指南](https://docs.nexustok.ai/zh/docs/installation)
 
 ---
 
@@ -163,7 +163,7 @@ docker run --name NexusTok -d --restart always \
 
 <div align="center">
 
-### 📖 [官方文件](https://docs.newapi.pro/zh/docs) | [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/c1cadaBob/NexusTok)
+### 📖 [官方文件](https://docs.nexustok.ai/zh/docs) | [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/c1cadaBob/NexusTok)
 
 </div>
 
@@ -171,17 +171,17 @@ docker run --name NexusTok -d --restart always \
 
 | 分類 | 連結 |
 |------|------|
-| 🚀 部署指南 | [安裝文件](https://docs.newapi.pro/zh/docs/installation) |
-| ⚙️ 環境配置 | [環境變數](https://docs.newapi.pro/zh/docs/installation/config-maintenance/environment-variables) |
-| 📡 接口文件 | [API 文件](https://docs.newapi.pro/zh/docs/api) |
-| ❓ 常見問題 | [FAQ](https://docs.newapi.pro/zh/docs/support/faq) |
-| 💬 社群交流 | [交流管道](https://docs.newapi.pro/zh/docs/support/community-interaction) |
+| 🚀 部署指南 | [安裝文件](https://docs.nexustok.ai/zh/docs/installation) |
+| ⚙️ 環境配置 | [環境變數](https://docs.nexustok.ai/zh/docs/installation/config-maintenance/environment-variables) |
+| 📡 接口文件 | [API 文件](https://docs.nexustok.ai/zh/docs/api) |
+| ❓ 常見問題 | [FAQ](https://docs.nexustok.ai/zh/docs/support/faq) |
+| 💬 社群交流 | [交流管道](https://docs.nexustok.ai/zh/docs/support/community-interaction) |
 
 ---
 
 ## ✨ 主要特性
 
-> 詳細特性請參考 [特性說明](https://docs.newapi.pro/zh/docs/guide/wiki/basic-concepts/features-introduction)
+> 詳細特性請參考 [特性說明](https://docs.nexustok.ai/zh/docs/guide/wiki/basic-concepts/features-introduction)
 
 ### 🎨 核心功能
 
@@ -211,11 +211,11 @@ docker run --name NexusTok -d --restart always \
 ### 🚀 高級功能
 
 **API 格式支援：**
-- ⚡ [OpenAI Responses](https://docs.newapi.pro/zh/docs/api/ai-model/chat/openai/create-response)
-- ⚡ [OpenAI Realtime API](https://docs.newapi.pro/zh/docs/api/ai-model/realtime/create-realtime-session)（含 Azure）
-- ⚡ [Claude Messages](https://docs.newapi.pro/zh/docs/api/ai-model/chat/create-message)
-- ⚡ [Google Gemini](https://doc.newapi.pro/api/google-gemini-chat)
-- 🔄 [Rerank 模型](https://docs.newapi.pro/zh/docs/api/ai-model/rerank/create-rerank)（Cohere、Jina）
+- ⚡ [OpenAI Responses](https://docs.nexustok.ai/zh/docs/api/ai-model/chat/openai/create-response)
+- ⚡ [OpenAI Realtime API](https://docs.nexustok.ai/zh/docs/api/ai-model/realtime/create-realtime-session)（含 Azure）
+- ⚡ [Claude Messages](https://docs.nexustok.ai/zh/docs/api/ai-model/chat/create-message)
+- ⚡ [Google Gemini](https://docs.nexustok.ai/api/google-gemini-chat)
+- 🔄 [Rerank 模型](https://docs.nexustok.ai/zh/docs/api/ai-model/rerank/create-rerank)（Cohere、Jina）
 
 **智慧路由：**
 - ⚖️ 管道加權隨機
@@ -258,17 +258,17 @@ docker run --name NexusTok -d --restart always \
 
 ## 🤖 模型支援
 
-> 詳情請參考 [接口文件 - 閘道接口](https://docs.newapi.pro/zh/docs/api)
+> 詳情請參考 [接口文件 - 閘道接口](https://docs.nexustok.ai/zh/docs/api)
 
 | 模型類型 | 說明 | 文件 |
 |---------|------|------|
-| 🤖 OpenAI-Compatible | OpenAI 兼容模型 | [文件](https://docs.newapi.pro/zh/docs/api/ai-model/chat/openai/createchatcompletion) |
-| 🤖 OpenAI Responses | OpenAI Responses 格式 | [文件](https://docs.newapi.pro/zh/docs/api/ai-model/chat/openai/createresponse) |
-| 🎨 Midjourney-Proxy | [Midjourney-Proxy(Plus)](https://github.com/novicezk/midjourney-proxy) | [文件](https://doc.newapi.pro/api/midjourney-proxy-image) |
-| 🎵 Suno-API | [Suno API](https://github.com/Suno-API/Suno-API) | [文件](https://doc.newapi.pro/api/suno-music) |
-| 🔄 Rerank | Cohere、Jina | [文件](https://docs.newapi.pro/zh/docs/api/ai-model/rerank/create-rerank) |
-| 💬 Claude | Messages 格式 | [文件](https://docs.newapi.pro/zh/docs/api/ai-model/chat/createmessage) |
-| 🌐 Gemini | Google Gemini 格式 | [文件](https://docs.newapi.pro/zh/docs/api/ai-model/chat/gemini/geminirelayv1beta) |
+| 🤖 OpenAI-Compatible | OpenAI 兼容模型 | [文件](https://docs.nexustok.ai/zh/docs/api/ai-model/chat/openai/createchatcompletion) |
+| 🤖 OpenAI Responses | OpenAI Responses 格式 | [文件](https://docs.nexustok.ai/zh/docs/api/ai-model/chat/openai/createresponse) |
+| 🎨 Midjourney-Proxy | [Midjourney-Proxy(Plus)](https://github.com/novicezk/midjourney-proxy) | [文件](https://docs.nexustok.ai/api/midjourney-proxy-image) |
+| 🎵 Suno-API | [Suno API](https://github.com/Suno-API/Suno-API) | [文件](https://docs.nexustok.ai/api/suno-music) |
+| 🔄 Rerank | Cohere、Jina | [文件](https://docs.nexustok.ai/zh/docs/api/ai-model/rerank/create-rerank) |
+| 💬 Claude | Messages 格式 | [文件](https://docs.nexustok.ai/zh/docs/api/ai-model/chat/createmessage) |
+| 🌐 Gemini | Google Gemini 格式 | [文件](https://docs.nexustok.ai/zh/docs/api/ai-model/chat/gemini/geminirelayv1beta) |
 | 🔧 Dify | ChatFlow 模式 | - |
 | 🎯 自訂上游 | 支援配置合法授權的上游介面位址 | - |
 
@@ -277,16 +277,16 @@ docker run --name NexusTok -d --restart always \
 <details>
 <summary>查看完整接口列表</summary>
 
-- [聊天接口 (Chat Completions)](https://docs.newapi.pro/zh/docs/api/ai-model/chat/openai/createchatcompletion)
-- [響應接口 (Responses)](https://docs.newapi.pro/zh/docs/api/ai-model/chat/openai/createresponse)
-- [圖像接口 (Image)](https://docs.newapi.pro/zh/docs/api/ai-model/images/openai/post-v1-images-generations)
-- [音訊接口 (Audio)](https://docs.newapi.pro/zh/docs/api/ai-model/audio/openai/create-transcription)
-- [影片接口 (Video)](https://docs.newapi.pro/zh/docs/api/ai-model/videos/sora/createvideo)
-- [嵌入接口 (Embeddings)](https://docs.newapi.pro/zh/docs/api/ai-model/embeddings/createembedding)
-- [重排序接口 (Rerank)](https://docs.newapi.pro/zh/docs/api/ai-model/rerank/creatererank)
-- [即時對話 (Realtime)](https://docs.newapi.pro/zh/docs/api/ai-model/realtime/createrealtimesession)
-- [Claude 聊天](https://docs.newapi.pro/zh/docs/api/ai-model/chat/createmessage)
-- [Google Gemini 聊天](https://docs.newapi.pro/zh/docs/api/ai-model/chat/gemini/geminirelayv1beta)
+- [聊天接口 (Chat Completions)](https://docs.nexustok.ai/zh/docs/api/ai-model/chat/openai/createchatcompletion)
+- [響應接口 (Responses)](https://docs.nexustok.ai/zh/docs/api/ai-model/chat/openai/createresponse)
+- [圖像接口 (Image)](https://docs.nexustok.ai/zh/docs/api/ai-model/images/openai/post-v1-images-generations)
+- [音訊接口 (Audio)](https://docs.nexustok.ai/zh/docs/api/ai-model/audio/openai/create-transcription)
+- [影片接口 (Video)](https://docs.nexustok.ai/zh/docs/api/ai-model/videos/sora/createvideo)
+- [嵌入接口 (Embeddings)](https://docs.nexustok.ai/zh/docs/api/ai-model/embeddings/createembedding)
+- [重排序接口 (Rerank)](https://docs.nexustok.ai/zh/docs/api/ai-model/rerank/creatererank)
+- [即時對話 (Realtime)](https://docs.nexustok.ai/zh/docs/api/ai-model/realtime/createrealtimesession)
+- [Claude 聊天](https://docs.nexustok.ai/zh/docs/api/ai-model/chat/createmessage)
+- [Google Gemini 聊天](https://docs.nexustok.ai/zh/docs/api/ai-model/chat/gemini/geminirelayv1beta)
 
 </details>
 
@@ -338,7 +338,7 @@ docker run --name NexusTok -d --restart always \
 | `PYROSCOPE_BLOCK_RATE` | Pyroscope block 採樣率                               | `5` |
 | `HOSTNAME` | Pyroscope 標籤裡的主機名                                          | `NexusTok` |
 
-📖 **完整配置：** [環境變數文件](https://docs.newapi.pro/zh/docs/installation/config-maintenance/environment-variables)
+📖 **完整配置：** [環境變數文件](https://docs.nexustok.ai/zh/docs/installation/config-maintenance/environment-variables)
 
 </details>
 
@@ -452,10 +452,10 @@ Token、Origin 驗證和 PAT 契約請參閱[使用者鑑權與登入工作階�
 
 | 資源 | 連結 |
 |------|------|
-| 📘 常見問題 | [FAQ](https://docs.newapi.pro/zh/docs/support/faq) |
-| 💬 社群交流 | [交流管道](https://docs.newapi.pro/zh/docs/support/community-interaction) |
-| 🐛 回饋問題 | [問題回饋](https://docs.newapi.pro/zh/docs/support/feedback-issues) |
-| 📚 完整文件 | [官方文件](https://docs.newapi.pro/zh/docs) |
+| 📘 常見問題 | [FAQ](https://docs.nexustok.ai/zh/docs/support/faq) |
+| 💬 社群交流 | [交流管道](https://docs.nexustok.ai/zh/docs/support/community-interaction) |
+| 🐛 回饋問題 | [問題回饋](https://docs.nexustok.ai/zh/docs/support/feedback-issues) |
+| 📚 完整文件 | [官方文件](https://docs.nexustok.ai/zh/docs) |
 
 ### 🤝 貢獻指南
 
@@ -494,7 +494,7 @@ Token、Origin 驗證和 PAT 契約請參閱[使用者鑑權與登入工作階�
 
 如果這個項目對你有幫助，歡迎給我們一個 ⭐️ Star！
 
-**[官方文件](https://docs.newapi.pro/zh/docs)** • **[問題回饋](https://github.com/c1cadabob/nexustok/issues)** • **[最新發布](https://github.com/c1cadabob/nexustok/releases)**
+**[官方文件](https://docs.nexustok.ai/zh/docs)** • **[問題回饋](https://github.com/c1cadabob/nexustok/issues)** • **[最新發布](https://github.com/c1cadabob/nexustok/releases)**
 
 <sub>Built with ❤️ by c1cadaBob</sub>
 

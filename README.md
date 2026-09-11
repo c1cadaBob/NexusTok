@@ -4,12 +4,12 @@
 
 # NexusTok
 
-🍥 **Next-Generation LLM Gateway and AI Asset Management System**
+🍥 **新一代大模型网关与AI资产管理系统**
 
 <p align="center">
-  <a href="./README.zh_CN.md">简体中文</a> |
+  简体中文 |
   <a href="./README.zh_TW.md">繁體中文</a> |
-  <strong>English</strong> |
+  <a href="./README.md">English</a> |
   <a href="./README.fr.md">Français</a> |
   <a href="./README.ja.md">日本語</a>
 </p>
@@ -44,29 +44,29 @@
 </p>
 
 <p align="center">
-  <a href="#-quick-start">Quick Start</a> •
-  <a href="#-key-features">Key Features</a> •
-  <a href="#-deployment">Deployment</a> •
-  <a href="#-documentation">Documentation</a> •
-  <a href="#-help-support">Help</a>
+  <a href="#-快速开始">快速开始</a> •
+  <a href="#-主要特性">主要特性</a> •
+  <a href="#-部署">部署</a> •
+  <a href="#-文档">文档</a> •
+  <a href="#-帮助支持">帮助</a>
 </p>
 
 </div>
 
-## 📝 Project Description
+## 📝 项目说明
 
 > [!IMPORTANT]
-> - This project is intended solely for lawful and authorized AI API gateway, organization-level authentication, multi-model management, usage analytics, cost accounting, and private deployment scenarios.
-> - Users must lawfully obtain upstream API keys, accounts, model services, and interface permissions, and must comply with upstream terms of service and applicable laws and regulations.
-> - Users should ensure their use complies with upstream terms of service and applicable laws and regulations.
-> - When providing generative AI services to the public, users should comply with applicable regulatory requirements and fulfill all filing, licensing, content safety, real-name verification, log retention, tax, and upstream authorization obligations required by their jurisdiction.
+> - 本项目仅面向合法授权的 AI API 网关、组织内部鉴权、多模型管理、用量统计、成本核算和私有化部署场景。
+> - 使用者必须合法取得上游 API Key、账号、模型服务或接口权限，并遵守上游服务条款及适用法律法规。
+> - 使用者应确保其使用方式符合上游服务条款及适用法律法规。
+> - 面向公众提供生成式人工智能服务时，使用者应遵守[《生成式人工智能服务管理暂行办法》](http://www.cac.gov.cn/2023-07/13/c_1690898327029107.htm)等监管要求，自行完成所在司法辖区要求的备案、许可、内容安全、实名、日志留存、税务和上游授权等合规义务。
 
 ---
 
-## 🤝 Trusted Partners
+## 🤝 我们信任的合作伙伴
 
 <p align="center">
-  <em>No particular order</em>
+  <em>排名不分先后</em>
 </p>
 
 <p align="center">
@@ -77,13 +77,13 @@
     <img src="./docs/images/aionui.png" alt="Aion UI" height="80" />
   </a><!--
   --><a href="https://bda.pku.edu.cn/" target="_blank">
-    <img src="./docs/images/pku.png" alt="Peking University" height="80" />
+    <img src="./docs/images/pku.png" alt="北京大学" height="80" />
   </a><!--
-  --><a href="https://www.compshare.cn/?ytag=GPU_yy_gh_newapi" target="_blank">
-    <img src="./docs/images/ucloud.png" alt="UCloud" height="80" />
+  --><a href="https://www.compshare.cn/?ytag=GPU_yy_gh_nexustok" target="_blank">
+    <img src="./docs/images/ucloud.png" alt="UCloud 优刻得" height="80" />
   </a><!--
   --><a href="https://www.aliyun.com/" target="_blank">
-    <img src="./docs/images/aliyun.png" alt="Alibaba Cloud" height="80" />
+    <img src="./docs/images/aliyun.png" alt="阿里云" height="80" />
   </a><!--
   --><a href="https://io.net/" target="_blank">
     <img src="./docs/images/io-net.png" alt="IO.NET" height="80" />
@@ -92,7 +92,7 @@
 
 ---
 
-## 🙏 Special Thanks
+## 🙏 特别鸣谢
 
 <p align="center">
   <a href="https://www.jetbrains.com/?from=NexusTok" target="_blank">
@@ -101,42 +101,42 @@
 </p>
 
 <p align="center">
-  <strong>Thanks to <a href="https://www.jetbrains.com/?from=NexusTok">JetBrains</a> for providing free open-source development license for this project</strong>
+  <strong>感谢 <a href="https://www.jetbrains.com/?from=NexusTok">JetBrains</a> 为本项目提供免费的开源开发许可证</strong>
 </p>
 
 ---
 
-## 🚀 Quick Start
+## 🚀 快速开始
 
-### Using Docker Compose (Recommended)
+### 使用 Docker Compose（推荐）
 
 ```bash
-# Clone the project
+# 克隆项目
 git clone https://github.com/c1cadaBob/NexusTok.git
 cd NexusTok
 
-# Edit docker-compose.yml configuration
+# 编辑 docker-compose.yml 配置
 nano docker-compose.yml
 
-# Start the service
+# 启动服务
 docker-compose up -d
 ```
 
 <details>
-<summary><strong>Using Docker Commands</strong></summary>
+<summary><strong>使用 Docker 命令</strong></summary>
 
 ```bash
-# Pull the latest image
+# 拉取最新镜像
 docker pull c1cadabob/nexustok:latest
 
-# Using SQLite (default)
+# 使用 SQLite（默认）
 docker run --name NexusTok -d --restart always \
   -p 3000:3000 \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
   c1cadabob/nexustok:latest
 
-# Using MySQL
+# 使用 MySQL
 docker run --name NexusTok -d --restart always \
   -p 3000:3000 \
   -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
@@ -145,97 +145,97 @@ docker run --name NexusTok -d --restart always \
   c1cadabob/nexustok:latest
 ```
 
-> **💡 Tip:** `-v ./data:/data` will save data in the `data` folder of the current directory, you can also change it to an absolute path like `-v /your/custom/path:/data`
+> **💡 提示：** `-v ./data:/data` 会将数据保存在当前目录的 `data` 文件夹中，你也可以改为绝对路径如 `-v /your/custom/path:/data`
 
 </details>
 
 ---
 
-🎉 After deployment is complete, visit `http://localhost:3000` to start using!
+🎉 部署完成后，访问 `http://localhost:3000` 即可使用！
 
 > [!WARNING]
-> When operating this project as a public generative AI service or API resale service, users should first complete all required filing, licensing, content safety, real-name verification, log retention, tax, payment, and upstream authorization obligations.
+> 将本项目作为面向公众的生成式 AI 服务或 API 转售服务运营时，使用者应先完成备案、内容安全、实名、日志留存、税务、支付和上游授权等合规义务。
 
-📖 For more deployment methods, please refer to [Deployment Guide](https://docs.newapi.pro/en/docs/installation)
+📖 更多部署方式请参考 [部署指南](https://docs.nexustok.ai/zh/docs/installation)
 
 ---
 
-## 📚 Documentation
+## 📚 文档
 
 <div align="center">
 
-### 📖 [Official Documentation](https://docs.newapi.pro/en/docs) | [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/c1cadaBob/NexusTok)
+### 📖 [官方文档](https://docs.nexustok.ai/zh/docs) | [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/c1cadaBob/NexusTok)
 
 </div>
 
-**Quick Navigation:**
+**快速导航：**
 
-| Category | Link |
+| 分类 | 链接 |
 |------|------|
-| 🚀 Deployment Guide | [Installation Documentation](https://docs.newapi.pro/en/docs/installation) |
-| ⚙️ Environment Configuration | [Environment Variables](https://docs.newapi.pro/en/docs/installation/config-maintenance/environment-variables) |
-| 📡 API Documentation | [API Documentation](https://docs.newapi.pro/en/docs/api) |
-| ❓ FAQ | [FAQ](https://docs.newapi.pro/en/docs/support/faq) |
-| 💬 Community Interaction | [Communication Channels](https://docs.newapi.pro/en/docs/support/community-interaction) |
+| 🚀 部署指南 | [安装文档](https://docs.nexustok.ai/zh/docs/installation) |
+| ⚙️ 环境配置 | [环境变量](https://docs.nexustok.ai/zh/docs/installation/config-maintenance/environment-variables) |
+| 📡 接口文档 | [API 文档](https://docs.nexustok.ai/zh/docs/api) |
+| ❓ 常见问题 | [FAQ](https://docs.nexustok.ai/zh/docs/support/faq) |
+| 💬 社区交流 | [交流渠道](https://docs.nexustok.ai/zh/docs/support/community-interaction) |
 
 ---
 
-## ✨ Key Features
+## ✨ 主要特性
 
-> For detailed features, please refer to [Features Introduction](https://docs.newapi.pro/en/docs/guide/wiki/basic-concepts/features-introduction)
+> 详细特性请参考 [特性说明](https://docs.nexustok.ai/zh/docs/guide/wiki/basic-concepts/features-introduction)
 
-### 🎨 Core Functions
+### 🎨 核心功能
 
-| Feature | Description |
+| 特性 | 说明 |
 |------|------|
-| 🎨 New UI | Modern user interface design |
-| 🌍 Multi-language | Supports Simplified Chinese, Traditional Chinese, English, French, Japanese |
-| 🔄 Data Compatibility | Fully compatible with the original One API database |
-| 📈 Data Dashboard | Visual console and statistical analysis |
-| 🔒 Permission Management | Token grouping, model restrictions, user management |
+| 🎨 全新 UI | 现代化的用户界面设计 |
+| 🌍 多语言 | 支持中文、英文、法语、日语 |
+| 🔄 数据兼容 | 完全兼容原版 One API 数据库 |
+| 📈 数据看板 | 可视化控制台与统计分析 |
+| 🔒 权限管理 | 令牌分组、模型限制、用户管理 |
 
-### 💰 Authorized Usage Accounting and Billing
+### 💰 授权用量与成本管理
 
-- ✅ Internal top-up and quota allocation for lawful authorized scenarios (EPay, Stripe)
-- ✅ Organization-level per-request, usage-based, and cache-hit cost accounting
-- ✅ Cache billing statistics for OpenAI, Azure, DeepSeek, Claude, Qwen, and supported models
-- ✅ Flexible billing policies for internal management or authorized enterprise customers
+- ✅ 合法授权场景下的内部充值与额度分配（易支付、Stripe）
+- ✅ 组织内按次、按量或缓存命中成本核算
+- ✅ 支持 OpenAI、Azure、DeepSeek、Claude、Qwen 等模型的缓存计费统计
+- ✅ 面向内部管理或企业客户的灵活计费策略配置
 
-### 🔐 Authorization and Security
+### 🔐 授权与安全
 
-- 😈 Discord authorization login
-- 🤖 LinuxDO authorization login
-- 📱 Telegram authorization login
-- 🔑 OIDC unified authentication
-- 🔍 Key quota query usage (with [NexusTok-key-tool](https://github.com/c1cadabob/nexustok-key-tool))
+- 😈 Discord 授权登录
+- 🤖 LinuxDO 授权登录
+- 📱 Telegram 授权登录
+- 🔑 OIDC 统一认证
+- 🔍 Key 查询使用额度（配合 [NexusTok-key-tool](https://github.com/c1cadabob/nexustok-key-tool)）
 
-### 🚀 Advanced Features
+### 🚀 高级功能
 
-**API Format Support:**
-- ⚡ [OpenAI Responses](https://docs.newapi.pro/en/docs/api/ai-model/chat/openai/create-response)
-- ⚡ [OpenAI Realtime API](https://docs.newapi.pro/en/docs/api/ai-model/realtime/create-realtime-session) (including Azure)
-- ⚡ [Claude Messages](https://docs.newapi.pro/en/docs/api/ai-model/chat/create-message)
-- ⚡ [Google Gemini](https://doc.newapi.pro/en/api/google-gemini-chat)
-- 🔄 [Rerank Models](https://docs.newapi.pro/en/docs/api/ai-model/rerank/create-rerank) (Cohere, Jina)
+**API 格式支持：**
+- ⚡ [OpenAI Responses](https://docs.nexustok.ai/zh/docs/api/ai-model/chat/openai/create-response)
+- ⚡ [OpenAI Realtime API](https://docs.nexustok.ai/zh/docs/api/ai-model/realtime/create-realtime-session)（含 Azure）
+- ⚡ [Claude Messages](https://docs.nexustok.ai/zh/docs/api/ai-model/chat/create-message)
+- ⚡ [Google Gemini](https://docs.nexustok.ai/api/google-gemini-chat)
+- 🔄 [Rerank 模型](https://docs.nexustok.ai/zh/docs/api/ai-model/rerank/create-rerank)（Cohere、Jina）
 
-**Intelligent Routing:**
-- ⚖️ Channel weighted random
-- 🔄 Automatic retry on failure
-- 🚦 User-level model rate limiting
+**智能路由：**
+- ⚖️ 渠道加权随机
+- 🔄 失败自动重试
+- 🚦 用户级别模型限流
 
-**Format Conversion:**
+**格式转换：**
 - 🔄 **OpenAI Compatible ⇄ Claude Messages**
 - 🔄 **OpenAI Compatible → Google Gemini**
-- 🔄 **Google Gemini → OpenAI Compatible** - Text only, function calling not supported yet
-- 🚧 **OpenAI Compatible ⇄ OpenAI Responses** - In development
-- 🔄 **Thinking-to-content functionality**
+- 🔄 **Google Gemini → OpenAI Compatible** - 仅支持文本，暂不支持函数调用
+- 🚧 **OpenAI Compatible ⇄ OpenAI Responses** - 开发中
+- 🔄 **思考转内容功能**
 
-**Reasoning Effort Support:**
+**Reasoning Effort 支持：**
 
 <details>
-<summary>View detailed configuration</summary>
+<summary>查看详细配置</summary>
 
-**OpenAI series models:**
+**OpenAI 系列模型：**
 - `o3-mini-high` - High reasoning effort
 - `o3-mini-medium` - Medium reasoning effort
 - `o3-mini-low` - Low reasoning effort
@@ -243,131 +243,129 @@ docker run --name NexusTok -d --restart always \
 - `gpt-5-medium` - Medium reasoning effort
 - `gpt-5-low` - Low reasoning effort
 
-**Claude thinking models:**
-- `claude-3-7-sonnet-20250219-thinking` - Enable thinking mode
+**Claude 思考模型：**
+- `claude-3-7-sonnet-20250219-thinking` - 启用思考模式
 
-**Google Gemini series models:**
-- `gemini-2.5-flash-thinking` - Enable thinking mode
-- `gemini-2.5-flash-nothinking` - Disable thinking mode
-- `gemini-2.5-pro-thinking` - Enable thinking mode
-- `gemini-2.5-pro-thinking-128` - Enable thinking mode with thinking budget of 128 tokens
-- You can also append `-low`, `-medium`, or `-high` to any Gemini model name to request the corresponding reasoning effort (no extra thinking-budget suffix needed).
+**Google Gemini 系列模型：**
+- `gemini-2.5-flash-thinking` - 启用思考模式
+- `gemini-2.5-flash-nothinking` - 禁用思考模式
+- `gemini-2.5-pro-thinking` - 启用思考模式
+- `gemini-2.5-pro-thinking-128` - 启用思考模式，并设置思考预算为128tokens
+- 也可以直接在 Gemini 模型名称后追加 `-low` / `-medium` / `-high` 来控制思考力度（无需再设置思考预算后缀）
 
 </details>
 
 ---
 
-## 🤖 Model Support
+## 🤖 模型支持
 
-> For details, please refer to [API Documentation - Gateway Interface](https://docs.newapi.pro/en/docs/api)
+> 详情请参考 [接口文档 - 网关接口](https://docs.nexustok.ai/zh/docs/api)
 
-| Model Type | Description | Documentation |
+| 模型类型 | 说明 | 文档 |
 |---------|------|------|
-| 🤖 OpenAI-Compatible | OpenAI compatible models | [Documentation](https://docs.newapi.pro/en/docs/api/ai-model/chat/openai/createchatcompletion) |
-| 🤖 OpenAI Responses | OpenAI Responses format | [Documentation](https://docs.newapi.pro/en/docs/api/ai-model/chat/openai/createresponse) |
-| 🎨 Midjourney-Proxy | [Midjourney-Proxy(Plus)](https://github.com/novicezk/midjourney-proxy) | [Documentation](https://doc.newapi.pro/api/midjourney-proxy-image) |
-| 🎵 Suno-API | [Suno API](https://github.com/Suno-API/Suno-API) | [Documentation](https://doc.newapi.pro/api/suno-music) |
-| 🔄 Rerank | Cohere, Jina | [Documentation](https://docs.newapi.pro/en/docs/api/ai-model/rerank/creatererank) |
-| 💬 Claude | Messages format | [Documentation](https://docs.newapi.pro/en/docs/api/ai-model/chat/createmessage) |
-| 🌐 Gemini | Google Gemini format | [Documentation](https://docs.newapi.pro/en/docs/api/ai-model/chat/gemini/geminirelayv1beta) |
-| 🔧 Dify | ChatFlow mode | - |
-| 🎯 Custom upstream | Supports configuring legally authorized upstream endpoints | - |
+| 🤖 OpenAI-Compatible | OpenAI 兼容模型 | [文档](https://docs.nexustok.ai/zh/docs/api/ai-model/chat/openai/createchatcompletion) |
+| 🤖 OpenAI Responses | OpenAI Responses 格式 | [文档](https://docs.nexustok.ai/zh/docs/api/ai-model/chat/openai/createresponse) |
+| 🎨 Midjourney-Proxy | [Midjourney-Proxy(Plus)](https://github.com/novicezk/midjourney-proxy) | [文档](https://docs.nexustok.ai/api/midjourney-proxy-image) |
+| 🎵 Suno-API | [Suno API](https://github.com/Suno-API/Suno-API) | [文档](https://docs.nexustok.ai/api/suno-music) |
+| 🔄 Rerank | Cohere、Jina | [文档](https://docs.nexustok.ai/zh/docs/api/ai-model/rerank/create-rerank) |
+| 💬 Claude | Messages 格式 | [文档](https://docs.nexustok.ai/zh/docs/api/ai-model/chat/createmessage) |
+| 🌐 Gemini | Google Gemini 格式 | [文档](https://docs.nexustok.ai/zh/docs/api/ai-model/chat/gemini/geminirelayv1beta) |
+| 🔧 Dify | ChatFlow 模式 | - |
+| 🎯 自定义上游 | 支持配置合法授权的上游接口地址 | - |
 
-### 📡 Supported Interfaces
+### 📡 支持的接口
 
 <details>
-<summary>View complete interface list</summary>
+<summary>查看完整接口列表</summary>
 
-- [Chat Interface (Chat Completions)](https://docs.newapi.pro/en/docs/api/ai-model/chat/openai/createchatcompletion)
-- [Response Interface (Responses)](https://docs.newapi.pro/en/docs/api/ai-model/chat/openai/createresponse)
-- [Image Interface (Image)](https://docs.newapi.pro/en/docs/api/ai-model/images/openai/post-v1-images-generations)
-- [Audio Interface (Audio)](https://docs.newapi.pro/en/docs/api/ai-model/audio/openai/create-transcription)
-- [Video Interface (Video)](https://docs.newapi.pro/en/docs/api/ai-model/videos/sora/createvideo)
-- [Embedding Interface (Embeddings)](https://docs.newapi.pro/en/docs/api/ai-model/embeddings/createembedding)
-- [Rerank Interface (Rerank)](https://docs.newapi.pro/en/docs/api/ai-model/rerank/creatererank)
-- [Realtime Conversation (Realtime)](https://docs.newapi.pro/en/docs/api/ai-model/realtime/createrealtimesession)
-- [Claude Chat](https://docs.newapi.pro/en/docs/api/ai-model/chat/createmessage)
-- [Google Gemini Chat](https://docs.newapi.pro/en/docs/api/ai-model/chat/gemini/geminirelayv1beta)
+- [聊天接口 (Chat Completions)](https://docs.nexustok.ai/zh/docs/api/ai-model/chat/openai/createchatcompletion)
+- [响应接口 (Responses)](https://docs.nexustok.ai/zh/docs/api/ai-model/chat/openai/createresponse)
+- [图像接口 (Image)](https://docs.nexustok.ai/zh/docs/api/ai-model/images/openai/post-v1-images-generations)
+- [音频接口 (Audio)](https://docs.nexustok.ai/zh/docs/api/ai-model/audio/openai/create-transcription)
+- [视频接口 (Video)](https://docs.nexustok.ai/zh/docs/api/ai-model/videos/sora/createvideo)
+- [嵌入接口 (Embeddings)](https://docs.nexustok.ai/zh/docs/api/ai-model/embeddings/createembedding)
+- [重排序接口 (Rerank)](https://docs.nexustok.ai/zh/docs/api/ai-model/rerank/creatererank)
+- [实时对话 (Realtime)](https://docs.nexustok.ai/zh/docs/api/ai-model/realtime/createrealtimesession)
+- [Claude 聊天](https://docs.nexustok.ai/zh/docs/api/ai-model/chat/createmessage)
+- [Google Gemini 聊天](https://docs.nexustok.ai/zh/docs/api/ai-model/chat/gemini/geminirelayv1beta)
 
 </details>
 
 ---
 
-## 🚢 Deployment
+## 🚢 部署
 
 > [!TIP]
-> **Latest Docker image:** `c1cadabob/nexustok:latest`
+> **最新版 Docker 镜像：** `c1cadabob/nexustok:latest`
 
-### 📋 Deployment Requirements
+### 📋 部署要求
 
-| Component | Requirement |
+| 组件 | 要求 |
 |------|------|
-| **Local database** | SQLite (Docker must mount `/data` directory)|
-| **Remote database** | MySQL ≥ 5.7.8 or PostgreSQL ≥ 9.6 |
-| **Container engine** | Docker / Docker Compose |
-| **System architecture** | 64-bit only (amd64 / arm64); 32-bit systems are not supported |
+| **本地数据库** | SQLite（Docker 需挂载 `/data` 目录）|
+| **远程数据库** | MySQL ≥ 5.7.8 或 PostgreSQL ≥ 9.6 |
+| **容器引擎** | Docker / Docker Compose |
+| **系统架构** | 仅支持 64 位系统（amd64 / arm64），不支持 32 位系统 |
 
-### ⚙️ Environment Variable Configuration
+### ⚙️ 环境变量配置
 
 <details>
-<summary>Common environment variable configuration</summary>
+<summary>常用环境变量配置</summary>
 
-| Variable Name | Description | Default Value |
-|--------|------|--------|
-| `SESSION_SECRET` | Authentication signing secret; must be identical on every node | - |
-| `SESSION_COOKIE_SECURE` | `false`/unset disables the refresh/logout OriginGuard for local HTTP dev proxies; `true` enables the Secure cookie and strict Origin checks | `false` |
-| `SESSION_COOKIE_TRUSTED_URL` | Required with Secure mode: comma-separated exact HTTPS Origins allowed to call refresh/logout; not a relay CORS allowlist | - |
-| `TRUSTED_PROXIES` | Unset/blank trusts loopback, RFC 1918 and IPv6 ULA with a startup warning; `none` trusts no proxies; an explicit proxy IP/CIDR list replaces the defaults | `127.0.0.0/8, ::1, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7` |
-| `USER_SESSION_ACTIVE_LIMIT` | Maximum active login Sessions per user | `50` |
-| `USER_SESSION_ISSUANCE_LIMIT` | Maximum Sessions created per user within the issuance window, including revoked Sessions | `100` |
-| `USER_SESSION_ISSUANCE_WINDOW_SECONDS` | Per-user Session issuance window; clamped to the revoked retention period when configured higher | `86400` |
-| `USER_SESSION_REVOKED_RETENTION_DAYS` | Days to retain revoked Session rows for audit and issuance accounting | `7` |
-| `USER_SESSION_HOURLY_ALERT_THRESHOLD` | Global Sessions created per hour that triggers an alert only; it never blocks login | `5000` |
-| `CRYPTO_SECRET` | HMAC secret for cache keys; nodes sharing Redis must use the same effective value | Defaults to `SESSION_SECRET` |
-| `SQL_DSN` | Database connection string | - |
-| `REDIS_CONN_STRING` | Redis connection string | - |
-| `RELAY_IDLE_CONN_TIMEOUT` | Idle keep-alive timeout for relay HTTP clients, seconds. Defaults to Go standard library behavior; set `0` to disable | `90` |
-| `RELAY_RESPONSE_HEADER_TIMEOUT` | How long the relay waits for upstream **response headers**, seconds; set `0` to disable. Only bounds the header wait -- streaming after the headers arrive is unaffected. Note that non-streaming upstreams usually send headers only once generation finishes, so leave headroom | `1800` |
-| `STREAMING_TIMEOUT` | Streaming timeout (seconds) | `300` |
-| `STREAM_SCANNER_MAX_BUFFER_MB` | Max per-line buffer (MB) for the stream scanner; increase when upstream sends huge image/base64 payloads | `64` |
-| `MAX_REQUEST_BODY_MB` | Max request body size (MB, counted **after decompression**; prevents huge requests/zip bombs from exhausting memory). Exceeding it returns `413` | `32` |
-| `AZURE_DEFAULT_API_VERSION` | Azure API version | `2025-04-01-preview` |
-| `ERROR_LOG_ENABLED` | Error log switch | `false` |
-| `PYROSCOPE_URL` | Pyroscope server address | - |
-| `PYROSCOPE_APP_NAME` | Pyroscope application name | `NexusTok` |
-| `PYROSCOPE_BASIC_AUTH_USER` | Pyroscope basic auth user | - |
-| `PYROSCOPE_BASIC_AUTH_PASSWORD` | Pyroscope basic auth password | - |
-| `PYROSCOPE_MUTEX_RATE` | Pyroscope mutex sampling rate | `5` |
-| `PYROSCOPE_BLOCK_RATE` | Pyroscope block sampling rate | `5` |
-| `HOSTNAME` | Hostname tag for Pyroscope | `NexusTok` |
+| 变量名 | 说明                                                           | 默认值 |
+|--------|--------------------------------------------------------------|--------|
+| `SESSION_SECRET` | 鉴权签名密钥；所有节点必须保持一致                                           | - |
+| `SESSION_COOKIE_SECURE` | `false`/未配置时关闭 refresh/logout OriginGuard 以兼容本地 HTTP 开发代理；`true` 时启用 Secure Cookie 和严格 Origin 校验 | `false` |
+| `SESSION_COOKIE_TRUSTED_URL` | Secure 模式必填：允许调用 refresh/logout 的精确 HTTPS Origin，多个用英文逗号分隔；不是 relay CORS 白名单 | - |
+| `TRUSTED_PROXIES` | 未配置/留空时信任回环、RFC1918 和 IPv6 ULA 并输出启动告警；`none` 不信任任何代理；显式代理 IP/CIDR 列表完全替代默认值 | `127.0.0.0/8, ::1, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7` |
+| `USER_SESSION_ACTIVE_LIMIT` | 单用户最大活跃登录 Session 数 | `50` |
+| `USER_SESSION_ISSUANCE_LIMIT` | 单用户在签发窗口内可创建的 Session 总数，包含已撤销 Session | `100` |
+| `USER_SESSION_ISSUANCE_WINDOW_SECONDS` | Session 签发计数窗口（秒）；高于 revoked 保留期时自动钳制 | `86400` |
+| `USER_SESSION_REVOKED_RETENTION_DAYS` | revoked Session 用于审计和签发计数的保留天数 | `7` |
+| `USER_SESSION_HOURLY_ALERT_THRESHOLD` | 全局每小时 Session 签发告警阈值；只告警，不拒绝登录 | `5000` |
+| `CRYPTO_SECRET` | 缓存键 HMAC 密钥；共享 Redis 的节点必须使用相同有效值 | 默认跟随 `SESSION_SECRET` |
+| `SQL_DSN` | 数据库连接字符串                                                     | - |
+| `REDIS_CONN_STRING` | Redis 连接字符串                                                  | - |
+| `STREAMING_TIMEOUT` | 流式超时时间（秒）                                                    | `300` |
+| `STREAM_SCANNER_MAX_BUFFER_MB` | 流式扫描器单行最大缓冲（MB），图像生成等超大 `data:` 片段（如 4K 图片 base64）需适当调大 | `64` |
+| `MAX_REQUEST_BODY_MB` | 请求体最大大小（MB，**解压后**计；防止超大请求/zip bomb 导致内存暴涨），超过将返回 `413` | `32` |
+| `AZURE_DEFAULT_API_VERSION` | Azure API 版本                                                 | `2025-04-01-preview` |
+| `ERROR_LOG_ENABLED` | 错误日志开关                                                       | `false` |
+| `PYROSCOPE_URL` | Pyroscope 服务地址                                            | - |
+| `PYROSCOPE_APP_NAME` | Pyroscope 应用名                                        | `NexusTok` |
+| `PYROSCOPE_BASIC_AUTH_USER` | Pyroscope Basic Auth 用户名                        | - |
+| `PYROSCOPE_BASIC_AUTH_PASSWORD` | Pyroscope Basic Auth 密码                  | - |
+| `PYROSCOPE_MUTEX_RATE` | Pyroscope mutex 采样率                               | `5` |
+| `PYROSCOPE_BLOCK_RATE` | Pyroscope block 采样率                               | `5` |
+| `HOSTNAME` | Pyroscope 标签里的主机名                                          | `NexusTok` |
 
-📖 **Complete configuration:** [Environment Variables Documentation](https://docs.newapi.pro/en/docs/installation/config-maintenance/environment-variables)
+📖 **完整配置：** [环境变量文档](https://docs.nexustok.ai/zh/docs/installation/config-maintenance/environment-variables)
 
 </details>
 
-### 🔧 Deployment Methods
+### 🔧 部署方式
 
 <details>
-<summary><strong>Method 1: Docker Compose (Recommended)</strong></summary>
+<summary><strong>方式 1：Docker Compose（推荐）</strong></summary>
 
 ```bash
-# Clone the project
+# 克隆项目
 git clone https://github.com/c1cadaBob/NexusTok.git
 cd NexusTok
 
-# Edit configuration
+# 编辑配置
 nano docker-compose.yml
 
-# Start service
+# 启动服务
 docker-compose up -d
 ```
 
 </details>
 
 <details>
-<summary><strong>Method 2: Docker Commands</strong></summary>
+<summary><strong>方式 2：Docker 命令</strong></summary>
 
-**Using SQLite:**
+**使用 SQLite：**
 ```bash
 docker run --name NexusTok -d --restart always \
   -p 3000:3000 \
@@ -376,7 +374,7 @@ docker run --name NexusTok -d --restart always \
   c1cadabob/nexustok:latest
 ```
 
-**Using MySQL:**
+**使用 MySQL：**
 ```bash
 docker run --name NexusTok -d --restart always \
   -p 3000:3000 \
@@ -386,106 +384,98 @@ docker run --name NexusTok -d --restart always \
   c1cadabob/nexustok:latest
 ```
 
-> **💡 Path explanation:**
-> - `./data:/data` - Relative path, data saved in the data folder of the current directory
-> - You can also use absolute path, e.g.: `/your/custom/path:/data`
+> **💡 路径说明：**
+> - `./data:/data` - 相对路径，数据保存在当前目录的 data 文件夹
+> - 也可使用绝对路径，如：`/your/custom/path:/data`
 
 </details>
 
 <details>
-<summary><strong>Method 3: BaoTa Panel</strong></summary>
+<summary><strong>方式 3：宝塔面板</strong></summary>
 
-1. Install BaoTa Panel (≥ 9.2.0 version)
-2. Search for **New-API** in the application store
-3. One-click installation
+1. 安装宝塔面板（≥ 9.2.0 版本）
+2. 在应用商店搜索 **New-API**
+3. 一键安装
 
-📖 [Tutorial with images](./docs/BT.md)
+📖 [图文教程](./docs/installation/BT.md)
 
 </details>
 
-### ⚠️ Multi-machine Deployment Considerations
+### ⚠️ 多机部署注意事项
 
 > [!WARNING]
-> - All nodes must use the same primary database and the same `SESSION_SECRET`; otherwise Access Tokens, refresh sessions, and temporary authentication flows cannot be verified consistently.
-> - Nodes connected to the same Redis must also use the same `CRYPTO_SECRET`, or their cache-key digests will differ and shared entries cannot be reused consistently.
+> - 所有节点必须使用同一个主数据库，并设置相同的 `SESSION_SECRET`；否则 Access Token、Refresh 会话和临时鉴权流程无法一致校验。
+> - 连接同一个 Redis 的节点还必须设置相同的 `CRYPTO_SECRET`，否则节点生成的缓存键摘要不一致，无法正确共享缓存。
 
-The database is authoritative for login Sessions and for the per-user active/issuance limits. Redis Session entries are short-lived caches whose TTL follows `SYNC_FREQUENCY` (60 seconds by default) and never exceeds the Session's remaining lifetime.
+登录 Session 和单用户活跃数/签发数限制均以数据库为权威。Redis 中的 Session 仅为短期缓存，TTL 跟随 `SYNC_FREQUENCY`（默认 60 秒），且不会超过 Session 的剩余寿命。
 
-| Redis topology | Session propagation | Rate limiting |
+| Redis 拓扑 | Session 状态传播 | 限流语义 |
 | --- | --- | --- |
-| Shared Redis | Revocations and version publications normally propagate immediately | Redis limits are shared across nodes |
-| Independent Redis per node | Nodes converge from the database within the effective `SYNC_FREQUENCY`; a newly rotated token may receive a temporary 401 on a node with stale cache | Each node has its own allowance, so aggregate capacity can reach roughly the configured limit multiplied by the node count |
-| No Redis | Every Session validation reads the database | In-memory limits are independent per node |
+| 所有节点共享 Redis | 撤销和版本发布通常即时传播 | Redis 限流额度在节点间共享 |
+| 每个节点使用独立 Redis | 最迟在有效 `SYNC_FREQUENCY` 内回源数据库收敛；版本轮换后，新 Token 在持有旧缓存的节点上可能短暂返回 401 | 每个节点独立计数，集群总额度最坏约为单节点阈值乘以节点数 |
+| 不使用 Redis | 每次 Session 校验直接读取数据库 | 各节点使用独立的内存限流额度 |
 
-A shorter `SYNC_FREQUENCY` reduces the independent-Redis staleness window but causes one additional primary-key Session lookup per active SID, per node, per TTL. These guarantees make Session authentication bounded-stale across the supported topologies; rate limits and other Redis-backed control-plane caches remain topology-dependent.
+缩短 `SYNC_FREQUENCY` 可减小独立 Redis 的陈旧窗口，但每个活跃 SID 在每个节点上会按该 TTL 增加一次数据库主键点查。上述保证只让 Session 鉴权在不同拓扑下保持有界陈旧；限流和其他 Redis 控制面缓存仍受拓扑影响。
 
-See [User authentication and login sessions](./docs/authentication.md) for the token, Origin-check and PAT contracts.
+Token、Origin 校验和 PAT 契约见[用户鉴权与登录会话](./docs/authentication.md)。
 
-### 🔄 Channel Retry and Cache
+### 🔄 渠道重试与缓存
 
-**Retry configuration:** `Settings → Operation Settings → General Settings → Failure Retry Count`
+**重试配置：** `设置 → 运营设置 → 通用设置 → 失败重试次数`
 
-**Cache configuration:**
-- `REDIS_CONN_STRING`: Redis cache (recommended)
-- `MEMORY_CACHE_ENABLED`: Memory cache
-
----
-
-## 🔗 Related Projects
-
-### Upstream Projects
-
-| Project | Description |
-|------|------|
-| [One API](https://github.com/songquanpeng/one-api) | Original project base |
-| [Midjourney-Proxy](https://github.com/novicezk/midjourney-proxy) | Midjourney interface support |
-
-### Supporting Tools
-
-| Project | Description |
-|------|------|
-| [NexusTok-key-tool](https://github.com/c1cadabob/nexustok-key-tool) | Key quota query tool |
-| [NexusTok-horizon](https://github.com/c1cadabob/nexustok-horizon) | NexusTok high-performance optimized version |
+**缓存配置：**
+- `REDIS_CONN_STRING`：Redis 缓存（推荐）
+- `MEMORY_CACHE_ENABLED`：内存缓存
 
 ---
 
-## 💬 Help Support
+## 🔗 相关项目
 
-### 📖 Documentation Resources
+### 上游项目
 
-| Resource | Link |
+| 项目 | 说明 |
 |------|------|
-| 📘 FAQ | [FAQ](https://docs.newapi.pro/en/docs/support/faq) |
-| 💬 Community Interaction | [Communication Channels](https://docs.newapi.pro/en/docs/support/community-interaction) |
-| 🐛 Issue Feedback | [Issue Feedback](https://docs.newapi.pro/en/docs/support/feedback-issues) |
-| 📚 Complete Documentation | [Official Documentation](https://docs.newapi.pro/en/docs) |
+| [One API](https://github.com/songquanpeng/one-api) | 原版项目基础 |
+| [Midjourney-Proxy](https://github.com/novicezk/midjourney-proxy) | Midjourney 接口支持 |
 
-### 🤝 Contribution Guide
+### 配套工具
 
-Welcome all forms of contribution!
-
-- 🐛 Report Bugs
-- 💡 Propose New Features
-- 📝 Improve Documentation
-- 🔧 Submit Code
+| 项目 | 说明 |
+|------|------|
+| [NexusTok-key-tool](https://github.com/c1cadabob/nexustok-key-tool) | Key 额度查询工具 |
+| [NexusTok-horizon](https://github.com/c1cadabob/nexustok-horizon) | NexusTok 高性能优化版 |
 
 ---
 
-## 📜 License
+## 💬 帮助支持
 
-This project is licensed under the [GNU Affero General Public License v3.0 (AGPLv3)](./LICENSE).
+### 📖 文档资源
 
-Additional terms under AGPLv3 Section 7 apply. Modified versions must preserve
-the author attribution notice `Frontend design and development by NexusTok
-contributors.` in the appropriate legal notices and in any prominent about,
-legal, footer, or attribution location presented by the user interface.
+| 资源 | 链接 |
+|------|------|
+| 📘 常见问题 | [FAQ](https://docs.nexustok.ai/zh/docs/support/faq) |
+| 💬 社区交流 | [交流渠道](https://docs.nexustok.ai/zh/docs/support/community-interaction) |
+| 🐛 反馈问题 | [问题反馈](https://docs.nexustok.ai/zh/docs/support/feedback-issues) |
+| 📚 完整文档 | [官方文档](https://docs.nexustok.ai/zh/docs) |
 
-Modified versions that present a user interface must also preserve a visible
-link to the original project: <https://github.com/c1cadaBob/NexusTok>.
+### 🤝 贡献指南
 
-This is an open-source project developed based on [One API](https://github.com/songquanpeng/one-api) (MIT License).
+欢迎各种形式的贡献！
 
-If your organization's policies do not permit the use of AGPLv3-licensed software, or if you wish to avoid the open-source obligations of AGPLv3, please contact us at: [support@c1cadabob.dev](mailto:support@c1cadabob.dev)
+- 🐛 报告 Bug
+- 💡 提出新功能
+- 📝 改进文档
+- 🔧 提交代码
+
+---
+
+## 📜 许可证
+
+本项目采用 [GNU Affero 通用公共许可证 v3.0 (AGPLv3)](./LICENSE) 授权。
+
+本项目为开源项目，在 [One API](https://github.com/songquanpeng/one-api)（MIT 许可证）的基础上进行二次开发。
+
+如果您所在的组织政策不允许使用 AGPLv3 许可的软件，或您希望规避 AGPLv3 的开源义务，请发送邮件至：[support@c1cadabob.dev](mailto:support@c1cadabob.dev)
 
 ---
 
@@ -501,11 +491,11 @@ If your organization's policies do not permit the use of AGPLv3-licensed softwar
 
 <div align="center">
 
-### 💖 Thank you for using NexusTok
+### 💖 感谢使用 NexusTok
 
-If this project is helpful to you, welcome to give us a ⭐️ Star！
+如果这个项目对你有帮助，欢迎给我们一个 ⭐️ Star！
 
-**[Official Documentation](https://docs.newapi.pro/en/docs)** • **[Issue Feedback](https://github.com/c1cadabob/nexustok/issues)** • **[Latest Release](https://github.com/c1cadabob/nexustok/releases)**
+**[官方文档](https://docs.nexustok.ai/zh/docs)** • **[问题反馈](https://github.com/c1cadabob/nexustok/issues)** • **[最新发布](https://github.com/c1cadabob/nexustok/releases)**
 
 <sub>Built with ❤️ by c1cadaBob</sub>
 

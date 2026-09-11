@@ -66,7 +66,7 @@ func TestValidateChannelRequiresNewAPIBaseURL(t *testing.T) {
 	}{
 		{name: "missing", wantErr: true},
 		{name: "blank", baseURL: common.GetPointer("  "), wantErr: true},
-		{name: "configured", baseURL: common.GetPointer("https://new-api.example")},
+		{name: "configured", baseURL: common.GetPointer("https://nexustok.example")},
 	}
 
 	for _, test := range tests {

@@ -23,8 +23,8 @@ const (
 	RefreshReplayWindow   = 30 * time.Second
 	accessTokenUse        = "access"
 	securityProofTokenUse = "security_proof"
-	authTokenIssuer       = "new-api"
-	authTokenAudience     = "new-api-dashboard"
+	authTokenIssuer       = "nexustok"
+	authTokenAudience     = "nexustok-dashboard"
 )
 
 var (
@@ -53,7 +53,7 @@ type authClaims struct {
 
 func authSigningKey(purpose string) []byte {
 	mac := hmac.New(sha256.New, []byte(common.SessionSecret))
-	_, _ = mac.Write([]byte("new-api/auth/" + purpose + "/v1"))
+	_, _ = mac.Write([]byte("nexustok/auth/" + purpose + "/v1"))
 	return mac.Sum(nil)
 }
 
@@ -99,7 +99,7 @@ func ParseAccessToken(raw string) (AuthIdentity, error) {
 	}, nil
 }
 
-// ParseDashboardAccessToken distinguishes new-api dashboard JWTs from opaque
+// ParseDashboardAccessToken distinguishes NexusTok dashboard JWTs from opaque
 // credentials. A token carrying the dashboard issuer, audience and a known
 // token use is always treated as internal, even when its signature, lifetime
 // or requested purpose is invalid, so it can never fall through to PAT or

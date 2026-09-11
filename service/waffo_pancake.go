@@ -30,7 +30,7 @@ type WaffoPancakeCreateSessionParams struct {
 
 // WaffoPancakeCheckoutSession is the response of CreateWaffoPancakeCheckoutSession.
 // CheckoutURL already carries the `#token=...` fragment; Token / TokenExpiresAt
-// are exposed separately for self-service flows driven from new-api's own UI.
+// are exposed separately for self-service flows driven from NexusTok's own UI.
 type WaffoPancakeCheckoutSession struct {
 	SessionID      string
 	CheckoutURL    string
@@ -156,7 +156,7 @@ func optionalString(s string) *string {
 // for checkout. Webhook handlers compare against the value rendered here to
 // reject identity mismatches, so both call sites must use this function.
 func WaffoPancakeBuyerIdentityFromUserID(userID int) string {
-	return fmt.Sprintf("new-api-user-%d", userID)
+	return fmt.Sprintf("nexustok-user-%d", userID)
 }
 
 // VerifyConfiguredWaffoPancakeWebhook verifies the signature header. The SDK
@@ -251,8 +251,8 @@ func ResolveWaffoPancakeSubscriptionTradeNo(event *WaffoPancakeWebhookEvent) (st
 // Deterministic default names for "+ Create": stable bodies mean stable
 // X-Idempotency-Key, which lets Pancake dedupe retries server-side.
 const (
-	defaultWaffoPancakeStoreName   = "new-api-store"
-	defaultWaffoPancakeProductName = "new-api-charge-product"
+	defaultWaffoPancakeStoreName   = "nexustok-store"
+	defaultWaffoPancakeProductName = "nexustok-charge-product"
 )
 
 // CreateWaffoPancakePrimaryStore creates a Pancake Store using in-flight
@@ -275,8 +275,8 @@ func CreateWaffoPancakePrimaryStore(ctx context.Context, merchantID, privateKey 
 // OnetimeProduct priced at `amount` USD, used as a subscription plan's
 // SubscriptionPlan.WaffoPancakeProductId.
 //
-// OnetimeProduct (not SubscriptionProduct) because new-api has no renewal-
-// event handling; Pancake auto-renewing without new-api extending user
+// OnetimeProduct (not SubscriptionProduct) because NexusTok has no renewal-
+// event handling; Pancake auto-renewing without NexusTok extending user
 // access would be a UX divergence. Revisit if renewal handling is added.
 func CreateWaffoPancakeProductForPlan(ctx context.Context, merchantID, privateKey, storeID, name, amount, returnURL string) (string, error) {
 	storeID = strings.TrimSpace(storeID)

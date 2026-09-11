@@ -317,10 +317,10 @@ export function indexHasIntegrityHashes(index: MarketplaceIndex): boolean {
 }
 
 export const DEFAULT_MARKETPLACE_INDEX_URL =
-  'https://www.newapi.ai/api/v1/plugins/index.json'
+  'https://www.nexustok.ai/api/v1/plugins/index.json'
 
 export const GITHUB_MARKETPLACE_INDEX_URL =
-  'https://raw.githubusercontent.com/c1cadaBob/new-api-plugins/main/index.json'
+  'https://raw.githubusercontent.com/c1cadaBob/NexusTok-plugins/main/index.json'
 
 /**
  * Both built-in indexes are maintained by the project. Other configured

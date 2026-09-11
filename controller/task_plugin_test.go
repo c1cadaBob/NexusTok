@@ -1067,7 +1067,7 @@ func TestUpdateTaskPluginMarketplaceSourcesRoundTrip(t *testing.T) {
 	setupTaskPluginMarketplaceSourcesTest(t)
 	payload := []setting.TaskPluginMarketplaceSource{
 		{Name: "Mirror", IndexURL: "https://example.com/plugins/index.json"},
-		{Name: "Official", IndexURL: "https://www.newapi.ai/api/v1/plugins/index.json"},
+		{Name: "Official", IndexURL: "https://www.nexustok.ai/api/v1/plugins/index.json"},
 	}
 	body, err := common.Marshal(payload)
 	require.NoError(t, err)

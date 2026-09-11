@@ -31,9 +31,9 @@ describe('plugin source URL normalization', () => {
   test('rewrites a GitHub blob URL to its raw host', () => {
     assert.equal(
       normalizePluginSourceUrl(
-        'https://github.com/c1cadaBob/new-api-plugins/blob/main/plugins/tasks/doubao/1.0.0/plugin.js'
+        'https://github.com/c1cadaBob/NexusTok-plugins/blob/main/plugins/tasks/doubao/1.0.0/plugin.js'
       ),
-      'https://raw.githubusercontent.com/c1cadaBob/new-api-plugins/main/plugins/tasks/doubao/1.0.0/plugin.js'
+      'https://raw.githubusercontent.com/c1cadaBob/NexusTok-plugins/main/plugins/tasks/doubao/1.0.0/plugin.js'
     )
   })
 

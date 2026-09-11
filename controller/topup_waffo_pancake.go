@@ -300,7 +300,7 @@ func CreateWaffoPancakeSubscriptionProduct(c *gin.Context) {
 
 // ListWaffoPancakeSubscriptionProductOptions returns the OnetimeProducts
 // in the saved Pancake store, for the subscription-plan dropdown. The name
-// reflects new-api's plan concept; under the hood it's still OnetimeProducts.
+// reflects NexusTok's plan concept; under the hood it's still OnetimeProducts.
 func ListWaffoPancakeSubscriptionProductOptions(c *gin.Context) {
 	merchantID, privateKey := resolveWaffoPancakeAdminCreds("", "")
 	storeID := strings.TrimSpace(setting.WaffoPancakeStoreID)

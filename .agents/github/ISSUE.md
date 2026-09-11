@@ -54,7 +54,7 @@ accept it, point them to the right place when there is one, and **do not file**.
 
 Search these yourself before filing. Do not send the user to "read the docs first". If this is usage, configuration, or integration: answer the user and do not file.
 
-- https://docs.newapi.ai/ — what was searched, conclusion:
+- https://docs.nexustok.ai/ — what was searched, conclusion:
 - https://deepwiki.com/c1cadaBob/NexusTok — what was searched, conclusion:
 - README / repo docs:
 - Relevant code paths and conclusion:
@@ -137,7 +137,7 @@ Open the docs and code. Do not write "already checked" without sources.
 
 ### Docs
 
-- https://docs.newapi.ai/ :
+- https://docs.nexustok.ai/ :
 - https://deepwiki.com/c1cadaBob/NexusTok :
 - README / other repo docs:
 - Conclusions:

@@ -79,7 +79,7 @@
   --><a href="https://bda.pku.edu.cn/" target="_blank">
     <img src="./docs/images/pku.png" alt="Université de Pékin" height="80" />
   </a><!--
-  --><a href="https://www.compshare.cn/?ytag=GPU_yy_gh_newapi" target="_blank">
+  --><a href="https://www.compshare.cn/?ytag=GPU_yy_gh_nexustok" target="_blank">
     <img src="./docs/images/ucloud.png" alt="UCloud" height="80" />
   </a><!--
   --><a href="https://www.aliyun.com/" target="_blank">
@@ -156,7 +156,7 @@ docker run --name NexusTok -d --restart always \
 > [!WARNING]
 > Lorsque vous exploitez ce projet en tant que service public d'IA générative ou service de revente d'API, les utilisateurs doivent d'abord remplir toutes les obligations requises en matière d'enregistrement, de licence, de sécurité du contenu, de vérification d'identité, de conservation des journaux, de fiscalité, de paiement et d'autorisation en amont.
 
-📖 Pour plus de méthodes de déploiement, veuillez vous référer à [Guide de déploiement](https://docs.newapi.pro/en/docs/installation)
+📖 Pour plus de méthodes de déploiement, veuillez vous référer à [Guide de déploiement](https://docs.nexustok.ai/en/docs/installation)
 
 ---
 
@@ -164,7 +164,7 @@ docker run --name NexusTok -d --restart always \
 
 <div align="center">
 
-### 📖 [Documentation officielle](https://docs.newapi.pro/en/docs) | [![Demander à DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/c1cadaBob/NexusTok)
+### 📖 [Documentation officielle](https://docs.nexustok.ai/en/docs) | [![Demander à DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/c1cadaBob/NexusTok)
 
 </div>
 
@@ -172,17 +172,17 @@ docker run --name NexusTok -d --restart always \
 
 | Catégorie | Lien |
 |------|------|
-| 🚀 Guide de déploiement | [Documentation d'installation](https://docs.newapi.pro/en/docs/installation) |
-| ⚙️ Configuration de l'environnement | [Variables d'environnement](https://docs.newapi.pro/en/docs/installation/config-maintenance/environment-variables) |
-| 📡 Documentation de l'API | [Documentation de l'API](https://docs.newapi.pro/en/docs/api) |
-| ❓ FAQ | [FAQ](https://docs.newapi.pro/en/docs/support/faq) |
-| 💬 Interaction avec la communauté | [Canaux de communication](https://docs.newapi.pro/en/docs/support/community-interaction) |
+| 🚀 Guide de déploiement | [Documentation d'installation](https://docs.nexustok.ai/en/docs/installation) |
+| ⚙️ Configuration de l'environnement | [Variables d'environnement](https://docs.nexustok.ai/en/docs/installation/config-maintenance/environment-variables) |
+| 📡 Documentation de l'API | [Documentation de l'API](https://docs.nexustok.ai/en/docs/api) |
+| ❓ FAQ | [FAQ](https://docs.nexustok.ai/en/docs/support/faq) |
+| 💬 Interaction avec la communauté | [Canaux de communication](https://docs.nexustok.ai/en/docs/support/community-interaction) |
 
 ---
 
 ## ✨ Fonctionnalités clés
 
-> Pour les fonctionnalités détaillées, veuillez vous référer à [Présentation des fonctionnalités](https://docs.newapi.pro/en/docs/guide/wiki/basic-concepts/features-introduction) |
+> Pour les fonctionnalités détaillées, veuillez vous référer à [Présentation des fonctionnalités](https://docs.nexustok.ai/en/docs/guide/wiki/basic-concepts/features-introduction) |
 
 ### 🎨 Fonctions principales
 
@@ -212,11 +212,11 @@ docker run --name NexusTok -d --restart always \
 ### 🚀 Fonctionnalités avancées
 
 **Prise en charge des formats d'API:**
-- ⚡ [OpenAI Responses](https://docs.newapi.pro/en/docs/api/ai-model/chat/openai/create-response)
-- ⚡ [OpenAI Realtime API](https://docs.newapi.pro/en/docs/api/ai-model/realtime/create-realtime-session) (y compris Azure)
-- ⚡ [Claude Messages](https://docs.newapi.pro/en/docs/api/ai-model/chat/create-message)
-- ⚡ [Google Gemini](https://doc.newapi.pro/en/api/google-gemini-chat)
-- 🔄 [Modèles Rerank](https://docs.newapi.pro/en/docs/api/ai-model/rerank/create-rerank) (Cohere, Jina)
+- ⚡ [OpenAI Responses](https://docs.nexustok.ai/en/docs/api/ai-model/chat/openai/create-response)
+- ⚡ [OpenAI Realtime API](https://docs.nexustok.ai/en/docs/api/ai-model/realtime/create-realtime-session) (y compris Azure)
+- ⚡ [Claude Messages](https://docs.nexustok.ai/en/docs/api/ai-model/chat/create-message)
+- ⚡ [Google Gemini](https://docs.nexustok.ai/en/api/google-gemini-chat)
+- 🔄 [Modèles Rerank](https://docs.nexustok.ai/en/docs/api/ai-model/rerank/create-rerank) (Cohere, Jina)
 
 **Routage intelligent:**
 - ⚖️ Sélection aléatoire pondérée des canaux
@@ -259,17 +259,17 @@ docker run --name NexusTok -d --restart always \
 
 ## 🤖 Prise en charge des modèles
 
-> Pour les détails, veuillez vous référer à [Documentation de l'API - Interface de passerelle](https://docs.newapi.pro/en/docs/api)
+> Pour les détails, veuillez vous référer à [Documentation de l'API - Interface de passerelle](https://docs.nexustok.ai/en/docs/api)
 
 | Type de modèle | Description | Documentation |
 |---------|------|------|
-| 🤖 OpenAI-Compatible | Modèles compatibles OpenAI | [Documentation](https://docs.newapi.pro/en/docs/api/ai-model/chat/openai/createchatcompletion) |
-| 🤖 OpenAI Responses | Format OpenAI Responses | [Documentation](https://docs.newapi.pro/en/docs/api/ai-model/chat/openai/createresponse) |
-| 🎨 Midjourney-Proxy | [Midjourney-Proxy(Plus)](https://github.com/novicezk/midjourney-proxy) | [Documentation](https://doc.newapi.pro/api/midjourney-proxy-image) |
-| 🎵 Suno-API | [Suno API](https://github.com/Suno-API/Suno-API) | [Documentation](https://doc.newapi.pro/api/suno-music) |
-| 🔄 Rerank | Cohere, Jina | [Documentation](https://docs.newapi.pro/en/docs/api/ai-model/rerank/creatererank) |
-| 💬 Claude | Format Messages | [Documentation](https://docs.newapi.pro/en/docs/api/ai-model/chat/createmessage) |
-| 🌐 Gemini | Format Google Gemini | [Documentation](https://docs.newapi.pro/en/docs/api/ai-model/chat/gemini/geminirelayv1beta) |
+| 🤖 OpenAI-Compatible | Modèles compatibles OpenAI | [Documentation](https://docs.nexustok.ai/en/docs/api/ai-model/chat/openai/createchatcompletion) |
+| 🤖 OpenAI Responses | Format OpenAI Responses | [Documentation](https://docs.nexustok.ai/en/docs/api/ai-model/chat/openai/createresponse) |
+| 🎨 Midjourney-Proxy | [Midjourney-Proxy(Plus)](https://github.com/novicezk/midjourney-proxy) | [Documentation](https://docs.nexustok.ai/api/midjourney-proxy-image) |
+| 🎵 Suno-API | [Suno API](https://github.com/Suno-API/Suno-API) | [Documentation](https://docs.nexustok.ai/api/suno-music) |
+| 🔄 Rerank | Cohere, Jina | [Documentation](https://docs.nexustok.ai/en/docs/api/ai-model/rerank/creatererank) |
+| 💬 Claude | Format Messages | [Documentation](https://docs.nexustok.ai/en/docs/api/ai-model/chat/createmessage) |
+| 🌐 Gemini | Format Google Gemini | [Documentation](https://docs.nexustok.ai/en/docs/api/ai-model/chat/gemini/geminirelayv1beta) |
 | 🔧 Dify | Mode ChatFlow | - |
 | 🎯 Amont personnalisé | Configuration des points d'accès amont légalement autorisés | - |
 
@@ -278,16 +278,16 @@ docker run --name NexusTok -d --restart always \
 <details>
 <summary>Voir la liste complète des interfaces</summary>
 
-- [Interface de discussion (Chat Completions)](https://docs.newapi.pro/en/docs/api/ai-model/chat/openai/createchatcompletion)
-- [Interface de réponse (Responses)](https://docs.newapi.pro/en/docs/api/ai-model/chat/openai/createresponse)
-- [Interface d'image (Image)](https://docs.newapi.pro/en/docs/api/ai-model/images/openai/post-v1-images-generations)
-- [Interface audio (Audio)](https://docs.newapi.pro/en/docs/api/ai-model/audio/openai/create-transcription)
-- [Interface vidéo (Video)](https://docs.newapi.pro/en/docs/api/ai-model/videos/sora/createvideo)
-- [Interface d'incorporation (Embeddings)](https://docs.newapi.pro/en/docs/api/ai-model/embeddings/createembedding)
-- [Interface de rerank (Rerank)](https://docs.newapi.pro/en/docs/api/ai-model/rerank/creatererank)
-- [Conversation en temps réel (Realtime)](https://docs.newapi.pro/en/docs/api/ai-model/realtime/createrealtimesession)
-- [Discussion Claude](https://docs.newapi.pro/en/docs/api/ai-model/chat/createmessage)
-- [Discussion Google Gemini](https://docs.newapi.pro/en/docs/api/ai-model/chat/gemini/geminirelayv1beta)
+- [Interface de discussion (Chat Completions)](https://docs.nexustok.ai/en/docs/api/ai-model/chat/openai/createchatcompletion)
+- [Interface de réponse (Responses)](https://docs.nexustok.ai/en/docs/api/ai-model/chat/openai/createresponse)
+- [Interface d'image (Image)](https://docs.nexustok.ai/en/docs/api/ai-model/images/openai/post-v1-images-generations)
+- [Interface audio (Audio)](https://docs.nexustok.ai/en/docs/api/ai-model/audio/openai/create-transcription)
+- [Interface vidéo (Video)](https://docs.nexustok.ai/en/docs/api/ai-model/videos/sora/createvideo)
+- [Interface d'incorporation (Embeddings)](https://docs.nexustok.ai/en/docs/api/ai-model/embeddings/createembedding)
+- [Interface de rerank (Rerank)](https://docs.nexustok.ai/en/docs/api/ai-model/rerank/creatererank)
+- [Conversation en temps réel (Realtime)](https://docs.nexustok.ai/en/docs/api/ai-model/realtime/createrealtimesession)
+- [Discussion Claude](https://docs.nexustok.ai/en/docs/api/ai-model/chat/createmessage)
+- [Discussion Google Gemini](https://docs.nexustok.ai/en/docs/api/ai-model/chat/gemini/geminirelayv1beta)
 
 </details>
 
@@ -339,7 +339,7 @@ docker run --name NexusTok -d --restart always \
 | `PYROSCOPE_BLOCK_RATE` | Taux d'échantillonnage block Pyroscope | `5` |
 | `HOSTNAME` | Nom d'hôte tagué pour Pyroscope | `NexusTok` |
 
-📖 **Configuration complète:** [Documentation des variables d'environnement](https://docs.newapi.pro/en/docs/installation/config-maintenance/environment-variables)
+📖 **Configuration complète:** [Documentation des variables d'environnement](https://docs.nexustok.ai/en/docs/installation/config-maintenance/environment-variables)
 
 </details>
 
@@ -453,10 +453,10 @@ Consultez [Authentification utilisateur et sessions de connexion](./docs/authent
 
 | Ressource | Lien |
 |------|------|
-| 📘 FAQ | [FAQ](https://docs.newapi.pro/en/docs/support/faq) |
-| 💬 Interaction avec la communauté | [Canaux de communication](https://docs.newapi.pro/en/docs/support/community-interaction) |
-| 🐛 Commentaires sur les problèmes | [Commentaires sur les problèmes](https://docs.newapi.pro/en/docs/support/feedback-issues) |
-| 📚 Documentation complète | [Documentation officielle](https://docs.newapi.pro/en/docs) |
+| 📘 FAQ | [FAQ](https://docs.nexustok.ai/en/docs/support/faq) |
+| 💬 Interaction avec la communauté | [Canaux de communication](https://docs.nexustok.ai/en/docs/support/community-interaction) |
+| 🐛 Commentaires sur les problèmes | [Commentaires sur les problèmes](https://docs.nexustok.ai/en/docs/support/feedback-issues) |
+| 📚 Documentation complète | [Documentation officielle](https://docs.nexustok.ai/en/docs) |
 
 ### 🤝 Guide de contribution
 
@@ -495,7 +495,7 @@ Si les politiques de votre organisation ne permettent pas l'utilisation de logic
 
 Si ce projet vous est utile, bienvenue à nous donner une ⭐️ Étoile！
 
-**[Documentation officielle](https://docs.newapi.pro/en/docs)** • **[Commentaires sur les problèmes](https://github.com/c1cadabob/nexustok/issues)** • **[Dernière version](https://github.com/c1cadabob/nexustok/releases)**
+**[Documentation officielle](https://docs.nexustok.ai/en/docs)** • **[Commentaires sur les problèmes](https://github.com/c1cadabob/nexustok/issues)** • **[Dernière version](https://github.com/c1cadabob/nexustok/releases)**
 
 <sub>Construit avec ❤️ par c1cadaBob</sub>
 

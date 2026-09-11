@@ -1,8 +1,8 @@
 # 宝塔面板部署教程
 
-本文档提供使用宝塔面板 Docker 功能部署 New API 的图文教程。
+本文档提供使用宝塔面板 Docker 功能部署 NexusTok 的图文教程。
 
-> 📖 官方文档：[宝塔面板部署](https://docs.newapi.pro/zh/docs/installation/deployment-methods/bt-docker-installation)
+> 📖 官方文档：[宝塔面板部署](https://docs.nexustok.ai/zh/docs/installation/deployment-methods/bt-docker-installation)
 
 ***
 
@@ -32,12 +32,12 @@
 
 ***
 
-## 步骤三：安装 New API
+## 步骤三：安装 NexusTok
 
 ### 方法一：使用宝塔应用商店（推荐）
 
 1. 在宝塔面板 Docker 功能中，点击 **应用商店**
-2. 搜索并找到 **New-API**
+2. 搜索并找到 **NexusTok**
 3. 点击 **安装**
 4. 配置以下基本选项：
    - **容器名称**：可自定义，默认为 `NexusTok`
@@ -136,9 +136,9 @@ docker-compose down && docker-compose up -d
 
 ## 相关链接
 
-- [官方文档](https://docs.newapi.pro/zh/docs/installation)
-- [环境变量配置](https://docs.newapi.pro/zh/docs/installation/config-maintenance/environment-variables)
-- [常见问题](https://docs.newapi.pro/zh/docs/support/faq)
+- [官方文档](https://docs.nexustok.ai/zh/docs/installation)
+- [环境变量配置](https://docs.nexustok.ai/zh/docs/installation/config-maintenance/environment-variables)
+- [常见问题](https://docs.nexustok.ai/zh/docs/support/faq)
 - [GitHub 仓库](https://github.com/c1cadaBob/NexusTok)
 
 ***

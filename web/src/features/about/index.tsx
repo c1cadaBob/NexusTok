@@ -50,17 +50,17 @@ function EmptyAboutState() {
           <p>
             {t('New API Project Repository:')}{' '}
             <a
-              href='https://github.com/c1cadaBob/new-api'
+              href='https://github.com/c1cadaBob/NexusTok'
               target='_blank'
               rel='noopener noreferrer'
               className='text-primary hover:underline'
             >
-              {t('https://github.com/c1cadaBob/new-api')}
+              {t('https://github.com/c1cadaBob/NexusTok')}
             </a>
           </p>
           <p className='text-muted-foreground'>
             <a
-              href='https://github.com/c1cadaBob/new-api'
+              href='https://github.com/c1cadaBob/NexusTok'
               target='_blank'
               rel='noopener noreferrer'
               className='text-primary hover:underline'
@@ -98,7 +98,7 @@ function EmptyAboutState() {
           <p className='text-muted-foreground'>
             {t('This project must be used in compliance with the')}{' '}
             <a
-              href='https://github.com/c1cadaBob/new-api/blob/main/LICENSE'
+              href='https://github.com/c1cadaBob/NexusTok/blob/main/LICENSE'
               target='_blank'
               rel='noopener noreferrer'
               className='text-primary hover:underline'

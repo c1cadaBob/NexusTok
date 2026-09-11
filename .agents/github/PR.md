@@ -17,7 +17,7 @@ Before opening, refuse the same out-of-scope list as `.agents/github/ISSUE.md`
 compatibility, pass-through-only forwarding, third-party hosts, usage questions).
 Tell the user and do not open a PR.
 
-Then search https://docs.newapi.ai/ , https://deepwiki.com/c1cadaBob/NexusTok ,
+Then search https://docs.nexustok.ai/ , https://deepwiki.com/c1cadaBob/NexusTok ,
 the README, and the code. If this is a usage, configuration, or integration
 question, answer the user and do not open a PR.
 -->
@@ -89,7 +89,7 @@ Take these from the linked issue. If a needed item is empty, ask the user that q
 
 Open them. Do not write "already checked" without sources.
 
-- https://docs.newapi.ai/ :
+- https://docs.nexustok.ai/ :
 - https://deepwiki.com/c1cadaBob/NexusTok :
 - README / repo docs:
 - Code paths and what they imply for this change:

@@ -1,7 +1,7 @@
 {
   "name": "NexusTok-electron",
   "version": "1.0.0",
-  "description": "New API - AI Model Gateway Desktop Application",
+  "description": "NexusTok - AI Model Gateway Desktop Application",
   "main": "main.js",
   "scripts": {
     "start-app": "electron .",
@@ -29,8 +29,8 @@
     "electron-builder": "^26.15.3"
   },
   "build": {
-    "appId": "com.newapi.desktop",
-    "productName": "New-API-App",
+    "appId": "com.nexustok.desktop",
+    "productName": "NexusTok-App",
     "publish": null,
     "directories": {
       "output": "dist"

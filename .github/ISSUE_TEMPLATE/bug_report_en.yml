@@ -11,7 +11,7 @@ body:
         -->
         ## Read This First (Do Not Remove This Section)
 
-        - Docs: https://docs.newapi.ai/
+        - Docs: https://docs.nexustok.ai/
         - Usage questions first: https://deepwiki.com/c1cadaBob/NexusTok
         - Relay reports must first establish that the issue occurs in the NexusTok layer. Use equivalent redacted requests to compare the direct upstream result with the result through NexusTok, including response status, error body, and server logs. Reports involving pass-through mode, or showing only an upstream error without this comparison, are not accepted.
         - Reports about Coding Plan services, reverse-engineered channels, third-party API wrappers, or compatibility issues caused by exposing a Codex endpoint through a reverse proxy as a general-purpose API are not accepted. Protocols or behavior specific to the Codex API should not be treated as standard OpenAI API behavior; confirm such issues with the channel or API provider first.
@@ -22,7 +22,7 @@ body:
     id: deployment-source
     attributes:
       label: Deployment source
-      description: Select the source of the newapi instance where the issue occurs. Third-party services and forks not reproduced against the unmodified repository are outside this project's support scope.
+      description: Select the source of the NexusTok instance where the issue occurs. Third-party services and forks not reproduced against the unmodified repository are outside this project's support scope.
       options:
         - Repository release / official image (self-hosted)
         - Repository main branch source (self-built)
@@ -34,7 +34,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: Your current newapi version
+      label: Your current NexusTok version
       description: Enter an exact version, commit, or image tag, such as `v1.0.0`. Values such as `latest` or `unknown` that cannot identify the code are not valid version information.
     validations:
       required: true
@@ -46,7 +46,7 @@ body:
       options:
         - label: "**Non-duplicate issue:** I have searched existing [Issues](https://github.com/c1cadaBob/NexusTok/issues?q=is%3Aissue) and confirmed there are no similar issues."
           required: true
-        - label: "**Read this first:** I have fully read the section above, reviewed the docs at https://docs.newapi.ai/ and the project README, and asked AI first, confirming this is not a usage, configuration, or integration question."
+        - label: "**Read this first:** I have fully read the section above, reviewed the docs at https://docs.nexustok.ai/ and the project README, and asked AI first, confirming this is not a usage, configuration, or integration question."
           required: true
         - label: "**Supported version:** I have provided an exact version, commit, or image tag (not `latest` or `unknown`) and confirmed that the issue reproduces on an unmodified, supported version from this repository."
           required: true

@@ -397,7 +397,7 @@ func TestFetchModelsUsesSharedChannelFetchBehavior(t *testing.T) {
 func TestFetchNewAPIModelsUsesOpenAIContract(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/v1/models", r.URL.Path)
-		assert.Equal(t, "Bearer new-api-key", r.Header.Get("Authorization"))
+		assert.Equal(t, "Bearer nexustok-key", r.Header.Get("Authorization"))
 		w.Header().Set("Content-Type", "application/json")
 		_, err := w.Write([]byte(`{"data":[{"id":"gpt-5"},{"id":" gpt-5-mini "}]}`))
 		assert.NoError(t, err)
@@ -407,7 +407,7 @@ func TestFetchNewAPIModelsUsesOpenAIContract(t *testing.T) {
 	baseURL := server.URL
 	channel := &model.Channel{
 		Type:    constant.ChannelTypeNewAPI,
-		Key:     "new-api-key",
+		Key:     "nexustok-key",
 		BaseURL: &baseURL,
 	}
 
