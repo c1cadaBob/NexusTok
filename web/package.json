@@ -107,19 +107,27 @@
     "oxfmt": "^0.57.0",
     "oxlint": "^1.72.0",
     "shadcn": "^4.12.0",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   },
   "overrides": {
-    "brace-expansion": "2.1.1",
+    "@hono/node-server": "1.19.15",
+    "baseline-browser-mapping": "2.11.0",
+    "brace-expansion": "2.1.4",
+    "browserslist": "4.28.7",
+    "colord": "2.9.4",
     "dompurify": "3.4.13",
-    "fast-uri": "3.1.2",
-    "hono": "4.12.22",
-    "ip-address": "10.2.0",
+    "fast-uri": "3.1.6",
+    "hono": "4.13.7",
+    "ip-address": "10.3.1",
     "js-cookie": "3.0.7",
-    "mermaid": "11.15.0",
+    "js-yaml": "4.3.2",
+    "mermaid": "11.16.1",
     "minimist": "1.2.8",
-    "postcss": "8.5.15",
-    "qs": "6.15.2",
+    "postcss": "8.5.28",
+    "qs": "6.16.0",
+    "query-string": "9.5.1",
+    "smol-toml": "1.8.0",
+    "undici": "7.29.0",
     "uuid": "14.0.0"
   }
 }

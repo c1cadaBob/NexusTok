@@ -1,7 +1,7 @@
 # Dockerfile.hot - 热更新开发环境镜像
 # 用于本地开发，支持 Air 热更新
 
-FROM golang:1.26.1-alpine
+FROM golang:1.26.6-alpine
 
 # 设置环境变量
 ENV GO111MODULE=on \
