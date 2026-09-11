@@ -35,7 +35,7 @@ export const OFFICIAL_CHANNEL_ID = -100
 export const OFFICIAL_CHANNEL_NAME = '官方倍率预设'
 export const OFFICIAL_CHANNEL_BASE_URL = 'https://basellm.github.io'
 export const OFFICIAL_CHANNEL_ENDPOINT =
-  '/llm-metadata/api/newapi/ratio_config-v1-base.json'
+  '/llm-metadata/api/nexustok/ratio_config-v1-base.json'
 
 export const MODELS_DEV_PRESET_ID = -101
 export const MODELS_DEV_PRESET_NAME = 'models.dev 价格预设'

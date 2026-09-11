@@ -76,7 +76,7 @@ describe('New API channel', () => {
     }
 
     expect(
-      channelFormSchema.safeParse(newAPIForm('https://new-api.example')).success
+      channelFormSchema.safeParse(newAPIForm('https://nexustok.example')).success
     ).toBe(true)
   })
 

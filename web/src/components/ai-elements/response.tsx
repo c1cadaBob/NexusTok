@@ -36,7 +36,7 @@ import {
 import { renderChildren, renderFootnotes } from './response-renderer'
 import type { ResponseProps } from './response-types'
 
-const DEFAULT_PARSER_ID = 'new-api-response'
+const DEFAULT_PARSER_ID = 'nexustok-response'
 const MAX_PARSED_MARKDOWN_CHARS = 20_000
 type MarkdownInstance = ReturnType<typeof getMarkdown>
 

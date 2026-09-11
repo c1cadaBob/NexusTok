@@ -322,7 +322,7 @@ async function performRefreshWithBrowserLock(
       return runRefresh(refreshEpoch)
     }
     return navigator.locks.request(
-      'new-api:auth-refresh',
+      'nexustok:auth-refresh',
       { mode: 'exclusive' },
       () => runRefresh(refreshEpoch)
     )

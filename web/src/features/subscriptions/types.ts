@@ -103,7 +103,7 @@ export interface SubscriptionPayResponse {
     // Waffo Pancake / Creem hosted checkout URL.
     checkout_url?: string
     // Pancake-only: order metadata + self-service buyer session token,
-    // surfaced for future flows (refund / cancel from new-api's own UI).
+    // surfaced for future flows (refund / cancel from NexusTok's own UI).
     session_id?: string
     expires_at?: number | string
     order_id?: string

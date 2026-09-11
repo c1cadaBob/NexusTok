@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cadabob.dev
 */
-export const CHANNEL_CONNECTION_INFO_TYPE = 'newapi_channel_conn'
+export const CHANNEL_CONNECTION_INFO_TYPE = 'nexustok_channel_conn'
 
 export type ChannelConnectionInfo = {
   key: string

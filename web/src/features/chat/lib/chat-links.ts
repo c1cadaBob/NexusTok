@@ -162,7 +162,7 @@ export function resolveChatUrl({
 
   if (url.includes('{cherryConfig}')) {
     const payload = {
-      id: 'new-api',
+      id: 'nexustok',
       baseUrl: safeServerAddress,
       apiKey: safeApiKey,
     }
@@ -172,7 +172,7 @@ export function resolveChatUrl({
 
   if (url.includes('{aionuiConfig}')) {
     const payload = {
-      platform: 'new-api',
+      platform: 'nexustok',
       baseUrl: safeServerAddress,
       apiKey: safeApiKey,
     }
@@ -182,7 +182,7 @@ export function resolveChatUrl({
 
   if (url.includes('{deepchatConfig}')) {
     const payload = {
-      id: 'new-api',
+      id: 'nexustok',
       baseUrl: safeServerAddress,
       apiKey: safeApiKey,
     }
@@ -192,7 +192,7 @@ export function resolveChatUrl({
 
   if (url.includes('{aqbotConfig}')) {
     const query = [
-      `name=${encodeURIComponent('New API')}`,
+      `name=${encodeURIComponent('NexusTok')}`,
       `baseurl=${encodeURIComponent(safeServerAddress)}`,
       `apikey=${encodeURIComponent(safeApiKey)}`,
       'type=openai',

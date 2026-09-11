@@ -37,7 +37,7 @@ import type {
   TaskPluginListItem,
 } from '../types'
 
-const OFFICIAL_INDEX_URL = 'https://www.newapi.ai/api/v1/plugins/index.json'
+const OFFICIAL_INDEX_URL = 'https://www.nexustok.ai/api/v1/plugins/index.json'
 
 function marketplacePlugin(
   overrides: Partial<MarketplacePlugin> = {}
@@ -107,7 +107,7 @@ describe('marketplace source path resolution', () => {
   test('resolves against a root index without dropping the path', () => {
     assert.equal(
       resolvePluginSourceUrl(OFFICIAL_INDEX_URL, 'x/1.0.0/plugin.js'),
-      'https://www.newapi.ai/api/v1/plugins/x/1.0.0/plugin.js'
+      'https://www.nexustok.ai/api/v1/plugins/x/1.0.0/plugin.js'
     )
   })
 
