@@ -14,6 +14,7 @@ export default defineConfig(({ envMode }) => {
     process.env.VITE_REACT_APP_SERVER_URL ||
     env.rawPublicVars.VITE_REACT_APP_SERVER_URL ||
     'http://localhost:3000'
+  const distRoot = process.env.NEXUSTOK_DIST_ROOT || 'dist'
 
   const isProd = envMode === 'production'
   const devProxy = Object.fromEntries(
@@ -67,6 +68,7 @@ export default defineConfig(({ envMode }) => {
     },
     server: {
       host: '0.0.0.0',
+      port: Number(process.env.PORT) || 3003,
       strictPort: false,
       proxy: devProxy,
     },
@@ -75,7 +77,7 @@ export default defineConfig(({ envMode }) => {
       minify: isProd,
       target: 'web',
       distPath: {
-        root: 'dist',
+        root: distRoot,
       },
       // Rely on Rsbuild default legalComments ("linked" → per-chunk *.LICENSE.txt) in all modes.
       // Do not set "none" in production: that strips minifier-preserved third-party notices and

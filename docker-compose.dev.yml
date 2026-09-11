@@ -1,20 +1,26 @@
-# Frontend Development - Backend built from local source
+# docker-compose.dev.yml - NexusTok 前端开发环境
 #
-# Usage:
+# 功能：
+# - 从本地源码构建后端（Dockerfile.dev）
+# - 前端使用独立的开发服务器（bun run dev）
+# - 自动代理 API 请求到后端
+#
+# 使用方法：
 #   1. docker compose -f docker-compose.dev.yml up -d
-#   2. make dev-web
-#   3. Open http://localhost:5173 (Rsbuild dev server, API auto-proxied to :3000)
+#   2. cd web && bun install && bun run dev
+#   3. 访问 http://localhost:3003（Rsbuild 开发服务器，API 自动代理到 :3030）
 #
-# Rebuild backend after Go code changes:
+# 重新构建后端（Go 代码修改后）：
 #   docker compose -f docker-compose.dev.yml up -d --build nexustok
 #
-# Stop:
+# 停止服务：
 #   docker compose -f docker-compose.dev.yml down
 #
-# Reset data:
+# 重置数据：
 #   docker compose -f docker-compose.dev.yml down -v
 
 services:
+  # NexusTok 后端服务（从本地源码构建）
   nexustok:
     build:
       context: .
@@ -23,17 +29,17 @@ services:
     container_name: nexustok-dev
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "3030:3030"
     volumes:
       - dev_data:/data
     environment:
       - SQL_DSN=postgresql://root:123456@postgres:5432/nexustok
       - REDIS_CONN_STRING=redis://redis
       - TZ=Asia/Shanghai
+      - PORT=3030
       - BATCH_UPDATE_ENABLED=true
-      # Local HTTP dev mode: keep Secure=false and leave TRUSTED_URL unset. This disables the refresh/logout OriginGuard so the :5173 -> :3000 dev proxy works.
-      - SESSION_COOKIE_SECURE=false
-      # For HTTPS only: set Secure=true and list every exact trusted HTTPS browser Origin. This does not configure relay CORS.
+      # 仅当开发后端通过 HTTPS 域名访问时开启。开启后必须配置可信 URL，
+      # 否则浏览器不会在 HTTP 本地开发环境中携带 Secure session cookie。
       # - SESSION_COOKIE_SECURE=true
       # - SESSION_COOKIE_TRUSTED_URL=https://example.com,https://admin.example.com
     depends_on:
@@ -51,6 +57,7 @@ services:
     networks:
       - dev-network
 
+  # PostgreSQL 数据库服务
   postgres:
     image: postgres:15-alpine
     container_name: nexustok-dev-pg

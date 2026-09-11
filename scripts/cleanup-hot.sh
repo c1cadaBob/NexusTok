@@ -1,112 +1,122 @@
 #!/bin/bash
 # NexusTok 热更新环境清理脚本
-# 用于清理旧的热更新开发环境
+#
+# 默认只清理 NexusTok 热更新 Docker 资源并保留宿主机数据。
+# 使用 --purge-data 时，同时清理热更新数据库卷、data、logs、前端依赖和构建产物。
 
-set -e
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.hot.yml"
+PROJECT_NAME="nexustok-hot"
+PURGE_DATA=false
+
+if [ "$#" -gt 1 ] || { [ "$#" -eq 1 ] && [ "$1" != "--purge-data" ]; }; then
+    echo "用法：bash scripts/cleanup-hot.sh [--purge-data]"
+    exit 1
+fi
+
+if [ "$#" -eq 1 ]; then
+    PURGE_DATA=true
+fi
+
+cd "${PROJECT_ROOT}"
 
 echo "=========================================="
-echo "NexusTok 热更新环境清理脚本"
+echo "NexusTok 热更新环境清理"
 echo "=========================================="
 echo ""
 
-# 颜色定义
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
-
-# 检查是否有运行的容器
-echo "检查运行中的热更新容器..."
-CONTAINERS=$(docker ps -a --filter "name=nexustok-hot" --filter "name=nexustok-api-hot" --filter "name=nexustok-frontend-watch" --format "{{.Names}}" | sort)
-
-if [ -z "$CONTAINERS" ]; then
-    echo -e "${GREEN}✓${NC} 没有找到热更新相关容器"
+echo "停止并删除 ${PROJECT_NAME} Compose 项目资源..."
+if [ "${PURGE_DATA}" = true ]; then
+    docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" down --volumes --remove-orphans
 else
-    echo -e "${YELLOW}找到以下容器:${NC}"
-    echo "$CONTAINERS" | while read -r container; do
-        echo "  - $container"
-    done
-    echo ""
+    docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" down --remove-orphans
+fi
 
-    read -p "是否停止并删除这些容器? (y/N): " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        echo "停止容器..."
-        echo "$CONTAINERS" | xargs -r docker stop
-        echo -e "${GREEN}✓${NC} 容器已停止"
+echo "清理同一 Compose 项目的残留容器..."
+mapfile -t leftover_containers < <(
+    docker ps -aq --filter "label=com.docker.compose.project=${PROJECT_NAME}"
+)
+if [ "${#leftover_containers[@]}" -gt 0 ]; then
+    docker rm -f "${leftover_containers[@]}"
+fi
 
-        echo "删除容器..."
-        echo "$CONTAINERS" | xargs -r docker rm
-        echo -e "${GREEN}✓${NC} 容器已删除"
-    else
-        echo "跳过容器清理"
+for container in \
+    nexustok-api-hot \
+    nexustok-frontend-watch \
+    nexustok-hot-pg \
+    nexustok-hot-redis \
+    nexustok-dev \
+    nexustok-dev-api \
+    nexustok-dev-pg \
+    nexustok-dev-postgres \
+    nexustok-dev-redis \
+    nexustok-dev-frontend; do
+    if docker container inspect "${container}" >/dev/null 2>&1; then
+        docker rm -f "${container}"
     fi
+done
+
+echo "清理 NexusTok 热更新专用镜像..."
+for image in nexustok-api-hot:local nexustok-dev:local; do
+    if docker image inspect "${image}" >/dev/null 2>&1; then
+        docker image rm "${image}"
+    fi
+done
+
+echo "检查并清理未被其他容器使用的热更新基础镜像..."
+for image in postgres:15 postgres:15-alpine redis:7-alpine oven/bun:1; do
+    if ! docker image inspect "${image}" >/dev/null 2>&1; then
+        continue
+    fi
+
+    used_by_other_container=false
+    while IFS='|' read -r container_name container_image; do
+        if [ "${container_image}" = "${image}" ]; then
+            case "${container_name}" in
+                nexustok-api-hot|nexustok-frontend-watch|nexustok-hot-pg|nexustok-hot-redis)
+                    ;;
+                *)
+                    used_by_other_container=true
+                    ;;
+            esac
+        fi
+    done < <(docker ps -a --format '{{.Names}}|{{.Image}}')
+
+    if [ "${used_by_other_container}" = false ]; then
+        docker image rm "${image}" || true
+    else
+        echo "保留 ${image}：仍被其他项目容器使用"
+    fi
+done
+
+for network in \
+    nexustok-hot_hot-network \
+    nexustok-hot_default; do
+    if docker network inspect "${network}" >/dev/null 2>&1; then
+        docker network rm "${network}" >/dev/null
+    fi
+done
+
+if [ "${PURGE_DATA}" = true ]; then
+    echo "清理热更新宿主机数据、日志、前端依赖和构建产物..."
+    docker run --rm --network none --user 0:0 \
+        --mount "type=bind,src=${PROJECT_ROOT},dst=/workspace" \
+        alpine:3.20 \
+        sh -c '
+            for directory in \
+                /workspace/data \
+                /workspace/logs; do
+                if [ -d "${directory}" ]; then
+                    find "${directory}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+                fi
+            done
+            rm -rf /workspace/web/dist /workspace/web/node_modules
+        '
+
+    mkdir -p "${PROJECT_ROOT}/data" "${PROJECT_ROOT}/logs"
 fi
 
 echo ""
-
-# 检查数据卷
-echo "检查热更新相关数据卷..."
-VOLUMES=$(docker volume ls --filter "name=nexustok-hot" --filter "name=nexustok_hot" --format "{{.Name}}" | sort)
-
-if [ -z "$VOLUMES" ]; then
-    echo -e "${GREEN}✓${NC} 没有找到热更新相关数据卷"
-else
-    echo -e "${YELLOW}找到以下数据卷:${NC}"
-    echo "$VOLUMES" | while read -r volume; do
-        echo "  - $volume"
-    done
-    echo ""
-    echo -e "${RED}警告: 删除数据卷将永久删除其中的数据库数据!${NC}"
-    read -p "是否删除这些数据卷? (y/N): " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        echo "删除数据卷..."
-        echo "$VOLUMES" | xargs -r docker volume rm
-        echo -e "${GREEN}✓${NC} 数据卷已删除"
-    else
-        echo "跳过数据卷清理"
-    fi
-fi
-
-echo ""
-
-# 检查自定义镜像
-echo "检查热更新相关镜像..."
-IMAGES=$(docker images --filter "reference=nexustok-api-hot" --filter "reference=nexustok-hot" --format "{{.Repository}}:{{.Tag}}" | grep -E "nexustok.*hot" || true)
-
-if [ -z "$IMAGES" ]; then
-    echo -e "${GREEN}✓${NC} 没有找到热更新相关镜像"
-else
-    echo -e "${YELLOW}找到以下镜像:${NC}"
-    echo "$IMAGES" | while read -r image; do
-        SIZE=$(docker images --format "{{.Size}}" "$image")
-        echo "  - $image ($SIZE)"
-    done
-    echo ""
-
-    read -p "是否删除这些镜像? (y/N): " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        echo "删除镜像..."
-        echo "$IMAGES" | xargs -r docker rmi
-        echo -e "${GREEN}✓${NC} 镜像已删除"
-    else
-        echo "跳过镜像清理"
-    fi
-fi
-
-echo ""
-
-# 清理未使用的网络
-echo "清理未使用的 Docker 网络..."
-docker network prune -f --filter "label=com.docker.compose.project=nexustok-hot" 2>/dev/null || true
-echo -e "${GREEN}✓${NC} 未使用的网络已清理"
-
-echo ""
-echo -e "${GREEN}=========================================="
-echo "清理完成!"
-echo "==========================================${NC}"
-echo ""
-echo "提示: 如需启动新的热更新开发环境，请运行:"
-echo "  bash scripts/dev-hot.sh"
+echo "热更新环境清理完成。"

@@ -55,13 +55,13 @@ jobs:
       #   if: runner.os != 'Windows'
       #   run: |
       #     go mod download
-      #     go build -ldflags "-s -w -X 'NexusTok/common.Version=$(git describe --tags)' -extldflags '-static'" -o NexusTok
+      #     go build -ldflags "-s -w -X 'github.com/c1cadaBob/NexusTok/common.Version=$(git describe --tags)' -extldflags '-static'" -o NexusTok
 
       - name: Build Go binary (Windows)
         if: runner.os == 'Windows'
         run: |
           go mod download
-          go build -ldflags "-s -w -X 'NexusTok/common.Version=$(git describe --tags)'" -o NexusTok.exe
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "-s -w -X 'github.com/c1cadaBob/NexusTok/common.Version=$(git describe --tags)'" -o NexusTok.exe
 
       - name: Update Electron version
         run: |

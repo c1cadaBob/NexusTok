@@ -12,6 +12,7 @@ build
 *.db-wal
 logs
 web/dist
+web/dist.hot
 web/node_modules
 .env
 one-api

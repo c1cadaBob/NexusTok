@@ -1,112 +1,124 @@
-# NexusTok 热更新开发环境 Docker Compose 配置
+# docker-compose.hot.yml - NexusTok 热重载开发环境
 #
-# 用途：本地开发环境，支持代码热更新
+# 功能：
+# - 前端：使用 Bun 监听文件变化并自动重新构建
+# - 后端：使用 Go 热重载脚本自动编译和重启
+# - 数据库：PostgreSQL + Redis
 #
 # 使用方法：
-#   启动: bash scripts/dev-hot.sh
-#   停止: docker compose -f docker-compose.hot.yml down
-#   清理: bash scripts/cleanup-hot.sh
+#   docker compose -f docker-compose.hot.yml up -d
 #
-# 特性：
-#   - Go 代码热更新（基于 Air）
-#   - 前端代码热更新（基于 Bun HMR）
-#   - PostgreSQL 数据库
-#   - Redis 缓存
-#   - 独立的数据卷和网络
+# 访问地址：
+#   - 后端 API: http://localhost:3003
+#   - 前端开发: 文件修改后自动重新构建
+#
+# 环境变量：
+#   HOT_PORT - 后端 API 端口（默认: 3003）
+#   DOCKER_UID/DOCKER_GID - 容器内用户 ID（默认使用当前开发容器常见的 1000:1000）
+
+name: nexustok-hot
 
 services:
+  # 前端构建监听服务（自动检测文件变化并重新构建）
+  frontend-watch:
+    image: oven/bun:1
+    container_name: nexustok-frontend-watch
+    user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
+    working_dir: /app
+    environment:
+      BUN_INSTALL_CACHE_DIR: /app/.cache/bun
+      DISABLE_ESLINT_PLUGIN: "true"
+      HOME: /app/.cache/home
+      NEXUSTOK_HOT_RELOAD: "true"
+      NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
+      NODE_ENV: production
+      TMPDIR: /app/.cache/tmp
+      npm_config_registry: https://registry.npmmirror.com
+    volumes:
+      - .:/app
+    command: ["/bin/sh", "/app/bin/docker-hot-frontend.sh"]
+    networks:
+      - hot-network
+    restart: unless-stopped
+
+  # NexusTok 后端服务（热重载模式）
   nexustok:
     build:
       context: .
-      dockerfile: Dockerfile.hot
-    image: nexustok-dev:local
-    container_name: nexustok-dev-api
-    restart: unless-stopped
+      dockerfile: Dockerfile.dev-hot
+    image: nexustok-api-hot:local
+    container_name: nexustok-api-hot
+    user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
+    working_dir: /app
+    command: ["/bin/sh", "/app/bin/docker-hot-backend.sh"]
     ports:
-      - "3000:3000"
+      - "${HOT_PORT:-3003}:3030"
     volumes:
-      # 挂载整个项目目录以支持热更新
       - .:/app
-      # 使用命名卷存储数据
-      - nexustok_dev_data:/data
-      # 使用命名卷存储日志
-      - nexustok_dev_logs:/app/logs
+      - ./data:/data
+      - ./logs:/app/logs
     environment:
-      - SQL_DSN=postgresql://root:123456@postgres:5432/nexustok
-      - REDIS_CONN_STRING=redis://:123456@redis:6379
-      - TZ=Asia/Shanghai
-      - BATCH_UPDATE_ENABLED=true
-      - NODE_NAME=nexustok-dev-node-1
-      - SESSION_SECRET_FILE=/data/session_secret
-      - SESSION_COOKIE_SECURE=false
-      - DEBUG=false
-      - NEXUSTOK_HOT_RELOAD=true
-      - GIN_MODE=release
-      - ERROR_LOG_ENABLED=true
+      SQL_DSN: postgresql://root:123456@postgres:5432/nexustok
+      REDIS_CONN_STRING: redis://redis:6379
+      TZ: Asia/Shanghai
+      PORT: "3030"
+      GIN_MODE: release
+      GOPROXY: https://goproxy.cn,https://goproxy.io,direct
+      GOSUMDB: sum.golang.google.cn
+      GOWORK: "off"
+      NEXUSTOK_HOT_RELOAD: "true"
+      DEBUG: "false"
+      BATCH_UPDATE_ENABLED: "true"
+      NODE_NAME: nexustok-hot-node-1
+      SESSION_SECRET_FILE: /data/session_secret
+      SESSION_MAX_AGE: "7776000"
     depends_on:
-      postgres:
-        condition: service_healthy
+      frontend-watch:
+        condition: service_started
       redis:
         condition: service_started
+      postgres:
+        condition: service_healthy
     networks:
-      - nexustok-dev-network
+      - hot-network
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:3030/api/status | grep -q '\"success\":[[:space:]]*true' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
 
+  # Redis 缓存服务
+  redis:
+    image: redis:7-alpine
+    container_name: nexustok-hot-redis
+    restart: unless-stopped
+    networks:
+      - hot-network
+
+  # PostgreSQL 数据库服务
   postgres:
     image: postgres:15-alpine
-    container_name: nexustok-dev-postgres
+    container_name: nexustok-hot-pg
     restart: unless-stopped
     environment:
       POSTGRES_USER: root
       POSTGRES_PASSWORD: 123456
       POSTGRES_DB: nexustok
     volumes:
-      - nexustok_dev_pg_data:/var/lib/postgresql/data
+      - hot_pg_data:/var/lib/postgresql/data
     networks:
-      - nexustok-dev-network
+      - hot-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U root -d nexustok"]
       interval: 5s
       timeout: 3s
-      retries: 5
-
-  redis:
-    image: redis:7-alpine
-    container_name: nexustok-dev-redis
-    restart: unless-stopped
-    command: ["redis-server", "--requirepass", "123456"]
-    networks:
-      - nexustok-dev-network
-
-  frontend:
-    image: oven/bun:1
-    container_name: nexustok-dev-frontend
-    restart: unless-stopped
-    working_dir: /app/web
-    command: sh -c "bun install && bun run dev --host 0.0.0.0 --port 5173"
-    ports:
-      - "5173:5173"
-    volumes:
-      - ./web:/app/web
-      - /app/web/node_modules
-    environment:
-      - NODE_ENV=development
-      - VITE_API_URL=http://localhost:3000
-    networks:
-      - nexustok-dev-network
-    depends_on:
-      - nexustok
+      retries: 20
 
 volumes:
-  nexustok_dev_data:
-  nexustok_dev_logs:
-  nexustok_dev_pg_data:
+  hot_pg_data:
 
 networks:
-  nexustok-dev-network:
+  hot-network:
     driver: bridge
