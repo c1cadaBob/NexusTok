@@ -16,7 +16,7 @@ import (
 	"github.com/c1cadaBob/NexusTok/setting"
 	"github.com/c1cadaBob/NexusTok/setting/operation_setting"
 
-	"github.com/c1cadaBob/go-epay/epay"
+	"github.com/Calcium-Ion/go-epay/epay"
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
 	"github.com/shopspring/decimal"

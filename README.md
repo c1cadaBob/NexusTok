@@ -115,7 +115,14 @@
 git clone https://github.com/c1cadaBob/NexusTok.git
 cd NexusTok
 
-# 编辑 docker-compose.yml 配置
+# 一键部署（PostgreSQL + Redis）
+bash scripts/deploy.sh
+```
+
+**或手动启动：**
+
+```bash
+# 编辑 docker-compose.yml 配置（可选）
 nano docker-compose.yml
 
 # 启动服务
@@ -125,21 +132,34 @@ docker-compose up -d
 <details>
 <summary><strong>使用 Docker 命令</strong></summary>
 
+**使用 PostgreSQL + Redis（推荐）：**
 ```bash
-# 拉取最新镜像
-docker pull c1cadabob/nexustok:latest
+# 首先启动 PostgreSQL 和 Redis
+docker run -d --name postgres \
+  -e POSTGRES_USER=root \
+  -e POSTGRES_PASSWORD=123456 \
+  -e POSTGRES_DB=nexustok \
+  -v pg_data:/var/lib/postgresql/data \
+  postgres:15
 
-# 使用 SQLite（默认）
+docker run -d --name redis \
+  redis:latest redis-server --requirepass 123456
+
+# 启动 NexusTok
 docker run --name NexusTok -d --restart always \
   -p 3000:3000 \
+  -e SQL_DSN="postgresql://root:123456@postgres:5432/nexustok" \
+  -e REDIS_CONN_STRING="redis://:123456@redis:6379" \
   -e TZ=Asia/Shanghai \
-  -v ./data:/data \
+  --link postgres:postgres \
+  --link redis:redis \
   c1cadabob/nexustok:latest
+```
 
-# 使用 MySQL
+**使用 SQLite（仅用于测试）：**
+```bash
 docker run --name NexusTok -d --restart always \
   -p 3000:3000 \
-  -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
   c1cadabob/nexustok:latest
@@ -148,6 +168,42 @@ docker run --name NexusTok -d --restart always \
 > **💡 提示：** `-v ./data:/data` 会将数据保存在当前目录的 `data` 文件夹中，你也可以改为绝对路径如 `-v /your/custom/path:/data`
 
 </details>
+
+---
+
+## 🔧 开发环境
+
+### 热更新开发环境（推荐用于本地开发）
+
+```bash
+# 启动热更新开发环境
+bash scripts/dev-start.sh
+```
+
+**特性：**
+- ✅ Go 代码自动热更新（基于 Air）
+- ✅ 前端代码自动热更新（基于 Vite HMR）
+- ✅ PostgreSQL + Redis 完整开发环境
+- ✅ 独立的数据卷，不影响生产环境
+- ✅ 实时日志输出
+
+**访问地址：**
+- API 服务：http://localhost:3000
+- 前端开发：http://localhost:5173
+
+**常用命令：**
+```bash
+# 查看后端日志
+docker logs -f nexustok-dev-api
+
+# 查看前端日志
+docker logs -f nexustok-dev-frontend
+
+# 停止服务
+bash scripts/dev-stop.sh
+```
+
+📖 完整的开发环境文档请参考 [DEV-SETUP.md](DEV-SETUP.md)
 
 ---
 
@@ -302,10 +358,16 @@ docker run --name NexusTok -d --restart always \
 
 | 组件 | 要求 |
 |------|------|
-| **本地数据库** | SQLite（Docker 需挂载 `/data` 目录）|
-| **远程数据库** | MySQL ≥ 5.7.8 或 PostgreSQL ≥ 9.6 |
+| **数据库（推荐）** | PostgreSQL ≥ 9.6 或 MySQL ≥ 5.7.8 |
+| **缓存（推荐）** | Redis（用于多节点部署和性能优化）|
+| **本地测试** | SQLite（仅用于单机测试，不推荐生产环境）|
 | **容器引擎** | Docker / Docker Compose |
 | **系统架构** | 仅支持 64 位系统（amd64 / arm64），不支持 32 位系统 |
+
+> **💡 生产环境建议：**
+> - 使用 **PostgreSQL + Redis** 部署以获得最佳性能和扩展性
+> - SQLite 仅适用于本地开发和测试，生产环境请使用 PostgreSQL 或 MySQL
+> - 多节点部署必须使用共享数据库（PostgreSQL/MySQL）和 Redis
 
 ### ⚙️ 环境变量配置
 

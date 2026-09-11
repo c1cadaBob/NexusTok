@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/c1cadaBob/go-epay/epay"
+	"github.com/Calcium-Ion/go-epay/epay"
 	"github.com/c1cadaBob/NexusTok/common"
 	"github.com/c1cadaBob/NexusTok/model"
 	"github.com/c1cadaBob/NexusTok/service"

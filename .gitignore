@@ -44,3 +44,11 @@ relaykit/relayconvert/chat_responses_live_local_test.go
 service/openaicompat/chat_responses_live_local_test.go
 go.work
 go.work.sum
+
+# Air 热更新临时文件
+tmp/
+build-errors.log
+
+# 开发环境数据和日志
+/dev-data/
+/dev-logs/

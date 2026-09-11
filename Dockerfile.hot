@@ -1,0 +1,32 @@
+# Dockerfile.hot - 热更新开发环境镜像
+# 用于本地开发，支持 Air 热更新
+
+FROM golang:1.26.1-alpine
+
+# 设置环境变量
+ENV GO111MODULE=on \
+    CGO_ENABLED=0 \
+    GOEXPERIMENT=greenteagc \
+    GOPROXY=https://goproxy.cn,https://goproxy.io,direct \
+    GOPRIVATE=github.com/c1cadaBob/* \
+    GOSUMDB=off
+
+# 安装必要的工具
+RUN apk add --no-cache \
+    git \
+    make \
+    bash \
+    curl \
+    tzdata
+
+# 安装 Air 热更新工具
+RUN go install github.com/air-verse/air@latest
+
+# 设置工作目录
+WORKDIR /app
+
+# 暴露端口
+EXPOSE 3000
+
+# 使用 Air 启动应用
+CMD ["air", "-c", ".air.toml"]

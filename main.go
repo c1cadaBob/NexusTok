@@ -377,3 +377,4 @@ func InitResources() error {
 
 	return nil
 }
+// 热更新测试注释

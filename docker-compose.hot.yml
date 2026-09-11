@@ -1,0 +1,112 @@
+# NexusTok 热更新开发环境 Docker Compose 配置
+#
+# 用途：本地开发环境，支持代码热更新
+#
+# 使用方法：
+#   启动: bash scripts/dev-hot.sh
+#   停止: docker compose -f docker-compose.hot.yml down
+#   清理: bash scripts/cleanup-hot.sh
+#
+# 特性：
+#   - Go 代码热更新（基于 Air）
+#   - 前端代码热更新（基于 Bun HMR）
+#   - PostgreSQL 数据库
+#   - Redis 缓存
+#   - 独立的数据卷和网络
+
+services:
+  nexustok:
+    build:
+      context: .
+      dockerfile: Dockerfile.hot
+    image: nexustok-dev:local
+    container_name: nexustok-dev-api
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      # 挂载整个项目目录以支持热更新
+      - .:/app
+      # 使用命名卷存储数据
+      - nexustok_dev_data:/data
+      # 使用命名卷存储日志
+      - nexustok_dev_logs:/app/logs
+    environment:
+      - SQL_DSN=postgresql://root:123456@postgres:5432/nexustok
+      - REDIS_CONN_STRING=redis://:123456@redis:6379
+      - TZ=Asia/Shanghai
+      - BATCH_UPDATE_ENABLED=true
+      - NODE_NAME=nexustok-dev-node-1
+      - SESSION_SECRET_FILE=/data/session_secret
+      - SESSION_COOKIE_SECURE=false
+      - DEBUG=false
+      - NEXUSTOK_HOT_RELOAD=true
+      - GIN_MODE=release
+      - ERROR_LOG_ENABLED=true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - nexustok-dev-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: nexustok-dev-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: 123456
+      POSTGRES_DB: nexustok
+    volumes:
+      - nexustok_dev_pg_data:/var/lib/postgresql/data
+    networks:
+      - nexustok-dev-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U root -d nexustok"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: nexustok-dev-redis
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "123456"]
+    networks:
+      - nexustok-dev-network
+
+  frontend:
+    image: oven/bun:1
+    container_name: nexustok-dev-frontend
+    restart: unless-stopped
+    working_dir: /app/web
+    command: sh -c "bun install && bun run dev --host 0.0.0.0 --port 5173"
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./web:/app/web
+      - /app/web/node_modules
+    environment:
+      - NODE_ENV=development
+      - VITE_API_URL=http://localhost:3000
+    networks:
+      - nexustok-dev-network
+    depends_on:
+      - nexustok
+
+volumes:
+  nexustok_dev_data:
+  nexustok_dev_logs:
+  nexustok_dev_pg_data:
+
+networks:
+  nexustok-dev-network:
+    driver: bridge
