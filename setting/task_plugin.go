@@ -12,8 +12,8 @@ const (
 	TaskPluginMarketplaceSourcesKey  = "TaskPluginMarketplaceSources"
 	TaskPluginDisabledFactoryKeysKey = "TaskPluginDisabledFactoryKeys"
 
-	officialTaskPluginMarketplaceIndexURL = "https://www.newapi.ai/api/v1/plugins/index.json"
-	githubTaskPluginMarketplaceIndexURL   = "https://raw.githubusercontent.com/QuantumNous/new-api-plugins/main/index.json"
+	officialTaskPluginMarketplaceIndexURL = "https://www.nexustok.ai/api/v1/plugins/index.json"
+	githubTaskPluginMarketplaceIndexURL   = "https://raw.githubusercontent.com/c1cadaBob/NexusTok-plugins/main/index.json"
 )
 
 type TaskPluginMarketplaceSource struct {
