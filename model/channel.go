@@ -60,7 +60,8 @@ type Channel struct {
 	OtherSettings string `json:"settings" gorm:"column:settings"` // 其他设置，存储azure版本等不需要检索的信息，详见dto.ChannelOtherSettings
 
 	// cache info
-	Keys []string `json:"-" gorm:"-"`
+	Keys                []string     `json:"-" gorm:"-"`
+	SelectedUpstreamKey *UpstreamKey `json:"-" gorm:"-"`
 }
 
 type ChannelInfo struct {
@@ -206,6 +207,12 @@ func (channel *Channel) GetKeys() []string {
 }
 
 func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
+	if channel.SelectedUpstreamKey != nil {
+		if channel.SelectedUpstreamKey.Secret == "" {
+			return "", 0, types.NewError(errors.New("upstream key secret unavailable"), types.ErrorCodeChannelNoAvailableKey)
+		}
+		return channel.SelectedUpstreamKey.Secret, 0, nil
+	}
 	// If not in multi-key mode, return the original key string directly.
 	if !channel.ChannelInfo.IsMultiKey {
 		return channel.Key, 0, nil
@@ -491,6 +498,10 @@ func BatchDeleteChannels(ids []int) (int64, error) {
 	}
 	var deletedCount int64
 	for _, chunk := range lo.Chunk(ids, 200) {
+		if err := DeleteUpstreamData(tx, chunk); err != nil {
+			tx.Rollback()
+			return 0, err
+		}
 		result := tx.Where("id in (?)", chunk).Delete(&Channel{})
 		if result.Error != nil {
 			tx.Rollback()
@@ -627,13 +638,15 @@ func (channel *Channel) UpdateBalance(balance float64) {
 }
 
 func (channel *Channel) Delete() error {
-	var err error
-	err = DB.Delete(channel).Error
-	if err != nil {
-		return err
-	}
-	err = channel.DeleteAbilities()
-	return err
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := DeleteUpstreamData(tx, []int{channel.Id}); err != nil {
+			return err
+		}
+		if err := tx.Delete(channel).Error; err != nil {
+			return err
+		}
+		return tx.Where("channel_id = ?", channel.Id).Delete(&Ability{}).Error
+	})
 }
 
 var channelStatusLock sync.Mutex
@@ -903,13 +916,45 @@ func updateChannelUsedQuota(id int, quota int) {
 }
 
 func DeleteChannelByStatus(status int64) (int64, error) {
-	result := DB.Where("status = ?", status).Delete(&Channel{})
-	return result.RowsAffected, result.Error
+	var ids []int
+	if err := DB.Model(&Channel{}).Where("status = ?", status).Pluck("id", &ids).Error; err != nil {
+		return 0, err
+	}
+	var result int64
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := DeleteUpstreamData(tx, ids); err != nil {
+			return err
+		}
+		deleteResult := tx.Where("status = ?", status).Delete(&Channel{})
+		if deleteResult.Error != nil {
+			return deleteResult.Error
+		}
+		result = deleteResult.RowsAffected
+		return tx.Where("channel_id IN ?", ids).Delete(&Ability{}).Error
+	})
+	return result, err
 }
 
 func DeleteDisabledChannel() (int64, error) {
-	result := DB.Where("status = ? or status = ?", common.ChannelStatusAutoDisabled, common.ChannelStatusManuallyDisabled).Delete(&Channel{})
-	return result.RowsAffected, result.Error
+	var ids []int
+	if err := DB.Model(&Channel{}).
+		Where("status = ? or status = ?", common.ChannelStatusAutoDisabled, common.ChannelStatusManuallyDisabled).
+		Pluck("id", &ids).Error; err != nil {
+		return 0, err
+	}
+	var result int64
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := DeleteUpstreamData(tx, ids); err != nil {
+			return err
+		}
+		deleteResult := tx.Where("status = ? or status = ?", common.ChannelStatusAutoDisabled, common.ChannelStatusManuallyDisabled).Delete(&Channel{})
+		if deleteResult.Error != nil {
+			return deleteResult.Error
+		}
+		result = deleteResult.RowsAffected
+		return tx.Where("channel_id IN ?", ids).Delete(&Ability{}).Error
+	})
+	return result, err
 }
 
 func GetPaginatedTags(offset int, limit int) ([]*string, error) {

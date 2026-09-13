@@ -20,8 +20,53 @@ import (
 func RegisterScheduledSystemTasks() {
 	service.RegisterSystemTaskHandler(channelTestHandler{})
 	service.RegisterSystemTaskHandler(modelUpdateHandler{})
+	service.RegisterSystemTaskHandler(upstreamSiteSyncHandler{})
 	service.RegisterSystemTaskHandler(midjourneyPollHandler{})
 	service.RegisterSystemTaskHandler(asyncTaskPollHandler{})
+}
+
+type upstreamSiteSyncHandler struct{}
+
+func (upstreamSiteSyncHandler) Type() string { return model.SystemTaskTypeUpstreamSync }
+
+func (upstreamSiteSyncHandler) Enabled() bool {
+	return common.GetEnvOrDefaultBool("UPSTREAM_SITE_SYNC_TASK_ENABLED", true)
+}
+
+func (upstreamSiteSyncHandler) Interval() time.Duration {
+	minutes := common.GetEnvOrDefault("UPSTREAM_SITE_SYNC_TASK_INTERVAL_MINUTES", 15)
+	if minutes < 1 {
+		minutes = 15
+	}
+	return time.Duration(minutes) * time.Minute
+}
+
+type upstreamSiteSyncPayload struct {
+	ChannelID int `json:"channel_id,omitempty"`
+}
+
+func (upstreamSiteSyncHandler) NewPayload() any { return upstreamSiteSyncPayload{} }
+
+func (upstreamSiteSyncHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	payload := upstreamSiteSyncPayload{}
+	if err := task.DecodePayload(&payload); err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
+		return
+	}
+	successCount, failureCount, err := service.SyncUpstreamSites(
+		ctx,
+		payload.ChannelID,
+		service.NewSystemTaskProgressReporter(task, runnerID),
+	)
+	result := map[string]any{
+		"success_count": successCount,
+		"failure_count": failureCount,
+	}
+	if err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, result, err)
+		return
+	}
+	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, result, nil)
 }
 
 // channelTestHandler runs the scheduled "test all channels" job. Enablement and

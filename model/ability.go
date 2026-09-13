@@ -139,28 +139,36 @@ func GetChannel(
 			return ability.Priority == nil && targetPriority == 0 || ability.Priority != nil && *ability.Priority == targetPriority
 		})
 	}
-	channel := Channel{}
-	if len(abilities) > 0 {
-		// Randomly choose one
-		weightSum := uint(0)
-		for _, ability_ := range abilities {
-			weightSum += ability_.Weight + 10
-		}
-		// Randomly choose one
-		weight := common.GetRandomInt(int(weightSum))
-		for _, ability_ := range abilities {
-			weight -= int(ability_.Weight) + 10
-			//log.Printf("weight: %d, ability weight: %d", weight, *ability_.Weight)
-			if weight <= 0 {
-				channel.Id = ability_.ChannelId
-				break
-			}
-		}
-	} else {
+	if len(abilities) == 0 {
 		return nil, nil
 	}
-	err = DB.First(&channel, "id = ?", channel.Id).Error
-	return &channel, err
+	channelIDs := make([]int, 0, len(abilities))
+	seenChannels := make(map[int]struct{}, len(abilities))
+	for _, ability := range abilities {
+		if _, exists := seenChannels[ability.ChannelId]; exists {
+			continue
+		}
+		seenChannels[ability.ChannelId] = struct{}{}
+		channelIDs = append(channelIDs, ability.ChannelId)
+	}
+	var channels []*Channel
+	if err := DB.Where("id IN ?", channelIDs).Find(&channels).Error; err != nil {
+		return nil, err
+	}
+	var targetPriority int64
+	if len(abilities) > 0 {
+		targetPriority = 0
+		if abilities[0].Priority != nil {
+			targetPriority = *abilities[0].Priority
+		}
+	}
+	targetChannels := make([]*Channel, 0, len(channels))
+	for _, channel := range channels {
+		if channel.GetPriority() == targetPriority {
+			targetChannels = append(targetChannels, channel)
+		}
+	}
+	return selectChannelByUpstreamKey(targetChannels, group, model), nil
 }
 
 // filterAbilitiesByConstraints applies the same ChannelSatisfiesFilters

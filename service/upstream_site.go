@@ -1,0 +1,627 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/cookiejar"
+	"net/url"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/c1cadaBob/NexusTok/common"
+	"github.com/c1cadaBob/NexusTok/logger"
+	"github.com/c1cadaBob/NexusTok/model"
+
+	"gorm.io/gorm"
+)
+
+const (
+	upstreamSiteRequestTimeout = 30 * time.Second
+	upstreamSiteResponseLimit  = 2 << 20
+	upstreamSitePageSize       = 100
+	upstreamSiteMaxPages       = 100
+)
+
+var (
+	ErrUnsupportedPlatformSite = errors.New("unsupported upstream platform site")
+	ErrPlatformSiteAuth        = errors.New("platform site authentication failed")
+	ErrPlatformSiteResponse    = errors.New("platform site returned an invalid response")
+)
+
+type PlatformSiteSession struct {
+	BaseURL string
+	Client  *http.Client
+	Headers http.Header
+}
+
+type PlatformSiteAdapter interface {
+	Platform() string
+	Authenticate(context.Context, string, model.PlatformSiteCredential) (*PlatformSiteSession, error)
+	FetchSnapshot(context.Context, *PlatformSiteSession) (PlatformSiteSnapshot, error)
+}
+
+type UpstreamKeySnapshot struct {
+	ExternalID      string
+	Name            string
+	Secret          string
+	Group           string
+	Models          []string
+	ConversionRatio float64
+	UsedQuota       int64
+	RemainQuota     *int64
+	ExpiresAt       *time.Time
+}
+
+type PlatformSiteSnapshot struct {
+	Balance   float64
+	UsedQuota int64
+	Models    []string
+	Keys      []UpstreamKeySnapshot
+}
+
+type upstreamSiteSyncLock struct {
+	mu sync.Mutex
+}
+
+var upstreamSiteLocks sync.Map
+
+func adapterForPlatform(platform string) (PlatformSiteAdapter, error) {
+	switch strings.ToLower(strings.TrimSpace(platform)) {
+	case model.PlatformNewAPI:
+		return NewNewAPIAdapter(nil), nil
+	case model.PlatformSub2API:
+		return NewSub2APIAdapter(nil), nil
+	default:
+		return nil, fmt.Errorf("%w: %s", ErrUnsupportedPlatformSite, platform)
+	}
+}
+
+func getUpstreamSiteLock(channelID int) *upstreamSiteSyncLock {
+	value, _ := upstreamSiteLocks.LoadOrStore(channelID, &upstreamSiteSyncLock{})
+	return value.(*upstreamSiteSyncLock)
+}
+
+func normalizePlatformSiteURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", errors.New("站点地址不能为空")
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", errors.New("站点地址格式错误")
+	}
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return "", errors.New("站点地址只允许使用 HTTP 或 HTTPS")
+	}
+	if parsed.User != nil {
+		return "", errors.New("站点地址不允许包含用户信息")
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return strings.TrimRight(parsed.String(), "/"), nil
+}
+
+func validatePlatformSiteURL(raw string) error {
+	normalized, err := normalizePlatformSiteURL(raw)
+	if err != nil {
+		return err
+	}
+	parsed, _ := url.Parse(normalized)
+	if parsed.Scheme != "https" && !common.GetEnvOrDefaultBool("NEXUSTOK_ALLOW_HTTP_UPSTREAM_SITES", false) {
+		return errors.New("平台站点默认必须使用 HTTPS")
+	}
+	protection := &common.SSRFProtection{
+		AllowPrivateIp:         false,
+		DomainFilterMode:       false,
+		IpFilterMode:           false,
+		ApplyIPFilterForDomain: true,
+	}
+	return protection.ValidateURL(normalized)
+}
+
+// ValidatePlatformSiteURLForAdmin validates an administrator-provided site
+// address before it is persisted or used for outbound requests.
+func ValidatePlatformSiteURLForAdmin(raw string) error {
+	return validatePlatformSiteURL(raw)
+}
+
+func newPlatformSiteHTTPClient() (*http.Client, error) {
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return nil, err
+	}
+	client := GetSSRFProtectedHTTPClient()
+	if client == nil {
+		client = GetHttpClient()
+	}
+	if client == nil {
+		client = &http.Client{}
+	}
+	clone := *client
+	clone.Jar = jar
+	clone.Timeout = upstreamSiteRequestTimeout
+	clone.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 5 {
+			return errors.New("平台站点重定向次数超过限制")
+		}
+		if err := validatePlatformSiteURL(req.URL.String()); err != nil {
+			return fmt.Errorf("平台站点重定向被拒绝: %w", err)
+		}
+		return nil
+	}
+	return &clone, nil
+}
+
+func newPlatformSiteSession(baseURL string, headers http.Header) (*PlatformSiteSession, error) {
+	normalized, err := normalizePlatformSiteURL(baseURL)
+	if err != nil {
+		return nil, err
+	}
+	client, err := newPlatformSiteHTTPClient()
+	if err != nil {
+		return nil, err
+	}
+	if headers == nil {
+		headers = make(http.Header)
+	}
+	return &PlatformSiteSession{BaseURL: normalized, Client: client, Headers: headers}, nil
+}
+
+func upstreamSiteURL(baseURL, path string, query url.Values) (string, error) {
+	normalized, err := normalizePlatformSiteURL(baseURL)
+	if err != nil {
+		return "", err
+	}
+	joined := normalized + "/" + strings.TrimLeft(path, "/")
+	if len(query) > 0 {
+		joined += "?" + query.Encode()
+	}
+	return joined, nil
+}
+
+func platformSiteRequest(
+	ctx context.Context,
+	session *PlatformSiteSession,
+	method string,
+	path string,
+	query url.Values,
+	body any,
+) (any, error) {
+	if session == nil || session.Client == nil {
+		return nil, errors.New("平台站点会话不可用")
+	}
+	target, err := upstreamSiteURL(session.BaseURL, path, query)
+	if err != nil {
+		return nil, err
+	}
+	var reader io.Reader
+	if body != nil {
+		payload, marshalErr := common.Marshal(body)
+		if marshalErr != nil {
+			return nil, marshalErr
+		}
+		reader = strings.NewReader(string(payload))
+	}
+	request, err := http.NewRequestWithContext(ctx, method, target, reader)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	if body != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	for name, values := range session.Headers {
+		for _, value := range values {
+			request.Header.Add(name, value)
+		}
+	}
+	response, err := session.Client.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(response.Body, upstreamSiteResponseLimit+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > upstreamSiteResponseLimit {
+		return nil, errors.New("平台站点响应体超过限制")
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("%w: HTTP %d", ErrPlatformSiteAuth, response.StatusCode)
+	}
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return map[string]any{}, nil
+	}
+	var payload any
+	if err := common.Unmarshal(data, &payload); err != nil {
+		return nil, fmt.Errorf("%w: JSON", ErrPlatformSiteResponse)
+	}
+	if object, ok := payload.(map[string]any); ok {
+		if success, exists := object["success"].(bool); exists && !success {
+			return nil, fmt.Errorf("%w: %s", ErrPlatformSiteAuth, firstString(object, "message", "error"))
+		}
+		if code := firstFloat(object, "code"); code != 0 && code != 200 {
+			return nil, fmt.Errorf("%w: %s", ErrPlatformSiteAuth, firstString(object, "message", "error"))
+		}
+		if code := firstString(object, "code"); code != "" &&
+			code != "0" && code != "200" && !strings.EqualFold(code, "success") {
+			return nil, fmt.Errorf("%w: %s", ErrPlatformSiteAuth, firstString(object, "message", "error"))
+		}
+	}
+	return payload, nil
+}
+
+func unwrapPlatformData(payload any) any {
+	object, ok := payload.(map[string]any)
+	if !ok {
+		return payload
+	}
+	if data, exists := object["data"]; exists {
+		return data
+	}
+	return payload
+}
+
+func recordsFromPayload(payload any) []map[string]any {
+	payload = unwrapPlatformData(payload)
+	switch value := payload.(type) {
+	case []any:
+		records := make([]map[string]any, 0, len(value))
+		for _, item := range value {
+			if record, ok := item.(map[string]any); ok {
+				records = append(records, record)
+			}
+		}
+		return records
+	case map[string]any:
+		for _, key := range []string{"items", "data", "list", "tokens", "keys", "accounts"} {
+			if items, ok := value[key]; ok {
+				return recordsFromPayload(items)
+			}
+		}
+		return []map[string]any{value}
+	default:
+		return nil
+	}
+}
+
+func firstString(record map[string]any, keys ...string) string {
+	for _, key := range keys {
+		switch value := record[key].(type) {
+		case string:
+			if strings.TrimSpace(value) != "" {
+				return strings.TrimSpace(value)
+			}
+		case float64:
+			return strconv.FormatFloat(value, 'f', -1, 64)
+		case int:
+			return strconv.Itoa(value)
+		case int64:
+			return strconv.FormatInt(value, 10)
+		}
+	}
+	return ""
+}
+
+func firstFloat(record map[string]any, keys ...string) float64 {
+	for _, key := range keys {
+		switch value := record[key].(type) {
+		case float64:
+			return value
+		case int:
+			return float64(value)
+		case int64:
+			return float64(value)
+		case string:
+			parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+			if err == nil {
+				return parsed
+			}
+		}
+	}
+	return 0
+}
+
+func firstInt64(record map[string]any, keys ...string) int64 {
+	return int64(firstFloat(record, keys...))
+}
+
+func firstTime(record map[string]any, keys ...string) *time.Time {
+	for _, key := range keys {
+		value, exists := record[key]
+		if !exists || value == nil {
+			continue
+		}
+		switch parsed := value.(type) {
+		case float64:
+			if parsed > 0 {
+				result := time.Unix(int64(parsed), 0).UTC()
+				return &result
+			}
+		case string:
+			text := strings.TrimSpace(parsed)
+			if text == "" || text == "0" {
+				continue
+			}
+			if unix, err := strconv.ParseInt(text, 10, 64); err == nil {
+				if unix > 1_000_000_000_000 {
+					unix /= 1000
+				}
+				result := time.Unix(unix, 0).UTC()
+				return &result
+			}
+			if parsedTime, err := time.Parse(time.RFC3339, text); err == nil {
+				return &parsedTime
+			}
+		}
+	}
+	return nil
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func syncPlatformSite(ctx context.Context, channelID int) error {
+	lock := getUpstreamSiteLock(channelID)
+	lock.mu.Lock()
+	defer lock.mu.Unlock()
+
+	var account model.PlatformSiteAccount
+	if err := model.DB.Where("channel_id = ?", channelID).First(&account).Error; err != nil {
+		return err
+	}
+	var credential model.PlatformSiteCredential
+	credential, err := model.DecryptPlatformSiteCredential(account.CredentialCiphertext)
+	if err != nil {
+		return err
+	}
+	adapter, err := adapterForPlatform(account.Platform)
+	if err != nil {
+		return err
+	}
+	account.SyncStatus = model.UpstreamSiteSyncRunning
+	account.LastSyncError = ""
+	_ = model.DB.Model(&account).Updates(map[string]any{
+		"sync_status":     account.SyncStatus,
+		"last_sync_error": "",
+	})
+
+	session, err := adapter.Authenticate(ctx, account.BaseURL, credential)
+	if err == nil {
+		var snapshot PlatformSiteSnapshot
+		snapshot, err = adapter.FetchSnapshot(ctx, session)
+		if err == nil {
+			err = persistPlatformSiteSnapshot(ctx, &account, snapshot)
+		}
+	}
+	if err != nil {
+		account.SyncStatus = model.UpstreamSiteSyncFailed
+		account.LastSyncError = safeUpstreamError(err)
+		account.ConsecutiveFailures++
+		_ = model.DB.Model(&account).Updates(map[string]any{
+			"sync_status":          account.SyncStatus,
+			"last_sync_error":      account.LastSyncError,
+			"consecutive_failures": account.ConsecutiveFailures,
+		})
+		logger.LogWarn(ctx, fmt.Sprintf("upstream site sync failed: channel_id=%d platform=%s error=%v", channelID, account.Platform, err))
+		return err
+	}
+	now := common.GetTimestamp()
+	_ = model.DB.Model(&account).Updates(map[string]any{
+		"sync_status":          model.UpstreamSiteSyncSuccess,
+		"last_sync_at":         now,
+		"last_sync_error":      "",
+		"consecutive_failures": 0,
+		"disabled_at":          0,
+		"disabled_reason":      "",
+	})
+	model.InitChannelCache()
+	return nil
+}
+
+func safeUpstreamError(err error) string {
+	if err == nil {
+		return ""
+	}
+	switch {
+	case errors.Is(err, ErrPlatformSiteAuth):
+		return "上游平台认证失败"
+	case errors.Is(err, ErrPlatformSiteResponse):
+		return "上游平台响应无效"
+	case errors.Is(err, ErrUnsupportedPlatformSite):
+		return "不支持的平台站点类型"
+	default:
+		return "上游平台同步失败"
+	}
+}
+
+func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteAccount, snapshot PlatformSiteSnapshot) error {
+	if account == nil {
+		return errors.New("平台站点不存在")
+	}
+	ratio := account.ConversionRatio
+	if ratio == 0 && account.RechargeAmount > 0 && account.CreditedAmount > 0 {
+		ratio = account.RechargeAmount / account.CreditedAmount
+	}
+	if ratio < 0 {
+		return errors.New("平台站点转换倍率不能为负数")
+	}
+	now := common.GetTimestamp()
+	return model.DB.Transaction(func(tx *gorm.DB) error {
+		var channel model.Channel
+		if err := tx.First(&channel, "id = ?", account.ChannelID).Error; err != nil {
+			return err
+		}
+		seen := make(map[string]struct{}, len(snapshot.Keys))
+		allModels := append([]string{}, snapshot.Models...)
+		for _, item := range snapshot.Keys {
+			if item.ExternalID == "" || item.Secret == "" {
+				continue
+			}
+			seen[item.ExternalID] = struct{}{}
+			allModels = append(allModels, item.Models...)
+			effectiveRatio := ratio
+			if item.ConversionRatio > 0 {
+				effectiveRatio *= item.ConversionRatio
+			}
+			weight, err := model.CalculateUpstreamKeyWeight(effectiveRatio)
+			if err != nil {
+				return err
+			}
+			ciphertext, err := model.EncryptPlatformSiteCredential(model.PlatformSiteCredential{AccessToken: item.Secret})
+			if err != nil {
+				return err
+			}
+			var existing model.UpstreamKey
+			findErr := tx.Where("channel_id = ? AND external_id = ?", account.ChannelID, item.ExternalID).First(&existing).Error
+			if errors.Is(findErr, gorm.ErrRecordNotFound) {
+				existing = model.UpstreamKey{
+					ChannelID:   account.ChannelID,
+					ExternalID:  item.ExternalID,
+					KeyPriority: 0,
+					Status:      model.UpstreamKeyStatusEnabled,
+				}
+			} else if findErr != nil {
+				return findErr
+			}
+			existing.Name = item.Name
+			existing.SecretCiphertext = ciphertext
+			existing.SecretFingerprint = common.GenerateHMAC(item.Secret)
+			existing.Models = strings.Join(uniqueStrings(item.Models), ",")
+			existing.ConversionRatio = effectiveRatio
+			existing.Weight = weight
+			existing.UsedQuota = item.UsedQuota
+			existing.RemainQuota = item.RemainQuota
+			existing.ExpiresAt = item.ExpiresAt
+			if existing.Status != model.UpstreamKeyStatusManualDisabled {
+				switch {
+				case item.ExpiresAt != nil && !item.ExpiresAt.After(time.Unix(now, 0)):
+					existing.Status = model.UpstreamKeyStatusAutoDisabled
+					existing.DisabledReason = "密钥已过期"
+				case item.RemainQuota != nil && *item.RemainQuota <= 0:
+					existing.Status = model.UpstreamKeyStatusAutoDisabled
+					existing.DisabledReason = "密钥剩余额度不足"
+				default:
+					existing.Status = model.UpstreamKeyStatusEnabled
+					existing.DisabledReason = ""
+				}
+			}
+			existing.LastSyncAt = now
+			if err := tx.Save(&existing).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("upstream_key_id = ?", existing.ID).Delete(&model.UpstreamKeyAbility{}).Error; err != nil {
+				return err
+			}
+			for _, modelName := range uniqueStrings(item.Models) {
+				if err := tx.Create(&model.UpstreamKeyAbility{
+					UpstreamKeyID: existing.ID,
+					Group:         item.Group,
+					Model:         modelName,
+					Enabled:       true,
+				}).Error; err != nil {
+					return err
+				}
+			}
+		}
+		var existingKeys []model.UpstreamKey
+		if err := tx.Where("channel_id = ?", account.ChannelID).Find(&existingKeys).Error; err != nil {
+			return err
+		}
+		for _, key := range existingKeys {
+			if _, exists := seen[key.ExternalID]; !exists {
+				if err := tx.Model(&key).Updates(map[string]any{
+					"status":          model.UpstreamKeyStatusMissing,
+					"disabled_reason": "同步结果中未返回",
+					"missing_since":   now,
+				}).Error; err != nil {
+					return err
+				}
+			}
+		}
+		allModels = uniqueStrings(allModels)
+		channel.Models = strings.Join(allModels, ",")
+		channel.Balance = snapshot.Balance
+		channel.UsedQuota = snapshot.UsedQuota
+		if err := tx.Model(&channel).Select("models", "balance", "used_quota", "balance_updated_time").Updates(map[string]any{
+			"models":               channel.Models,
+			"balance":              snapshot.Balance,
+			"used_quota":           snapshot.UsedQuota,
+			"balance_updated_time": now,
+		}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("channel_id = ?", channel.Id).Delete(&model.Ability{}).Error; err != nil {
+			return err
+		}
+		if err := channel.AddAbilities(tx); err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+// SyncUpstreamSite performs one read-only synchronization for a platform site.
+func SyncUpstreamSite(ctx context.Context, channelID int) error {
+	return syncPlatformSite(ctx, channelID)
+}
+
+// SyncAllUpstreamSites synchronizes every configured platform site. A single
+// site failure is returned in the summary but does not stop other sites.
+func SyncAllUpstreamSites(ctx context.Context, progress func(processed, total int)) (int, int, error) {
+	return SyncUpstreamSites(ctx, 0, progress)
+}
+
+// SyncUpstreamSites synchronizes either one site or all configured sites when
+// channelID is zero.
+func SyncUpstreamSites(ctx context.Context, channelID int, progress func(processed, total int)) (int, int, error) {
+	var accounts []model.PlatformSiteAccount
+	query := model.DB
+	if channelID > 0 {
+		query = query.Where("channel_id = ?", channelID)
+	}
+	if err := query.Find(&accounts).Error; err != nil {
+		return 0, 0, err
+	}
+	successCount := 0
+	failureCount := 0
+	var firstErr error
+	for index, account := range accounts {
+		if err := SyncUpstreamSite(ctx, account.ChannelID); err != nil {
+			failureCount++
+			if firstErr == nil {
+				firstErr = err
+			}
+		} else {
+			successCount++
+		}
+		if progress != nil {
+			progress(index+1, len(accounts))
+		}
+		if ctx.Err() != nil {
+			return successCount, failureCount, ctx.Err()
+		}
+	}
+	return successCount, failureCount, firstErr
+}

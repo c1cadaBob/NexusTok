@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/c1cadaBob/NexusTok/common"
+	"gorm.io/gorm"
 )
 
 const (
@@ -33,8 +34,9 @@ const (
 )
 
 const (
-	MinUpstreamKeyWeight = 0
-	MaxUpstreamKeyWeight = 2000
+	MinUpstreamKeyWeight       = 0
+	MaxUpstreamKeyWeight       = 2000
+	MaxUpstreamConversionRatio = 1000
 )
 
 type PlatformSiteCredential struct {
@@ -69,8 +71,8 @@ type PlatformSiteAccount struct {
 
 type UpstreamKey struct {
 	ID                uint       `json:"id" gorm:"primaryKey"`
-	ChannelID         int        `json:"channel_id" gorm:"not null;index"`
-	ExternalID        string     `json:"external_id" gorm:"type:varchar(255);not null"`
+	ChannelID         int        `json:"channel_id" gorm:"not null;index;uniqueIndex:idx_upstream_key_channel_external"`
+	ExternalID        string     `json:"external_id" gorm:"type:varchar(255);not null;uniqueIndex:idx_upstream_key_channel_external"`
 	Name              string     `json:"name" gorm:"type:varchar(255)"`
 	SecretCiphertext  string     `json:"-" gorm:"type:text;not null"`
 	SecretFingerprint string     `json:"secret_fingerprint" gorm:"type:varchar(128);index"`
@@ -86,6 +88,7 @@ type UpstreamKey struct {
 	DisabledReason    string     `json:"disabled_reason" gorm:"type:varchar(255)"`
 	LastSyncAt        int64      `json:"last_sync_at" gorm:"bigint;index"`
 	MissingSince      int64      `json:"missing_since" gorm:"bigint"`
+	Secret            string     `json:"-" gorm:"-"`
 }
 
 type UpstreamKeyAbility struct {
@@ -169,4 +172,32 @@ func (key *UpstreamKey) IsRoutable(now time.Time) bool {
 		return false
 	}
 	return key.RemainQuota == nil || *key.RemainQuota > 0
+}
+
+func DeleteUpstreamData(tx *gorm.DB, channelIDs []int) error {
+	if tx == nil || len(channelIDs) == 0 {
+		return nil
+	}
+	if tx.Migrator().HasTable(&UpstreamKey{}) {
+		var keys []UpstreamKey
+		if err := tx.Where("channel_id IN ?", channelIDs).Find(&keys).Error; err != nil {
+			return err
+		}
+		keyIDs := make([]uint, 0, len(keys))
+		for _, key := range keys {
+			keyIDs = append(keyIDs, key.ID)
+		}
+		if len(keyIDs) > 0 && tx.Migrator().HasTable(&UpstreamKeyAbility{}) {
+			if err := tx.Where("upstream_key_id IN ?", keyIDs).Delete(&UpstreamKeyAbility{}).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Where("channel_id IN ?", channelIDs).Delete(&UpstreamKey{}).Error; err != nil {
+			return err
+		}
+	}
+	if !tx.Migrator().HasTable(&PlatformSiteAccount{}) {
+		return nil
+	}
+	return tx.Where("channel_id IN ?", channelIDs).Delete(&PlatformSiteAccount{}).Error
 }

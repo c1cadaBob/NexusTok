@@ -482,13 +482,13 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 		}
 	}
 
-	if channel.Type == constant.ChannelTypeNewAPI && strings.TrimSpace(channel.GetBaseURL()) == "" {
+	if channel.Type == constant.ChannelTypeNewAPI && strings.TrimSpace(channel.GetBaseURL()) == "" && channel.UpstreamKind != model.UpstreamKindPlatformSite {
 		return fmt.Errorf("New API channel base URL cannot be empty")
 	}
 
 	// 如果是添加操作，检查 channel 和 key 是否为空
 	if isAdd {
-		if channel.Key == "" {
+		if channel.Key == "" && channel.UpstreamKind != model.UpstreamKindPlatformSite {
 			return fmt.Errorf("channel cannot be empty")
 		}
 
@@ -576,6 +576,7 @@ type AddChannelRequest struct {
 	MultiKeyMode              constant.MultiKeyMode `json:"multi_key_mode"`
 	BatchAddSetKeyPrefix2Name bool                  `json:"batch_add_set_key_prefix_2_name"`
 	Channel                   *model.Channel        `json:"channel"`
+	PlatformSite              *PlatformSiteInput    `json:"platform_site"`
 }
 
 func getVertexArrayKeys(keys string) ([]string, error) {
@@ -616,6 +617,37 @@ func AddChannel(c *gin.Context) {
 	if err != nil {
 		common.ApiError(c, err)
 		return
+	}
+
+	if addChannelRequest.Channel != nil && addChannelRequest.Channel.UpstreamKind == "" {
+		addChannelRequest.Channel.UpstreamKind = model.UpstreamKindKeyChannel
+	}
+	if addChannelRequest.Channel != nil && addChannelRequest.Channel.UpstreamKind == model.UpstreamKindPlatformSite {
+		if addChannelRequest.Mode != "" && addChannelRequest.Mode != "single" {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "平台站点只能使用单渠道模式",
+			})
+			return
+		}
+		if err := ensurePlatformSiteChannel(addChannelRequest.Channel, addChannelRequest.PlatformSite); err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": err.Error(),
+			})
+			return
+		}
+		if addChannelRequest.PlatformSite == nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "平台站点配置不能为空",
+			})
+			return
+		}
+		baseURL := strings.TrimRight(strings.TrimSpace(addChannelRequest.PlatformSite.BaseURL), "/")
+		addChannelRequest.Channel.BaseURL = &baseURL
+		addChannelRequest.Channel.Key = ""
+		addChannelRequest.Mode = "single"
 	}
 
 	if addChannelRequest.Channel != nil && addChannelRequest.Channel.Type == constant.ChannelTypeTaskPlugin &&
@@ -708,6 +740,29 @@ func AddChannel(c *gin.Context) {
 			localChannel.Name = fmt.Sprintf("%s %s", localChannel.Name, keyPrefix)
 		}
 		channels = append(channels, *localChannel)
+	}
+	if addChannelRequest.Channel.UpstreamKind == model.UpstreamKindPlatformSite {
+		channel := addChannelRequest.Channel
+		if err := channel.Insert(); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		if err := savePlatformSiteAccount(channel.Id, addChannelRequest.PlatformSite, nil); err != nil {
+			_ = channel.Delete()
+			common.ApiError(c, err)
+			return
+		}
+		_, _, _ = service.EnqueueSystemTask(model.SystemTaskTypeUpstreamSync, map[string]any{"channel_id": channel.Id})
+		recordManageAudit(c, "channel.upstream_site_create", map[string]any{
+			"id":       channel.Id,
+			"platform": addChannelRequest.PlatformSite.Platform,
+		})
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "",
+			"data":    gin.H{"id": channel.Id},
+		})
+		return
 	}
 	err = model.BatchInsertChannels(channels)
 	if err != nil {
@@ -946,8 +1001,9 @@ func DeleteChannelBatch(c *gin.Context) {
 
 type PatchChannel struct {
 	model.Channel
-	MultiKeyMode *string `json:"multi_key_mode"`
-	KeyMode      *string `json:"key_mode"` // 多key模式下密钥覆盖或者追加
+	MultiKeyMode *string            `json:"multi_key_mode"`
+	KeyMode      *string            `json:"key_mode"` // 多key模式下密钥覆盖或者追加
+	PlatformSite *PlatformSiteInput `json:"platform_site"`
 }
 
 type ChannelStatusRequest struct {
@@ -1008,6 +1064,26 @@ func UpdateChannel(c *gin.Context) {
 			"message": err.Error(),
 		})
 		return
+	}
+	if _, provided := requestData["upstream_kind"]; !provided {
+		channel.UpstreamKind = originChannel.UpstreamKind
+	}
+	if channel.UpstreamKind == model.UpstreamKindPlatformSite {
+		if channel.Type == 0 {
+			channel.Type = originChannel.Type
+		}
+		if err := ensurePlatformSiteChannel(&channel.Channel, channel.PlatformSite); err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": err.Error(),
+			})
+			return
+		}
+		if channel.PlatformSite != nil {
+			baseURL := strings.TrimRight(strings.TrimSpace(channel.PlatformSite.BaseURL), "/")
+			channel.BaseURL = &baseURL
+			channel.Key = ""
+		}
 	}
 	originProxy := originChannel.GetSetting().Proxy
 	proxyChanged := false
@@ -1119,6 +1195,22 @@ func UpdateChannel(c *gin.Context) {
 	model.InitChannelCache()
 	if proxyChanged {
 		service.InvalidateProxyClient(originProxy)
+	}
+	if channel.UpstreamKind == model.UpstreamKindPlatformSite && channel.PlatformSite != nil {
+		var existingAccount model.PlatformSiteAccount
+		if err := model.DB.Where("channel_id = ?", channel.Id).First(&existingAccount).Error; err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		if err := savePlatformSiteAccount(channel.Id, channel.PlatformSite, &existingAccount); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		_, _, _ = service.EnqueueSystemTask(model.SystemTaskTypeUpstreamSync, map[string]any{"channel_id": channel.Id})
+		recordManageAudit(c, "channel.upstream_site_update", map[string]any{
+			"id":       channel.Id,
+			"platform": channel.PlatformSite.Platform,
+		})
 	}
 	// 记录变更的字段名（语言无关的字段标识），密钥仅记录"已更换"绝不记录内容。
 	changedFields := make([]string, 0)
