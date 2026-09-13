@@ -45,6 +45,27 @@ func TestChannelHasSensitiveChanges(t *testing.T) {
 		assert.True(t, channelHasSensitiveChanges(&updated, origin, map[string]any{"key": updated.Key}))
 	})
 
+	t.Run("platform site credentials are sensitive", func(t *testing.T) {
+		updated := PatchChannel{Channel: *origin}
+		updated.PlatformSite = &PlatformSiteInput{
+			Platform: "newapi",
+			BaseURL:  "https://upstream.example.com",
+		}
+
+		assert.True(t, channelHasSensitiveChanges(&updated, origin, map[string]any{
+			"platform_site": updated.PlatformSite,
+		}))
+	})
+
+	t.Run("upstream kind change is sensitive", func(t *testing.T) {
+		updated := PatchChannel{Channel: *origin}
+		updated.UpstreamKind = model.UpstreamKindPlatformSite
+
+		assert.True(t, channelHasSensitiveChanges(&updated, origin, map[string]any{
+			"upstream_kind": updated.UpstreamKind,
+		}))
+	})
+
 	t.Run("base url change", func(t *testing.T) {
 		updated := PatchChannel{Channel: *origin}
 		newBaseURL := "https://leak.example.com"

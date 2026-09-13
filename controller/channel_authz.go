@@ -6,6 +6,12 @@ func channelHasSensitiveChanges(channel *PatchChannel, origin *model.Channel, re
 	if _, ok := requestData["type"]; ok && channel.Type != origin.Type {
 		return true
 	}
+	if _, ok := requestData["upstream_kind"]; ok && channel.UpstreamKind != origin.UpstreamKind {
+		return true
+	}
+	if _, ok := requestData["platform_site"]; ok {
+		return true
+	}
 	if _, ok := requestData["key"]; ok && channel.Key != "" && channel.Key != origin.Key {
 		return true
 	}
