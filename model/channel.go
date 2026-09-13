@@ -50,6 +50,10 @@ type Channel struct {
 	ParamOverride     *string `json:"param_override" gorm:"type:text"`
 	HeaderOverride    *string `json:"header_override" gorm:"type:text"`
 	Remark            *string `json:"remark" gorm:"type:varchar(255)" validate:"max=255"`
+	UpstreamKind      string  `json:"upstream_kind" gorm:"type:varchar(32);index"`
+	KeyPriority       int64   `json:"key_priority" gorm:"bigint;index"`
+	ConversionRatio   float64 `json:"conversion_ratio"`
+	KeyWeightOverride *int    `json:"key_weight_override" gorm:"index"`
 	// add after v0.8.5
 	ChannelInfo ChannelInfo `json:"channel_info" gorm:"type:json"`
 

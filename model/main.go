@@ -336,6 +336,9 @@ func migrateDB() error {
 
 	err := DB.AutoMigrate(
 		&Channel{},
+		&PlatformSiteAccount{},
+		&UpstreamKey{},
+		&UpstreamKeyAbility{},
 		&Token{},
 		&User{},
 		&UserSession{},
@@ -374,6 +377,9 @@ func migrateDB() error {
 	if err != nil {
 		return err
 	}
+	if err := migrateUpstreamChannelDefaults(); err != nil {
+		return err
+	}
 	if err := InitializeUserAuthVersions(); err != nil {
 		return err
 	}
@@ -390,6 +396,12 @@ func migrateDB() error {
 		}
 	}
 	return nil
+}
+
+func migrateUpstreamChannelDefaults() error {
+	return DB.Model(&Channel{}).
+		Where("upstream_kind IS NULL OR upstream_kind = ?", "").
+		Update("upstream_kind", UpstreamKindKeyChannel).Error
 }
 
 func migrateLOGDB() error {
