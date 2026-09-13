@@ -156,13 +156,12 @@ weight = clamp(round(2000 - conversion_ratio * 1000), 0, 2000)
 ```go
 type PlatformSiteAdapter interface {
     Platform() string
-    Authenticate(ctx context.Context, credential PlatformCredential) (PlatformSession, error)
-    FetchSiteInfo(ctx context.Context, session PlatformSession) (SiteInfo, error)
-    FetchKeys(ctx context.Context, session PlatformSession, page Page) (KeyPage, error)
-    FetchKeyDetail(ctx context.Context, session PlatformSession, key ExternalKey) (KeyDetail, error)
-    FetchModels(ctx context.Context, session PlatformSession, key ExternalKey) ([]string, error)
+    Authenticate(ctx context.Context, baseURL string, credential model.PlatformSiteCredential) (*PlatformSiteSession, error)
+    FetchSnapshot(ctx context.Context, session *PlatformSiteSession) (PlatformSiteSnapshot, error)
 }
 ```
+
+`FetchSnapshot` 在适配器内部完成站点信息、分页密钥、密钥详情和模型能力的协议聚合，宿主服务只接收统一的 `PlatformSiteSnapshot`，负责事务写入、状态处理、缓存刷新和路由。这样可以将平台接口差异限制在适配器内，避免数据库和路由逻辑泄漏到平台协议实现中。
 
 统一认证类型：
 
@@ -256,8 +255,6 @@ POST  /api/channel/:id/upstream-keys/batch-status
 
 - 平台站点；
 - 密钥渠道。
-
-平台站点只显示 NewAPI 和 Sub2API；密钥渠道显示现有官方平台类型。
 
 平台站点表单包含：
 
