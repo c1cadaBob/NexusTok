@@ -21,6 +21,7 @@ import { describe, expect, test } from 'vitest'
 import type { Channel, UpstreamKey } from '../../types'
 import {
   filterUpstreamKeys,
+  formatConversionRatio,
   getChannelTableRowId,
   type TagRow,
 } from '../channel-utils'
@@ -108,5 +109,13 @@ describe('channel table row identity', () => {
     expect(
       filterUpstreamKeys(keys, { status: ['disabled'] }).map((key) => key.id)
     ).toEqual([2])
+  })
+
+  test('formats conversion ratio with bounded readable precision', () => {
+    expect(formatConversionRatio(0)).toBe('0')
+    expect(formatConversionRatio(0.1)).toBe('0.1')
+    expect(formatConversionRatio(1.23456)).toBe('1.235')
+    expect(formatConversionRatio(null)).toBe('-')
+    expect(formatConversionRatio(Number.POSITIVE_INFINITY)).toBe('-')
   })
 })

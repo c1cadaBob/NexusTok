@@ -87,6 +87,7 @@ import {
   handleUpdateTagField,
   createChannelFieldUpdateScheduler,
   isTagAggregateRow,
+  formatConversionRatio,
   type TagRow,
 } from '../lib'
 import { parseUpstreamUpdateMeta } from '../lib/upstream-update-utils'
@@ -371,6 +372,25 @@ function UpstreamKeyWeightCell({ channel }: { channel: Channel }) {
         />
       )}
     </div>
+  )
+}
+
+function ConversionRatioCell({ channel }: { channel: Channel }) {
+  if (isTagAggregateRow(channel)) {
+    return <span className='text-muted-foreground text-xs'>-</span>
+  }
+
+  let ratio = channel.conversion_ratio
+  if (channel.is_upstream_key) {
+    ratio = channel.upstream_key?.conversion_ratio
+  } else if (channel.upstream_kind === 'platform_site') {
+    ratio = channel.upstream_site_status?.conversion_ratio
+  }
+
+  return (
+    <span className='font-mono text-sm tabular-nums'>
+      {formatConversionRatio(ratio)}
+    </span>
   )
 }
 
@@ -1427,6 +1447,16 @@ export function useChannelsColumns(
             <PriorityCell channel={row.original} />
           ),
         size: 100,
+      },
+
+      // 转换倍率列
+      {
+        accessorKey: 'conversion_ratio',
+        header: t('Conversion ratio'),
+        meta: { mobileHidden: true },
+        cell: ({ row }) => <ConversionRatioCell channel={row.original} />,
+        size: 130,
+        enableSorting: false,
       },
 
       // Weight column

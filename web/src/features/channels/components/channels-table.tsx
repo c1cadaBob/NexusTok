@@ -366,6 +366,7 @@ export function ChannelsTable() {
           key: '',
           models: key.models.join(','),
           priority: key.key_priority,
+          conversion_ratio: key.conversion_ratio,
           weight: key.weight,
           status: key.status,
           balance: key.remain_quota ?? 0,

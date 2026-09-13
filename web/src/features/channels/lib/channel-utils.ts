@@ -682,6 +682,19 @@ export function filterUpstreamKeys(
   })
 }
 
+export function formatConversionRatio(
+  value: number | null | undefined
+): string {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    return '-'
+  }
+
+  return value.toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 3,
+  })
+}
+
 /**
  * Aggregate channels by tag for tag mode display
  * Converts flat array into tree structure grouped by tag
