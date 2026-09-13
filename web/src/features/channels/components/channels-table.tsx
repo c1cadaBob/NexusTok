@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cadabob.dev
 */
-import { useQuery } from '@tanstack/react-query'
+import { useQueries, useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
 import type {
   ColumnFiltersState,
@@ -46,7 +46,13 @@ import { useMediaQuery } from '@/hooks'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
-import { getChannels, searchChannels, getGroups } from '../api'
+import {
+  getChannels,
+  getGroups,
+  getUpstreamKeys,
+  getUpstreamSiteStatus,
+  searchChannels,
+} from '../api'
 import {
   DEFAULT_PAGE_SIZE,
   CHANNEL_STATUS,
@@ -55,11 +61,12 @@ import {
 import {
   channelsQueryKeys,
   aggregateChannelsByTag,
+  filterUpstreamKeys,
   getChannelTableRowId,
   isTagAggregateRow,
   getChannelTypeLabel,
 } from '../lib'
-import type { Channel, ChannelSortBy } from '../types'
+import type { Channel, ChannelSortBy, UpstreamKey } from '../types'
 import { ChannelCard } from './channel-card'
 import { ChannelTypeLogo } from './channel-type-badge'
 import { useChannelsColumns } from './channels-columns'
@@ -154,8 +161,11 @@ export function ChannelsTable() {
   }
 
   // Extract filters from column filters
-  const statusFilter =
-    (columnFilters.find((f) => f.id === 'status')?.value as string[]) || []
+  const statusFilter = useMemo(
+    () =>
+      (columnFilters.find((f) => f.id === 'status')?.value as string[]) || [],
+    [columnFilters]
+  )
   const typeFilter = useMemo(
     () => (columnFilters.find((f) => f.id === 'type')?.value as string[]) || [],
     [columnFilters]
@@ -294,16 +304,102 @@ export function ChannelsTable() {
     placeholderData: (previousData) => previousData,
   })
 
+  const platformChannels = useMemo(
+    () =>
+      (data?.data?.items || []).filter(
+        (channel) => channel.upstream_kind === 'platform_site'
+      ),
+    [data]
+  )
+  const upstreamKeyQueries = useQueries({
+    queries: platformChannels.map((channel) => ({
+      queryKey: ['upstream-keys', channel.id],
+      queryFn: async () =>
+        requireServerSuccess(await getUpstreamKeys(channel.id)),
+      staleTime: 30_000,
+    })),
+  })
+  const upstreamSiteStatusQueries = useQueries({
+    queries: platformChannels.map((channel) => ({
+      queryKey: ['upstream-site-status', channel.id],
+      queryFn: async () =>
+        requireServerSuccess(await getUpstreamSiteStatus(channel.id)),
+      staleTime: 30_000,
+    })),
+  })
+
+  const upstreamKeysByChannelId = useMemo(() => {
+    const result = new Map<number, UpstreamKey[]>()
+    platformChannels.forEach((channel, index) => {
+      const items = upstreamKeyQueries[index]?.data?.data?.items || []
+      result.set(channel.id, items)
+    })
+    return result
+  }, [platformChannels, upstreamKeyQueries])
+  const upstreamSiteStatusByChannelId = useMemo(() => {
+    const result = new Map<number, Channel['upstream_site_status']>()
+    platformChannels.forEach((channel, index) => {
+      result.set(channel.id, upstreamSiteStatusQueries[index]?.data?.data)
+    })
+    return result
+  }, [platformChannels, upstreamSiteStatusQueries])
+
   // Apply tag aggregation if tag mode is enabled
   const channels = useMemo(() => {
     const rawChannels = data?.data?.items || []
+    const withUpstreamChildren = rawChannels.map((channel) => {
+      if (channel.upstream_kind !== 'platform_site') {
+        return channel
+      }
+      const children = filterUpstreamKeys(
+        upstreamKeysByChannelId.get(channel.id) || [],
+        {
+          keyword: globalFilter,
+          model: modelFilter,
+          status: statusFilter,
+        }
+      ).map(
+        (key): Channel => ({
+          ...channel,
+          id: key.id,
+          name: key.name || key.external_id,
+          key: '',
+          models: key.models.join(','),
+          priority: key.key_priority,
+          weight: key.weight,
+          status: key.status,
+          balance: key.remain_quota ?? 0,
+          used_quota: key.used_quota,
+          response_time: 0,
+          test_time: key.last_sync_at,
+          is_upstream_key: true,
+          upstream_key: key,
+          parent_channel_id: channel.id,
+          upstream_group: '',
+          children: undefined,
+        })
+      )
+      return {
+        ...channel,
+        upstream_site_status: upstreamSiteStatusByChannelId.get(channel.id),
+        children,
+      }
+    })
 
-    if (enableTagMode && rawChannels.length > 0) {
-      return aggregateChannelsByTag(rawChannels)
+    if (enableTagMode && withUpstreamChildren.length > 0) {
+      return aggregateChannelsByTag(withUpstreamChildren)
     }
 
-    return rawChannels
-  }, [data, enableTagMode])
+    return withUpstreamChildren
+  }, [
+    data,
+    globalFilter,
+    enableTagMode,
+    modelFilter,
+    statusFilter,
+    upstreamKeysByChannelId,
+    upstreamSiteStatusByChannelId,
+  ])
 
   const totalCount = data?.data?.total || 0
   const typeCounts = data?.data?.type_counts

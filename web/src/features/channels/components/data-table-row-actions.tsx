@@ -36,6 +36,7 @@ import {
 } from 'lucide-react'
 import { useContext, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Button } from '@/components/ui/button'
@@ -57,8 +58,11 @@ import {
   ADMIN_PERMISSION_RESOURCES,
   hasPermission,
 } from '@/lib/admin-permissions'
+import { handleServerError } from '@/lib/handle-server-error'
+import { createServerError } from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
 
+import { syncUpstreamSite } from '../api'
 import { MODEL_FETCHABLE_TYPES } from '../constants'
 import {
   channelsQueryKeys,
@@ -87,6 +91,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [isTesting, setIsTesting] = useState(false)
   const [isTogglingStatus, setIsTogglingStatus] = useState(false)
+  const [isSyncing, setIsSyncing] = useState(false)
 
   const isEnabled = isChannelEnabled(channel)
   const isMultiKey = isMultiKeyChannel(channel)
@@ -152,6 +157,34 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
       await handleToggleChannelStatus(channel.id, channel.status, queryClient)
     } finally {
       setIsTogglingStatus(false)
+    }
+  }
+
+  const handleSyncUpstreamSite = async () => {
+    if (channel.upstream_kind !== 'platform_site' || !canEditSensitive) {
+      return
+    }
+
+    setIsSyncing(true)
+    try {
+      const response = await syncUpstreamSite(channel.id)
+      if (!response.success) {
+        throw createServerError(response, t('Failed to sync upstream site'))
+      }
+      toast.success(t('Upstream site synchronized'))
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() }),
+        queryClient.invalidateQueries({
+          queryKey: ['upstream-keys', channel.id],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ['upstream-site-status', channel.id],
+        }),
+      ])
+    } catch (error) {
+      handleServerError(error, t('Failed to sync upstream site'))
+    } finally {
+      setIsSyncing(false)
     }
   }
 
@@ -320,6 +353,26 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
               {t('Upstream Updates')}
               <DropdownMenuShortcut>
                 <RefreshCw size={16} />
+              </DropdownMenuShortcut>
+            </DropdownMenuItem>
+          )}
+
+          {channel.upstream_kind === 'platform_site' && (
+            <DropdownMenuItem
+              disabled={!canEditSensitive || isSyncing}
+              onClick={() => {
+                void handleSyncUpstreamSite()
+              }}
+            >
+              {isSyncing
+                ? t('Synchronizing upstream site')
+                : t('Sync upstream site')}
+              <DropdownMenuShortcut>
+                {isSyncing ? (
+                  <Loader2 className='size-4 animate-spin' />
+                ) : (
+                  <RefreshCw className='size-4' />
+                )}
               </DropdownMenuShortcut>
             </DropdownMenuItem>
           )}

@@ -90,7 +90,7 @@ export function Channels() {
       <SectionPageLayout fixedContent>
         <SectionPageLayout.Title>
           <span className='flex min-w-0 items-center gap-2'>
-            <span className='truncate'>{t('Channels')}</span>
+            <span className='truncate'>{t('Upstream Channels')}</span>
             {retryBadge}
           </span>
         </SectionPageLayout.Title>

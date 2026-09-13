@@ -21,9 +21,16 @@ import { describe, expect, test } from 'vitest'
 import {
   CHANNEL_TYPE_NEW_API,
   CHANNEL_TYPE_OPTIONS,
+  CHANNEL_TYPE_SUB2_API,
   MODEL_FETCHABLE_TYPES,
 } from '../../constants'
-import { CHANNEL_FORM_DEFAULT_VALUES, channelFormSchema } from '../channel-form'
+import type { Channel } from '../../types'
+import {
+  CHANNEL_FORM_DEFAULT_VALUES,
+  channelFormSchema,
+  transformChannelToFormDefaults,
+  transformFormDataToCreatePayload,
+} from '../channel-form'
 import { getChannelTypeConfig } from '../channel-type-config'
 import { getChannelTypeIcon, getKeyPromptForType } from '../channel-utils'
 
@@ -76,7 +83,8 @@ describe('New API channel', () => {
     }
 
     expect(
-      channelFormSchema.safeParse(newAPIForm('https://nexustok.example')).success
+      channelFormSchema.safeParse(newAPIForm('https://nexustok.example'))
+        .success
     ).toBe(true)
   })
 
@@ -87,5 +95,109 @@ describe('New API channel', () => {
     })
 
     expect(result.success).toBe(true)
+  })
+
+  test('validates platform site fields and keeps the selected platform payload', () => {
+    const result = channelFormSchema.safeParse({
+      ...CHANNEL_FORM_DEFAULT_VALUES,
+      name: 'Synthetic platform site',
+      type: CHANNEL_TYPE_NEW_API,
+      upstream_kind: 'platform_site',
+      platform_site_platform: 'newapi',
+      platform_site_auth_type: 'password',
+      platform_site_username: 'synthetic-user',
+      platform_site_password: 'synthetic-password',
+      base_url: 'https://upstream.example',
+      models: 'gpt-4o',
+      platform_site_recharge_amount: 1,
+      platform_site_credited_amount: 10,
+    })
+
+    expect(result.success).toBe(true)
+    if (!result.success) return
+
+    const payload = transformFormDataToCreatePayload(result.data)
+    expect(payload.channel.upstream_kind).toBe('platform_site')
+    expect(payload.platform_site).toMatchObject({
+      platform: 'newapi',
+      base_url: 'https://upstream.example',
+      recharge_amount: 1,
+      credited_amount: 10,
+    })
+    expect(payload.platform_site?.conversion_ratio).toBeUndefined()
+  })
+
+  test('sends an explicit platform ratio only after a manual override', () => {
+    const result = channelFormSchema.safeParse({
+      ...CHANNEL_FORM_DEFAULT_VALUES,
+      name: 'Manual ratio site',
+      type: CHANNEL_TYPE_NEW_API,
+      upstream_kind: 'platform_site',
+      base_url: 'https://upstream.example',
+      models: 'gpt-4o',
+      platform_site_recharge_amount: 1,
+      platform_site_credited_amount: 10,
+      platform_site_conversion_ratio: 1,
+      platform_site_conversion_ratio_override: true,
+    })
+
+    expect(result.success).toBe(true)
+    if (!result.success) return
+
+    const payload = transformFormDataToCreatePayload(result.data)
+    expect(payload.platform_site?.conversion_ratio).toBe(1)
+  })
+
+  test('restricts platform sites to NewAPI and Sub2API channel types', () => {
+    const result = channelFormSchema.safeParse({
+      ...CHANNEL_FORM_DEFAULT_VALUES,
+      name: 'Invalid platform site',
+      type: 1,
+      upstream_kind: 'platform_site',
+      base_url: 'https://upstream.example',
+      models: 'gpt-4o',
+    })
+
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(
+        result.error.issues.some(
+          (issue) =>
+            issue.path[0] === 'type' &&
+            issue.message === '平台站点仅支持 NewAPI 或 Sub2API'
+        )
+      ).toBe(true)
+    }
+  })
+
+  test('supports Sub2API as a platform site type', () => {
+    const result = channelFormSchema.safeParse({
+      ...CHANNEL_FORM_DEFAULT_VALUES,
+      name: 'Synthetic Sub2API site',
+      type: CHANNEL_TYPE_SUB2_API,
+      upstream_kind: 'platform_site',
+      platform_site_platform: 'sub2api',
+      platform_site_auth_type: 'admin_key',
+      platform_site_admin_key: 'synthetic-admin-key',
+      base_url: 'https://upstream.example',
+      models: 'gpt-4o',
+      platform_site_recharge_amount: 1,
+      platform_site_credited_amount: 1,
+    })
+
+    expect(result.success).toBe(true)
+  })
+
+  test('preserves an explicit zero conversion ratio for free official keys', () => {
+    const defaults = transformChannelToFormDefaults({
+      ...newAPIForm('https://upstream.example'),
+      group: 'default',
+      channel_info: {
+        multi_key_mode: 'random',
+      },
+      conversion_ratio: 0,
+    } as unknown as Channel)
+
+    expect(defaults.conversion_ratio).toBe(0)
   })
 })

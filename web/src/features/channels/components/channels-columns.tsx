@@ -23,6 +23,9 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronRight,
+  CornerDownRight,
+  Eye,
+  EyeOff,
   ListOrdered,
   Shuffle,
   SlidersHorizontal,
@@ -57,7 +60,12 @@ import { handleServerError } from '@/lib/handle-server-error'
 import { createServerError } from '@/lib/server-error-message'
 import { truncateText } from '@/lib/utils'
 
-import { getCodexUsage, updateChannelBalance } from '../api'
+import {
+  batchUpdateUpstreamKeyStatus,
+  getCodexUsage,
+  patchUpstreamKey,
+  updateChannelBalance,
+} from '../api'
 import {
   CHANNEL_STATUS_CONFIG,
   CHANNEL_TYPE_TASK_PLUGIN,
@@ -270,17 +278,237 @@ function ChannelFieldCell({
  * Weight cell component with inline editing
  */
 function WeightCell({ channel }: { channel: Channel }) {
+  const { t } = useTranslation()
   if (isTagAggregateRow(channel)) {
     return <TagWeightCell channel={channel} />
   }
 
+  if (channel.upstream_kind === 'platform_site') {
+    return <span className='text-muted-foreground text-xs'>-</span>
+  }
+
+  const ratio =
+    channel.conversion_ratio !== null &&
+    channel.conversion_ratio !== undefined &&
+    channel.conversion_ratio >= 0
+      ? channel.conversion_ratio
+      : 1
+  const automaticWeight = Math.max(
+    0,
+    Math.min(2000, Math.round(1000 + (1 - ratio) / 0.001))
+  )
+  const weight = channel.key_weight_override ?? automaticWeight
+
   return (
-    <ChannelFieldCell
-      channelId={channel.id}
-      value={channel.weight}
-      field='weight'
-      min={0}
+    <div className='flex items-center gap-1'>
+      <span className='font-mono text-sm tabular-nums'>{weight}</span>
+      {channel.key_weight_override !== null &&
+        channel.key_weight_override !== undefined && (
+          <StatusBadge
+            label={t('Override')}
+            variant='blue'
+            size='sm'
+            copyable={false}
+          />
+        )}
+    </div>
+  )
+}
+
+function UpstreamKeyPriorityCell({ channel }: { channel: Channel }) {
+  const { t } = useTranslation()
+  const key = channel.upstream_key
+  const queryClient = useQueryClient()
+  if (!key) return null
+  return (
+    <NumericSpinnerInput
+      value={key.key_priority}
+      min={-999}
+      onChange={(value) => {
+        void (async () => {
+          try {
+            const response = await patchUpstreamKey(
+              channel.parent_channel_id || key.channel_id,
+              key.id,
+              { key_priority: value }
+            )
+            if (!response.success) {
+              throw createServerError(response, t('Operation failed'))
+            }
+            await Promise.all([
+              queryClient.invalidateQueries({
+                queryKey: [
+                  'upstream-keys',
+                  channel.parent_channel_id || key.channel_id,
+                ],
+              }),
+              queryClient.invalidateQueries({
+                queryKey: channelsQueryKeys.lists(),
+              }),
+            ])
+          } catch (error) {
+            handleServerError(error, t('Operation failed'))
+          }
+        })()
+      }}
     />
+  )
+}
+
+function UpstreamKeyWeightCell({ channel }: { channel: Channel }) {
+  const { t } = useTranslation()
+  const key = channel.upstream_key
+  if (!key) return null
+  return (
+    <div className='flex items-center gap-1'>
+      <span className='font-mono text-sm tabular-nums'>{key.weight}</span>
+      {key.weight_override !== null && key.weight_override !== undefined && (
+        <StatusBadge
+          label={t('Override')}
+          variant='blue'
+          size='sm'
+          copyable={false}
+        />
+      )}
+    </div>
+  )
+}
+
+function UpstreamKeyBalanceCell({ channel }: { channel: Channel }) {
+  const { t } = useTranslation()
+  const key = channel.upstream_key
+  if (!key) return null
+  const remaining =
+    key.remain_quota === null || key.remain_quota === undefined
+      ? t('Unknown')
+      : key.remain_quota.toLocaleString()
+  return (
+    <div className='flex min-w-0 flex-col text-xs'>
+      <span className='text-muted-foreground truncate'>
+        {t('Used')}: {key.used_quota.toLocaleString()}
+      </span>
+      <span className='truncate'>
+        {t('Remaining')}: {remaining}
+      </span>
+    </div>
+  )
+}
+
+function UpstreamKeyStatusCell({ channel }: { channel: Channel }) {
+  const key = channel.upstream_key
+  const queryClient = useQueryClient()
+  const { t } = useTranslation()
+  if (!key) return null
+  const enabled = key.status === 1
+  const statusConfig =
+    CHANNEL_STATUS_CONFIG[key.status as keyof typeof CHANNEL_STATUS_CONFIG] ||
+    CHANNEL_STATUS_CONFIG[0]
+  return (
+    <div className='flex items-center gap-1.5'>
+      <StatusBadge
+        label={t(statusConfig.label)}
+        variant={statusConfig.variant}
+        size='sm'
+        copyable={false}
+      />
+      <Button
+        type='button'
+        variant='ghost'
+        size='icon'
+        className='size-7'
+        aria-label={enabled ? t('Disable key') : t('Enable key')}
+        title={enabled ? t('Disable key') : t('Enable key')}
+        onClick={() => {
+          void (async () => {
+            try {
+              const response = await batchUpdateUpstreamKeyStatus(
+                channel.parent_channel_id || key.channel_id,
+                [key.id],
+                enabled ? 2 : 1
+              )
+              if (!response.success) {
+                throw createServerError(response, t('Operation failed'))
+              }
+              await Promise.all([
+                queryClient.invalidateQueries({
+                  queryKey: [
+                    'upstream-keys',
+                    channel.parent_channel_id || key.channel_id,
+                  ],
+                }),
+                queryClient.invalidateQueries({
+                  queryKey: channelsQueryKeys.lists(),
+                }),
+              ])
+            } catch (error) {
+              handleServerError(error, t('Operation failed'))
+            }
+          })()
+        }}
+      >
+        {enabled ? <EyeOff /> : <Eye />}
+      </Button>
+    </div>
+  )
+}
+
+function UpstreamSiteSyncStatusCell({ channel }: { channel: Channel }) {
+  const { t, i18n } = useTranslation()
+  const status = channel.upstream_site_status
+  if (!status) {
+    return <span className='text-muted-foreground text-xs'>-</span>
+  }
+
+  const statusConfig = {
+    idle: { label: t('Idle'), variant: 'neutral' as const },
+    running: { label: t('Running'), variant: 'info' as const },
+    success: { label: t('Success'), variant: 'success' as const },
+    failed: { label: t('Failed'), variant: 'danger' as const },
+  }[status.sync_status] || {
+    label: status.sync_status,
+    variant: 'neutral' as const,
+  }
+  const lastSync =
+    status.last_sync_at > 0
+      ? formatRelativeTime(
+          status.last_sync_at,
+          toIntlLocale(i18n.resolvedLanguage || i18n.language)
+        )
+      : t('Never')
+
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <div className='flex min-w-0 flex-col items-start gap-1'>
+              <StatusBadge
+                label={statusConfig.label}
+                variant={statusConfig.variant}
+                size='sm'
+                copyable={false}
+              />
+              <span className='text-muted-foreground max-w-full truncate text-xs'>
+                {lastSync}
+              </span>
+            </div>
+          }
+        />
+        <TooltipContent side='top' className='max-w-xs'>
+          <div className='space-y-1 text-xs'>
+            <div>
+              {t('Last sync')}: {lastSync}
+            </div>
+            {status.consecutive_failures > 0 && (
+              <div>
+                {t('Consecutive failures')}: {status.consecutive_failures}
+              </div>
+            )}
+            {status.last_sync_error && <div>{status.last_sync_error}</div>}
+          </div>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   )
 }
 
@@ -670,6 +898,7 @@ export function useChannelsColumns(
                   size='sm'
                   className='h-6 w-6 p-0'
                   onClick={row.getToggleExpandedHandler()}
+                  aria-expanded={row.getIsExpanded()}
                 >
                   {row.getIsExpanded() ? (
                     <ChevronDown className='h-4 w-4' />
@@ -690,6 +919,22 @@ export function useChannelsColumns(
             )
           }
 
+          if (channel.is_upstream_key) {
+            return (
+              <div className='flex min-w-0 items-center gap-2 pl-6'>
+                <CornerDownRight
+                  className='text-muted-foreground size-4 shrink-0'
+                  aria-hidden='true'
+                />
+                <TruncatedText
+                  text={sensitiveVisible ? name : SENSITIVE_MASK}
+                  className='font-medium'
+                  maxWidth='max-w-full'
+                />
+              </div>
+            )
+          }
+
           // Regular channel row
           const settings = parseChannelSettings(channel.setting)
           const isPassThrough = settings.pass_through_body_enabled === true
@@ -697,6 +942,31 @@ export function useChannelsColumns(
 
           return (
             <div className='flex max-w-full min-w-0 items-center gap-2'>
+              {channel.upstream_kind === 'platform_site' && (
+                <Button
+                  variant='ghost'
+                  size='icon'
+                  className='size-7 shrink-0'
+                  onClick={row.getToggleExpandedHandler()}
+                  aria-expanded={row.getIsExpanded()}
+                  aria-label={
+                    row.getIsExpanded()
+                      ? t('Collapse upstream keys')
+                      : t('Expand upstream keys')
+                  }
+                  title={
+                    row.getIsExpanded()
+                      ? t('Collapse upstream keys')
+                      : t('Expand upstream keys')
+                  }
+                >
+                  {row.getIsExpanded() ? (
+                    <ChevronDown className='size-4' />
+                  ) : (
+                    <ChevronRight className='size-4' />
+                  )}
+                </Button>
+              )}
               <div className='flex max-w-full min-w-0 flex-col gap-1'>
                 <div className='flex max-w-full min-w-0 items-center gap-1.5'>
                   <TruncatedText
@@ -784,6 +1054,16 @@ export function useChannelsColumns(
           const typeName = t(typeNameKey)
           const iconName = getChannelTypeIcon(type)
           const channel = row.original as Channel
+          if (channel.is_upstream_key) {
+            return (
+              <StatusBadge
+                label={t('Upstream key')}
+                variant='neutral'
+                size='sm'
+                copyable={false}
+              />
+            )
+          }
           const isMultiKey = isMultiKeyChannel(channel)
           const multiKeyMode = channel.channel_info?.multi_key_mode ?? 'random'
           const MultiKeyModeIcon =
@@ -913,6 +1193,10 @@ export function useChannelsColumns(
           const status = row.getValue('status') as number
           const channel = row.original as Channel
 
+          if (channel.is_upstream_key) {
+            return <UpstreamKeyStatusCell channel={channel} />
+          }
+
           // Tag row: show aggregated status
           if (isTagRow) {
             const childrenCount = (row.original as TagRow).children?.length || 0
@@ -957,6 +1241,20 @@ export function useChannelsColumns(
             isMultiKey && keySize > 0
               ? `${t(config.label)} (${enabledCount}/${keySize})`
               : t(config.label)
+
+          if (channel.upstream_kind === 'platform_site') {
+            return (
+              <div className='flex min-w-0 items-center gap-2'>
+                <StatusBadge
+                  label={label}
+                  variant={config.variant}
+                  size='sm'
+                  copyable={false}
+                />
+                <UpstreamSiteSyncStatusCell channel={channel} />
+              </div>
+            )
+          }
 
           // Auto-disabled: show reason and time tooltip
           if (status === 3) {
@@ -1122,7 +1420,12 @@ export function useChannelsColumns(
         accessorKey: 'priority',
         header: t('Priority'),
         meta: { mobileHidden: true },
-        cell: ({ row }) => <PriorityCell channel={row.original} />,
+        cell: ({ row }) =>
+          row.original.is_upstream_key ? (
+            <UpstreamKeyPriorityCell channel={row.original} />
+          ) : (
+            <PriorityCell channel={row.original} />
+          ),
         size: 100,
       },
 
@@ -1131,7 +1434,12 @@ export function useChannelsColumns(
         accessorKey: 'weight',
         header: t('Weight'),
         meta: { mobileHidden: true },
-        cell: ({ row }) => <WeightCell channel={row.original} />,
+        cell: ({ row }) =>
+          row.original.is_upstream_key ? (
+            <UpstreamKeyWeightCell channel={row.original} />
+          ) : (
+            <WeightCell channel={row.original} />
+          ),
         size: 90,
         enableSorting: false,
       },
@@ -1140,7 +1448,12 @@ export function useChannelsColumns(
       {
         accessorKey: 'balance',
         header: t('Used / Remaining'),
-        cell: ({ row }) => <BalanceCell channel={row.original} />,
+        cell: ({ row }) =>
+          row.original.is_upstream_key ? (
+            <UpstreamKeyBalanceCell channel={row.original} />
+          ) : (
+            <BalanceCell channel={row.original} />
+          ),
         size: 180,
       },
 
@@ -1213,6 +1526,9 @@ export function useChannelsColumns(
         id: 'actions',
         header: () => t('Actions'),
         cell: ({ row }) => {
+          if (row.original.is_upstream_key) {
+            return null
+          }
           // Check if this is a tag row (has children)
           const isTagRow = isTagAggregateRow(row.original)
 

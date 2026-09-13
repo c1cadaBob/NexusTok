@@ -17,10 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cadabob.dev
 */
 import { useQueryClient } from '@tanstack/react-query'
-import { type Table } from '@tanstack/react-table'
+import type { Table } from '@tanstack/react-table'
 import { Power, PowerOff, Tag, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
 import { DataTableBulkActions as BulkActionsToolbar } from '@/components/data-table'
 import { Dialog } from '@/components/dialog'
@@ -37,14 +38,20 @@ import {
   ADMIN_PERMISSION_RESOURCES,
   hasPermission,
 } from '@/lib/admin-permissions'
+import { handleServerError } from '@/lib/handle-server-error'
+import { createServerError } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
+import { batchUpdateUpstreamKeyStatus } from '../api'
+import { CHANNEL_STATUS } from '../constants'
 import {
   handleBatchDelete,
   handleBatchDisable,
   handleBatchEnable,
   handleBatchSetTag,
+  channelsQueryKeys,
+  isTagAggregateRow,
 } from '../lib'
 import type { Channel } from '../types'
 
@@ -68,30 +75,124 @@ export function DataTableBulkActions<TData>({
   )
 
   const selectedRows = table.getFilteredSelectedRowModel().rows
-  const selectedIds = selectedRows.reduce<number[]>((ids, row) => {
-    const id = (row.original as Channel).id
+  const selectedChannelIds = new Set<number>()
+  const selectedUpstreamKeyIdsByChannelId = new Map<number, number[]>()
 
-    if (typeof id === 'number') {
-      ids.push(id)
+  for (const row of selectedRows) {
+    const channel = row.original as Channel
+    if (isTagAggregateRow(channel)) {
+      continue
     }
 
-    return ids
-  }, [])
+    if (!channel.is_upstream_key && typeof channel.id === 'number') {
+      selectedChannelIds.add(channel.id)
+      continue
+    }
+
+    const parentChannelId =
+      channel.parent_channel_id ?? channel.upstream_key?.channel_id
+    const upstreamKeyId = channel.upstream_key?.id ?? channel.id
+    if (
+      typeof parentChannelId !== 'number' ||
+      typeof upstreamKeyId !== 'number' ||
+      selectedChannelIds.has(parentChannelId)
+    ) {
+      continue
+    }
+
+    const keyIds = selectedUpstreamKeyIdsByChannelId.get(parentChannelId) || []
+    if (!keyIds.includes(upstreamKeyId)) {
+      keyIds.push(upstreamKeyId)
+      selectedUpstreamKeyIdsByChannelId.set(parentChannelId, keyIds)
+    }
+  }
+
+  const selectedIds = [...selectedChannelIds]
 
   const handleClearSelection = () => {
     table.resetRowSelection()
   }
 
-  const handleEnableAll = () => {
-    handleBatchEnable(selectedIds, queryClient, handleClearSelection)
+  const updateSelectedUpstreamKeyStatus = async (
+    status: number
+  ): Promise<number> => {
+    let updatedCount = 0
+
+    for (const [channelId, keyIds] of selectedUpstreamKeyIdsByChannelId) {
+      try {
+        const response = await batchUpdateUpstreamKeyStatus(
+          channelId,
+          keyIds,
+          status
+        )
+        if (!response.success) {
+          handleServerError(
+            createServerError(
+              response,
+              status === CHANNEL_STATUS.ENABLED
+                ? t('Failed to enable upstream keys')
+                : t('Failed to disable upstream keys')
+            )
+          )
+          continue
+        }
+
+        updatedCount += response.data?.updated || 0
+        await queryClient.invalidateQueries({
+          queryKey: ['upstream-keys', channelId],
+        })
+      } catch (error) {
+        handleServerError(
+          error,
+          status === CHANNEL_STATUS.ENABLED
+            ? t('Failed to enable upstream keys')
+            : t('Failed to disable upstream keys')
+        )
+      }
+    }
+
+    if (updatedCount > 0) {
+      toast.success(
+        status === CHANNEL_STATUS.ENABLED
+          ? t('{{count}} upstream key(s) enabled', { count: updatedCount })
+          : t('{{count}} upstream key(s) disabled', { count: updatedCount })
+      )
+      await queryClient.invalidateQueries({
+        queryKey: channelsQueryKeys.lists(),
+      })
+    }
+
+    return updatedCount
   }
 
-  const handleDisableAll = () => {
-    handleBatchDisable(selectedIds, queryClient, handleClearSelection)
+  const handleEnableAll = async () => {
+    const channelsUpdated =
+      selectedIds.length > 0
+        ? await handleBatchEnable(selectedIds, queryClient)
+        : false
+    const keysUpdated = await updateSelectedUpstreamKeyStatus(
+      CHANNEL_STATUS.ENABLED
+    )
+    if (channelsUpdated || keysUpdated > 0) {
+      handleClearSelection()
+    }
+  }
+
+  const handleDisableAll = async () => {
+    const channelsUpdated =
+      selectedIds.length > 0
+        ? await handleBatchDisable(selectedIds, queryClient)
+        : false
+    const keysUpdated = await updateSelectedUpstreamKeyStatus(
+      CHANNEL_STATUS.MANUAL_DISABLED
+    )
+    if (channelsUpdated || keysUpdated > 0) {
+      handleClearSelection()
+    }
   }
 
   const handleDeleteAll = () => {
-    if (!canEditSensitive) return
+    if (!canEditSensitive || selectedIds.length === 0) return
     handleBatchDelete(selectedIds, queryClient, () => {
       setShowDeleteConfirm(false)
       handleClearSelection()
@@ -99,11 +200,24 @@ export function DataTableBulkActions<TData>({
   }
 
   const handleSetTag = () => {
+    if (selectedIds.length === 0) return
     handleBatchSetTag(selectedIds, tagValue || null, queryClient, () => {
       setShowTagDialog(false)
       setTagValue('')
       handleClearSelection()
     })
+  }
+
+  const tagActionTooltip =
+    selectedIds.length > 0
+      ? t('Set tag for selected channels')
+      : t('Select a parent channel')
+  let deleteActionTooltip = t('No permission to perform this action')
+  if (canEditSensitive) {
+    deleteActionTooltip =
+      selectedIds.length > 0
+        ? t('Delete selected channels')
+        : t('Select a parent channel')
   }
 
   return (
@@ -158,9 +272,10 @@ export function DataTableBulkActions<TData>({
                 variant='outline'
                 size='icon'
                 onClick={() => setShowTagDialog(true)}
+                disabled={selectedIds.length === 0}
                 className='size-8'
                 aria-label={t('Set tag for selected channels')}
-                title={t('Set tag for selected channels')}
+                title={tagActionTooltip}
               />
             }
           >
@@ -170,7 +285,7 @@ export function DataTableBulkActions<TData>({
             </span>
           </TooltipTrigger>
           <TooltipContent>
-            <p>{t('Set tag for selected channels')}</p>
+            <p>{tagActionTooltip}</p>
           </TooltipContent>
         </Tooltip>
 
@@ -181,20 +296,18 @@ export function DataTableBulkActions<TData>({
                 variant='destructive'
                 size='icon'
                 onClick={() => {
-                  if (!canEditSensitive) return
+                  if (!canEditSensitive || selectedIds.length === 0) return
                   setShowDeleteConfirm(true)
                 }}
-                aria-disabled={!canEditSensitive}
+                disabled={!canEditSensitive || selectedIds.length === 0}
+                aria-disabled={!canEditSensitive || selectedIds.length === 0}
                 className={cn(
                   'size-8',
-                  !canEditSensitive && 'cursor-not-allowed opacity-50'
+                  (!canEditSensitive || selectedIds.length === 0) &&
+                    'cursor-not-allowed opacity-50'
                 )}
                 aria-label={t('Delete selected channels')}
-                title={
-                  canEditSensitive
-                    ? t('Delete selected channels')
-                    : t('No permission to perform this action')
-                }
+                title={deleteActionTooltip}
               />
             }
           >
@@ -202,11 +315,7 @@ export function DataTableBulkActions<TData>({
             <span className='sr-only'>{t('Delete selected channels')}</span>
           </TooltipTrigger>
           <TooltipContent>
-            <p>
-              {canEditSensitive
-                ? t('Delete selected channels')
-                : t('No permission to perform this action')}
-            </p>
+            <p>{deleteActionTooltip}</p>
           </TooltipContent>
         </Tooltip>
       </BulkActionsToolbar>
@@ -277,7 +386,7 @@ export function DataTableBulkActions<TData>({
             <Button
               variant='destructive'
               onClick={handleDeleteAll}
-              disabled={!canEditSensitive}
+              disabled={!canEditSensitive || selectedIds.length === 0}
             >
               {t('Delete')}
             </Button>

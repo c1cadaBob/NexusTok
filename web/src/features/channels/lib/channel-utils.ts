@@ -27,7 +27,12 @@ import {
   RESPONSE_TIME_THRESHOLDS,
   TYPE_TO_KEY_PROMPT,
 } from '../constants'
-import type { Channel, ChannelSettings, ChannelOtherSettings } from '../types'
+import type {
+  Channel,
+  ChannelOtherSettings,
+  ChannelSettings,
+  UpstreamKey,
+} from '../types'
 
 // ============================================================================
 // Channel Type Utilities
@@ -623,7 +628,55 @@ export function getChannelTableRowId(row: Channel | TagRow): string {
     return `tag:${row.tag || ''}`
   }
 
+  if (row.is_upstream_key) {
+    const parentChannelId =
+      row.parent_channel_id ?? row.upstream_key?.channel_id ?? ''
+    return `upstream-key:${parentChannelId}:${row.id}`
+  }
+
   return `channel:${row.id}`
+}
+
+export function filterUpstreamKeys(
+  keys: UpstreamKey[],
+  filters: {
+    keyword?: string
+    model?: string
+    status?: string[]
+  }
+): UpstreamKey[] {
+  const keyword = filters.keyword?.trim().toLocaleLowerCase() || ''
+  const model = filters.model?.trim().toLocaleLowerCase() || ''
+  const status = filters.status || []
+  const filterByStatus =
+    status.length > 0 && !status.includes('all') ? status[0] : undefined
+
+  return keys.filter((key) => {
+    if (keyword) {
+      const searchableText = [key.name, key.external_id, ...key.models]
+        .join(' ')
+        .toLocaleLowerCase()
+      if (!searchableText.includes(keyword)) {
+        return false
+      }
+    }
+
+    if (
+      model &&
+      !key.models.some((item) => item.toLocaleLowerCase().includes(model))
+    ) {
+      return false
+    }
+
+    if (filterByStatus === 'enabled' && key.status !== 1) {
+      return false
+    }
+    if (filterByStatus === 'disabled' && key.status === 1) {
+      return false
+    }
+
+    return true
+  })
 }
 
 /**

@@ -37,6 +37,12 @@ export type ChannelInfo = z.infer<typeof channelInfoSchema>
 export const channelSchema = z.object({
   id: z.number(),
   type: z.number(),
+  upstream_kind: z
+    .enum(['key_channel', 'platform_site'])
+    .default('key_channel'),
+  key_priority: z.number().nullish(),
+  conversion_ratio: z.number().nullish(),
+  key_weight_override: z.number().nullish(),
   key: z.string(),
   openai_organization: z.string().nullish(),
   test_model: z.string().nullish(),
@@ -73,7 +79,14 @@ export const channelSchema = z.object({
   settings: z.string().default('{}'), // other_settings JSON
 })
 
-export type Channel = z.infer<typeof channelSchema>
+export type Channel = z.infer<typeof channelSchema> & {
+  children?: Channel[]
+  is_upstream_key?: boolean
+  upstream_key?: UpstreamKey
+  upstream_site_status?: UpstreamSiteStatus
+  parent_channel_id?: number
+  upstream_group?: string
+}
 
 // ============================================================================
 // Channel Settings Types
@@ -378,4 +391,75 @@ export interface AddChannelRequest {
   multi_key_mode?: 'random' | 'polling'
   batch_add_set_key_prefix_2_name?: boolean
   channel: Partial<Channel>
+  platform_site?: PlatformSiteInput
+}
+
+export type UpstreamKind = 'key_channel' | 'platform_site'
+export type UpstreamAuthType =
+  | 'password'
+  | 'access_token'
+  | 'admin_key'
+  | 'cookie'
+
+export interface PlatformSiteInput {
+  platform: 'newapi' | 'sub2api'
+  base_url: string
+  auth_type: UpstreamAuthType
+  username?: string
+  password?: string
+  access_token?: string
+  admin_key?: string
+  cookie?: string
+  recharge_amount: number
+  credited_amount: number
+  conversion_ratio?: number
+}
+
+export interface UpstreamSiteStatus {
+  channel_id: number
+  platform: string
+  base_url: string
+  auth_type: UpstreamAuthType
+  recharge_amount: number
+  credited_amount: number
+  conversion_ratio: number
+  balance: number
+  used_quota: number
+  sync_status: string
+  last_sync_at: number
+  last_sync_error?: string
+  consecutive_failures: number
+}
+
+export interface UpstreamKey {
+  id: number
+  channel_id: number
+  external_id: string
+  name: string
+  models: string[]
+  key_priority: number
+  conversion_ratio: number
+  weight: number
+  weight_override?: number | null
+  used_quota: number
+  remain_quota?: number | null
+  expires_at?: string | null
+  status: number
+  disabled_reason?: string
+  last_sync_at: number
+}
+
+export interface UpstreamSiteStatusResponse {
+  success: boolean
+  message?: string
+  data?: UpstreamSiteStatus
+}
+
+export interface UpstreamKeysResponse {
+  success: boolean
+  message?: string
+  data?: {
+    items: UpstreamKey[]
+    total: number
+  }
 }

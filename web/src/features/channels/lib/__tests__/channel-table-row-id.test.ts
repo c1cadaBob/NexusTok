@@ -18,8 +18,12 @@ For commercial licensing, please contact support@c1cadabob.dev
 */
 import { describe, expect, test } from 'vitest'
 
-import type { Channel } from '../../types'
-import { getChannelTableRowId, type TagRow } from '../channel-utils'
+import type { Channel, UpstreamKey } from '../../types'
+import {
+  filterUpstreamKeys,
+  getChannelTableRowId,
+  type TagRow,
+} from '../channel-utils'
 
 function channel(id: number): Channel {
   return { id } as Channel
@@ -47,5 +51,46 @@ describe('channel table row identity', () => {
 
     expect(getChannelTableRowId(tagRow)).toBe('tag:202')
     expect(getChannelTableRowId(channel(202))).toBe('channel:202')
+  })
+
+  test('uses a parent-scoped namespace for upstream key rows', () => {
+    const upstreamKey = {
+      id: 202,
+      is_upstream_key: true,
+      parent_channel_id: 7,
+    } as Channel
+
+    expect(getChannelTableRowId(upstreamKey)).toBe('upstream-key:7:202')
+    expect(getChannelTableRowId(upstreamKey)).not.toBe('channel:202')
+  })
+
+  test('filters upstream keys by keyword, model, and status', () => {
+    const keys = [
+      {
+        id: 1,
+        name: 'Production',
+        external_id: 'prod-key',
+        models: ['gpt-4o', 'claude-3-7'],
+        status: 1,
+      },
+      {
+        id: 2,
+        name: 'Disabled backup',
+        external_id: 'backup-key',
+        models: ['gpt-4o-mini'],
+        status: 2,
+      },
+    ] as UpstreamKey[]
+
+    expect(
+      filterUpstreamKeys(keys, {
+        keyword: 'prod',
+        model: 'claude',
+        status: ['enabled'],
+      }).map((key) => key.id)
+    ).toEqual([1])
+    expect(
+      filterUpstreamKeys(keys, { status: ['disabled'] }).map((key) => key.id)
+    ).toEqual([2])
   })
 })

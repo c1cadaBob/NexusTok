@@ -39,6 +39,10 @@ import type {
   SearchChannelsParams,
   SearchChannelsResponse,
   TagOperationParams,
+  PlatformSiteInput,
+  UpstreamKey,
+  UpstreamKeysResponse,
+  UpstreamSiteStatusResponse,
 } from './types'
 
 const channelActionConfig = (
@@ -149,11 +153,66 @@ export async function createChannel(
  */
 export async function updateChannel(
   id: number,
-  data: Partial<Channel>
+  data: Partial<Channel> & { platform_site?: PlatformSiteInput }
 ): Promise<{ success: boolean; message?: string; data?: Channel }> {
   const res = await api.put(
     '/api/channel/',
     { id, ...data },
+    channelActionConfig()
+  )
+  return res.data
+}
+
+export async function getUpstreamSiteStatus(
+  id: number
+): Promise<UpstreamSiteStatusResponse> {
+  const res = await api.get(`/api/channel/${id}/upstream-sync`)
+  return res.data
+}
+
+export async function getUpstreamKeys(
+  id: number
+): Promise<UpstreamKeysResponse> {
+  const res = await api.get(`/api/channel/${id}/upstream-keys`)
+  return res.data
+}
+
+export async function syncUpstreamSite(
+  id: number
+): Promise<UpstreamSiteStatusResponse> {
+  const res = await api.post(
+    `/api/channel/${id}/upstream-sync`,
+    undefined,
+    channelActionConfig()
+  )
+  return res.data
+}
+
+export async function patchUpstreamKey(
+  channelId: number,
+  keyId: number,
+  data: Partial<
+    Pick<UpstreamKey, 'key_priority' | 'conversion_ratio' | 'weight_override'>
+  > & {
+    clear_weight?: boolean
+  }
+): Promise<{ success: boolean; message?: string; data?: UpstreamKey }> {
+  const res = await api.patch(
+    `/api/channel/${channelId}/upstream-keys/${keyId}`,
+    data,
+    channelActionConfig()
+  )
+  return res.data
+}
+
+export async function batchUpdateUpstreamKeyStatus(
+  channelId: number,
+  ids: number[],
+  status: number
+): Promise<{ success: boolean; message?: string; data?: { updated: number } }> {
+  const res = await api.post(
+    `/api/channel/${channelId}/upstream-keys/batch-status`,
+    { ids, status },
     channelActionConfig()
   )
   return res.data

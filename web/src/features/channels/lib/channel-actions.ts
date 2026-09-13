@@ -405,10 +405,10 @@ export async function handleBatchEnable(
   ids: number[],
   queryClient?: QueryClient,
   onSuccess?: () => void
-): Promise<void> {
+): Promise<boolean> {
   if (ids.length === 0) {
     toast.error(i18next.t('No channels selected'))
-    return
+    return false
   }
 
   try {
@@ -431,8 +431,10 @@ export async function handleBatchEnable(
         i18next.t('{{count}} channel(s) failed to enable', { count: failCount })
       )
     }
+    return successCount > 0
   } catch (error) {
     handleServerError(error, i18next.t('Failed to enable channels'))
+    return false
   }
 }
 
@@ -443,10 +445,10 @@ export async function handleBatchDisable(
   ids: number[],
   queryClient?: QueryClient,
   onSuccess?: () => void
-): Promise<void> {
+): Promise<boolean> {
   if (ids.length === 0) {
     toast.error(i18next.t('No channels selected'))
-    return
+    return false
   }
 
   try {
@@ -474,8 +476,10 @@ export async function handleBatchDisable(
         })
       )
     }
+    return successCount > 0
   } catch (error) {
     handleServerError(error, i18next.t('Failed to disable channels'))
+    return false
   }
 }
 

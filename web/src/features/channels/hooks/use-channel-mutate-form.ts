@@ -47,6 +47,7 @@ type UseChannelMutateFormParams = {
 
 const SENSITIVE_UPDATE_FIELDS = [
   'type',
+  'upstream_kind',
   'key',
   'base_url',
   'openai_organization',
@@ -80,6 +81,7 @@ export function useChannelMutateForm(props: UseChannelMutateFormParams) {
           for (const field of SENSITIVE_UPDATE_FIELDS) {
             delete payload[field]
           }
+          delete payload.platform_site
         }
         const payloadWithKeyMode =
           canEditSensitive &&

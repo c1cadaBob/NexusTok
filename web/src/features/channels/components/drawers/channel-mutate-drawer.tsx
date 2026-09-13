@@ -51,7 +51,11 @@ import {
   useCallback,
   useRef,
 } from 'react'
-import { type SubmitErrorHandler, useForm } from 'react-hook-form'
+import {
+  type Resolver,
+  type SubmitErrorHandler,
+  useForm,
+} from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -136,13 +140,16 @@ import {
   getGroups,
   getPrefillGroups,
   getTaskPluginOptions,
+  getUpstreamSiteStatus,
   refreshCodexCredential,
 } from '../../api'
 import {
   ADD_MODE_OPTIONS,
   CLAUDE_FIELD_PASSTHROUGH_TYPES,
   CHANNEL_STATUS_LABELS,
+  CHANNEL_TYPE_NEW_API,
   CHANNEL_TYPE_OPTIONS,
+  CHANNEL_TYPE_SUB2_API,
   CHANNEL_TYPE_TASK_PLUGIN,
   channelTypeOptionsForTaskPluginBind,
   CHANNEL_TYPE_WARNINGS,
@@ -194,6 +201,7 @@ import {
 import { ParamOverrideEditorDialog } from '../dialogs/param-override-editor-dialog'
 import { StatusCodeRiskDialog } from '../dialogs/status-code-risk-dialog'
 import { ModelMappingEditor } from '../model-mapping-editor'
+import { PlatformSiteFields } from './platform-site-fields'
 import {
   ChannelAdvancedSection,
   ChannelApiAccessSection,
@@ -649,6 +657,16 @@ export function ChannelMutateDrawer({
     queryFn: async () => requireServerSuccess(await getChannel(channelId || 0)),
     enabled: isEditing && Boolean(channelId),
   })
+  const { data: upstreamSiteData, isFetched: isUpstreamSiteStatusFetched } =
+    useQuery({
+      queryKey: ['upstream-site-status', channelId],
+      queryFn: async () =>
+        requireServerSuccess(await getUpstreamSiteStatus(channelId || 0)),
+      enabled:
+        isEditing &&
+        Boolean(channelId) &&
+        channelData?.data?.upstream_kind === 'platform_site',
+    })
 
   // Fetch available groups
   const { data: groupsData, isLoading: isLoadingGroups } = useQuery({
@@ -679,7 +697,9 @@ export function ChannelMutateDrawer({
 
   // Form setup
   const form = useForm<ChannelFormValues>({
-    resolver: zodResolver(channelFormSchema),
+    resolver: zodResolver(
+      channelFormSchema
+    ) as unknown as Resolver<ChannelFormValues>,
     defaultValues: CHANNEL_FORM_DEFAULT_VALUES,
   })
 
@@ -689,6 +709,7 @@ export function ChannelMutateDrawer({
   const keyMode = form.watch('key_mode')
   const currentGroups = form.watch('group')
   const currentType = form.watch('type')
+  const currentUpstreamKind = form.watch('upstream_kind')
   const currentStatus = form.watch('status')
   const currentBaseUrl = form.watch('base_url')
   const currentTaskPluginKey = form.watch('task_plugin_key')
@@ -706,6 +727,9 @@ export function ChannelMutateDrawer({
   const currentAdvancedCustom = form.watch('advanced_custom')
   const currentPriority = form.watch('priority')
   const currentWeight = form.watch('weight')
+  const currentKeyPriority = form.watch('key_priority')
+  const currentConversionRatio = form.watch('conversion_ratio')
+  const currentKeyWeightOverride = form.watch('key_weight_override')
   const currentTestModel = form.watch('test_model')
   const currentAutoBan = form.watch('auto_ban')
   const currentTag = form.watch('tag')
@@ -916,13 +940,18 @@ export function ChannelMutateDrawer({
       : null
 
   const channelTypeOptions = useMemo(() => {
-    const options = channelTypeOptionsForTaskPluginBind(canBindTaskPlugin).map(
-      (option) => ({
-        value: String(option.value),
-        label: t(option.label),
-        icon: <ChannelTypeLogo type={option.value} size={16} />,
-      })
+    const availableOptions = channelTypeOptionsForTaskPluginBind(
+      canBindTaskPlugin
+    ).filter(
+      (option) =>
+        currentUpstreamKind !== 'platform_site' ||
+        [CHANNEL_TYPE_SUB2_API, CHANNEL_TYPE_NEW_API].includes(option.value)
     )
+    const options = availableOptions.map((option) => ({
+      value: String(option.value),
+      label: t(option.label),
+      icon: <ChannelTypeLogo type={option.value} size={16} />,
+    }))
     if (!options.some((option) => Number(option.value) === currentType)) {
       options.push({
         value: String(currentType),
@@ -931,7 +960,7 @@ export function ChannelMutateDrawer({
       })
     }
     return options
-  }, [canBindTaskPlugin, currentType, t])
+  }, [canBindTaskPlugin, currentType, currentUpstreamKind, t])
 
   const formErrors = form.formState.errors
   const identityHasErrors = Boolean(
@@ -960,7 +989,9 @@ export function ChannelMutateDrawer({
   const providerRequiresOther = [3, 18, 21, 39, 41, 49].includes(currentType)
   const identityComplete = Boolean(currentName?.trim() && currentType > 0)
   const credentialsComplete = Boolean(
-    (isEditing || currentKey?.trim()) &&
+    (isEditing ||
+      currentUpstreamKind === 'platform_site' ||
+      currentKey?.trim()) &&
     (!providerRequiresBaseUrl || currentBaseUrl?.trim()) &&
     (!providerRequiresOther || currentOther?.trim())
   )
@@ -993,6 +1024,9 @@ export function ChannelMutateDrawer({
   const routingStrategyConfigured = Boolean(
     currentPriority ||
     currentWeight ||
+    currentKeyPriority ||
+    currentConversionRatio !== 1 ||
+    currentKeyWeightOverride !== undefined ||
     currentTestModel?.trim() ||
     (currentAutoBan ?? 1) !== 1
   )
@@ -1238,8 +1272,32 @@ export function ChannelMutateDrawer({
   // Load channel data into form when editing
   useEffect(() => {
     if (isEditing && channelData?.data) {
+      const isPlatformSite = channelData.data.upstream_kind === 'platform_site'
+      if (isPlatformSite && !isUpstreamSiteStatusFetched) {
+        return
+      }
       const defaults = transformChannelToFormDefaults(channelData.data)
-      form.reset(defaults)
+      const site = upstreamSiteData?.data
+      let platformSitePlatform: 'newapi' | 'sub2api' = 'newapi'
+      if (site?.platform === 'sub2api') {
+        platformSitePlatform = 'sub2api'
+      } else if (channelData.data.type === CHANNEL_TYPE_SUB2_API) {
+        platformSitePlatform = 'sub2api'
+      }
+      form.reset({
+        ...defaults,
+        platform_site_platform: platformSitePlatform,
+        platform_site_auth_type: site?.auth_type ?? 'password',
+        platform_site_recharge_amount: site?.recharge_amount ?? 0,
+        platform_site_credited_amount: site?.credited_amount ?? 0,
+        platform_site_conversion_ratio: site?.conversion_ratio ?? 1,
+        platform_site_conversion_ratio_override:
+          site?.credited_amount !== undefined &&
+          site.credited_amount > 0 &&
+          Math.abs(
+            site.conversion_ratio - site.recharge_amount / site.credited_amount
+          ) > 0.0000001,
+      })
       setAdvancedSettingsOpen(
         readAdvancedSettingsPreference() || hasAdvancedSettingsValues(defaults)
       )
@@ -1257,7 +1315,13 @@ export function ChannelMutateDrawer({
       initialModelMappingRef.current = ''
       initialStatusCodeMappingRef.current = ''
     }
-  }, [isEditing, channelData, form])
+  }, [
+    isEditing,
+    channelData,
+    form,
+    isUpstreamSiteStatusFetched,
+    upstreamSiteData,
+  ])
 
   // Handle type change - set default values for specific types
   useEffect(() => {
@@ -1573,8 +1637,12 @@ export function ChannelMutateDrawer({
   // Submit handler
   const onSubmit = useCallback(
     async (data: ChannelFormValues) => {
-      // Validate key is required when creating
-      if (!isEditing && !data.key?.trim()) {
+      // Platform sites use credentials instead of the parent channel key.
+      if (
+        !isEditing &&
+        data.upstream_kind !== 'platform_site' &&
+        !data.key?.trim()
+      ) {
         form.setError('key', {
           type: 'manual',
           message: ERROR_MESSAGES.REQUIRED_KEY,
@@ -1936,6 +2004,71 @@ export function ChannelMutateDrawer({
                           >
                             <FormField
                               control={form.control}
+                              name='upstream_kind'
+                              render={({ field }) => (
+                                <FormItem className='sm:col-span-2'>
+                                  <FormLabel>
+                                    {t('Upstream channel type')}
+                                  </FormLabel>
+                                  <Select
+                                    value={field.value}
+                                    onValueChange={(value) => {
+                                      field.onChange(value)
+                                      if (value === 'platform_site') {
+                                        const type = form.getValues('type')
+                                        if (
+                                          ![
+                                            CHANNEL_TYPE_SUB2_API,
+                                            CHANNEL_TYPE_NEW_API,
+                                          ].includes(type)
+                                        ) {
+                                          form.setValue(
+                                            'type',
+                                            CHANNEL_TYPE_NEW_API,
+                                            {
+                                              shouldDirty: true,
+                                              shouldValidate: true,
+                                            }
+                                          )
+                                        }
+                                      }
+                                    }}
+                                    items={[
+                                      {
+                                        value: 'key_channel',
+                                        label: t('Key channel'),
+                                      },
+                                      {
+                                        value: 'platform_site',
+                                        label: t('Platform site'),
+                                      },
+                                    ]}
+                                  >
+                                    <FormControl>
+                                      <SelectTrigger>
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                    </FormControl>
+                                    <SelectContent>
+                                      <SelectItem value='key_channel'>
+                                        {t('Key channel')}
+                                      </SelectItem>
+                                      <SelectItem value='platform_site'>
+                                        {t('Platform site')}
+                                      </SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                  <FormDescription>
+                                    {t(
+                                      'Platform sites synchronize upstream keys under one parent channel.'
+                                    )}
+                                  </FormDescription>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                            <FormField
+                              control={form.control}
                               name='type'
                               render={({ field }) => (
                                 <FormItem>
@@ -2173,7 +2306,22 @@ export function ChannelMutateDrawer({
                           </Alert>
                         )}
 
-                        <div className='border-border/60 bg-muted/10 rounded-lg border p-4'>
+                        {currentUpstreamKind === 'platform_site' && (
+                          <div className='border-border/60 bg-muted/10 rounded-lg border p-4'>
+                            <PlatformSiteFields
+                              disabled={sensitiveLocked}
+                              isEditing={isEditing}
+                              syncStatus={upstreamSiteData?.data}
+                            />
+                          </div>
+                        )}
+
+                        <div
+                          className={cn(
+                            'border-border/60 bg-muted/10 rounded-lg border p-4',
+                            currentUpstreamKind === 'platform_site' && 'hidden'
+                          )}
+                        >
                           <fieldset
                             disabled={sensitiveLocked}
                             className='space-y-4 disabled:opacity-60'
@@ -3781,7 +3929,7 @@ export function ChannelMutateDrawer({
                                 control={form.control}
                                 name='weight'
                                 render={({ field }) => (
-                                  <FormItem>
+                                  <FormItem className='hidden'>
                                     <FormLabel>{t('Weight')}</FormLabel>
                                     <FormControl>
                                       <Input
@@ -3800,6 +3948,108 @@ export function ChannelMutateDrawer({
                                   </FormItem>
                                 )}
                               />
+
+                              {currentUpstreamKind === 'key_channel' && (
+                                <>
+                                  <FormField
+                                    control={form.control}
+                                    name='key_priority'
+                                    render={({ field }) => (
+                                      <FormItem>
+                                        <FormLabel>
+                                          {t('Key priority')}
+                                        </FormLabel>
+                                        <FormControl>
+                                          <Input
+                                            type='number'
+                                            min={-999}
+                                            step='1'
+                                            {...field}
+                                            onChange={(event) =>
+                                              field.onChange(
+                                                Number(event.target.value)
+                                              )
+                                            }
+                                          />
+                                        </FormControl>
+                                        <FormDescription>
+                                          {t(
+                                            'Higher key priority is selected first within the same channel priority.'
+                                          )}
+                                        </FormDescription>
+                                        <FormMessage />
+                                      </FormItem>
+                                    )}
+                                  />
+
+                                  <FormField
+                                    control={form.control}
+                                    name='conversion_ratio'
+                                    render={({ field }) => (
+                                      <FormItem>
+                                        <FormLabel>
+                                          {t('Key conversion ratio')}
+                                        </FormLabel>
+                                        <FormControl>
+                                          <Input
+                                            type='number'
+                                            min='0'
+                                            step='0.001'
+                                            {...field}
+                                            onChange={(event) =>
+                                              field.onChange(
+                                                event.target.value === ''
+                                                  ? 1
+                                                  : event.target.valueAsNumber
+                                              )
+                                            }
+                                          />
+                                        </FormControl>
+                                        <FormDescription>
+                                          {t(
+                                            'Used to calculate the automatic key weight.'
+                                          )}
+                                        </FormDescription>
+                                        <FormMessage />
+                                      </FormItem>
+                                    )}
+                                  />
+
+                                  <FormField
+                                    control={form.control}
+                                    name='key_weight_override'
+                                    render={({ field }) => (
+                                      <FormItem>
+                                        <FormLabel>
+                                          {t('Key weight override')}
+                                        </FormLabel>
+                                        <FormControl>
+                                          <Input
+                                            type='number'
+                                            min='0'
+                                            max='2000'
+                                            step='1'
+                                            value={field.value ?? ''}
+                                            onChange={(event) =>
+                                              field.onChange(
+                                                event.target.value === ''
+                                                  ? undefined
+                                                  : event.target.valueAsNumber
+                                              )
+                                            }
+                                          />
+                                        </FormControl>
+                                        <FormDescription>
+                                          {t(
+                                            'Leave blank to use the automatic weight from the conversion ratio.'
+                                          )}
+                                        </FormDescription>
+                                        <FormMessage />
+                                      </FormItem>
+                                    )}
+                                  />
+                                </>
+                              )}
                             </div>
 
                             <FormField

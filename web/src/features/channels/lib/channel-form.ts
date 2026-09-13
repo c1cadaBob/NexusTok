@@ -21,6 +21,7 @@ import { z } from 'zod'
 import {
   CLAUDE_FIELD_PASSTHROUGH_TYPES,
   CHANNEL_TYPE_NEW_API,
+  CHANNEL_TYPE_SUB2_API,
   CHANNEL_TYPE_TASK_PLUGIN,
   CHANNEL_STATUS,
   ERROR_MESSAGES,
@@ -28,7 +29,7 @@ import {
   MODEL_FETCHABLE_TYPES,
   OPENAI_FIELD_PASSTHROUGH_TYPES,
 } from '../constants'
-import type { Channel } from '../types'
+import type { Channel, PlatformSiteInput } from '../types'
 import {
   CHANNEL_TYPE_ADVANCED_CUSTOM,
   advancedCustomConfigUsesRelativeUpstreamPath,
@@ -201,6 +202,25 @@ export const channelFormSchema = z
   .object({
     name: z.string().min(1, ERROR_MESSAGES.REQUIRED_NAME),
     type: z.number().min(0, ERROR_MESSAGES.REQUIRED_TYPE),
+    upstream_kind: z
+      .enum(['key_channel', 'platform_site'])
+      .default('key_channel'),
+    key_priority: z.number().int().min(-999).default(0),
+    conversion_ratio: z.number().min(0).default(1),
+    key_weight_override: z.number().int().min(0).max(2000).optional(),
+    platform_site_platform: z.enum(['newapi', 'sub2api']).default('newapi'),
+    platform_site_auth_type: z
+      .enum(['password', 'access_token', 'admin_key', 'cookie'])
+      .default('password'),
+    platform_site_username: z.string().optional(),
+    platform_site_password: z.string().optional(),
+    platform_site_access_token: z.string().optional(),
+    platform_site_admin_key: z.string().optional(),
+    platform_site_cookie: z.string().optional(),
+    platform_site_recharge_amount: z.number().min(0).default(0),
+    platform_site_credited_amount: z.number().min(0).default(0),
+    platform_site_conversion_ratio: z.number().min(0).default(1),
+    platform_site_conversion_ratio_override: z.boolean().default(false),
     base_url: z.string().optional(),
     task_plugin_key: z.string().optional(),
     key: z.string(),
@@ -286,6 +306,24 @@ export const channelFormSchema = z
     upstream_model_update_ignored_models: z.string().optional(),
   })
   .superRefine((data, ctx) => {
+    if (data.upstream_kind === 'platform_site') {
+      if (![CHANNEL_TYPE_NEW_API, CHANNEL_TYPE_SUB2_API].includes(data.type)) {
+        addRequiredIssue(ctx, 'type', '平台站点仅支持 NewAPI 或 Sub2API')
+      }
+      if (!data.base_url?.trim()) {
+        addRequiredIssue(ctx, 'base_url', '平台站点地址不能为空')
+      }
+      if (
+        data.platform_site_credited_amount === 0 &&
+        data.platform_site_recharge_amount > 0
+      ) {
+        addRequiredIssue(
+          ctx,
+          'platform_site_credited_amount',
+          '到账金额必须大于 0'
+        )
+      }
+    }
     if (
       [3, 8, 36, 45, CHANNEL_TYPE_NEW_API, CHANNEL_TYPE_TASK_PLUGIN].includes(
         data.type
@@ -414,6 +452,21 @@ export type ChannelFormValues = z.infer<typeof channelFormSchema>
 export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   name: '',
   type: 1,
+  upstream_kind: 'key_channel',
+  key_priority: 0,
+  conversion_ratio: 1,
+  key_weight_override: undefined,
+  platform_site_platform: 'newapi',
+  platform_site_auth_type: 'password',
+  platform_site_username: '',
+  platform_site_password: '',
+  platform_site_access_token: '',
+  platform_site_admin_key: '',
+  platform_site_cookie: '',
+  platform_site_recharge_amount: 0,
+  platform_site_credited_amount: 0,
+  platform_site_conversion_ratio: 1,
+  platform_site_conversion_ratio_override: false,
   base_url: '',
   task_plugin_key: '',
   key: '',
@@ -568,6 +621,22 @@ export function transformChannelToFormDefaults(
   return {
     name: channel.name || '',
     type: channel.type,
+    upstream_kind: channel.upstream_kind || 'key_channel',
+    key_priority: channel.key_priority ?? 0,
+    conversion_ratio: channel.conversion_ratio ?? 1,
+    key_weight_override: channel.key_weight_override ?? undefined,
+    platform_site_platform:
+      channel.type === CHANNEL_TYPE_SUB2_API ? 'sub2api' : 'newapi',
+    platform_site_auth_type: 'password',
+    platform_site_username: '',
+    platform_site_password: '',
+    platform_site_access_token: '',
+    platform_site_admin_key: '',
+    platform_site_cookie: '',
+    platform_site_recharge_amount: 0,
+    platform_site_credited_amount: 0,
+    platform_site_conversion_ratio: 1,
+    platform_site_conversion_ratio_override: false,
     base_url: channel.base_url || '',
     key: '', // Never populate key from backend for security
     openai_organization: channel.openai_organization || '',
@@ -797,6 +866,7 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
   multi_key_mode?: 'random' | 'polling'
   batch_add_set_key_prefix_2_name?: boolean
   channel: Partial<Channel>
+  platform_site?: PlatformSiteInput
 } {
   const mode = formData.multi_key_mode || 'single'
 
@@ -805,6 +875,9 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
     type: formData.type,
     base_url: normalizeBaseUrl(formData.base_url) || null,
     key: formData.key,
+    key_priority: formData.key_priority,
+    conversion_ratio: formData.conversion_ratio,
+    key_weight_override: formData.key_weight_override ?? null,
     openai_organization: formData.openai_organization || null,
     models: formData.models,
     group: formatGroups(formData.group),
@@ -822,6 +895,7 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
     header_override: formData.header_override || null,
     settings: buildSettingsJSON(formData),
     other: formData.other || '',
+    upstream_kind: formData.upstream_kind,
   }
 
   // Clean up empty strings to null for optional fields
@@ -831,7 +905,13 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
     }
   })
 
-  return {
+  const payload: {
+    mode: 'single' | 'batch' | 'multi_to_single'
+    multi_key_mode?: 'random' | 'polling'
+    batch_add_set_key_prefix_2_name?: boolean
+    channel: Partial<Channel>
+    platform_site?: PlatformSiteInput
+  } = {
     mode,
     multi_key_mode:
       mode === 'multi_to_single' ? formData.multi_key_type : undefined,
@@ -839,6 +919,24 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
       mode === 'batch' ? formData.batch_add_set_key_prefix_2_name : undefined,
     channel,
   }
+  if (formData.upstream_kind === 'platform_site') {
+    payload.platform_site = {
+      platform: formData.platform_site_platform,
+      base_url: normalizeBaseUrl(formData.base_url),
+      auth_type: formData.platform_site_auth_type,
+      username: formData.platform_site_username,
+      password: formData.platform_site_password,
+      access_token: formData.platform_site_access_token,
+      admin_key: formData.platform_site_admin_key,
+      cookie: formData.platform_site_cookie,
+      recharge_amount: formData.platform_site_recharge_amount,
+      credited_amount: formData.platform_site_credited_amount,
+      conversion_ratio: formData.platform_site_conversion_ratio_override
+        ? formData.platform_site_conversion_ratio
+        : undefined,
+    }
+  }
+  return payload
 }
 
 /**
@@ -847,12 +945,15 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
 export function transformFormDataToUpdatePayload(
   formData: ChannelFormValues,
   channelId: number
-): Partial<Channel> {
-  const payload: Partial<Channel> = {
+): Partial<Channel> & { platform_site?: PlatformSiteInput } {
+  const payload: Partial<Channel> & { platform_site?: PlatformSiteInput } = {
     id: channelId,
     name: formData.name,
     type: formData.type,
     base_url: normalizeBaseUrl(formData.base_url) || null,
+    key_priority: formData.key_priority,
+    conversion_ratio: formData.conversion_ratio,
+    key_weight_override: formData.key_weight_override ?? null,
     openai_organization: formData.openai_organization || null,
     models: formData.models,
     group: formatGroups(formData.group),
@@ -869,6 +970,7 @@ export function transformFormDataToUpdatePayload(
     header_override: formData.header_override || null,
     settings: buildSettingsJSON(formData),
     other: formData.other || '',
+    upstream_kind: formData.upstream_kind,
   }
 
   // Only include key if it was changed (not empty)
@@ -893,6 +995,25 @@ export function transformFormDataToUpdatePayload(
   payload.status_code_mapping = formData.status_code_mapping || ''
   payload.param_override = formData.param_override || ''
   payload.header_override = formData.header_override || ''
+  payload.upstream_kind = formData.upstream_kind
+
+  if (formData.upstream_kind === 'platform_site') {
+    payload.platform_site = {
+      platform: formData.platform_site_platform,
+      base_url: normalizeBaseUrl(formData.base_url),
+      auth_type: formData.platform_site_auth_type,
+      username: formData.platform_site_username,
+      password: formData.platform_site_password,
+      access_token: formData.platform_site_access_token,
+      admin_key: formData.platform_site_admin_key,
+      cookie: formData.platform_site_cookie,
+      recharge_amount: formData.platform_site_recharge_amount,
+      credited_amount: formData.platform_site_credited_amount,
+      conversion_ratio: formData.platform_site_conversion_ratio_override
+        ? formData.platform_site_conversion_ratio
+        : undefined,
+    }
+  }
 
   return payload
 }
