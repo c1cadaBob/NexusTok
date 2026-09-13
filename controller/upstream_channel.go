@@ -19,17 +19,17 @@ import (
 )
 
 type PlatformSiteInput struct {
-	Platform        string  `json:"platform"`
-	BaseURL         string  `json:"base_url"`
-	AuthType        string  `json:"auth_type"`
-	Username        string  `json:"username"`
-	Password        string  `json:"password"`
-	AccessToken     string  `json:"access_token"`
-	AdminKey        string  `json:"admin_key"`
-	Cookie          string  `json:"cookie"`
-	RechargeAmount  float64 `json:"recharge_amount"`
-	CreditedAmount  float64 `json:"credited_amount"`
-	ConversionRatio float64 `json:"conversion_ratio"`
+	Platform        string   `json:"platform"`
+	BaseURL         string   `json:"base_url"`
+	AuthType        string   `json:"auth_type"`
+	Username        string   `json:"username"`
+	Password        string   `json:"password"`
+	AccessToken     string   `json:"access_token"`
+	AdminKey        string   `json:"admin_key"`
+	Cookie          string   `json:"cookie"`
+	RechargeAmount  *float64 `json:"recharge_amount"`
+	CreditedAmount  *float64 `json:"credited_amount"`
+	ConversionRatio *float64 `json:"conversion_ratio"`
 }
 
 type UpstreamSiteStatusResponse struct {
@@ -124,22 +124,32 @@ func validatePlatformSiteInput(input *PlatformSiteInput, existing *model.Platfor
 			return model.PlatformSiteCredential{}, 0, errors.New("Cookie 不能为空")
 		}
 	}
-	for _, value := range []float64{input.RechargeAmount, input.CreditedAmount, input.ConversionRatio} {
+	rechargeAmount := 0.0
+	if input.RechargeAmount != nil {
+		rechargeAmount = *input.RechargeAmount
+	}
+	creditedAmount := 0.0
+	if input.CreditedAmount != nil {
+		creditedAmount = *input.CreditedAmount
+	}
+	for _, value := range []float64{rechargeAmount, creditedAmount} {
 		if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
 			return model.PlatformSiteCredential{}, 0, errors.New("充值金额、到账金额和转换倍率必须是有限的非负数")
 		}
 	}
-	ratio := input.ConversionRatio
-	if input.CreditedAmount > 0 {
-		ratio = input.RechargeAmount / input.CreditedAmount
-	} else if input.RechargeAmount > 0 {
+	ratio := 1.0
+	if input.ConversionRatio != nil {
+		ratio = *input.ConversionRatio
+	} else if creditedAmount > 0 {
+		ratio = rechargeAmount / creditedAmount
+	} else if rechargeAmount > 0 {
 		return model.PlatformSiteCredential{}, 0, errors.New("到账金额必须大于 0")
+	}
+	if math.IsNaN(ratio) || math.IsInf(ratio, 0) || ratio < 0 {
+		return model.PlatformSiteCredential{}, 0, errors.New("充值金额、到账金额和转换倍率必须是有限的非负数")
 	}
 	if ratio > model.MaxUpstreamConversionRatio {
 		return model.PlatformSiteCredential{}, 0, errors.New("转换倍率超出允许范围")
-	}
-	if ratio == 0 && input.RechargeAmount == 0 && input.CreditedAmount == 0 && input.ConversionRatio == 0 {
-		ratio = 1
 	}
 	return credential, ratio, nil
 }
@@ -155,6 +165,17 @@ func savePlatformSiteAccount(channelID int, input *PlatformSiteInput, existing *
 		}
 		if strings.TrimSpace(merged.AuthType) == "" {
 			merged.AuthType = existing.AuthType
+		}
+		if merged.RechargeAmount == nil {
+			merged.RechargeAmount = &existing.RechargeAmount
+		}
+		if merged.CreditedAmount == nil {
+			merged.CreditedAmount = &existing.CreditedAmount
+		}
+		if merged.ConversionRatio == nil &&
+			input.RechargeAmount == nil &&
+			input.CreditedAmount == nil {
+			merged.ConversionRatio = &existing.ConversionRatio
 		}
 		if existing.CredentialCiphertext != "" {
 			credential, decryptErr := model.DecryptPlatformSiteCredential(existing.CredentialCiphertext)
@@ -198,8 +219,18 @@ func savePlatformSiteAccount(channelID int, input *PlatformSiteInput, existing *
 		account.Platform = strings.ToLower(strings.TrimSpace(input.Platform))
 		account.BaseURL = strings.TrimRight(strings.TrimSpace(input.BaseURL), "/")
 		account.AuthType = input.AuthType
-		account.RechargeAmount = input.RechargeAmount
-		account.CreditedAmount = input.CreditedAmount
+		if existing != nil {
+			account.SyncStatus = model.UpstreamSiteSyncIdle
+			account.LastSyncError = ""
+			account.DisabledAt = 0
+			account.DisabledReason = ""
+		}
+		if input.RechargeAmount != nil {
+			account.RechargeAmount = *input.RechargeAmount
+		}
+		if input.CreditedAmount != nil {
+			account.CreditedAmount = *input.CreditedAmount
+		}
 		account.ConversionRatio = ratio
 		if existing == nil || hasCredentialInput(input) {
 			ciphertext, encryptErr := model.EncryptPlatformSiteCredential(credential)
@@ -249,6 +280,17 @@ func platformSiteStatus(account *model.PlatformSiteAccount) UpstreamSiteStatusRe
 	}
 }
 
+func getPlatformSiteChannel(channelID int) (*model.Channel, error) {
+	var channel model.Channel
+	if err := model.DB.Select("id", "upstream_kind").First(&channel, "id = ?", channelID).Error; err != nil {
+		return nil, err
+	}
+	if channel.UpstreamKind != model.UpstreamKindPlatformSite {
+		return nil, errors.New("该渠道不是平台站点渠道")
+	}
+	return &channel, nil
+}
+
 func toUpstreamKeyResponse(key *model.UpstreamKey) UpstreamKeyResponse {
 	return UpstreamKeyResponse{
 		ID:              key.ID,
@@ -275,6 +317,10 @@ func GetUpstreamSiteStatus(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if _, err := getPlatformSiteChannel(channelID); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	var account model.PlatformSiteAccount
 	if err := model.DB.Where("channel_id = ?", channelID).First(&account).Error; err != nil {
 		common.ApiError(c, err)
@@ -286,6 +332,10 @@ func GetUpstreamSiteStatus(c *gin.Context) {
 func GetUpstreamKeys(c *gin.Context) {
 	channelID, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if _, err := getPlatformSiteChannel(channelID); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -304,6 +354,10 @@ func GetUpstreamKeys(c *gin.Context) {
 func PatchUpstreamKey(c *gin.Context) {
 	channelID, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if _, err := getPlatformSiteChannel(channelID); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -335,7 +389,18 @@ func PatchUpstreamKey(c *gin.Context) {
 		updates["conversion_ratio"] = *request.ConversionRatio
 		updates["weight"] = weight
 	}
-	if request.ClearWeight {
+	effectiveRatio := key.ConversionRatio
+	if request.ConversionRatio != nil {
+		effectiveRatio = *request.ConversionRatio
+	}
+	if effectiveRatio == 0 && (request.ClearWeight || request.WeightOverride != nil) {
+		common.ApiError(c, errors.New("免费密钥的权重固定为 2000，不允许修改"))
+		return
+	}
+	if effectiveRatio == 0 {
+		updates["weight"] = model.MaxUpstreamKeyWeight
+		updates["weight_override"] = nil
+	} else if request.ClearWeight {
 		updates["weight_override"] = nil
 	} else if request.WeightOverride != nil {
 		if *request.WeightOverride < model.MinUpstreamKeyWeight || *request.WeightOverride > model.MaxUpstreamKeyWeight {
@@ -364,6 +429,10 @@ func PatchUpstreamKey(c *gin.Context) {
 func BatchUpdateUpstreamKeyStatus(c *gin.Context) {
 	channelID, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if _, err := getPlatformSiteChannel(channelID); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -397,6 +466,10 @@ func SyncUpstreamSiteNow(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if _, err := getPlatformSiteChannel(channelID); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
 	err = service.SyncUpstreamSite(ctx, channelID)
@@ -412,21 +485,36 @@ func SyncUpstreamSiteNow(c *gin.Context) {
 }
 
 func safeUpstreamErrorForResponse(err error) string {
+	return serviceSafeUpstreamError(err)
+}
+
+func serviceSafeUpstreamError(err error) string {
 	if err == nil {
 		return ""
 	}
-	message := err.Error()
-	if len(message) > 300 {
-		message = message[:300]
+	switch {
+	case errors.Is(err, service.ErrPlatformSiteAuth):
+		return "上游平台认证失败，请检查认证方式或凭据"
+	case errors.Is(err, service.ErrPlatformSiteResponse):
+		return "上游平台返回了无效或不完整的数据"
+	case errors.Is(err, service.ErrUnsupportedPlatformSite):
+		return "不支持的平台站点类型"
+	default:
+		return "上游平台同步失败，请稍后重试"
 	}
-	return message
 }
 
 func EnqueueUpstreamSiteSync(c *gin.Context) {
-	payload := map[string]any{}
-	if id, err := strconv.Atoi(c.Param("id")); err == nil {
-		payload["channel_id"] = id
+	channelID, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
 	}
+	if _, err := getPlatformSiteChannel(channelID); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	payload := map[string]any{"channel_id": channelID}
 	task, created, err := service.EnqueueSystemTask(model.SystemTaskTypeUpstreamSync, payload)
 	if err != nil {
 		common.ApiError(c, err)
@@ -461,11 +549,23 @@ func ensurePlatformSiteChannel(channel *model.Channel, input *PlatformSiteInput)
 		}
 		return nil
 	}
-	if channel.Type == constant.ChannelTypeNewAPI && strings.ToLower(strings.TrimSpace(input.Platform)) != model.PlatformNewAPI {
-		return errors.New("NewAPI 渠道必须使用 NewAPI 平台")
+	platform := strings.ToLower(strings.TrimSpace(input.Platform))
+	if platform == "" && channel.Id > 0 {
+		var account model.PlatformSiteAccount
+		if err := model.DB.Where("channel_id = ?", channel.Id).First(&account).Error; err != nil {
+			return err
+		}
+		platform = account.Platform
 	}
-	if channel.Type == constant.ChannelTypeSub2API && strings.ToLower(strings.TrimSpace(input.Platform)) != model.PlatformSub2API {
-		return errors.New("Sub2API 渠道必须使用 Sub2API 平台")
+	switch channel.Type {
+	case constant.ChannelTypeNewAPI:
+		if platform != model.PlatformNewAPI {
+			return errors.New("NewAPI 渠道必须使用 NewAPI 平台")
+		}
+	case constant.ChannelTypeSub2API:
+		if platform != model.PlatformSub2API {
+			return errors.New("Sub2API 渠道必须使用 Sub2API 平台")
+		}
 	}
 	return nil
 }

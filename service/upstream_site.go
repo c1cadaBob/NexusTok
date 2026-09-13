@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -33,6 +34,11 @@ var (
 	ErrPlatformSiteResponse    = errors.New("platform site returned an invalid response")
 )
 
+const (
+	upstreamKeySyncErrorSecretUnavailable = "上游密钥读取失败"
+	upstreamKeySyncErrorInvalidData       = "上游密钥数据无效"
+)
+
 type PlatformSiteSession struct {
 	BaseURL string
 	Client  *http.Client
@@ -46,15 +52,18 @@ type PlatformSiteAdapter interface {
 }
 
 type UpstreamKeySnapshot struct {
-	ExternalID      string
-	Name            string
-	Secret          string
-	Group           string
-	Models          []string
-	ConversionRatio float64
-	UsedQuota       int64
-	RemainQuota     *int64
-	ExpiresAt       *time.Time
+	ExternalID         string
+	Name               string
+	Secret             string
+	Group              string
+	Models             []string
+	ConversionRatio    float64
+	ConversionRatioSet bool
+	UsedQuota          int64
+	RemainQuota        *int64
+	ExpiresAt          *time.Time
+	Disabled           bool
+	SyncError          string
 }
 
 type PlatformSiteSnapshot struct {
@@ -330,7 +339,19 @@ func firstFloat(record map[string]any, keys ...string) float64 {
 }
 
 func firstInt64(record map[string]any, keys ...string) int64 {
-	return int64(firstFloat(record, keys...))
+	value := firstFloat(record, keys...)
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0
+	}
+	const maxInt64 = int64(^uint64(0) >> 1)
+	const minInt64 = -maxInt64 - 1
+	if value >= float64(maxInt64) {
+		return maxInt64
+	}
+	if value <= float64(minInt64) {
+		return minInt64
+	}
+	return int64(value)
 }
 
 func firstTime(record map[string]any, keys ...string) *time.Time {
@@ -341,9 +362,8 @@ func firstTime(record map[string]any, keys ...string) *time.Time {
 		}
 		switch parsed := value.(type) {
 		case float64:
-			if parsed > 0 {
-				result := time.Unix(int64(parsed), 0).UTC()
-				return &result
+			if result := unixTimestamp(parsed); result != nil {
+				return result
 			}
 		case string:
 			text := strings.TrimSpace(parsed)
@@ -351,11 +371,13 @@ func firstTime(record map[string]any, keys ...string) *time.Time {
 				continue
 			}
 			if unix, err := strconv.ParseInt(text, 10, 64); err == nil {
-				if unix > 1_000_000_000_000 {
+				if unix > 100_000_000_000 {
 					unix /= 1000
 				}
-				result := time.Unix(unix, 0).UTC()
-				return &result
+				if unix > 0 {
+					result := time.Unix(unix, 0).UTC()
+					return &result
+				}
 			}
 			if parsedTime, err := time.Parse(time.RFC3339, text); err == nil {
 				return &parsedTime
@@ -363,6 +385,21 @@ func firstTime(record map[string]any, keys ...string) *time.Time {
 		}
 	}
 	return nil
+}
+
+func unixTimestamp(value float64) *time.Time {
+	if math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 {
+		return nil
+	}
+	if value > 100_000_000_000 {
+		value /= 1000
+	}
+	const maxInt64 = int64(^uint64(0) >> 1)
+	if value >= float64(maxInt64) {
+		return nil
+	}
+	result := time.Unix(int64(value), 0).UTC()
+	return &result
 }
 
 func uniqueStrings(values []string) []string {
@@ -391,51 +428,61 @@ func syncPlatformSite(ctx context.Context, channelID int) error {
 	if err := model.DB.Where("channel_id = ?", channelID).First(&account).Error; err != nil {
 		return err
 	}
-	var credential model.PlatformSiteCredential
-	credential, err := model.DecryptPlatformSiteCredential(account.CredentialCiphertext)
-	if err != nil {
-		return err
-	}
-	adapter, err := adapterForPlatform(account.Platform)
-	if err != nil {
-		return err
-	}
 	account.SyncStatus = model.UpstreamSiteSyncRunning
 	account.LastSyncError = ""
-	_ = model.DB.Model(&account).Updates(map[string]any{
+	if err := model.DB.Model(&account).Updates(map[string]any{
 		"sync_status":     account.SyncStatus,
 		"last_sync_error": "",
-	})
+	}).Error; err != nil {
+		return err
+	}
 
-	session, err := adapter.Authenticate(ctx, account.BaseURL, credential)
+	var credential model.PlatformSiteCredential
+	credential, err := model.DecryptPlatformSiteCredential(account.CredentialCiphertext)
 	if err == nil {
-		var snapshot PlatformSiteSnapshot
-		snapshot, err = adapter.FetchSnapshot(ctx, session)
+		var adapter PlatformSiteAdapter
+		adapter, err = adapterForPlatform(account.Platform)
 		if err == nil {
-			err = persistPlatformSiteSnapshot(ctx, &account, snapshot)
+			session, authenticateErr := adapter.Authenticate(ctx, account.BaseURL, credential)
+			err = authenticateErr
+			if err == nil {
+				var snapshot PlatformSiteSnapshot
+				snapshot, err = adapter.FetchSnapshot(ctx, session)
+				if err == nil {
+					err = persistPlatformSiteSnapshot(ctx, &account, snapshot)
+				}
+			}
 		}
 	}
 	if err != nil {
 		account.SyncStatus = model.UpstreamSiteSyncFailed
 		account.LastSyncError = safeUpstreamError(err)
 		account.ConsecutiveFailures++
-		_ = model.DB.Model(&account).Updates(map[string]any{
+		account.DisabledAt = common.GetTimestamp()
+		account.DisabledReason = account.LastSyncError
+		if updateErr := model.DB.Model(&account).Updates(map[string]any{
 			"sync_status":          account.SyncStatus,
 			"last_sync_error":      account.LastSyncError,
 			"consecutive_failures": account.ConsecutiveFailures,
-		})
-		logger.LogWarn(ctx, fmt.Sprintf("upstream site sync failed: channel_id=%d platform=%s error=%v", channelID, account.Platform, err))
+			"disabled_at":          account.DisabledAt,
+			"disabled_reason":      account.DisabledReason,
+		}).Error; updateErr != nil {
+			return errors.Join(err, updateErr)
+		}
+		logger.LogWarn(ctx, fmt.Sprintf("upstream site sync failed: channel_id=%d platform=%s error=%s", channelID, account.Platform, safeUpstreamError(err)))
 		return err
 	}
 	now := common.GetTimestamp()
-	_ = model.DB.Model(&account).Updates(map[string]any{
+	if err := model.DB.Model(&account).Updates(map[string]any{
 		"sync_status":          model.UpstreamSiteSyncSuccess,
 		"last_sync_at":         now,
 		"last_sync_error":      "",
 		"consecutive_failures": 0,
 		"disabled_at":          0,
 		"disabled_reason":      "",
-	})
+	}).Error; err != nil {
+		return err
+	}
 	model.InitChannelCache()
 	return nil
 }
@@ -461,11 +508,12 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 		return errors.New("平台站点不存在")
 	}
 	ratio := account.ConversionRatio
-	if ratio == 0 && account.RechargeAmount > 0 && account.CreditedAmount > 0 {
-		ratio = account.RechargeAmount / account.CreditedAmount
+	if math.IsNaN(ratio) || math.IsInf(ratio, 0) || ratio < 0 || ratio > model.MaxUpstreamConversionRatio {
+		return errors.New("平台站点转换倍率超出允许范围")
 	}
-	if ratio < 0 {
-		return errors.New("平台站点转换倍率不能为负数")
+	if math.IsNaN(snapshot.Balance) || math.IsInf(snapshot.Balance, 0) ||
+		snapshot.UsedQuota < 0 {
+		return fmt.Errorf("%w: 站点额度数据无效", ErrPlatformSiteResponse)
 	}
 	now := common.GetTimestamp()
 	return model.DB.Transaction(func(tx *gorm.DB) error {
@@ -476,13 +524,41 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 		seen := make(map[string]struct{}, len(snapshot.Keys))
 		allModels := append([]string{}, snapshot.Models...)
 		for _, item := range snapshot.Keys {
-			if item.ExternalID == "" || item.Secret == "" {
-				continue
+			if item.ExternalID == "" {
+				return fmt.Errorf("%w: 上游密钥数据不完整", ErrPlatformSiteResponse)
 			}
 			seen[item.ExternalID] = struct{}{}
+			if item.SyncError != "" {
+				var existing model.UpstreamKey
+				findErr := tx.Where("channel_id = ? AND external_id = ?", account.ChannelID, item.ExternalID).First(&existing).Error
+				if errors.Is(findErr, gorm.ErrRecordNotFound) {
+					continue
+				}
+				if findErr != nil {
+					return findErr
+				}
+				updates := map[string]any{
+					"last_sync_at":  now,
+					"missing_since": 0,
+				}
+				if existing.Status != model.UpstreamKeyStatusManualDisabled {
+					updates["status"] = model.UpstreamKeyStatusAutoDisabled
+					updates["disabled_reason"] = upstreamKeySyncErrorReason(item.SyncError)
+				}
+				if err := tx.Model(&existing).Updates(updates).Error; err != nil {
+					return err
+				}
+				continue
+			}
+			if item.Secret == "" {
+				return fmt.Errorf("%w: 上游密钥数据不完整", ErrPlatformSiteResponse)
+			}
+			if item.UsedQuota < 0 {
+				return fmt.Errorf("%w: 上游密钥额度数据无效", ErrPlatformSiteResponse)
+			}
 			allModels = append(allModels, item.Models...)
 			effectiveRatio := ratio
-			if item.ConversionRatio > 0 {
+			if item.ConversionRatioSet || item.ConversionRatio > 0 {
 				effectiveRatio *= item.ConversionRatio
 			}
 			weight, err := model.CalculateUpstreamKeyWeight(effectiveRatio)
@@ -511,11 +587,17 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 			existing.Models = strings.Join(uniqueStrings(item.Models), ",")
 			existing.ConversionRatio = effectiveRatio
 			existing.Weight = weight
+			if effectiveRatio == 0 {
+				existing.WeightOverride = nil
+			}
 			existing.UsedQuota = item.UsedQuota
 			existing.RemainQuota = item.RemainQuota
 			existing.ExpiresAt = item.ExpiresAt
 			if existing.Status != model.UpstreamKeyStatusManualDisabled {
 				switch {
+				case item.Disabled:
+					existing.Status = model.UpstreamKeyStatusAutoDisabled
+					existing.DisabledReason = "上游平台已禁用"
 				case item.ExpiresAt != nil && !item.ExpiresAt.After(time.Unix(now, 0)):
 					existing.Status = model.UpstreamKeyStatusAutoDisabled
 					existing.DisabledReason = "密钥已过期"
@@ -528,6 +610,7 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 				}
 			}
 			existing.LastSyncAt = now
+			existing.MissingSince = 0
 			if err := tx.Save(&existing).Error; err != nil {
 				return err
 			}
@@ -586,6 +669,17 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 		}
 		return nil
 	})
+}
+
+func upstreamKeySyncErrorReason(reason string) string {
+	switch reason {
+	case upstreamKeySyncErrorSecretUnavailable:
+		return upstreamKeySyncErrorSecretUnavailable
+	case upstreamKeySyncErrorInvalidData:
+		return upstreamKeySyncErrorInvalidData
+	default:
+		return "上游密钥同步失败"
+	}
 }
 
 // SyncUpstreamSite performs one read-only synchronization for a platform site.

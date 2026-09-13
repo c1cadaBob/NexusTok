@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net/url"
@@ -399,9 +400,29 @@ func migrateDB() error {
 }
 
 func migrateUpstreamChannelDefaults() error {
-	return DB.Model(&Channel{}).
-		Where("upstream_kind IS NULL OR upstream_kind = ?", "").
-		Update("upstream_kind", UpstreamKindKeyChannel).Error
+	const migrationKey = "migration.upstream_channel_defaults.v1"
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&Channel{}).
+			Where("upstream_kind IS NULL OR upstream_kind = ?", "").
+			Update("upstream_kind", UpstreamKindKeyChannel).Error; err != nil {
+			return err
+		}
+
+		var marker Option
+		err := tx.Where("key = ?", migrationKey).First(&marker).Error
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		if err := tx.Model(&Channel{}).
+			Where("upstream_kind = ? AND conversion_ratio = ?", UpstreamKindKeyChannel, 0).
+			Update("conversion_ratio", 1).Error; err != nil {
+			return err
+		}
+		return tx.Create(&Option{Key: migrationKey, Value: "1"}).Error
+	})
 }
 
 func migrateLOGDB() error {

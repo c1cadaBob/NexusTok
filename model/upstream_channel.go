@@ -129,8 +129,12 @@ func DecryptPlatformSiteCredential(ciphertext string) (PlatformSiteCredential, e
 }
 
 func CalculateUpstreamKeyWeight(conversionRatio float64) (int, error) {
-	if math.IsNaN(conversionRatio) || math.IsInf(conversionRatio, 0) || conversionRatio < 0 {
+	if math.IsNaN(conversionRatio) || math.IsInf(conversionRatio, 0) ||
+		conversionRatio < 0 || conversionRatio > MaxUpstreamConversionRatio {
 		return 0, errors.New("conversion ratio must be a finite non-negative number")
+	}
+	if conversionRatio >= 2 {
+		return MinUpstreamKeyWeight, nil
 	}
 	weight := int(math.Round(1000 + (1-conversionRatio)/0.001))
 	if weight < MinUpstreamKeyWeight {
@@ -143,6 +147,9 @@ func CalculateUpstreamKeyWeight(conversionRatio float64) (int, error) {
 }
 
 func (key *UpstreamKey) EffectiveWeight() int {
+	if key.ConversionRatio == 0 {
+		return MaxUpstreamKeyWeight
+	}
 	if key.WeightOverride != nil {
 		return max(MinUpstreamKeyWeight, min(MaxUpstreamKeyWeight, *key.WeightOverride))
 	}

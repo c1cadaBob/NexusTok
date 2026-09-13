@@ -58,6 +58,49 @@ func TestNewAPIAdapterPasswordAuthenticationAndSnapshot(t *testing.T) {
 	assert.Equal(t, []string{"gpt-4o"}, snapshot.Keys[0].Models)
 }
 
+func TestNewAPIAdapterAdminKeySkipsPasswordLogin(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		if request.URL.Path == "/api/user/login" {
+			t.Fatalf("admin key authentication must not submit a password login")
+		}
+		if request.URL.Path == "/api/user/self" {
+			assert.Equal(t, "admin-secret", request.Header.Get("x-api-key"))
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"quota":1}}`))
+			return
+		}
+		http.NotFound(writer, request)
+	}))
+	defer server.Close()
+
+	adapter := NewNewAPIAdapter(server.Client())
+	_, err := adapter.Authenticate(context.Background(), server.URL, model.PlatformSiteCredential{
+		AdminKey: "admin-secret",
+	})
+	require.NoError(t, err)
+}
+
+func TestNewAPIAdapterRejectsInteractiveLoginVerification(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		if request.URL.Path == "/api/user/login" {
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"require_2fa":true,"flow_token":"flow"}}`))
+			return
+		}
+		http.NotFound(writer, request)
+	}))
+	defer server.Close()
+
+	adapter := NewNewAPIAdapter(server.Client())
+	_, err := adapter.Authenticate(context.Background(), server.URL, model.PlatformSiteCredential{
+		Username: "operator",
+		Password: "synthetic-password",
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPlatformSiteAuth)
+	assert.NotContains(t, err.Error(), "flow")
+}
+
 func TestSub2APIAdapterAdminKeyReadsNestedCredentialAndPagination(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
@@ -72,6 +115,8 @@ func TestSub2APIAdapterAdminKeyReadsNestedCredentialAndPagination(t *testing.T) 
 		case "/api/v1/admin/accounts":
 			assert.Equal(t, "apikey", request.URL.Query().Get("type"))
 			assert.Equal(t, "1", request.URL.Query().Get("page"))
+			assert.Equal(t, "name", request.URL.Query().Get("sort_by"))
+			assert.Equal(t, "asc", request.URL.Query().Get("sort_order"))
 			_, _ = writer.Write([]byte(`{"data":{"accounts":[{"id":"account-1","name":"managed","group":"default","quota":9}],"total":1,"page_size":100}}`))
 		case "/api/v1/admin/accounts/data":
 			_, _ = writer.Write([]byte(`{"data":{"accounts":[{"id":"account-1","credentials":{"api_key":"sk-sub2api"}}]}}`))
@@ -94,6 +139,147 @@ func TestSub2APIAdapterAdminKeyReadsNestedCredentialAndPagination(t *testing.T) 
 	assert.Equal(t, "sk-sub2api", snapshot.Keys[0].Secret)
 	assert.Equal(t, 0.5, snapshot.Keys[0].ConversionRatio)
 	assert.Equal(t, []string{"gpt-4o"}, snapshot.Keys[0].Models)
+}
+
+func TestNewAPIAdapterReturnsUnavailableKeyWhenKeyRevealFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/user/self":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"quota":12.5}}`))
+		case "/api/user/models":
+			_, _ = writer.Write([]byte(`{"success":true,"data":["gpt-4o"]}`))
+		case "/api/token/":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"items":[{"id":7,"name":"primary","key":"sk-****"}]}}`))
+		case "/api/token/7/key":
+			writer.WriteHeader(http.StatusForbidden)
+			_, _ = writer.Write([]byte(`{"success":false,"message":"verification required"}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	adapter := NewNewAPIAdapter(server.Client())
+	session, err := adapter.Authenticate(context.Background(), server.URL, model.PlatformSiteCredential{
+		AccessToken: "session-token",
+	})
+	require.NoError(t, err)
+	snapshot, err := adapter.FetchSnapshot(context.Background(), session)
+	require.NoError(t, err)
+	require.Len(t, snapshot.Keys, 1)
+	assert.Equal(t, "7", snapshot.Keys[0].ExternalID)
+	assert.Equal(t, upstreamKeySyncErrorSecretUnavailable, snapshot.Keys[0].SyncError)
+	assert.Empty(t, snapshot.Keys[0].Secret)
+}
+
+func TestPersistPlatformSiteSnapshotIsolatesUnavailableKeys(t *testing.T) {
+	previousDB := model.DB
+	previousSecret := common.CryptoSecret
+	common.CryptoSecret = "upstream-site-isolation-test-secret"
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&model.Channel{},
+		&model.Ability{},
+		&model.PlatformSiteAccount{},
+		&model.UpstreamKey{},
+		&model.UpstreamKeyAbility{},
+	))
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = previousDB
+		common.CryptoSecret = previousSecret
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	priority := int64(3)
+	channel := &model.Channel{
+		Id:           12,
+		Name:         "site",
+		Status:       common.ChannelStatusEnabled,
+		UpstreamKind: model.UpstreamKindPlatformSite,
+		Group:        "default",
+		Priority:     &priority,
+	}
+	require.NoError(t, db.Create(channel).Error)
+	account := &model.PlatformSiteAccount{
+		ChannelID:       channel.Id,
+		Platform:        model.PlatformNewAPI,
+		BaseURL:         "https://upstream.example",
+		ConversionRatio: 0.1,
+	}
+	require.NoError(t, db.Create(account).Error)
+
+	oldSecret, err := model.EncryptPlatformSiteCredential(model.PlatformSiteCredential{AccessToken: "sk-old"})
+	require.NoError(t, err)
+	oldKey := &model.UpstreamKey{
+		ChannelID:        channel.Id,
+		ExternalID:       "old-key",
+		Name:             "old",
+		SecretCiphertext: oldSecret,
+		Models:           "gpt-4o",
+		Status:           model.UpstreamKeyStatusEnabled,
+	}
+	require.NoError(t, db.Create(oldKey).Error)
+	require.NoError(t, db.Create(&model.UpstreamKeyAbility{
+		UpstreamKeyID: oldKey.ID,
+		Group:         "default",
+		Model:         "gpt-4o",
+		Enabled:       true,
+	}).Error)
+
+	require.NoError(t, persistPlatformSiteSnapshot(context.Background(), account, PlatformSiteSnapshot{
+		Balance: 7,
+		Models:  []string{"gpt-4o"},
+		Keys: []UpstreamKeySnapshot{
+			{
+				ExternalID: "old-key",
+				Name:       "old",
+				Models:     []string{"gpt-4o"},
+				SyncError:  upstreamKeySyncErrorSecretUnavailable,
+			},
+			{
+				ExternalID: "new-key",
+				Name:       "new",
+				Models:     []string{"gpt-4o"},
+				SyncError:  upstreamKeySyncErrorSecretUnavailable,
+			},
+			{
+				ExternalID: "healthy-key",
+				Name:       "healthy",
+				Secret:     "sk-healthy",
+				Group:      "default",
+				Models:     []string{"gpt-4o"},
+			},
+		},
+	}))
+
+	var savedOld model.UpstreamKey
+	require.NoError(t, db.Where("channel_id = ? AND external_id = ?", channel.Id, "old-key").First(&savedOld).Error)
+	assert.Equal(t, model.UpstreamKeyStatusAutoDisabled, savedOld.Status)
+	assert.Equal(t, upstreamKeySyncErrorSecretUnavailable, savedOld.DisabledReason)
+	assert.Equal(t, "gpt-4o", savedOld.Models)
+	oldCredential, err := model.DecryptPlatformSiteCredential(savedOld.SecretCiphertext)
+	require.NoError(t, err)
+	assert.Equal(t, "sk-old", oldCredential.AccessToken)
+
+	var newKey model.UpstreamKey
+	assert.ErrorIs(t, db.Where("channel_id = ? AND external_id = ?", channel.Id, "new-key").First(&newKey).Error, gorm.ErrRecordNotFound)
+
+	var healthyKey model.UpstreamKey
+	require.NoError(t, db.Where("channel_id = ? AND external_id = ?", channel.Id, "healthy-key").First(&healthyKey).Error)
+	healthyCredential, err := model.DecryptPlatformSiteCredential(healthyKey.SecretCiphertext)
+	require.NoError(t, err)
+	assert.Equal(t, "sk-healthy", healthyCredential.AccessToken)
+
+	var savedAccount model.PlatformSiteAccount
+	require.NoError(t, db.Where("channel_id = ?", channel.Id).First(&savedAccount).Error)
+	assert.Equal(t, 7.0, savedAccount.Balance)
 }
 
 func TestPersistPlatformSiteSnapshotRebuildsAbilitiesAndAutoDisablesUnavailableKeys(t *testing.T) {
@@ -180,6 +366,7 @@ func TestPlatformSiteRequestRejectsOversizedResponse(t *testing.T) {
 
 	session, err := newPlatformSiteSession(server.URL, nil)
 	require.NoError(t, err)
+	session.Client = server.Client()
 	_, err = platformSiteRequest(context.Background(), session, http.MethodGet, "/", url.Values{}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "响应体超过限制")

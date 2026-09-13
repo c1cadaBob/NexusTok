@@ -29,10 +29,8 @@ func selectChannelByUpstreamKey(channels []*Channel, group, modelName string) *C
 		weight := 1000
 		if channel.KeyWeightOverride != nil {
 			weight = max(MinUpstreamKeyWeight, min(MaxUpstreamKeyWeight, *channel.KeyWeightOverride))
-		} else if channel.ConversionRatio > 0 {
-			if calculated, err := CalculateUpstreamKeyWeight(channel.ConversionRatio); err == nil {
-				weight = calculated
-			}
+		} else if calculated, err := CalculateUpstreamKeyWeight(channel.ConversionRatio); err == nil {
+			weight = calculated
 		}
 		candidates = append(candidates, upstreamRouteCandidate{
 			channel: channel,
@@ -84,6 +82,14 @@ func selectChannelByUpstreamKey(channels []*Channel, group, modelName string) *C
 }
 
 func loadRoutableUpstreamKeys(channelID int, group, modelName string) []*UpstreamKey {
+	var account PlatformSiteAccount
+	if err := DB.Select("sync_status", "disabled_at").
+		Where("channel_id = ?", channelID).
+		First(&account).Error; err != nil ||
+		account.SyncStatus != UpstreamSiteSyncSuccess ||
+		account.DisabledAt != 0 {
+		return nil
+	}
 	var keys []UpstreamKey
 	if err := DB.Where("channel_id = ? AND status = ?", channelID, UpstreamKeyStatusEnabled).Find(&keys).Error; err != nil {
 		return nil

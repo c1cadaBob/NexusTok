@@ -422,10 +422,31 @@ func SearchChannels(keyword string, group string, model string, idSort bool, sor
 	// 构造基础查询
 	baseQuery := DB.Model(&Channel{}).Omit("key")
 
-	// 构造WHERE子句
+	// 父渠道搜索仍保持原有字段；平台站点额外通过子查询匹配上游密钥名称、
+	// 外部 ID 和模型，避免把真实密钥值加载到管理端搜索路径。
 	whereClause := "(id = ? OR name LIKE ? OR " + commonKeyCol + " = ? OR " + baseURLCol + " LIKE ?) AND " + modelsCol + " LIKE ?"
 	args := []any{common.String2Int(keyword), "%" + keyword + "%", keyword, "%" + keyword + "%", "%" + model + "%"}
-	baseQuery = ApplyChannelGroupFilter(baseQuery.Where(whereClause, args...), group)
+	if (keyword != "" || model != "") && DB.Migrator().HasTable(&UpstreamKey{}) {
+		upstreamKeyQuery := DB.Model(&UpstreamKey{}).Select("channel_id")
+		if keyword != "" {
+			upstreamKeyQuery = upstreamKeyQuery.Where(
+				"(id = ? OR name LIKE ? OR external_id LIKE ?)",
+				common.String2Int(keyword),
+				"%"+keyword+"%",
+				"%"+keyword+"%",
+			)
+		}
+		if model != "" {
+			upstreamKeyQuery = upstreamKeyQuery.Where("models LIKE ?", "%"+model+"%")
+		}
+		baseQuery = baseQuery.Where(
+			"(("+whereClause+") OR id IN (?))",
+			append(args, upstreamKeyQuery)...,
+		)
+	} else {
+		baseQuery = baseQuery.Where(whereClause, args...)
+	}
+	baseQuery = ApplyChannelGroupFilter(baseQuery, group)
 
 	// 执行查询
 	err := order.Apply(baseQuery).Find(&channels).Error

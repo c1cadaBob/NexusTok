@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -44,7 +45,7 @@ func (adapter *NewAPIAdapter) Authenticate(ctx context.Context, baseURL string, 
 	if adapter.client != nil {
 		session.Client = adapter.client
 	}
-	if credential.AccessToken == "" && credential.Cookie == "" {
+	if credential.AccessToken == "" && credential.AdminKey == "" && credential.Cookie == "" {
 		if strings.TrimSpace(credential.Username) == "" || credential.Password == "" {
 			return nil, fmt.Errorf("%w: 缺少账号密码", ErrPlatformSiteAuth)
 		}
@@ -54,6 +55,9 @@ func (adapter *NewAPIAdapter) Authenticate(ctx context.Context, baseURL string, 
 		})
 		if requestErr != nil {
 			return nil, requestErr
+		}
+		if loginRequiresInteractiveVerification(payload) {
+			return nil, fmt.Errorf("%w: 需要完成上游二次验证", ErrPlatformSiteAuth)
 		}
 		if token := findToken(payload); token != "" {
 			session.Headers.Set("Authorization", bearerToken(token))
@@ -90,14 +94,32 @@ func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *Platfo
 	}
 	snapshot.Keys = make([]UpstreamKeySnapshot, 0, len(tokens))
 	for _, token := range tokens {
+		externalID := firstString(token, "id", "token_id", "key_id")
+		if externalID == "" {
+			return PlatformSiteSnapshot{}, fmt.Errorf("%w: NewAPI 密钥缺少外部 ID", ErrPlatformSiteResponse)
+		}
+		itemModels := stringsFromPayload(token["models"])
+		if len(itemModels) == 0 {
+			itemModels = snapshot.Models
+		}
+		item := UpstreamKeySnapshot{
+			ExternalID:         externalID,
+			Name:               firstString(token, "name", "key_name", "token_name"),
+			Group:              firstString(token, "group", "group_name"),
+			Models:             itemModels,
+			ConversionRatio:    firstFloat(token, "ratio", "rate", "multiplier", "group_ratio"),
+			ConversionRatioSet: hasAnyField(token, "ratio", "rate", "multiplier", "group_ratio"),
+			UsedQuota:          firstInt64(token, "used_quota", "used", "quota_used"),
+			RemainQuota:        optionalInt64(token, "remain_quota", "remaining_quota", "quota"),
+			ExpiresAt:          firstTime(token, "expired_time", "expires_at", "expire_at"),
+			Disabled:           isUpstreamKeyDisabled(token),
+		}
 		secret := firstString(token, "key", "token", "api_key")
 		if secret == "" || strings.Contains(secret, "*") {
-			id := firstString(token, "id", "token_id")
-			if id == "" {
-				continue
-			}
-			revealed, revealErr := platformSiteRequest(ctx, session, http.MethodPost, "/api/token/"+id+"/key", nil, nil)
+			revealed, revealErr := platformSiteRequest(ctx, session, http.MethodPost, "/api/token/"+externalID+"/key", nil, nil)
 			if revealErr != nil {
+				item.SyncError = upstreamKeySyncErrorSecretUnavailable
+				snapshot.Keys = append(snapshot.Keys, item)
 				continue
 			}
 			secret = firstString(firstRecord(revealed), "key", "token", "api_key")
@@ -106,23 +128,12 @@ func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *Platfo
 			}
 		}
 		if secret == "" {
+			item.SyncError = upstreamKeySyncErrorSecretUnavailable
+			snapshot.Keys = append(snapshot.Keys, item)
 			continue
 		}
-		itemModels := stringsFromPayload(token["models"])
-		if len(itemModels) == 0 {
-			itemModels = snapshot.Models
-		}
-		snapshot.Keys = append(snapshot.Keys, UpstreamKeySnapshot{
-			ExternalID:      firstString(token, "id", "token_id", "key_id"),
-			Name:            firstString(token, "name", "key_name", "token_name"),
-			Secret:          secret,
-			Group:           firstString(token, "group", "group_name"),
-			Models:          itemModels,
-			ConversionRatio: firstFloat(token, "ratio", "rate", "multiplier", "group_ratio"),
-			UsedQuota:       firstInt64(token, "used_quota", "used", "quota_used"),
-			RemainQuota:     optionalInt64(token, "remain_quota", "remaining_quota", "quota"),
-			ExpiresAt:       firstTime(token, "expired_time", "expires_at", "expire_at"),
-		})
+		item.Secret = secret
+		snapshot.Keys = append(snapshot.Keys, item)
 	}
 	return snapshot, nil
 }
@@ -143,6 +154,7 @@ func (adapter *Sub2APIAdapter) Authenticate(ctx context.Context, baseURL string,
 	headers := make(http.Header)
 	switch {
 	case credential.AdminKey != "":
+		headers.Set("Authorization", bearerToken(credential.AdminKey))
 		headers.Set("x-api-key", credential.AdminKey)
 	case credential.AccessToken != "":
 		headers.Set("Authorization", bearerToken(credential.AccessToken))
@@ -167,6 +179,9 @@ func (adapter *Sub2APIAdapter) Authenticate(ctx context.Context, baseURL string,
 		})
 		if requestErr != nil {
 			return nil, requestErr
+		}
+		if loginRequiresInteractiveVerification(payload) {
+			return nil, fmt.Errorf("%w: 需要完成上游二次验证", ErrPlatformSiteAuth)
 		}
 		if token := findToken(payload); token != "" {
 			session.Headers.Set("Authorization", bearerToken(token))
@@ -219,6 +234,67 @@ func findToken(payload any) string {
 		return findToken(data)
 	}
 	return ""
+}
+
+func loginRequiresInteractiveVerification(payload any) bool {
+	switch value := payload.(type) {
+	case map[string]any:
+		for _, key := range []string{
+			"require_2fa",
+			"requires_2fa",
+			"verification_required",
+			"requires_verification",
+		} {
+			if required, ok := value[key].(bool); ok && required {
+				return true
+			}
+		}
+		for _, key := range []string{"flow_token", "verification_token"} {
+			if token, ok := value[key].(string); ok && strings.TrimSpace(token) != "" {
+				return true
+			}
+		}
+		for _, key := range []string{"data", "auth_bundle", "result"} {
+			if nested, ok := value[key]; ok && loginRequiresInteractiveVerification(nested) {
+				return true
+			}
+		}
+	case []any:
+		for _, item := range value {
+			if loginRequiresInteractiveVerification(item) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasAnyField(record map[string]any, keys ...string) bool {
+	for _, key := range keys {
+		if _, exists := record[key]; exists {
+			return true
+		}
+	}
+	return false
+}
+
+func isUpstreamKeyDisabled(record map[string]any) bool {
+	for _, key := range []string{"disabled", "revoked", "suspended"} {
+		if disabled, ok := record[key].(bool); ok && disabled {
+			return true
+		}
+	}
+	if enabled, ok := record["enabled"].(bool); ok && !enabled {
+		return true
+	}
+	for _, key := range []string{"status", "state"} {
+		status := strings.ToLower(strings.TrimSpace(firstString(record, key)))
+		switch status {
+		case "disabled", "inactive", "revoked", "suspended", "expired", "error":
+			return true
+		}
+	}
+	return false
 }
 
 func firstRecord(payload any) map[string]any {
@@ -316,26 +392,37 @@ func fetchSub2APIKeys(ctx context.Context, session *PlatformSiteSession, rates m
 		}
 		items := recordsFromPayload(payload)
 		for _, item := range items {
-			secret := firstString(item, "key", "api_key", "token")
-			if secret == "" || strings.Contains(secret, "*") {
-				continue
+			externalID := firstString(item, "id", "key_id")
+			if externalID == "" {
+				return nil, fmt.Errorf("%w: Sub2API 密钥缺少外部 ID", ErrPlatformSiteResponse)
 			}
 			group := firstString(item, "group", "group_name")
+			ratioKeysPresent := hasAnyField(item, "rate_multiplier", "ratio", "rate", "multiplier")
 			ratio := firstFloat(item, "rate_multiplier", "ratio", "rate", "multiplier")
-			if ratio == 0 {
+			_, groupRateSet := rates[group]
+			if !ratioKeysPresent {
 				ratio = rates[group]
 			}
-			result = append(result, UpstreamKeySnapshot{
-				ExternalID:      firstString(item, "id", "key_id"),
-				Name:            firstString(item, "name", "key_name"),
-				Secret:          secret,
-				Group:           group,
-				Models:          stringsFromPayload(item["models"]),
-				ConversionRatio: ratio,
-				UsedQuota:       firstInt64(item, "quota_used", "used_quota", "used"),
-				RemainQuota:     optionalInt64(item, "quota", "remain_quota", "remaining_quota"),
-				ExpiresAt:       firstTime(item, "expires_at", "expired_at", "expire_at"),
-			})
+			keySnapshot := UpstreamKeySnapshot{
+				ExternalID:         externalID,
+				Name:               firstString(item, "name", "key_name"),
+				Group:              group,
+				Models:             stringsFromPayload(item["models"]),
+				ConversionRatio:    ratio,
+				ConversionRatioSet: ratioKeysPresent || groupRateSet,
+				UsedQuota:          firstInt64(item, "quota_used", "used_quota", "used"),
+				RemainQuota:        optionalInt64(item, "quota", "remain_quota", "remaining_quota"),
+				ExpiresAt:          firstTime(item, "expires_at", "expired_at", "expire_at"),
+				Disabled:           isUpstreamKeyDisabled(item),
+			}
+			secret := firstString(item, "key", "api_key", "token")
+			if secret == "" || strings.Contains(secret, "*") {
+				keySnapshot.SyncError = upstreamKeySyncErrorSecretUnavailable
+				result = append(result, keySnapshot)
+				continue
+			}
+			keySnapshot.Secret = secret
+			result = append(result, keySnapshot)
 		}
 		if len(items) == 0 || len(items) < upstreamSitePageSize || page >= payloadPageCount(payload) {
 			break
@@ -353,9 +440,11 @@ func fetchSub2APIAdminKeys(ctx context.Context, session *PlatformSiteSession, ra
 	result := make([]UpstreamKeySnapshot, 0)
 	for page := 1; page <= upstreamSiteMaxPages; page++ {
 		payload, err := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/admin/accounts", url.Values{
-			"page":      {fmt.Sprint(page)},
-			"page_size": {fmt.Sprint(upstreamSitePageSize)},
-			"type":      {"apikey"},
+			"page":       {fmt.Sprint(page)},
+			"page_size":  {fmt.Sprint(upstreamSitePageSize)},
+			"sort_by":    {"name"},
+			"sort_order": {"asc"},
+			"type":       {"apikey"},
 		}, nil)
 		if err != nil {
 			return nil, err
@@ -364,13 +453,38 @@ func fetchSub2APIAdminKeys(ctx context.Context, session *PlatformSiteSession, ra
 		for _, item := range items {
 			id := firstString(item, "id", "account_id")
 			if id == "" {
-				continue
+				return nil, fmt.Errorf("%w: Sub2API 密钥缺少外部 ID", ErrPlatformSiteResponse)
+			}
+			group := firstString(item, "group", "group_name")
+			ratioKeysPresent := hasAnyField(item, "rate_multiplier", "ratio", "rate", "multiplier")
+			ratio := firstFloat(item, "rate_multiplier", "ratio", "rate", "multiplier")
+			_, groupRateSet := rates[group]
+			if !ratioKeysPresent {
+				ratio = rates[group]
+			}
+			itemModels := stringsFromPayload(item["models"])
+			if len(itemModels) == 0 {
+				itemModels = models
+			}
+			keySnapshot := UpstreamKeySnapshot{
+				ExternalID:         id,
+				Name:               firstString(item, "name", "account_name"),
+				Group:              group,
+				Models:             itemModels,
+				ConversionRatio:    ratio,
+				ConversionRatioSet: ratioKeysPresent || groupRateSet,
+				UsedQuota:          firstInt64(item, "quota_used", "used_quota", "used"),
+				RemainQuota:        optionalInt64(item, "quota", "remain_quota", "remaining_quota"),
+				ExpiresAt:          firstTime(item, "expires_at", "expired_at", "expire_at"),
+				Disabled:           isUpstreamKeyDisabled(item),
 			}
 			dataPayload, dataErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/admin/accounts/data", url.Values{
 				"ids":             {id},
 				"include_proxies": {"false"},
 			}, nil)
 			if dataErr != nil {
+				keySnapshot.SyncError = upstreamKeySyncErrorSecretUnavailable
+				result = append(result, keySnapshot)
 				continue
 			}
 			data := firstRecord(dataPayload)
@@ -385,28 +499,12 @@ func fetchSub2APIAdminKeys(ctx context.Context, session *PlatformSiteSession, ra
 				secret = firstString(item, "key", "api_key", "token")
 			}
 			if secret == "" || strings.Contains(secret, "*") {
+				keySnapshot.SyncError = upstreamKeySyncErrorSecretUnavailable
+				result = append(result, keySnapshot)
 				continue
 			}
-			group := firstString(item, "group", "group_name")
-			ratio := firstFloat(item, "rate_multiplier", "ratio", "rate", "multiplier")
-			if ratio == 0 {
-				ratio = rates[group]
-			}
-			itemModels := stringsFromPayload(item["models"])
-			if len(itemModels) == 0 {
-				itemModels = models
-			}
-			result = append(result, UpstreamKeySnapshot{
-				ExternalID:      id,
-				Name:            firstString(item, "name", "account_name"),
-				Secret:          secret,
-				Group:           group,
-				Models:          itemModels,
-				ConversionRatio: ratio,
-				UsedQuota:       firstInt64(item, "quota_used", "used_quota", "used"),
-				RemainQuota:     optionalInt64(item, "quota", "remain_quota", "remaining_quota"),
-				ExpiresAt:       firstTime(item, "expires_at", "expired_at", "expire_at"),
-			})
+			keySnapshot.Secret = secret
+			result = append(result, keySnapshot)
 		}
 		if len(items) == 0 || len(items) < upstreamSitePageSize || page >= payloadPageCount(payload) {
 			break
@@ -419,12 +517,19 @@ func payloadPageCount(payload any) int {
 	record := firstRecord(payload)
 	pages := firstInt64(record, "pages", "total_pages")
 	if pages > 0 {
+		if pages > int64(upstreamSiteMaxPages) {
+			return upstreamSiteMaxPages + 1
+		}
 		return int(pages)
 	}
 	total := firstInt64(record, "total")
 	pageSize := firstInt64(record, "page_size", "pageSize", "size")
 	if total > 0 && pageSize > 0 {
-		return int((total + pageSize - 1) / pageSize)
+		pageCount := (total-1)/pageSize + 1
+		if pageCount > int64(upstreamSiteMaxPages) {
+			return upstreamSiteMaxPages + 1
+		}
+		return int(pageCount)
 	}
 	return upstreamSiteMaxPages + 1
 }
@@ -454,8 +559,9 @@ func parseGroupRates(payload any) map[string]float64 {
 	records := recordsFromPayload(payload)
 	for _, record := range records {
 		name := firstString(record, "name", "group", "group_name", "id")
+		ratioKeysPresent := hasAnyField(record, "rate_multiplier", "ratio", "rate", "multiplier")
 		ratio := firstFloat(record, "rate_multiplier", "ratio", "rate", "multiplier")
-		if name != "" && ratio > 0 {
+		if name != "" && ratioKeysPresent && isValidConversionRatio(ratio) {
 			rates[name] = ratio
 		}
 	}
@@ -463,15 +569,20 @@ func parseGroupRates(payload any) map[string]float64 {
 		for key, value := range record {
 			switch parsed := value.(type) {
 			case float64:
-				if parsed > 0 {
+				if isValidConversionRatio(parsed) {
 					rates[key] = parsed
 				}
 			case string:
-				if ratio, err := strconv.ParseFloat(strings.TrimSpace(parsed), 64); err == nil && ratio > 0 {
+				if ratio, err := strconv.ParseFloat(strings.TrimSpace(parsed), 64); err == nil && isValidConversionRatio(ratio) {
 					rates[key] = ratio
 				}
 			}
 		}
 	}
 	return rates
+}
+
+func isValidConversionRatio(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) &&
+		value >= 0 && value <= model.MaxUpstreamConversionRatio
 }

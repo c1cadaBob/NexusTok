@@ -613,14 +613,29 @@ func getVertexArrayKeys(keys string) ([]string, error) {
 
 func AddChannel(c *gin.Context) {
 	addChannelRequest := AddChannelRequest{}
-	err := c.ShouldBindJSON(&addChannelRequest)
+	rawBody, err := c.GetRawData()
 	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := common.Unmarshal(rawBody, &addChannelRequest); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	var requestData map[string]any
+	if err := common.Unmarshal(rawBody, &requestData); err != nil {
 		common.ApiError(c, err)
 		return
 	}
 
 	if addChannelRequest.Channel != nil && addChannelRequest.Channel.UpstreamKind == "" {
 		addChannelRequest.Channel.UpstreamKind = model.UpstreamKindKeyChannel
+	}
+	if addChannelRequest.Channel != nil {
+		channelData, _ := requestData["channel"].(map[string]any)
+		if _, provided := channelData["conversion_ratio"]; !provided {
+			addChannelRequest.Channel.ConversionRatio = 1
+		}
 	}
 	if addChannelRequest.Channel != nil && addChannelRequest.Channel.UpstreamKind == model.UpstreamKindPlatformSite {
 		if addChannelRequest.Mode != "" && addChannelRequest.Mode != "single" {
@@ -1037,6 +1052,26 @@ func UpdateChannel(c *gin.Context) {
 	}
 	clearChannelReadOnlyFields(&channel, requestData)
 
+	// 先读取原渠道，用于补全省略字段，确保平台站点的局部更新不会清空
+	// 原有的站点类型和地址。
+	originChannel, err := model.GetChannelById(channel.Id, true)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	if _, provided := requestData["upstream_kind"]; !provided {
+		channel.UpstreamKind = originChannel.UpstreamKind
+	}
+	if _, provided := requestData["conversion_ratio"]; !provided {
+		channel.ConversionRatio = originChannel.ConversionRatio
+	}
+	if channel.UpstreamKind == model.UpstreamKindPlatformSite && channel.Type == 0 {
+		channel.Type = originChannel.Type
+	}
+
 	if channel.Type == constant.ChannelTypeTaskPlugin &&
 		!authz.Can(c.GetInt("id"), c.GetInt("role"), authz.TaskPluginBind) {
 		c.JSON(http.StatusOK, gin.H{
@@ -1056,22 +1091,7 @@ func UpdateChannel(c *gin.Context) {
 		})
 		return
 	}
-	// Preserve existing ChannelInfo to ensure multi-key channels keep correct state even if the client does not send ChannelInfo in the request.
-	originChannel, err := model.GetChannelById(channel.Id, true)
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
-		return
-	}
-	if _, provided := requestData["upstream_kind"]; !provided {
-		channel.UpstreamKind = originChannel.UpstreamKind
-	}
 	if channel.UpstreamKind == model.UpstreamKindPlatformSite {
-		if channel.Type == 0 {
-			channel.Type = originChannel.Type
-		}
 		if err := ensurePlatformSiteChannel(&channel.Channel, channel.PlatformSite); err != nil {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,
@@ -1080,7 +1100,11 @@ func UpdateChannel(c *gin.Context) {
 			return
 		}
 		if channel.PlatformSite != nil {
-			baseURL := strings.TrimRight(strings.TrimSpace(channel.PlatformSite.BaseURL), "/")
+			baseURL := strings.TrimSpace(channel.PlatformSite.BaseURL)
+			if baseURL == "" && originChannel.BaseURL != nil {
+				baseURL = *originChannel.BaseURL
+			}
+			baseURL = strings.TrimRight(baseURL, "/")
 			channel.BaseURL = &baseURL
 			channel.Key = ""
 		}
