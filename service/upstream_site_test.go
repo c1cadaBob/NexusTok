@@ -158,6 +158,11 @@ func TestPersistPlatformSiteSnapshotRebuildsAbilitiesAndAutoDisablesUnavailableK
 	assert.Equal(t, "密钥剩余额度不足", key.DisabledReason)
 	assert.Equal(t, 1900, key.Weight)
 
+	var savedAccount model.PlatformSiteAccount
+	require.NoError(t, db.Where("channel_id = ?", channel.Id).First(&savedAccount).Error)
+	assert.Equal(t, 5.0, savedAccount.Balance)
+	assert.Equal(t, int64(0), savedAccount.UsedQuota)
+
 	var ability model.Ability
 	require.NoError(t, db.Where(&model.Ability{
 		ChannelId: channel.Id,

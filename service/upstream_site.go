@@ -572,6 +572,12 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 		}).Error; err != nil {
 			return err
 		}
+		if err := tx.Model(account).Updates(map[string]any{
+			"balance":    snapshot.Balance,
+			"used_quota": snapshot.UsedQuota,
+		}).Error; err != nil {
+			return err
+		}
 		if err := tx.Where("channel_id = ?", channel.Id).Delete(&model.Ability{}).Error; err != nil {
 			return err
 		}
