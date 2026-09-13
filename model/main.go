@@ -409,15 +409,17 @@ func migrateUpstreamChannelDefaults() error {
 		}
 
 		var marker Option
-		err := tx.Where("key = ?", migrationKey).First(&marker).Error
+		err := tx.Where(commonKeyCol+" = ?", migrationKey).First(&marker).Error
 		if err == nil {
-			return nil
+			return tx.Model(&Channel{}).
+				Where("upstream_kind = ? AND conversion_ratio IS NULL", UpstreamKindKeyChannel).
+				Update("conversion_ratio", 1).Error
 		}
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
 		if err := tx.Model(&Channel{}).
-			Where("upstream_kind = ? AND conversion_ratio = ?", UpstreamKindKeyChannel, 0).
+			Where("upstream_kind = ? AND (conversion_ratio IS NULL OR conversion_ratio = ?)", UpstreamKindKeyChannel, 0).
 			Update("conversion_ratio", 1).Error; err != nil {
 			return err
 		}
