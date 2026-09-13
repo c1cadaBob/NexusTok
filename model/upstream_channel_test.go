@@ -30,6 +30,13 @@ type upstreamCompatibilityLegacyChannel struct {
 	Priority *int64 `gorm:"bigint"`
 }
 
+type upstreamCompatibilityLegacyUpstreamKey struct {
+	ID                 uint   `gorm:"primaryKey"`
+	UpstreamChannelID  int    `gorm:"bigint"`
+	ExternalKeyID      string `gorm:"size:255"`
+	CredentialEnvelope string `gorm:"type:text"`
+}
+
 func TestCalculateUpstreamKeyWeight(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -234,8 +241,15 @@ func TestUpstreamChannelDatabaseCompatibility(t *testing.T) {
 				Group:  "default",
 				Status: common.ChannelStatusEnabled,
 			}).Error)
+			require.NoError(t, db.Table(prefix+"upstream_keys").AutoMigrate(&upstreamCompatibilityLegacyUpstreamKey{}))
+			require.NoError(t, db.Table(prefix+"upstream_keys").Create(&upstreamCompatibilityLegacyUpstreamKey{
+				UpstreamChannelID:  41,
+				ExternalKeyID:      "legacy-external",
+				CredentialEnvelope: "legacy-envelope",
+			}).Error)
 
 			for range 2 {
+				require.NoError(t, archiveIncompatibleUpstreamKeysTable())
 				require.NoError(t, db.AutoMigrate(
 					&Channel{},
 					&PlatformSiteAccount{},
@@ -251,6 +265,24 @@ func TestUpstreamChannelDatabaseCompatibility(t *testing.T) {
 			require.NoError(t, db.First(&migratedLegacy, "id = ?", 41).Error)
 			assert.Equal(t, UpstreamKindKeyChannel, migratedLegacy.UpstreamKind)
 			assert.Equal(t, 1.0, migratedLegacy.ConversionRatio)
+
+			tables, err := db.Migrator().GetTables()
+			require.NoError(t, err)
+			archivedTables := make([]string, 0, 1)
+			for _, table := range tables {
+				if strings.HasPrefix(table, prefix+"upstream_keys_legacy_") {
+					archivedTables = append(archivedTables, table)
+				}
+			}
+			require.Len(t, archivedTables, 1)
+			t.Cleanup(func() { _ = db.Migrator().DropTable(archivedTables[0]) })
+			var archivedCount int64
+			require.NoError(t, db.Table(archivedTables[0]).Count(&archivedCount).Error)
+			assert.EqualValues(t, 1, archivedCount)
+
+			var currentKeyCount int64
+			require.NoError(t, db.Model(&UpstreamKey{}).Count(&currentKeyCount).Error)
+			assert.Zero(t, currentKeyCount)
 
 			priority := int64(9)
 			channel := &Channel{

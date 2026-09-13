@@ -334,6 +334,9 @@ func migrateDB() error {
 	if err := migrateOptionPrimaryKey(DB); err != nil {
 		common.SysError("failed to migrate options primary key: " + err.Error())
 	}
+	if err := archiveIncompatibleUpstreamKeysTable(); err != nil {
+		return err
+	}
 
 	err := DB.AutoMigrate(
 		&Channel{},
@@ -397,6 +400,48 @@ func migrateDB() error {
 		}
 	}
 	return nil
+}
+
+func archiveIncompatibleUpstreamKeysTable() error {
+	migrator := DB.Migrator()
+	if !migrator.HasTable(&UpstreamKey{}) {
+		return nil
+	}
+	columns, err := migrator.ColumnTypes(&UpstreamKey{})
+	if err != nil {
+		return err
+	}
+	existing := make(map[string]struct{}, len(columns))
+	for _, column := range columns {
+		existing[strings.ToLower(column.Name())] = struct{}{}
+	}
+	for _, required := range []string{"channel_id", "external_id", "secret_ciphertext"} {
+		if _, ok := existing[required]; !ok {
+			tableName := DB.NamingStrategy.TableName("upstream_keys")
+			archiveName := archivedUpstreamKeysTableName(tableName, 0)
+			for index := 1; migrator.HasTable(archiveName); index++ {
+				archiveName = archivedUpstreamKeysTableName(tableName, index)
+			}
+			common.SysLog(fmt.Sprintf("archiving incompatible upstream_keys table as %s before migration", archiveName))
+			if err := migrator.RenameTable(tableName, archiveName); err != nil {
+				return fmt.Errorf("failed to archive incompatible upstream_keys table: %w", err)
+			}
+			return nil
+		}
+	}
+	return nil
+}
+
+func archivedUpstreamKeysTableName(tableName string, index int) string {
+	suffix := fmt.Sprintf("_legacy_%d", common.GetTimestamp())
+	if index > 0 {
+		suffix = fmt.Sprintf("%s_%d", suffix, index)
+	}
+	const maxIdentifierLength = 63
+	if len(tableName)+len(suffix) > maxIdentifierLength {
+		tableName = tableName[:maxIdentifierLength-len(suffix)]
+	}
+	return tableName + suffix
 }
 
 func migrateUpstreamChannelDefaults() error {
