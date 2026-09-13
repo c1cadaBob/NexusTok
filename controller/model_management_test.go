@@ -587,7 +587,7 @@ export function parseTaskResult() { return {}; }
 				var revision atomic.Int32
 				var failVendors atomic.Bool
 				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					assert.Contains(t, r.URL.Path, "/api/i18n/zh/nexustok/")
+					assert.Contains(t, r.URL.Path, "/api/i18n/zh/newapi/")
 					var payload any
 					if strings.HasSuffix(r.URL.Path, "vendors.json") {
 						if failVendors.Load() {
