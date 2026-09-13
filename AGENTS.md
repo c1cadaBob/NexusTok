@@ -167,6 +167,13 @@ Inside `relaykit/`, use `kitutil.*` from `relaykit/relayconvert/kitutil/json.go`
 
 ### Project Governance
 
+**版本控制工作流：**
+
+- 每完成一个可独立验收的子功能，必须立即将该子功能涉及的文件执行 `git add` 暂存，并在继续实现下一个子功能前确认暂存内容仅包含本次子功能。
+- 完成一个完整功能后，必须创建中文 commit 保存完整变更，并将该 commit 推送到当前分支对应的远端，确保代码在远端持久保存。
+- 提交前必须检查 `git diff --cached`、测试结果和工作区状态；不得将密码、Cookie、Token、API Key、临时文件、构建产物或无关修改提交到仓库。
+- 推送失败时必须保留本地 commit，明确报告失败原因和待执行的远端保存步骤；不得通过删除 commit 或覆盖其他人的提交来规避失败。
+
 **Protected project information:** The following project-related information is strictly protected and MUST NOT be modified, deleted, replaced, or removed under any circumstances:
 
 **Issues:** When opening a GitHub issue, first refuse out-of-scope requests listed in `.agents/github/ISSUE.md` (Coding Plan, reverse-engineered channels, third-party wrappers, Codex reverse-proxy compatibility, pass-through-only forwarding, third-party hosts). Tell the user and do not file. Then search https://docs.nexustok.ai/ , https://deepwiki.com/c1cadaBob/NexusTok , the README, and the code. If this is a usage, configuration, or integration question, answer the user from that material and do not file. Otherwise fill `.agents/github/ISSUE.md` as the entire body. If actual behavior, impact, frequency, evidence that the problem is in NexusTok, or the applicable relay/billing/frontend/deployment items are missing, ask the user those questions and wait. Do not invent them. Do not tell the user to confirm a template. Do not use GitHub issue forms.
