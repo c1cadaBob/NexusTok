@@ -69,8 +69,8 @@ var defaultVendorIcons = map[string]string{
 	"Azure":      "AzureAI",
 }
 
-// initDefaultVendorMapping 简化的默认供应商映射
-func initDefaultVendorMapping(metaMap map[string]*Model, vendorMap map[int]*Vendor, enableAbilities []AbilityWithChannel) {
+// InferDefaultVendorName 根据模型名称推断默认供应商。
+func InferDefaultVendorName(modelName string) string {
 	patterns := make([]string, 0, len(defaultVendorRules))
 	for pattern := range defaultVendorRules {
 		patterns = append(patterns, pattern)
@@ -81,6 +81,17 @@ func initDefaultVendorMapping(metaMap map[string]*Model, vendorMap map[int]*Vend
 		}
 		return strings.Compare(a, b)
 	})
+	modelLower := strings.ToLower(modelName)
+	for _, pattern := range patterns {
+		if strings.Contains(modelLower, pattern) {
+			return defaultVendorRules[pattern]
+		}
+	}
+	return ""
+}
+
+// initDefaultVendorMapping 简化的默认供应商映射
+func initDefaultVendorMapping(metaMap map[string]*Model, vendorMap map[int]*Vendor, enableAbilities []AbilityWithChannel) {
 	for _, ability := range enableAbilities {
 		modelName := ability.Model
 		if _, exists := metaMap[modelName]; exists {
@@ -89,13 +100,8 @@ func initDefaultVendorMapping(metaMap map[string]*Model, vendorMap map[int]*Vend
 
 		// 匹配供应商
 		vendorID := 0
-		modelLower := strings.ToLower(modelName)
-		for _, pattern := range patterns {
-			vendorName := defaultVendorRules[pattern]
-			if strings.Contains(modelLower, pattern) {
-				vendorID = getDisplayVendor(vendorName, vendorMap)
-				break
-			}
+		if vendorName := InferDefaultVendorName(modelName); vendorName != "" {
+			vendorID = getDisplayVendor(vendorName, vendorMap)
 		}
 
 		// 创建模型元数据

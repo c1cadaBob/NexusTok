@@ -29,20 +29,20 @@ import (
 )
 
 const (
-	defaultTimeoutSeconds       = 10
-	defaultEndpoint             = "/api/pricing"
-	maxConcurrentFetches        = 8
-	maxRatioConfigBytes         = 10 << 20 // 10MB
-	floatEpsilon                = 1e-9
-	officialRatioPresetID       = -100
-	officialRatioPresetName     = "官方倍率预设"
-	officialRatioPresetBaseURL  = "https://basellm.github.io"
-	modelsDevPresetID           = -101
-	modelsDevPresetName         = "models.dev 价格预设"
-	modelsDevPresetBaseURL      = "https://models.dev"
-	modelsDevHost               = "models.dev"
-	modelsDevPath               = "/api.json"
-	modelsDevInputCostRatioBase = 1000.0
+	defaultTimeoutSeconds      = 10
+	defaultEndpoint            = "/api/pricing"
+	maxConcurrentFetches       = 8
+	maxRatioConfigBytes        = 10 << 20 // 10MB
+	floatEpsilon               = 1e-9
+	officialRatioPresetID      = -100
+	officialRatioPresetName    = "官方倍率预设"
+	officialRatioPresetBaseURL = "https://basellm.github.io"
+	modelsDevPresetID          = -101
+	modelsDevPresetName        = "models.dev 价格预设"
+	modelsDevPresetBaseURL     = "https://models.dev"
+	modelsDevHost              = "models.dev"
+	modelsDevPath              = "/api.json"
+	modelsDevContextOver200K   = 200000
 )
 
 func nearlyEqual(a, b float64) bool {
@@ -931,28 +931,57 @@ type modelsDevProvider struct {
 }
 
 type modelsDevModel struct {
+	ID   string        `json:"id"`
+	Name string        `json:"name"`
 	Cost modelsDevCost `json:"cost"`
 }
 
 type modelsDevCost struct {
-	Input     *float64 `json:"input"`
-	Output    *float64 `json:"output"`
-	CacheRead *float64 `json:"cache_read"`
+	Input           *float64            `json:"input"`
+	Output          *float64            `json:"output"`
+	CacheRead       *float64            `json:"cache_read"`
+	CacheWrite      *float64            `json:"cache_write"`
+	InputAudio      *float64            `json:"input_audio"`
+	OutputAudio     *float64            `json:"output_audio"`
+	Tiers           []modelsDevCostTier `json:"tiers"`
+	ContextOver200K *modelsDevPrice     `json:"context_over_200k"`
+}
+
+type modelsDevCostTier struct {
+	Input       *float64          `json:"input"`
+	Output      *float64          `json:"output"`
+	CacheRead   *float64          `json:"cache_read"`
+	CacheWrite  *float64          `json:"cache_write"`
+	InputAudio  *float64          `json:"input_audio"`
+	OutputAudio *float64          `json:"output_audio"`
+	Tier        modelsDevTierSpec `json:"tier"`
+}
+
+type modelsDevTierSpec struct {
+	Type string   `json:"type"`
+	Size *float64 `json:"size"`
+}
+
+type modelsDevPrice struct {
+	Input       *float64 `json:"input"`
+	Output      *float64 `json:"output"`
+	CacheRead   *float64 `json:"cache_read"`
+	CacheWrite  *float64 `json:"cache_write"`
+	InputAudio  *float64 `json:"input_audio"`
+	OutputAudio *float64 `json:"output_audio"`
 }
 
 type modelsDevCandidate struct {
-	Provider  string
-	Input     float64
-	Output    *float64
-	CacheRead *float64
+	Provider      string
+	ModelKey      string
+	ModelID       string
+	CanonicalName string
+	Cost          modelsDevCost
 }
 
-func cloneFloatPtr(v *float64) *float64 {
-	if v == nil {
-		return nil
-	}
-	out := *v
-	return &out
+type modelsDevContextTier struct {
+	Size  int
+	Price modelsDevPrice
 }
 
 func isValidNonNegativeCost(v float64) bool {
@@ -962,67 +991,363 @@ func isValidNonNegativeCost(v float64) bool {
 	return v >= 0
 }
 
-func buildModelsDevCandidate(provider string, cost modelsDevCost) (modelsDevCandidate, bool) {
-	if cost.Input == nil {
+func modelsDevBasePrice(cost modelsDevCost) modelsDevPrice {
+	return modelsDevPrice{
+		Input:       cost.Input,
+		Output:      cost.Output,
+		CacheRead:   cost.CacheRead,
+		CacheWrite:  cost.CacheWrite,
+		InputAudio:  cost.InputAudio,
+		OutputAudio: cost.OutputAudio,
+	}
+}
+
+func modelsDevTierPrice(tier modelsDevCostTier) modelsDevPrice {
+	return modelsDevPrice{
+		Input:       tier.Input,
+		Output:      tier.Output,
+		CacheRead:   tier.CacheRead,
+		CacheWrite:  tier.CacheWrite,
+		InputAudio:  tier.InputAudio,
+		OutputAudio: tier.OutputAudio,
+	}
+}
+
+func isValidModelsDevPrice(price modelsDevPrice) bool {
+	if price.Input == nil || !isValidNonNegativeCost(*price.Input) {
+		return false
+	}
+	for _, value := range []*float64{price.Output, price.CacheRead, price.CacheWrite, price.InputAudio, price.OutputAudio} {
+		if value != nil && !isValidNonNegativeCost(*value) {
+			return false
+		}
+	}
+	return true
+}
+
+func buildModelsDevCandidate(provider, modelKey string, item modelsDevModel) (modelsDevCandidate, bool) {
+	base := modelsDevBasePrice(item.Cost)
+	if !isValidModelsDevPrice(base) {
 		return modelsDevCandidate{}, false
 	}
-
-	input := *cost.Input
-	if !isValidNonNegativeCost(input) {
-		return modelsDevCandidate{}, false
-	}
-
-	var output *float64
-	if cost.Output != nil {
-		if !isValidNonNegativeCost(*cost.Output) {
+	if base.Input != nil && *base.Input == 0 && hasPositiveModelsDevNonInputCost(base) {
+		if _, ok := buildModelsDevBillingExpression(item.Cost); !ok {
 			return modelsDevCandidate{}, false
 		}
-		output = cloneFloatPtr(cost.Output)
 	}
-
-	// input=0/output>0 cannot be transformed into local ratio.
-	if input == 0 && output != nil && *output > 0 {
+	canonicalName := canonicalModelsDevModelName(modelKey, item.ID)
+	if canonicalName == "" {
 		return modelsDevCandidate{}, false
 	}
-
-	var cacheRead *float64
-	if cost.CacheRead != nil && isValidNonNegativeCost(*cost.CacheRead) {
-		cacheRead = cloneFloatPtr(cost.CacheRead)
-	}
-
 	return modelsDevCandidate{
-		Provider:  provider,
-		Input:     input,
-		Output:    output,
-		CacheRead: cacheRead,
+		Provider:      strings.TrimSpace(provider),
+		ModelKey:      strings.TrimSpace(modelKey),
+		ModelID:       strings.TrimSpace(item.ID),
+		CanonicalName: canonicalName,
+		Cost:          item.Cost,
 	}, true
 }
 
-func shouldReplaceModelsDevCandidate(current, next modelsDevCandidate) bool {
-	currentNonZero := current.Input > 0
-	nextNonZero := next.Input > 0
-	if currentNonZero != nextNonZero {
-		// Prefer non-zero pricing data; this matches "cheapest non-zero" conflict policy.
-		return nextNonZero
+func modelsDevCandidateInput(candidate modelsDevCandidate) float64 {
+	if candidate.Cost.Input == nil {
+		return 0
 	}
-	if nextNonZero && !nearlyEqual(next.Input, current.Input) {
-		return next.Input < current.Input
-	}
-	// Stable tie-breaker for deterministic result.
-	return next.Provider < current.Provider
+	return *candidate.Cost.Input
 }
 
-// convertModelsDevToRatioData parses models.dev /api.json and converts
-// provider pricing metadata into local ratio format.
-// models.dev costs are USD per 1M tokens:
-//
-//	model_ratio = input_cost_per_1M / 2
-//	completion_ratio = output_cost / input_cost
-//	cache_ratio = cache_read_cost / input_cost
-//
-// Duplicate model keys across providers are resolved by selecting the
-// cheapest non-zero input cost. If only zero-priced candidates exist,
-// a zero ratio is kept.
+func shouldReplaceModelsDevCandidate(current, next modelsDevCandidate) bool {
+	currentInput := modelsDevCandidateInput(current)
+	nextInput := modelsDevCandidateInput(next)
+	currentNonZero := currentInput > 0
+	nextNonZero := nextInput > 0
+	if currentNonZero != nextNonZero {
+		return nextNonZero
+	}
+	if nextNonZero && !nearlyEqual(nextInput, currentInput) {
+		return nextInput < currentInput
+	}
+	if next.Provider != current.Provider {
+		return next.Provider < current.Provider
+	}
+	if next.ModelKey != current.ModelKey {
+		return next.ModelKey < current.ModelKey
+	}
+	return next.ModelID < current.ModelID
+}
+
+func normalizeModelsDevProviderName(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	normalized = strings.ReplaceAll(normalized, " ", "")
+	normalized = strings.ReplaceAll(normalized, "_", "-")
+	switch normalized {
+	case "open-ai", "openai":
+		return "openai"
+	case "claude":
+		return "anthropic"
+	case "amazon", "aws", "bedrock", "amazonbedrock":
+		return "amazon-bedrock"
+	default:
+		return normalized
+	}
+}
+
+func preferredModelsDevProvider(modelName string) string {
+	switch model.InferDefaultVendorName(modelName) {
+	case "OpenAI":
+		return "openai"
+	case "Anthropic":
+		return "anthropic"
+	case "Google":
+		return "google"
+	case "Moonshot":
+		return "moonshot"
+	case "DeepSeek":
+		return "deepseek"
+	case "MiniMax":
+		return "minimax"
+	case "Cohere":
+		return "cohere"
+	case "Cloudflare":
+		return "cloudflare"
+	case "Mistral":
+		return "mistral"
+	case "xAI":
+		return "xai"
+	case "Meta":
+		return "meta"
+	case "Vidu":
+		return "vidu"
+	case "阿里巴巴":
+		return "alibaba"
+	case "字节跳动":
+		return "volcengine"
+	default:
+		return ""
+	}
+}
+
+func canonicalModelsDevModelName(modelKey, modelID string) string {
+	fallback := ""
+	for _, value := range []string{modelID, modelKey} {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if canonical, ok := stripModelsDevProviderPrefix(value); ok {
+			return canonical
+		}
+		if fallback == "" {
+			fallback = value
+		}
+		if !strings.Contains(value, "/") {
+			return value
+		}
+	}
+	return fallback
+}
+
+func stripModelsDevProviderPrefix(value string) (string, bool) {
+	prefix, suffix, ok := strings.Cut(value, "/")
+	if !ok || strings.TrimSpace(prefix) == "" || strings.TrimSpace(suffix) == "" || strings.HasPrefix(value, "@") {
+		return "", false
+	}
+	preferredProvider := preferredModelsDevProvider(suffix)
+	if preferredProvider == "" || normalizeModelsDevProviderName(prefix) != preferredProvider {
+		return "", false
+	}
+	return suffix, true
+}
+
+func modelsDevIdentifierRank(candidate modelsDevCandidate, preferredProvider string) int {
+	if preferredProvider == "" {
+		return 2
+	}
+	canonical := strings.ToLower(candidate.CanonicalName)
+	prefixed := preferredProvider + "/" + canonical
+	for _, value := range []string{candidate.ModelID, candidate.ModelKey} {
+		normalized := strings.ToLower(strings.TrimSpace(value))
+		if normalized == prefixed {
+			return 0
+		}
+	}
+	for _, value := range []string{candidate.ModelID, candidate.ModelKey} {
+		if strings.ToLower(strings.TrimSpace(value)) == canonical {
+			return 1
+		}
+	}
+	return 2
+}
+
+func chooseModelsDevCandidateFromProvider(candidates []modelsDevCandidate, preferredProvider string) modelsDevCandidate {
+	selected := candidates[0]
+	selectedRank := modelsDevIdentifierRank(selected, preferredProvider)
+	for _, candidate := range candidates[1:] {
+		rank := modelsDevIdentifierRank(candidate, preferredProvider)
+		if rank < selectedRank || rank == selectedRank && shouldReplaceModelsDevCandidate(selected, candidate) {
+			selected = candidate
+			selectedRank = rank
+		}
+	}
+	return selected
+}
+
+func chooseModelsDevCandidate(candidates []modelsDevCandidate) modelsDevCandidate {
+	preferredProvider := preferredModelsDevProvider(candidates[0].CanonicalName)
+	if preferredProvider != "" {
+		var official []modelsDevCandidate
+		for _, candidate := range candidates {
+			if normalizeModelsDevProviderName(candidate.Provider) == preferredProvider {
+				official = append(official, candidate)
+			}
+		}
+		if len(official) > 0 {
+			return chooseModelsDevCandidateFromProvider(official, preferredProvider)
+		}
+
+		var prefixed []modelsDevCandidate
+		for _, candidate := range candidates {
+			if modelsDevIdentifierRank(candidate, preferredProvider) == 0 {
+				prefixed = append(prefixed, candidate)
+			}
+		}
+		if len(prefixed) > 0 {
+			return chooseModelsDevCandidateFromProvider(prefixed, preferredProvider)
+		}
+	}
+
+	selected := candidates[0]
+	for _, candidate := range candidates[1:] {
+		if shouldReplaceModelsDevCandidate(selected, candidate) {
+			selected = candidate
+		}
+	}
+	return selected
+}
+
+func modelsDevCostTerm(variable string, cost *float64) (string, bool) {
+	if cost == nil || nearlyEqual(*cost, 0) {
+		return "", false
+	}
+	return fmt.Sprintf("%s * %s", variable, strconv.FormatFloat(*cost, 'f', -1, 64)), true
+}
+
+func modelsDevTierExpression(label string, price modelsDevPrice) string {
+	terms := make([]string, 0, 6)
+	for _, item := range []struct {
+		variable string
+		cost     *float64
+	}{
+		{"p", price.Input},
+		{"c", price.Output},
+		{"cr", price.CacheRead},
+		{"cc", price.CacheWrite},
+		{"ai", price.InputAudio},
+		{"ao", price.OutputAudio},
+	} {
+		if term, ok := modelsDevCostTerm(item.variable, item.cost); ok {
+			terms = append(terms, term)
+		}
+	}
+	body := "0"
+	if len(terms) > 0 {
+		body = strings.Join(terms, " + ")
+	}
+	return fmt.Sprintf("tier(%s, %s)", strconv.Quote(label), body)
+}
+
+func modelsDevContextTiers(cost modelsDevCost) []modelsDevContextTier {
+	tiers := make([]modelsDevContextTier, 0, len(cost.Tiers))
+	for _, tier := range cost.Tiers {
+		if strings.ToLower(strings.TrimSpace(tier.Tier.Type)) != "context" || tier.Tier.Size == nil {
+			continue
+		}
+		size := *tier.Tier.Size
+		if math.IsNaN(size) || math.IsInf(size, 0) || size <= 0 {
+			continue
+		}
+		price := modelsDevTierPrice(tier)
+		if !isValidModelsDevPrice(price) {
+			continue
+		}
+		tiers = append(tiers, modelsDevContextTier{Size: int(math.Round(size)), Price: price})
+	}
+	sort.SliceStable(tiers, func(i, j int) bool {
+		return tiers[i].Size < tiers[j].Size
+	})
+	return tiers
+}
+
+func buildModelsDevBillingExpression(cost modelsDevCost) (string, bool) {
+	base := modelsDevBasePrice(cost)
+	if cost.ContextOver200K != nil && isValidModelsDevPrice(*cost.ContextOver200K) {
+		return fmt.Sprintf(
+			"len <= %d ? %s : %s",
+			modelsDevContextOver200K,
+			modelsDevTierExpression("standard", base),
+			modelsDevTierExpression("long_context", *cost.ContextOver200K),
+		), true
+	}
+
+	contextTiers := modelsDevContextTiers(cost)
+	if len(contextTiers) == 0 {
+		return "", false
+	}
+	expression := modelsDevTierExpression(fmt.Sprintf("context_over_%d", contextTiers[len(contextTiers)-1].Size), contextTiers[len(contextTiers)-1].Price)
+	for i := len(contextTiers) - 2; i >= 0; i-- {
+		expression = fmt.Sprintf(
+			"len <= %d ? %s : %s",
+			contextTiers[i+1].Size,
+			modelsDevTierExpression(fmt.Sprintf("context_over_%d", contextTiers[i].Size), contextTiers[i].Price),
+			expression,
+		)
+	}
+	return fmt.Sprintf(
+		"len <= %d ? %s : %s",
+		contextTiers[0].Size,
+		modelsDevTierExpression("standard", base),
+		expression,
+	), true
+}
+
+func hasPositiveModelsDevNonInputCost(price modelsDevPrice) bool {
+	for _, value := range []*float64{price.Output, price.CacheRead, price.CacheWrite, price.InputAudio, price.OutputAudio} {
+		if value != nil && *value > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func setModelsDevRatioValue(values map[string]any, modelName string, numerator *float64, denominator float64) {
+	if numerator != nil {
+		values[modelName] = roundRatioValue(*numerator / denominator)
+	}
+}
+
+func addModelsDevTokenPricing(modelName string, cost modelsDevCost, modelRatioMap, completionRatioMap, cacheRatioMap, createCacheRatioMap, audioRatioMap, audioCompletionRatioMap map[string]any) bool {
+	price := modelsDevBasePrice(cost)
+	input := *price.Input
+	if input == 0 {
+		if hasPositiveModelsDevNonInputCost(price) {
+			return false
+		}
+		modelRatioMap[modelName] = 0.0
+		return true
+	}
+
+	modelRatioMap[modelName] = roundRatioValue(input / 2)
+	setModelsDevRatioValue(completionRatioMap, modelName, price.Output, input)
+	setModelsDevRatioValue(cacheRatioMap, modelName, price.CacheRead, input)
+	setModelsDevRatioValue(createCacheRatioMap, modelName, price.CacheWrite, input)
+	setModelsDevRatioValue(audioRatioMap, modelName, price.InputAudio, input)
+	if price.OutputAudio != nil && price.InputAudio != nil && *price.InputAudio > 0 {
+		audioCompletionRatioMap[modelName] = roundRatioValue(*price.OutputAudio / *price.InputAudio)
+	}
+	return true
+}
+
+// convertModelsDevToRatioData 解析 models.dev /api.json。无阶梯价格仍输出旧
+// ratio 字段；存在上下文阶梯时输出真实 USD/百万 token 的 billing expression。
 func convertModelsDevToRatioData(reader io.Reader) (map[string]any, error) {
 	var upstreamData map[string]modelsDevProvider
 	if err := common.DecodeJson(reader, &upstreamData); err != nil {
@@ -1038,7 +1363,7 @@ func convertModelsDevToRatioData(reader io.Reader) (map[string]any, error) {
 	}
 	sort.Strings(providers)
 
-	selectedCandidates := make(map[string]modelsDevCandidate)
+	candidateGroups := make(map[string][]modelsDevCandidate)
 	for _, provider := range providers {
 		providerData := upstreamData[provider]
 		if len(providerData.Models) == 0 {
@@ -1052,14 +1377,20 @@ func convertModelsDevToRatioData(reader io.Reader) (map[string]any, error) {
 		sort.Strings(modelNames)
 
 		for _, modelName := range modelNames {
-			candidate, ok := buildModelsDevCandidate(provider, providerData.Models[modelName].Cost)
+			candidate, ok := buildModelsDevCandidate(provider, modelName, providerData.Models[modelName])
 			if !ok {
 				continue
 			}
-			current, exists := selectedCandidates[modelName]
-			if !exists || shouldReplaceModelsDevCandidate(current, candidate) {
-				selectedCandidates[modelName] = candidate
+			if candidate.CanonicalName != "" {
+				candidateGroups[candidate.CanonicalName] = append(candidateGroups[candidate.CanonicalName], candidate)
 			}
+		}
+	}
+
+	selectedCandidates := make(map[string]modelsDevCandidate)
+	for modelName, candidates := range candidateGroups {
+		if len(candidates) > 0 {
+			selectedCandidates[modelName] = chooseModelsDevCandidate(candidates)
 		}
 	}
 
@@ -1070,25 +1401,19 @@ func convertModelsDevToRatioData(reader io.Reader) (map[string]any, error) {
 	modelRatioMap := make(map[string]any)
 	completionRatioMap := make(map[string]any)
 	cacheRatioMap := make(map[string]any)
+	createCacheRatioMap := make(map[string]any)
+	audioRatioMap := make(map[string]any)
+	audioCompletionRatioMap := make(map[string]any)
+	billingModeMap := make(map[string]any)
+	billingExprMap := make(map[string]any)
 
 	for modelName, candidate := range selectedCandidates {
-		if candidate.Input == 0 {
-			modelRatioMap[modelName] = 0.0
+		if expression, ok := buildModelsDevBillingExpression(candidate.Cost); ok {
+			billingModeMap[modelName] = billing_setting.BillingModeTieredExpr
+			billingExprMap[modelName] = expression
 			continue
 		}
-
-		modelRatio := candidate.Input * float64(ratio_setting.USD) / modelsDevInputCostRatioBase
-		modelRatioMap[modelName] = roundRatioValue(modelRatio)
-
-		if candidate.Output != nil {
-			completionRatio := *candidate.Output / candidate.Input
-			completionRatioMap[modelName] = roundRatioValue(completionRatio)
-		}
-
-		if candidate.CacheRead != nil {
-			cacheRatio := *candidate.CacheRead / candidate.Input
-			cacheRatioMap[modelName] = roundRatioValue(cacheRatio)
-		}
+		addModelsDevTokenPricing(modelName, candidate.Cost, modelRatioMap, completionRatioMap, cacheRatioMap, createCacheRatioMap, audioRatioMap, audioCompletionRatioMap)
 	}
 
 	converted := make(map[string]any)
@@ -1100,6 +1425,24 @@ func convertModelsDevToRatioData(reader io.Reader) (map[string]any, error) {
 	}
 	if len(cacheRatioMap) > 0 {
 		converted["cache_ratio"] = cacheRatioMap
+	}
+	if len(createCacheRatioMap) > 0 {
+		converted["create_cache_ratio"] = createCacheRatioMap
+	}
+	if len(audioRatioMap) > 0 {
+		converted["audio_ratio"] = audioRatioMap
+	}
+	if len(audioCompletionRatioMap) > 0 {
+		converted["audio_completion_ratio"] = audioCompletionRatioMap
+	}
+	if len(billingModeMap) > 0 {
+		converted[billing_setting.BillingModeField] = billingModeMap
+	}
+	if len(billingExprMap) > 0 {
+		converted[billing_setting.BillingExprField] = billingExprMap
+	}
+	if len(converted) == 0 {
+		return nil, fmt.Errorf("no valid models.dev pricing entries found")
 	}
 	return converted, nil
 }

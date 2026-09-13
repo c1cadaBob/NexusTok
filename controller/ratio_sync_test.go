@@ -1,9 +1,11 @@
 package controller
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/c1cadaBob/NexusTok/common"
+	"github.com/c1cadaBob/NexusTok/pkg/billingexpr"
 	"github.com/c1cadaBob/NexusTok/relaykit/dto"
 	"github.com/c1cadaBob/NexusTok/setting/billing_setting"
 	"github.com/c1cadaBob/NexusTok/setting/config"
@@ -139,4 +141,185 @@ func TestPricingSyncCompleteSourcesAndArrayFormats(t *testing.T) {
 	assert.Equal(t, float64(4), response.Data.Prices["sync-token"].Upstreams["Expressions(1)"]["completion_ratio"])
 	assert.Equal(t, float64(0), response.Data.Prices["sync-token"].Upstreams["Expressions(1)"]["cache_ratio"])
 	assert.Equal(t, float64(0), response.Data.Prices["sync-free"].Upstreams["Legacy(2)"]["model_ratio"])
+}
+
+func convertModelsDevJSONForTest(t *testing.T, body string) map[string]any {
+	t.Helper()
+	converted, err := convertModelsDevToRatioData(strings.NewReader(body))
+	require.NoError(t, err)
+	return converted
+}
+
+func TestModelsDevPricingPrefersOfficialProviderAndBuildsContextExpression(t *testing.T) {
+	converted := convertModelsDevJSONForTest(t, `{
+		"unorouter": {
+			"models": {
+				"gpt-5.5": {
+					"id": "gpt-5.5",
+					"cost": {"input": 0.1875, "output": 1.125}
+				}
+			}
+		},
+		"openai": {
+			"models": {
+				"gpt-5.5": {
+					"id": "gpt-5.5",
+					"cost": {
+						"input": 5,
+						"output": 30,
+						"cache_read": 0.5,
+						"tiers": [
+							{
+								"input": 10,
+								"output": 45,
+								"cache_read": 1,
+								"tier": {"type": "context", "size": 272000}
+							}
+						],
+						"context_over_200k": {"input": 10, "output": 45, "cache_read": 1}
+					}
+				}
+			}
+		}
+	}`)
+
+	assert.NotContains(t, valueMap(converted["model_ratio"]), "gpt-5.5")
+	assert.Equal(t, billing_setting.BillingModeTieredExpr, valueMap(converted[billing_setting.BillingModeField])["gpt-5.5"])
+	expression, ok := valueMap(converted[billing_setting.BillingExprField])["gpt-5.5"].(string)
+	require.True(t, ok)
+	assert.Equal(t, `len <= 200000 ? tier("standard", p * 5 + c * 30 + cr * 0.5) : tier("long_context", p * 10 + c * 45 + cr * 1)`, expression)
+
+	standardCost, standardTrace, err := billingexpr.RunExpr(expression, billingexpr.TokenParams{P: 100, C: 10, CR: 20, Len: 200000})
+	require.NoError(t, err)
+	assert.Equal(t, "standard", standardTrace.MatchedTier)
+	assert.InEpsilon(t, 810, standardCost, 1e-9)
+
+	longCost, longTrace, err := billingexpr.RunExpr(expression, billingexpr.TokenParams{P: 100, C: 10, CR: 20, Len: 200001})
+	require.NoError(t, err)
+	assert.Equal(t, "long_context", longTrace.MatchedTier)
+	assert.InEpsilon(t, 1470, longCost, 1e-9)
+}
+
+func TestModelsDevPricingPrefersProviderQualifiedIDBeforeBareID(t *testing.T) {
+	converted := convertModelsDevJSONForTest(t, `{
+		"Open AI": {
+			"models": {
+				"gpt-5.5": {
+					"id": "gpt-5.5",
+					"cost": {"input": 1, "output": 2, "cache_read": 0.1}
+				},
+				"openai/gpt-5.5": {
+					"id": "openai/gpt-5.5",
+					"cost": {"input": 5, "output": 30, "cache_read": 0.5}
+				}
+			}
+		}
+	}`)
+
+	assert.Equal(t, float64(2.5), valueMap(converted["model_ratio"])["gpt-5.5"])
+	assert.Equal(t, float64(6), valueMap(converted["completion_ratio"])["gpt-5.5"])
+	assert.Equal(t, float64(0.1), valueMap(converted["cache_ratio"])["gpt-5.5"])
+	assert.NotContains(t, valueMap(converted[billing_setting.BillingModeField]), "gpt-5.5")
+	assert.NotContains(t, valueMap(converted[billing_setting.BillingExprField]), "gpt-5.5")
+}
+
+func TestModelsDevPricingFallsBackToBareOfficialModelID(t *testing.T) {
+	converted := convertModelsDevJSONForTest(t, `{
+		"unorouter": {
+			"models": {
+				"gpt-5.5": {
+					"id": "gpt-5.5",
+					"cost": {"input": 0.1875, "output": 1.125}
+				}
+			}
+		},
+		"openai": {
+			"models": {
+				"gpt-5.5": {
+					"id": "gpt-5.5",
+					"cost": {"input": 5, "output": 30, "cache_read": 0.5}
+				}
+			}
+		}
+	}`)
+
+	assert.Equal(t, float64(2.5), valueMap(converted["model_ratio"])["gpt-5.5"])
+	assert.Equal(t, float64(6), valueMap(converted["completion_ratio"])["gpt-5.5"])
+	assert.Equal(t, float64(0.1), valueMap(converted["cache_ratio"])["gpt-5.5"])
+}
+
+func TestModelsDevPricingUsesTokenRatiosWithoutTiers(t *testing.T) {
+	converted := convertModelsDevJSONForTest(t, `{
+		"custom": {
+			"models": {
+				"plain-model": {
+					"id": "plain-model",
+					"cost": {
+						"input": 5,
+						"output": 30,
+						"cache_read": 0.5,
+						"cache_write": 10,
+						"input_audio": 20,
+						"output_audio": 80
+					}
+				}
+			}
+		}
+	}`)
+
+	assert.Equal(t, float64(2.5), valueMap(converted["model_ratio"])["plain-model"])
+	assert.Equal(t, float64(6), valueMap(converted["completion_ratio"])["plain-model"])
+	assert.Equal(t, float64(0.1), valueMap(converted["cache_ratio"])["plain-model"])
+	assert.Equal(t, float64(2), valueMap(converted["create_cache_ratio"])["plain-model"])
+	assert.Equal(t, float64(4), valueMap(converted["audio_ratio"])["plain-model"])
+	assert.Equal(t, float64(4), valueMap(converted["audio_completion_ratio"])["plain-model"])
+	assert.Empty(t, valueMap(converted[billing_setting.BillingModeField]))
+	assert.Empty(t, valueMap(converted[billing_setting.BillingExprField]))
+}
+
+func TestModelsDevPricingBuildsGenericContextTiers(t *testing.T) {
+	converted := convertModelsDevJSONForTest(t, `{
+		"custom": {
+			"models": {
+				"context-model": {
+					"id": "context-model",
+					"cost": {
+						"input": 1,
+						"output": 2,
+						"tiers": [
+							{"input": 5, "output": 6, "tier": {"type": "context", "size": 128000}},
+							{"input": 3, "output": 4, "tier": {"type": "context", "size": 32000}}
+						]
+					}
+				}
+			}
+		}
+	}`)
+
+	expression, ok := valueMap(converted[billing_setting.BillingExprField])["context-model"].(string)
+	require.True(t, ok)
+	assert.Equal(t, `len <= 32000 ? tier("standard", p * 1 + c * 2) : len <= 128000 ? tier("context_over_32000", p * 3 + c * 4) : tier("context_over_128000", p * 5 + c * 6)`, expression)
+	_, _, err := billingexpr.RunExpr(expression, billingexpr.TokenParams{P: 1, C: 1, Len: 128001})
+	require.NoError(t, err)
+}
+
+func TestModelsDevPricingSkipsInvalidCostsAndKeepsFreeModels(t *testing.T) {
+	converted := convertModelsDevJSONForTest(t, `{
+		"custom": {
+			"models": {
+				"bad-negative": {"id": "bad-negative", "cost": {"input": -1, "output": 2}},
+				"bad-cache": {"id": "bad-cache", "cost": {"input": 1, "cache_read": -0.1}},
+				"bad-missing": {"id": "bad-missing", "cost": {}},
+				"bad-zero": {"id": "bad-zero", "cost": {"input": 0, "output": 1}},
+				"good-free": {"id": "good-free", "cost": {"input": 0, "output": 0, "cache_read": 0}}
+			}
+		}
+	}`)
+
+	modelRatios := valueMap(converted["model_ratio"])
+	assert.Equal(t, float64(0), modelRatios["good-free"])
+	assert.NotContains(t, modelRatios, "bad-negative")
+	assert.NotContains(t, modelRatios, "bad-cache")
+	assert.NotContains(t, modelRatios, "bad-missing")
+	assert.NotContains(t, modelRatios, "bad-zero")
 }
