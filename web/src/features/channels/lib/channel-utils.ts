@@ -620,7 +620,10 @@ export type TagRow = Channel & {
  * Type guard to check whether a row is a tag aggregate row
  */
 export function isTagAggregateRow(row: Channel | TagRow): row is TagRow {
-  return Array.isArray((row as TagRow).children)
+  return (
+    Array.isArray((row as TagRow).children) &&
+    typeof (row as { id: unknown }).id === 'string'
+  )
 }
 
 export function getChannelTableRowId(row: Channel | TagRow): string {

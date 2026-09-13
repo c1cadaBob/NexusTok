@@ -53,6 +53,22 @@ describe('channel table row identity', () => {
     expect(getChannelTableRowId(channel(202))).toBe('channel:202')
   })
 
+  test('keeps platform site parent rows in the channel namespace', () => {
+    const platformSite = {
+      id: 404,
+      upstream_kind: 'platform_site',
+      children: [
+        {
+          id: 1,
+          is_upstream_key: true,
+          parent_channel_id: 404,
+        } as Channel,
+      ],
+    } as Channel
+
+    expect(getChannelTableRowId(platformSite)).toBe('channel:404')
+  })
+
   test('uses a parent-scoped namespace for upstream key rows', () => {
     const upstreamKey = {
       id: 202,
