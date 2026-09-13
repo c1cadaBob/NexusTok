@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/c1cadaBob/NexusTok/common"
 	"github.com/c1cadaBob/NexusTok/model"
@@ -356,6 +357,45 @@ func TestPersistPlatformSiteSnapshotRebuildsAbilitiesAndAutoDisablesUnavailableK
 		Model:     "gpt-4o",
 	}).First(&ability).Error)
 	assert.True(t, ability.Enabled)
+
+	require.NoError(t, persistPlatformSiteSnapshot(context.Background(), account, PlatformSiteSnapshot{
+		Balance: 5,
+		Models:  []string{"gpt-4o"},
+		Keys:    nil,
+	}))
+
+	remaining = 100
+	require.NoError(t, db.Model(&model.UpstreamKey{}).
+		Where("channel_id = ? AND external_id = ?", channel.Id, "key-1").
+		Updates(map[string]any{
+			"status":          model.UpstreamKeyStatusEnabled,
+			"disabled_reason": "",
+			"remain_quota":    remaining,
+		}).Error)
+
+	var missingKey model.UpstreamKey
+	require.NoError(t, db.Where("channel_id = ? AND external_id = ?", channel.Id, "key-1").First(&missingKey).Error)
+	require.NotZero(t, missingKey.MissingSince)
+	assert.False(t, missingKey.IsRoutable(time.Now()))
+
+	require.NoError(t, persistPlatformSiteSnapshot(context.Background(), account, PlatformSiteSnapshot{
+		Balance: 5,
+		Models:  []string{"gpt-4o"},
+		Keys: []UpstreamKeySnapshot{{
+			ExternalID:  "key-1",
+			Name:        "key",
+			Secret:      "sk-test",
+			Group:       "default",
+			Models:      []string{"gpt-4o"},
+			RemainQuota: &remaining,
+		}},
+	}))
+
+	var restoredKey model.UpstreamKey
+	require.NoError(t, db.Where("channel_id = ? AND external_id = ?", channel.Id, "key-1").First(&restoredKey).Error)
+	assert.Equal(t, model.UpstreamKeyStatusEnabled, restoredKey.Status)
+	assert.Zero(t, restoredKey.MissingSince)
+	assert.True(t, restoredKey.IsRoutable(time.Now()))
 }
 
 func TestPlatformSiteRequestRejectsOversizedResponse(t *testing.T) {

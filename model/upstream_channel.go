@@ -175,6 +175,9 @@ func (key *UpstreamKey) IsRoutable(now time.Time) bool {
 	if key.Status != UpstreamKeyStatusEnabled {
 		return false
 	}
+	if key.MissingSince != 0 {
+		return false
+	}
 	if key.ExpiresAt != nil && !key.ExpiresAt.After(now) {
 		return false
 	}

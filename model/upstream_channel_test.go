@@ -140,6 +140,10 @@ func TestUpstreamKeyIsRoutable(t *testing.T) {
 	key.ExpiresAt = nil
 	remaining = 0
 	assert.False(t, key.IsRoutable(now))
+
+	remaining = 100
+	key.MissingSince = now.Unix()
+	assert.False(t, key.IsRoutable(now))
 }
 
 func TestSelectChannelByUpstreamKeyMergesParentsAndFiltersChildren(t *testing.T) {
