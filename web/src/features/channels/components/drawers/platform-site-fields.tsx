@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { useFormContext } from 'react-hook-form'
+import { useFormContext, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -29,27 +29,60 @@ type PlatformSiteFieldsProps = {
   syncStatus?: UpstreamSiteStatus
 }
 
+const RATIO_COMPARE_EPSILON = 0.0000001
+
+function normalizePlatformNumber(
+  value: number | null | undefined,
+  fallback = 0
+): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    return fallback
+  }
+  return value
+}
+
 export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
   const { t } = useTranslation()
   const form = useFormContext<ChannelFormValues>()
-  const authType = form.watch('platform_site_auth_type')
-  const rechargeAmount = form.watch('platform_site_recharge_amount') || 0
-  const creditedAmount = form.watch('platform_site_credited_amount') || 0
+  const authType = useWatch({
+    control: form.control,
+    name: 'platform_site_auth_type',
+  })
+  const watchedRechargeAmount = useWatch({
+    control: form.control,
+    name: 'platform_site_recharge_amount',
+  })
+  const watchedCreditedAmount = useWatch({
+    control: form.control,
+    name: 'platform_site_credited_amount',
+  })
+  const watchedConversionRatio = useWatch({
+    control: form.control,
+    name: 'platform_site_conversion_ratio',
+  })
+  const watchedRatioIsOverridden = useWatch({
+    control: form.control,
+    name: 'platform_site_conversion_ratio_override',
+  })
+  const rechargeAmount = normalizePlatformNumber(watchedRechargeAmount)
+  const creditedAmount = normalizePlatformNumber(watchedCreditedAmount)
+  const conversionRatio = normalizePlatformNumber(watchedConversionRatio, 1)
   const previewRatio =
     creditedAmount > 0 ? rechargeAmount / creditedAmount : undefined
-  const ratioIsOverridden = form.watch(
-    'platform_site_conversion_ratio_override'
-  )
+  const ratioIsOverridden = watchedRatioIsOverridden === true
 
   useEffect(() => {
     if (props.isEditing || ratioIsOverridden || previewRatio === undefined) {
       return
     }
+    if (Math.abs(conversionRatio - previewRatio) <= RATIO_COMPARE_EPSILON) {
+      return
+    }
     form.setValue('platform_site_conversion_ratio', previewRatio, {
       shouldDirty: false,
-      shouldValidate: true,
+      shouldValidate: false,
     })
-  }, [form, previewRatio, props.isEditing, ratioIsOverridden])
+  }, [conversionRatio, form, previewRatio, props.isEditing, ratioIsOverridden])
 
   return (
     <fieldset
@@ -262,7 +295,9 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
                   step='0.001'
                   {...field}
                   onChange={(event) =>
-                    field.onChange(event.target.valueAsNumber || 0)
+                    field.onChange(
+                      normalizePlatformNumber(event.target.valueAsNumber)
+                    )
                   }
                 />
               </FormControl>
@@ -283,7 +318,9 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
                   step='0.001'
                   {...field}
                   onChange={(event) =>
-                    field.onChange(event.target.valueAsNumber || 0)
+                    field.onChange(
+                      normalizePlatformNumber(event.target.valueAsNumber)
+                    )
                   }
                 />
               </FormControl>
@@ -302,7 +339,7 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
               if (previewRatio !== undefined) {
                 if (ratioIsOverridden) {
                   ratioDescription = t('Manual ratio override: {{ratio}}.', {
-                    ratio: field.value.toFixed(3),
+                    ratio: conversionRatio.toFixed(3),
                   })
                 } else {
                   ratioDescription = t(
@@ -322,7 +359,9 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
                       step='0.001'
                       {...field}
                       onChange={(event) => {
-                        field.onChange(event.target.valueAsNumber || 0)
+                        field.onChange(
+                          normalizePlatformNumber(event.target.valueAsNumber)
+                        )
                         form.setValue(
                           'platform_site_conversion_ratio_override',
                           true,
@@ -354,7 +393,7 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
                         form.setValue(
                           'platform_site_conversion_ratio',
                           previewRatio ?? 1,
-                          { shouldDirty: true, shouldValidate: true }
+                          { shouldDirty: true, shouldValidate: false }
                         )
                       }
                     }}
