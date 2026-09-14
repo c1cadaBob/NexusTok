@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,12 +41,13 @@ const (
 )
 
 type PlatformSiteCredential struct {
-	Username     string `json:"username,omitempty"`
-	Password     string `json:"password,omitempty"`
-	AccessToken  string `json:"access_token,omitempty"`
-	RefreshToken string `json:"refresh_token,omitempty"`
-	AdminKey     string `json:"admin_key,omitempty"`
-	Cookie       string `json:"cookie,omitempty"`
+	Username       string `json:"username,omitempty"`
+	Password       string `json:"password,omitempty"`
+	AccessToken    string `json:"access_token,omitempty"`
+	RefreshToken   string `json:"refresh_token,omitempty"`
+	TokenExpiresAt int64  `json:"token_expires_at,omitempty"`
+	AdminKey       string `json:"admin_key,omitempty"`
+	Cookie         string `json:"cookie,omitempty"`
 }
 
 type PlatformSiteAccount struct {
@@ -108,6 +110,7 @@ func (credential PlatformSiteCredential) Fingerprint() string {
 		credential.Password,
 		credential.AccessToken,
 		credential.RefreshToken,
+		strconv.FormatInt(credential.TokenExpiresAt, 10),
 		credential.AdminKey,
 		credential.Cookie,
 	}, "\x00"))

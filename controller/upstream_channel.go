@@ -25,6 +25,7 @@ type PlatformSiteInput struct {
 	Username        string   `json:"username"`
 	Password        string   `json:"password"`
 	AccessToken     string   `json:"access_token"`
+	RefreshToken    string   `json:"refresh_token"`
 	AdminKey        string   `json:"admin_key"`
 	Cookie          string   `json:"cookie"`
 	RechargeAmount  *float64 `json:"recharge_amount"`
@@ -105,11 +106,12 @@ func validatePlatformSiteInput(input *PlatformSiteInput, existing *model.Platfor
 		return model.PlatformSiteCredential{}, 0, err
 	}
 	credential := model.PlatformSiteCredential{
-		Username:    strings.TrimSpace(input.Username),
-		Password:    input.Password,
-		AccessToken: strings.TrimSpace(input.AccessToken),
-		AdminKey:    strings.TrimSpace(input.AdminKey),
-		Cookie:      input.Cookie,
+		Username:     strings.TrimSpace(input.Username),
+		Password:     input.Password,
+		AccessToken:  strings.TrimSpace(input.AccessToken),
+		RefreshToken: strings.TrimSpace(input.RefreshToken),
+		AdminKey:     strings.TrimSpace(input.AdminKey),
+		Cookie:       input.Cookie,
 	}
 	switch input.AuthType {
 	case model.UpstreamAuthPassword:
@@ -199,6 +201,9 @@ func savePlatformSiteAccount(channelID int, input *PlatformSiteInput, existing *
 				if merged.AccessToken == "" {
 					merged.AccessToken = credential.AccessToken
 				}
+				if merged.RefreshToken == "" {
+					merged.RefreshToken = credential.RefreshToken
+				}
 			case model.UpstreamAuthAdminKey:
 				if merged.AdminKey == "" {
 					merged.AdminKey = credential.AdminKey
@@ -257,7 +262,7 @@ func savePlatformSiteAccount(channelID int, input *PlatformSiteInput, existing *
 }
 
 func hasCredentialInput(input *PlatformSiteInput) bool {
-	return input != nil && (input.Username != "" || input.Password != "" || input.AccessToken != "" || input.AdminKey != "" || input.Cookie != "")
+	return input != nil && (input.Username != "" || input.Password != "" || input.AccessToken != "" || input.RefreshToken != "" || input.AdminKey != "" || input.Cookie != "")
 }
 
 func redactBaseURL(raw string) string {

@@ -453,6 +453,9 @@ func syncPlatformSite(ctx context.Context, channelID int) error {
 				snapshot, err = adapter.FetchSnapshot(ctx, session)
 				if err == nil {
 					err = persistPlatformSiteSnapshot(ctx, &account, snapshot)
+					if err == nil && session.CredentialUpdate != nil {
+						err = persistPlatformSiteCredential(&account, *session.CredentialUpdate)
+					}
 				}
 			}
 		}
@@ -488,6 +491,21 @@ func syncPlatformSite(ctx context.Context, channelID int) error {
 	}
 	model.InitChannelCache()
 	return nil
+}
+
+func persistPlatformSiteCredential(account *model.PlatformSiteAccount, credential model.PlatformSiteCredential) error {
+	if account == nil {
+		return errors.New("平台站点不存在")
+	}
+	ciphertext, err := model.EncryptPlatformSiteCredential(credential)
+	if err != nil {
+		return err
+	}
+	return model.DB.Model(account).Updates(map[string]any{
+		"credential_ciphertext":  ciphertext,
+		"credential_key_version": "v1",
+		"credential_fingerprint": credential.Fingerprint(),
+	}).Error
 }
 
 func safeUpstreamError(err error) string {

@@ -81,6 +81,37 @@ func TestNewAPIAdapterAdminKeySkipsPasswordLogin(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestNewAPIAdapterRefreshesRotatingSession(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/user/auth/refresh":
+			assert.Equal(t, "Bearer old-access", request.Header.Get("Authorization"))
+			body, readErr := io.ReadAll(request.Body)
+			require.NoError(t, readErr)
+			assert.Contains(t, string(body), `"refresh_token":"old-refresh"`)
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600}}`))
+		case "/api/user/self":
+			assert.Equal(t, "Bearer new-access", request.Header.Get("Authorization"))
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"quota":1}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	adapter := NewNewAPIAdapter(server.Client())
+	session, err := adapter.Authenticate(context.Background(), server.URL, model.PlatformSiteCredential{
+		AccessToken:  "old-access",
+		RefreshToken: "old-refresh",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, session.CredentialUpdate)
+	assert.Equal(t, "new-access", session.CredentialUpdate.AccessToken)
+	assert.Equal(t, "new-refresh", session.CredentialUpdate.RefreshToken)
+	assert.Greater(t, session.CredentialUpdate.TokenExpiresAt, common.GetTimestamp())
+}
+
 func TestNewAPIAdapterRejectsInteractiveLoginVerification(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
@@ -100,6 +131,36 @@ func TestNewAPIAdapterRejectsInteractiveLoginVerification(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrPlatformSiteAuth)
 	assert.NotContains(t, err.Error(), "flow")
+}
+
+func TestSub2APIAdapterRefreshesRotatingSession(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v1/auth/refresh":
+			assert.Equal(t, "Bearer old-access", request.Header.Get("Authorization"))
+			body, readErr := io.ReadAll(request.Body)
+			require.NoError(t, readErr)
+			assert.Contains(t, string(body), `"refresh_token":"old-refresh"`)
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600}}`))
+		case "/api/v1/auth/me":
+			assert.Equal(t, "Bearer new-access", request.Header.Get("Authorization"))
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"balance":1}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	adapter := NewSub2APIAdapter(server.Client())
+	session, err := adapter.Authenticate(context.Background(), server.URL, model.PlatformSiteCredential{
+		AccessToken:  "old-access",
+		RefreshToken: "old-refresh",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, session.CredentialUpdate)
+	assert.Equal(t, "new-access", session.CredentialUpdate.AccessToken)
+	assert.Equal(t, "new-refresh", session.CredentialUpdate.RefreshToken)
 }
 
 func TestSub2APIAdapterAdminKeyReadsNestedCredentialAndPagination(t *testing.T) {
@@ -281,6 +342,49 @@ func TestPersistPlatformSiteSnapshotIsolatesUnavailableKeys(t *testing.T) {
 	var savedAccount model.PlatformSiteAccount
 	require.NoError(t, db.Where("channel_id = ?", channel.Id).First(&savedAccount).Error)
 	assert.Equal(t, 7.0, savedAccount.Balance)
+}
+
+func TestPersistPlatformSiteCredentialStoresOnlyEncryptedRotatedValues(t *testing.T) {
+	previousDB := model.DB
+	previousSecret := common.CryptoSecret
+	common.CryptoSecret = "upstream-site-credential-update-test-secret"
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.PlatformSiteAccount{}))
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = previousDB
+		common.CryptoSecret = previousSecret
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	account := &model.PlatformSiteAccount{
+		ChannelID:            15,
+		Platform:             model.PlatformSub2API,
+		BaseURL:              "https://upstream.example",
+		CredentialCiphertext: "old-ciphertext",
+		CredentialKeyVersion: "v1",
+	}
+	require.NoError(t, db.Create(account).Error)
+	credential := model.PlatformSiteCredential{
+		AccessToken:    "rotated-access",
+		RefreshToken:   "rotated-refresh",
+		TokenExpiresAt: common.GetTimestamp() + 3600,
+	}
+	require.NoError(t, persistPlatformSiteCredential(account, credential))
+
+	var saved model.PlatformSiteAccount
+	require.NoError(t, db.First(&saved, account.ID).Error)
+	assert.NotContains(t, saved.CredentialCiphertext, credential.AccessToken)
+	assert.NotContains(t, saved.CredentialCiphertext, credential.RefreshToken)
+	assert.NotEqual(t, "old-ciphertext", saved.CredentialCiphertext)
+	decrypted, err := model.DecryptPlatformSiteCredential(saved.CredentialCiphertext)
+	require.NoError(t, err)
+	assert.Equal(t, credential, decrypted)
 }
 
 func TestPersistPlatformSiteSnapshotRebuildsAbilitiesAndAutoDisablesUnavailableKeys(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/c1cadaBob/NexusTok/model"
 )
@@ -27,6 +28,24 @@ func (adapter *NewAPIAdapter) Platform() string {
 
 func (adapter *NewAPIAdapter) Authenticate(ctx context.Context, baseURL string, credential model.PlatformSiteCredential) (*PlatformSiteSession, error) {
 	headers := make(http.Header)
+	session, err := newPlatformSiteSession(baseURL, headers)
+	if err != nil {
+		return nil, err
+	}
+	if adapter.client != nil {
+		session.Client = adapter.client
+	}
+	if credential.RefreshToken != "" && credential.Username == "" &&
+		credential.AdminKey == "" && credential.Cookie == "" {
+		if err := refreshPlatformSiteSession(
+			ctx,
+			session,
+			"/api/user/auth/refresh",
+			&credential,
+		); err != nil {
+			return nil, err
+		}
+	}
 	if credential.AccessToken != "" {
 		headers.Set("Authorization", bearerToken(credential.AccessToken))
 	}
@@ -37,13 +56,6 @@ func (adapter *NewAPIAdapter) Authenticate(ctx context.Context, baseURL string, 
 	}
 	if credential.Cookie != "" {
 		headers.Set("Cookie", credential.Cookie)
-	}
-	session, err := newPlatformSiteSession(baseURL, headers)
-	if err != nil {
-		return nil, err
-	}
-	if adapter.client != nil {
-		session.Client = adapter.client
 	}
 	if credential.AccessToken == "" && credential.AdminKey == "" && credential.Cookie == "" {
 		if strings.TrimSpace(credential.Username) == "" || credential.Password == "" {
@@ -61,6 +73,13 @@ func (adapter *NewAPIAdapter) Authenticate(ctx context.Context, baseURL string, 
 		}
 		if token := findToken(payload); token != "" {
 			session.Headers.Set("Authorization", bearerToken(token))
+		}
+		if refreshToken := findRefreshToken(payload); refreshToken != "" {
+			updatedCredential := credential
+			updatedCredential.AccessToken = ""
+			updatedCredential.RefreshToken = refreshToken
+			updatedCredential.TokenExpiresAt = findTokenExpiresAt(payload)
+			session.CredentialUpdate = &updatedCredential
 		}
 	}
 	if _, err := platformSiteRequest(ctx, session, http.MethodGet, "/api/user/self", nil, nil); err != nil {
@@ -154,6 +173,24 @@ func (adapter *Sub2APIAdapter) Platform() string {
 
 func (adapter *Sub2APIAdapter) Authenticate(ctx context.Context, baseURL string, credential model.PlatformSiteCredential) (*PlatformSiteSession, error) {
 	headers := make(http.Header)
+	session, err := newPlatformSiteSession(baseURL, headers)
+	if err != nil {
+		return nil, err
+	}
+	if adapter.client != nil {
+		session.Client = adapter.client
+	}
+	if credential.RefreshToken != "" && credential.Username == "" &&
+		credential.AdminKey == "" && credential.Cookie == "" {
+		if err := refreshPlatformSiteSession(
+			ctx,
+			session,
+			"/api/v1/auth/refresh",
+			&credential,
+		); err != nil {
+			return nil, err
+		}
+	}
 	switch {
 	case credential.AdminKey != "":
 		headers.Set("Authorization", bearerToken(credential.AdminKey))
@@ -162,13 +199,6 @@ func (adapter *Sub2APIAdapter) Authenticate(ctx context.Context, baseURL string,
 		headers.Set("Authorization", bearerToken(credential.AccessToken))
 	case credential.Cookie != "":
 		headers.Set("Cookie", credential.Cookie)
-	}
-	session, err := newPlatformSiteSession(baseURL, headers)
-	if err != nil {
-		return nil, err
-	}
-	if adapter.client != nil {
-		session.Client = adapter.client
 	}
 	if credential.AdminKey == "" && credential.AccessToken == "" && credential.Cookie == "" {
 		if strings.TrimSpace(credential.Username) == "" || credential.Password == "" {
@@ -187,6 +217,13 @@ func (adapter *Sub2APIAdapter) Authenticate(ctx context.Context, baseURL string,
 		}
 		if token := findToken(payload); token != "" {
 			session.Headers.Set("Authorization", bearerToken(token))
+		}
+		if refreshToken := findRefreshToken(payload); refreshToken != "" {
+			updatedCredential := credential
+			updatedCredential.AccessToken = ""
+			updatedCredential.RefreshToken = refreshToken
+			updatedCredential.TokenExpiresAt = findTokenExpiresAt(payload)
+			session.CredentialUpdate = &updatedCredential
 		}
 	}
 	if _, err := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/auth/me", nil, nil); err != nil {
@@ -227,6 +264,38 @@ func bearerToken(token string) string {
 	return "Bearer " + strings.TrimSpace(token)
 }
 
+func refreshPlatformSiteSession(
+	ctx context.Context,
+	session *PlatformSiteSession,
+	path string,
+	credential *model.PlatformSiteCredential,
+) error {
+	if credential == nil || strings.TrimSpace(credential.RefreshToken) == "" {
+		return fmt.Errorf("%w: 缺少刷新令牌", ErrPlatformSiteAuth)
+	}
+	if strings.TrimSpace(credential.AccessToken) != "" {
+		session.Headers.Set("Authorization", bearerToken(credential.AccessToken))
+	}
+	payload, err := platformSiteRequest(ctx, session, http.MethodPost, path, nil, map[string]string{
+		"refresh_token": credential.RefreshToken,
+	})
+	if err != nil {
+		return fmt.Errorf("%w: 刷新会话失败", ErrPlatformSiteAuth)
+	}
+	accessToken := findToken(payload)
+	refreshToken := findRefreshToken(payload)
+	if accessToken == "" || refreshToken == "" {
+		return fmt.Errorf("%w: 刷新会话响应不完整", ErrPlatformSiteAuth)
+	}
+	credential.AccessToken = accessToken
+	credential.RefreshToken = refreshToken
+	credential.TokenExpiresAt = findTokenExpiresAt(payload)
+	session.Headers.Set("Authorization", bearerToken(accessToken))
+	updatedCredential := *credential
+	session.CredentialUpdate = &updatedCredential
+	return nil
+}
+
 func findToken(payload any) string {
 	record := firstRecord(payload)
 	if token := firstString(record, "access_token", "token", "accessToken", "jwt"); token != "" {
@@ -236,6 +305,43 @@ func findToken(payload any) string {
 		return findToken(data)
 	}
 	return ""
+}
+
+func findRefreshToken(payload any) string {
+	record := firstRecord(payload)
+	if token := firstString(record, "refresh_token", "refreshToken"); token != "" {
+		return token
+	}
+	for _, key := range []string{"data", "result", "auth_bundle"} {
+		if nested, ok := record[key]; ok {
+			if token := findRefreshToken(nested); token != "" {
+				return token
+			}
+		}
+	}
+	return ""
+}
+
+func findTokenExpiresAt(payload any) int64 {
+	record := firstRecord(payload)
+	for _, key := range []string{"access_expires_at", "token_expires_at", "expires_at"} {
+		value := firstFloat(record, key)
+		if value > 0 && !math.IsInf(value, 0) && !math.IsNaN(value) {
+			return int64(value)
+		}
+	}
+	if expiresIn := firstFloat(record, "expires_in"); expiresIn > 0 &&
+		!math.IsInf(expiresIn, 0) && !math.IsNaN(expiresIn) {
+		return time.Now().Add(time.Duration(expiresIn) * time.Second).Unix()
+	}
+	for _, key := range []string{"data", "result", "auth_bundle"} {
+		if nested, ok := record[key]; ok {
+			if value := findTokenExpiresAt(nested); value > 0 {
+				return value
+			}
+		}
+	}
+	return 0
 }
 
 func loginRequiresInteractiveVerification(payload any) bool {
