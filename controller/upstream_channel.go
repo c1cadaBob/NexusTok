@@ -50,25 +50,21 @@ type UpstreamSiteStatusResponse struct {
 }
 
 type UpstreamKeyResponse struct {
-	ID                      uint       `json:"id"`
-	ChannelID               int        `json:"channel_id"`
-	ExternalID              string     `json:"external_id"`
-	Name                    string     `json:"name"`
-	KeyPreview              string     `json:"key_preview"`
-	Models                  []string   `json:"models"`
-	KeyPriority             int64      `json:"key_priority"`
-	SourceConversionRatio   float64    `json:"source_conversion_ratio"`
-	ConversionRatio         float64    `json:"conversion_ratio"`
-	ConversionRatioOverride *float64   `json:"conversion_ratio_override"`
-	Weight                  int        `json:"weight"`
-	WeightOverride          *int       `json:"weight_override"`
-	UsedQuota               int64      `json:"used_quota"`
-	RemainQuota             *int64     `json:"remain_quota"`
-	ExpiresAt               *time.Time `json:"expires_at"`
-	Status                  int        `json:"status"`
-	DisabledReason          string     `json:"disabled_reason"`
-	LastSyncAt              int64      `json:"last_sync_at"`
-	LastUsedAt              int64      `json:"last_used_at"`
+	ID                      uint     `json:"id"`
+	ChannelID               int      `json:"channel_id"`
+	ExternalID              string   `json:"external_id"`
+	Name                    string   `json:"name"`
+	KeyPreview              string   `json:"key_preview"`
+	Models                  []string `json:"models"`
+	KeyPriority             int64    `json:"key_priority"`
+	SourceConversionRatio   float64  `json:"source_conversion_ratio"`
+	ConversionRatio         float64  `json:"conversion_ratio"`
+	ConversionRatioOverride *float64 `json:"conversion_ratio_override"`
+	Weight                  int      `json:"weight"`
+	WeightOverride          *int     `json:"weight_override"`
+	Status                  int      `json:"status"`
+	DisabledReason          string   `json:"disabled_reason"`
+	LastSyncAt              int64    `json:"last_sync_at"`
 }
 
 type UpstreamKeyPatchRequest struct {
@@ -302,26 +298,26 @@ func getPlatformSiteChannel(channelID int) (*model.Channel, error) {
 }
 
 func toUpstreamKeyResponse(key *model.UpstreamKey) UpstreamKeyResponse {
+	models := key.GetModels()
+	if models == nil {
+		models = []string{}
+	}
 	return UpstreamKeyResponse{
 		ID:                      key.ID,
 		ChannelID:               key.ChannelID,
 		ExternalID:              key.ExternalID,
 		Name:                    key.Name,
 		KeyPreview:              upstreamKeyPreview(key),
-		Models:                  key.GetModels(),
+		Models:                  models,
 		KeyPriority:             key.KeyPriority,
 		SourceConversionRatio:   key.EffectiveSourceConversionRatio(),
 		ConversionRatio:         key.ConversionRatio,
 		ConversionRatioOverride: key.ConversionRatioOverride,
 		Weight:                  key.EffectiveWeight(),
 		WeightOverride:          key.WeightOverride,
-		UsedQuota:               key.UsedQuota,
-		RemainQuota:             key.RemainQuota,
-		ExpiresAt:               key.ExpiresAt,
 		Status:                  key.Status,
 		DisabledReason:          key.DisabledReason,
 		LastSyncAt:              key.LastSyncAt,
-		LastUsedAt:              key.LastUsedAt,
 	}
 }
 
@@ -447,7 +443,7 @@ func PatchUpstreamKey(c *gin.Context) {
 		updates["weight"] = weight
 		effectiveRatio = autoRatio
 	}
-	if effectiveRatio == 0 && (request.ClearWeight || request.WeightOverride != nil) {
+	if effectiveRatio == 0 && request.WeightOverride != nil {
 		common.ApiError(c, errors.New("免费密钥的权重固定为 2000，不允许修改"))
 		return
 	}

@@ -441,16 +441,14 @@ export interface UpstreamKey {
   key_preview?: string
   models: string[]
   key_priority: number
+  source_conversion_ratio: number
   conversion_ratio: number
+  conversion_ratio_override?: number | null
   weight: number
   weight_override?: number | null
-  used_quota: number
-  remain_quota?: number | null
-  expires_at?: string | null
   status: number
   disabled_reason?: string
   last_sync_at: number
-  last_used_at: number
 }
 
 export interface UpstreamSiteStatusResponse {

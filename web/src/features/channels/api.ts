@@ -195,6 +195,7 @@ export async function patchUpstreamKey(
   data: Partial<
     Pick<UpstreamKey, 'key_priority' | 'conversion_ratio' | 'weight_override'>
   > & {
+    clear_conversion_ratio?: boolean
     clear_weight?: boolean
   }
 ): Promise<{ success: boolean; message?: string; data?: UpstreamKey }> {

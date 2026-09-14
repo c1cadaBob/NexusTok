@@ -87,6 +87,7 @@ describe('channel table row identity', () => {
         id: 1,
         name: 'Production',
         external_id: 'prod-key',
+        key_preview: 'sk-prod...mask',
         models: ['gpt-4o', 'claude-3-7'],
         status: 1,
       },
@@ -94,6 +95,7 @@ describe('channel table row identity', () => {
         id: 2,
         name: 'Disabled backup',
         external_id: 'backup-key',
+        key_preview: 'sk-backup...mask',
         models: ['gpt-4o-mini'],
         status: 2,
       },
@@ -108,6 +110,9 @@ describe('channel table row identity', () => {
     ).toEqual([1])
     expect(
       filterUpstreamKeys(keys, { status: ['disabled'] }).map((key) => key.id)
+    ).toEqual([2])
+    expect(
+      filterUpstreamKeys(keys, { keyword: 'backup...' }).map((key) => key.id)
     ).toEqual([2])
   })
 

@@ -656,7 +656,12 @@ export function filterUpstreamKeys(
 
   return keys.filter((key) => {
     if (keyword) {
-      const searchableText = [key.name, key.external_id, ...key.models]
+      const searchableText = [
+        key.name,
+        key.external_id,
+        key.key_preview,
+        ...key.models,
+      ]
         .join(' ')
         .toLocaleLowerCase()
       if (!searchableText.includes(keyword)) {

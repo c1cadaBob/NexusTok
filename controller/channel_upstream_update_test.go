@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"testing"
 
 	"github.com/c1cadaBob/NexusTok/common"
@@ -415,6 +416,91 @@ func TestFetchNewAPIModelsUsesOpenAIContract(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, []string{"gpt-5", "gpt-5-mini"}, models)
+}
+
+func TestPatchUpstreamKeyClearsWeightWhenRestoredRatioIsFree(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(
+		&model.PlatformSiteAccount{},
+		&model.UpstreamKey{},
+		&model.AuditLog{},
+	))
+
+	channel := &model.Channel{
+		Name:         "free platform site",
+		Type:         constant.ChannelTypeNewAPI,
+		UpstreamKind: model.UpstreamKindPlatformSite,
+		Status:       common.ChannelStatusEnabled,
+	}
+	require.NoError(t, db.Create(channel).Error)
+	require.NoError(t, db.Create(&model.PlatformSiteAccount{
+		ChannelID:       channel.Id,
+		Platform:        model.PlatformNewAPI,
+		BaseURL:         "https://upstream.example",
+		AuthType:        model.UpstreamAuthAccessToken,
+		ConversionRatio: 0,
+	}).Error)
+
+	ratioOverride := 0.5
+	weightOverride := 100
+	key := &model.UpstreamKey{
+		ChannelID:               channel.Id,
+		ExternalID:              "free-key",
+		ConversionRatio:         ratioOverride,
+		ConversionRatioOverride: &ratioOverride,
+		Weight:                  1500,
+		WeightOverride:          &weightOverride,
+		Status:                  model.UpstreamKeyStatusEnabled,
+	}
+	require.NoError(t, db.Create(key).Error)
+
+	body, err := common.Marshal(map[string]any{
+		"clear_conversion_ratio": true,
+		"clear_weight":           true,
+	})
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Set("id", 1)
+	ctx.Set("role", common.RoleRootUser)
+	ctx.Params = gin.Params{
+		{Key: "id", Value: strconv.Itoa(channel.Id)},
+		{Key: "keyId", Value: strconv.Itoa(int(key.ID))},
+	}
+	ctx.Request = httptest.NewRequest(http.MethodPatch, "/api/channel/upstream-keys", bytes.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	PatchUpstreamKey(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.JSONEq(t, `{
+		"success": true,
+		"message": "",
+		"data": {
+			"id": 1,
+			"channel_id": 1,
+			"external_id": "free-key",
+			"name": "",
+			"key_preview": "",
+			"models": [],
+			"key_priority": 0,
+			"source_conversion_ratio": 1,
+			"conversion_ratio": 0,
+			"conversion_ratio_override": null,
+			"weight": 2000,
+			"weight_override": null,
+			"status": 1,
+			"disabled_reason": "",
+			"last_sync_at": 0
+		}
+	}`, recorder.Body.String())
+
+	var saved model.UpstreamKey
+	require.NoError(t, db.First(&saved, key.ID).Error)
+	assert.Zero(t, saved.ConversionRatio)
+	assert.Nil(t, saved.ConversionRatioOverride)
+	assert.Equal(t, model.MaxUpstreamKeyWeight, saved.Weight)
+	assert.Nil(t, saved.WeightOverride)
 }
 
 func TestNormalizeModelNames(t *testing.T) {

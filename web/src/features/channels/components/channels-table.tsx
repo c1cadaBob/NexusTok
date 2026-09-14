@@ -20,9 +20,11 @@ import { useQueries, useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
 import type {
   ColumnFiltersState,
+  ExpandedState,
   OnChangeFn,
   SortingState,
   Row,
+  Updater,
 } from '@tanstack/react-table'
 import { Eye, EyeOff } from 'lucide-react'
 import { Fragment, useState, useMemo, useEffect, useCallback } from 'react'
@@ -82,6 +84,7 @@ const CHANNELS_COLUMN_VISIBILITY_STORAGE_KEY = 'channels:column-visibility'
 const CHANNELS_COLUMN_SIZING_STORAGE_KEY = 'channels:column-sizing'
 const CHANNELS_VIEW_MODE_STORAGE_KEY = 'channels:view-mode'
 const CHANNELS_STATUS_FILTER_STORAGE_KEY = 'channel-status-filter'
+const CHANNELS_UPSTREAM_EXPANDED_STORAGE_KEY = 'channels:upstream-expanded:v1'
 
 const CHANNEL_SORTABLE_COLUMNS = new Set<ChannelSortBy>([
   'id',
@@ -108,6 +111,68 @@ function getChannelColumnClassName(columnId: string) {
   return 'text-center'
 }
 
+function resolveTableUpdater<TValue>(
+  updater: Updater<TValue>,
+  previous: TValue
+): TValue {
+  return typeof updater === 'function'
+    ? (updater as (old: TValue) => TValue)(previous)
+    : updater
+}
+
+function readUpstreamExpandedState(): ExpandedState {
+  if (typeof window === 'undefined') {
+    return {}
+  }
+
+  try {
+    const raw = window.localStorage.getItem(
+      CHANNELS_UPSTREAM_EXPANDED_STORAGE_KEY
+    )
+    if (!raw) {
+      return {}
+    }
+    const ids = JSON.parse(raw) as unknown
+    if (!Array.isArray(ids)) {
+      return {}
+    }
+    return ids.reduce<Record<string, boolean>>((state, id) => {
+      if (typeof id === 'number' && Number.isInteger(id) && id > 0) {
+        state[`channel:${id}`] = true
+      }
+      return state
+    }, {})
+  } catch {
+    return {}
+  }
+}
+
+function persistUpstreamExpandedState(expanded: ExpandedState): void {
+  if (typeof window === 'undefined' || expanded === true) {
+    return
+  }
+
+  try {
+    const ids = Object.entries(expanded)
+      .filter(([, value]) => value)
+      .map(([rowId]) => {
+        const prefix = 'channel:'
+        if (!rowId.startsWith(prefix)) {
+          return null
+        }
+        const id = Number(rowId.slice(prefix.length))
+        return Number.isInteger(id) && id > 0 ? id : null
+      })
+      .filter((id): id is number => id !== null)
+    window.localStorage.setItem(
+      CHANNELS_UPSTREAM_EXPANDED_STORAGE_KEY,
+      JSON.stringify(ids)
+    )
+  } catch {
+    // Storage can be unavailable; expansion still works for the current page.
+  }
+}
+
 export function ChannelsTable() {
   const { t } = useTranslation()
   const {
@@ -121,6 +186,9 @@ export function ChannelsTable() {
 
   // Table state
   const [sorting, setSorting] = useState<SortingState>([])
+  const [expanded, setExpanded] = useState<ExpandedState>(() =>
+    readUpstreamExpandedState()
+  )
 
   // URL state management
   const {
@@ -226,6 +294,17 @@ export function ChannelsTable() {
       return next
     })
   }
+
+  const handleExpandedChange: OnChangeFn<ExpandedState> = useCallback(
+    (updater) => {
+      setExpanded((previous) => {
+        const next = resolveTableUpdater(updater, previous)
+        persistUpstreamExpandedState(next)
+        return next
+      })
+    },
+    []
+  )
 
   // Fetch groups for filter
   const { data: groupsData } = useQuery({
@@ -416,6 +495,7 @@ export function ChannelsTable() {
       ? false
       : CHANNELS_COLUMN_SIZING_STORAGE_KEY,
     columnFilters,
+    expanded,
     pagination,
     globalFilter,
     enableRowSelection: batchMode
@@ -423,6 +503,7 @@ export function ChannelsTable() {
       : false,
     onSortingChange: handleSortingChange,
     onColumnFiltersChange: handleColumnFiltersChange,
+    onExpandedChange: handleExpandedChange,
     onPaginationChange,
     onGlobalFilterChange,
     getRowId: getChannelTableRowId,

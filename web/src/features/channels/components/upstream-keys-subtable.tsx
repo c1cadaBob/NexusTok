@@ -27,7 +27,7 @@ import {
   Power,
   PowerOff,
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -36,6 +36,7 @@ import { Dialog } from '@/components/dialog'
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
 import { TruncatedText } from '@/components/truncated-text'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -46,6 +47,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import {
   Tooltip,
   TooltipContent,
@@ -53,7 +55,6 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { toIntlLocale } from '@/i18n/languages'
-import { formatQuotaWithCurrency } from '@/lib/currency'
 import { formatTimestampToDate } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 import { createServerError } from '@/lib/server-error-message'
@@ -97,20 +98,19 @@ function getUpstreamKeyStatusConfig(status: number): {
   return { label: config.label, variant: config.variant }
 }
 
-function formatOptionalQuota(value: number | null | undefined): string {
-  if (value === null || value === undefined) {
-    return '-'
-  }
-
-  return formatQuotaWithCurrency(value, {
-    digitsLarge: 2,
-    digitsSmall: 4,
-    abbreviate: true,
-  })
-}
-
 function getKeyDisplayName(upstreamKey: UpstreamKey): string {
   return upstreamKey.name || upstreamKey.external_id || `#${upstreamKey.id}`
+}
+
+function hasConversionRatioOverride(upstreamKey: UpstreamKey): boolean {
+  return (
+    upstreamKey.conversion_ratio_override !== null &&
+    upstreamKey.conversion_ratio_override !== undefined
+  )
+}
+
+function isFreeUpstreamKey(upstreamKey: UpstreamKey): boolean {
+  return upstreamKey.conversion_ratio === 0
 }
 
 function getEffectiveWeight(upstreamKey: UpstreamKey): number {
@@ -120,7 +120,122 @@ function getEffectiveWeight(upstreamKey: UpstreamKey): number {
   return upstreamKey.weight_override ?? upstreamKey.weight
 }
 
-function LastUsedCell({ timestamp }: { timestamp: number }) {
+function useUpstreamKeySelection(channel: Channel, keys: UpstreamKey[]) {
+  const { t } = useTranslation()
+  const queryClient = useQueryClient()
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set())
+  const [isBatchUpdating, setIsBatchUpdating] = useState(false)
+
+  useEffect(() => {
+    const visibleIds = new Set(keys.map((upstreamKey) => upstreamKey.id))
+    setSelectedIds((previous) => {
+      const next = new Set<number>()
+      for (const id of previous) {
+        if (visibleIds.has(id)) {
+          next.add(id)
+        }
+      }
+      if (next.size === previous.size) {
+        return previous
+      }
+      return next
+    })
+  }, [keys])
+
+  const selectedIdList = useMemo(() => [...selectedIds], [selectedIds])
+  const allSelected = keys.length > 0 && selectedIds.size === keys.length
+  const partiallySelected =
+    selectedIds.size > 0 && selectedIds.size < keys.length
+
+  const toggleSelected = useCallback((id: number, checked: boolean) => {
+    setSelectedIds((previous) => {
+      const next = new Set(previous)
+      if (checked) {
+        next.add(id)
+      } else {
+        next.delete(id)
+      }
+      return next
+    })
+  }, [])
+
+  const toggleAll = useCallback(
+    (checked: boolean) => {
+      if (!checked) {
+        setSelectedIds(new Set())
+        return
+      }
+      setSelectedIds(new Set(keys.map((upstreamKey) => upstreamKey.id)))
+    },
+    [keys]
+  )
+
+  const clearSelection = useCallback(() => {
+    setSelectedIds(new Set())
+  }, [])
+
+  const updateSelectedStatus = useCallback(
+    async (status: number) => {
+      if (selectedIdList.length === 0) {
+        return
+      }
+
+      setIsBatchUpdating(true)
+      try {
+        const response = await batchUpdateUpstreamKeyStatus(
+          channel.id,
+          selectedIdList,
+          status
+        )
+        if (!response.success) {
+          throw createServerError(response, t('Operation failed'))
+        }
+        toast.success(t('Operation successful'))
+        setSelectedIds(new Set())
+        await Promise.all([
+          queryClient.invalidateQueries({
+            queryKey: ['upstream-keys', channel.id],
+          }),
+          queryClient.invalidateQueries({
+            queryKey: channelsQueryKeys.lists(),
+          }),
+        ])
+      } catch (error: unknown) {
+        handleServerError(error, t('Operation failed'))
+      } finally {
+        setIsBatchUpdating(false)
+      }
+    },
+    [channel.id, queryClient, selectedIdList, t]
+  )
+
+  return useMemo(
+    () => ({
+      allSelected,
+      clearSelection,
+      isBatchUpdating,
+      partiallySelected,
+      selectedIds,
+      selectedIdList,
+      toggleAll,
+      toggleSelected,
+      updateSelectedStatus,
+    }),
+    [
+      allSelected,
+      clearSelection,
+      isBatchUpdating,
+      partiallySelected,
+      selectedIds,
+      selectedIdList,
+      toggleAll,
+      toggleSelected,
+      updateSelectedStatus,
+    ]
+  )
+}
+
+function LastSyncCell({ timestamp }: { timestamp: number }) {
   const { t, i18n } = useTranslation()
   if (!timestamp) {
     return <span className='text-muted-foreground text-xs'>-</span>
@@ -184,6 +299,97 @@ function UpstreamKeyWeightCell({ upstreamKey }: { upstreamKey: UpstreamKey }) {
           copyable={false}
         />
       )}
+    </div>
+  )
+}
+
+function UpstreamKeyRatioCell({ upstreamKey }: { upstreamKey: UpstreamKey }) {
+  const { t } = useTranslation()
+
+  return (
+    <div className='flex items-center justify-center gap-1'>
+      <span className='font-mono text-sm tabular-nums'>
+        {formatConversionRatio(upstreamKey.conversion_ratio)}
+      </span>
+      {hasConversionRatioOverride(upstreamKey) && (
+        <StatusBadge
+          label={t('Override')}
+          variant='blue'
+          size='sm'
+          copyable={false}
+        />
+      )}
+      {isFreeUpstreamKey(upstreamKey) && (
+        <StatusBadge
+          label={t('Free')}
+          variant='success'
+          size='sm'
+          copyable={false}
+        />
+      )}
+    </div>
+  )
+}
+
+function UpstreamKeyBatchToolbar(props: {
+  allSelected: boolean
+  disabled: boolean
+  onClear: () => void
+  onDisable: () => void
+  onEnable: () => void
+  onToggleAll: (checked: boolean) => void
+  partiallySelected: boolean
+  selectedCount: number
+}) {
+  const { t } = useTranslation()
+  const checked = props.allSelected
+
+  return (
+    <div className='mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
+      <label className='flex min-w-0 items-center gap-2 text-sm'>
+        <Checkbox
+          checked={checked}
+          indeterminate={props.partiallySelected}
+          onCheckedChange={(value) => props.onToggleAll(!!value)}
+          aria-label={t('Select all upstream keys')}
+        />
+        <span className='text-muted-foreground min-w-0'>
+          {props.selectedCount} {t('selected')}
+        </span>
+      </label>
+      <div className='flex flex-wrap items-center gap-2'>
+        <Button
+          type='button'
+          variant='outline'
+          size='sm'
+          disabled={props.disabled}
+          onClick={props.onEnable}
+        >
+          <Power />
+          {t('Enable selected keys')}
+        </Button>
+        <Button
+          type='button'
+          variant='outline'
+          size='sm'
+          disabled={props.disabled}
+          onClick={props.onDisable}
+        >
+          <PowerOff />
+          {t('Disable selected keys')}
+        </Button>
+        {props.selectedCount > 0 && (
+          <Button
+            type='button'
+            variant='ghost'
+            size='sm'
+            disabled={props.disabled}
+            onClick={props.onClear}
+          >
+            {t('Clear selection')}
+          </Button>
+        )}
+      </div>
     </div>
   )
 }
@@ -363,6 +569,9 @@ export function UpstreamKeysMobileList(props: UpstreamKeysSubTableProps) {
   const { sensitiveVisible } = useChannels()
   const [editingKey, setEditingKey] = useState<UpstreamKey | null>(null)
   const keys = props.channel.upstream_keys || []
+  const selection = useUpstreamKeySelection(props.channel, keys)
+  const batchDisabled =
+    selection.isBatchUpdating || selection.selectedIdList.length === 0
 
   return (
     <div className='border-border mt-3 border-t pt-3'>
@@ -374,75 +583,92 @@ export function UpstreamKeysMobileList(props: UpstreamKeysSubTableProps) {
           {t('No upstream keys')}
         </div>
       ) : (
-        <div className='divide-y rounded-md border'>
-          {keys.map((upstreamKey) => (
-            <div key={upstreamKey.id} className='space-y-3 p-3'>
-              <div className='flex min-w-0 items-start justify-between gap-2'>
-                <TruncatedText
-                  text={
-                    sensitiveVisible
-                      ? getKeyDisplayName(upstreamKey)
-                      : SENSITIVE_MASK
-                  }
-                  maxWidth='max-w-[calc(100%-5rem)]'
-                  className='font-medium'
-                />
-                <UpstreamKeyStatusBadge upstreamKey={upstreamKey} />
-              </div>
+        <>
+          <UpstreamKeyBatchToolbar
+            allSelected={selection.allSelected}
+            disabled={batchDisabled}
+            onClear={selection.clearSelection}
+            onDisable={() => selection.updateSelectedStatus(2)}
+            onEnable={() => selection.updateSelectedStatus(1)}
+            onToggleAll={selection.toggleAll}
+            partiallySelected={selection.partiallySelected}
+            selectedCount={selection.selectedIdList.length}
+          />
+          <div className='divide-y rounded-md border'>
+            {keys.map((upstreamKey) => (
+              <div key={upstreamKey.id} className='space-y-3 p-3'>
+                <div className='flex min-w-0 items-start justify-between gap-2'>
+                  <div className='flex min-w-0 items-start gap-2'>
+                    <Checkbox
+                      checked={selection.selectedIds.has(upstreamKey.id)}
+                      onCheckedChange={(value) =>
+                        selection.toggleSelected(upstreamKey.id, !!value)
+                      }
+                      aria-label={t('Select upstream key')}
+                      className='mt-0.5'
+                    />
+                    <TruncatedText
+                      text={
+                        sensitiveVisible
+                          ? getKeyDisplayName(upstreamKey)
+                          : SENSITIVE_MASK
+                      }
+                      maxWidth='max-w-[calc(100%-5rem)]'
+                      className='font-medium'
+                    />
+                  </div>
+                  <UpstreamKeyStatusBadge upstreamKey={upstreamKey} />
+                </div>
 
-              <div className='grid min-w-0 grid-cols-2 gap-x-3 gap-y-3'>
-                <UpstreamKeyMobileField label={t('Key')}>
-                  <span
-                    className='block max-w-full truncate font-mono text-xs'
-                    title={
-                      sensitiveVisible
-                        ? upstreamKey.key_preview || undefined
-                        : undefined
-                    }
-                  >
-                    {sensitiveVisible
-                      ? upstreamKey.key_preview || '-'
-                      : SENSITIVE_MASK}
-                  </span>
-                </UpstreamKeyMobileField>
-                <UpstreamKeyMobileField label={t('Models')}>
-                  <span className='block max-w-full truncate font-mono text-xs'>
-                    {upstreamKey.models.length > 0
-                      ? upstreamKey.models.join(', ')
-                      : '-'}
-                  </span>
-                </UpstreamKeyMobileField>
-                <UpstreamKeyMobileField label={t('Converted ratio')}>
-                  <span className='font-mono tabular-nums'>
-                    {formatConversionRatio(upstreamKey.conversion_ratio)}
-                  </span>
-                </UpstreamKeyMobileField>
-                <UpstreamKeyMobileField label={t('Key priority')}>
-                  <span className='font-mono tabular-nums'>
-                    {upstreamKey.key_priority}
-                  </span>
-                </UpstreamKeyMobileField>
-                <UpstreamKeyMobileField label={t('Key weight')}>
-                  <UpstreamKeyWeightCell upstreamKey={upstreamKey} />
-                </UpstreamKeyMobileField>
-                <UpstreamKeyMobileField label={t('Upstream used')}>
-                  {formatOptionalQuota(upstreamKey.used_quota)}
-                </UpstreamKeyMobileField>
-                <UpstreamKeyMobileField label={t('Last used')}>
-                  <LastUsedCell timestamp={upstreamKey.last_used_at} />
-                </UpstreamKeyMobileField>
-              </div>
+                <div className='grid min-w-0 grid-cols-2 gap-x-3 gap-y-3'>
+                  <UpstreamKeyMobileField label={t('Key')}>
+                    <span
+                      className='block max-w-full truncate font-mono text-xs'
+                      title={
+                        sensitiveVisible
+                          ? upstreamKey.key_preview || undefined
+                          : undefined
+                      }
+                    >
+                      {sensitiveVisible
+                        ? upstreamKey.key_preview || '-'
+                        : SENSITIVE_MASK}
+                    </span>
+                  </UpstreamKeyMobileField>
+                  <UpstreamKeyMobileField label={t('Models')}>
+                    <span className='block max-w-full truncate font-mono text-xs'>
+                      {upstreamKey.models.length > 0
+                        ? upstreamKey.models.join(', ')
+                        : '-'}
+                    </span>
+                  </UpstreamKeyMobileField>
+                  <UpstreamKeyMobileField label={t('Converted ratio')}>
+                    <UpstreamKeyRatioCell upstreamKey={upstreamKey} />
+                  </UpstreamKeyMobileField>
+                  <UpstreamKeyMobileField label={t('Key priority')}>
+                    <span className='font-mono tabular-nums'>
+                      {upstreamKey.key_priority}
+                    </span>
+                  </UpstreamKeyMobileField>
+                  <UpstreamKeyMobileField label={t('Key weight')}>
+                    <UpstreamKeyWeightCell upstreamKey={upstreamKey} />
+                  </UpstreamKeyMobileField>
+                  <UpstreamKeyMobileField label={t('Last sync')}>
+                    <LastSyncCell timestamp={upstreamKey.last_sync_at} />
+                  </UpstreamKeyMobileField>
+                </div>
 
-              <div className='flex justify-end'>
-                <UpstreamKeyActions
-                  channel={props.channel}
-                  upstreamKey={upstreamKey}
-                  onEdit={setEditingKey}
-                />
+                <div className='flex justify-end'>
+                  <UpstreamKeyActions
+                    channel={props.channel}
+                    upstreamKey={upstreamKey}
+                    onEdit={setEditingKey}
+                  />
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        </>
       )}
       <UpstreamKeyEditDialog
         channel={props.channel}
@@ -462,6 +688,7 @@ function UpstreamKeyEditDialog(props: UpstreamKeyEditDialogProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [keyPriority, setKeyPriority] = useState(0)
+  const [ratioOverrideEnabled, setRatioOverrideEnabled] = useState(false)
   const [conversionRatio, setConversionRatio] = useState('')
   const [weightOverride, setWeightOverride] = useState('')
   const [isSaving, setIsSaving] = useState(false)
@@ -472,7 +699,13 @@ function UpstreamKeyEditDialog(props: UpstreamKeyEditDialogProps) {
     }
 
     setKeyPriority(props.upstreamKey.key_priority)
-    setConversionRatio(String(props.upstreamKey.conversion_ratio))
+    setRatioOverrideEnabled(hasConversionRatioOverride(props.upstreamKey))
+    setConversionRatio(
+      String(
+        props.upstreamKey.conversion_ratio_override ??
+          props.upstreamKey.conversion_ratio
+      )
+    )
     setWeightOverride(
       props.upstreamKey.weight_override === null ||
         props.upstreamKey.weight_override === undefined
@@ -487,10 +720,24 @@ function UpstreamKeyEditDialog(props: UpstreamKeyEditDialogProps) {
       return
     }
 
-    const parsedRatio = Number(conversionRatio)
-    if (!Number.isFinite(parsedRatio) || parsedRatio < 0) {
-      toast.error(t('Conversion ratio must be a finite non-negative number'))
-      return
+    const payload: Parameters<typeof patchUpstreamKey>[2] = {
+      key_priority: keyPriority,
+    }
+
+    let parsedRatio: number | undefined
+    if (ratioOverrideEnabled) {
+      if (conversionRatio.trim() === '') {
+        toast.error(t('Conversion ratio must be a finite non-negative number'))
+        return
+      }
+      parsedRatio = Number(conversionRatio)
+      if (!Number.isFinite(parsedRatio) || parsedRatio < 0) {
+        toast.error(t('Conversion ratio must be a finite non-negative number'))
+        return
+      }
+      payload.conversion_ratio = parsedRatio
+    } else {
+      payload.clear_conversion_ratio = true
     }
 
     const trimmedOverride = weightOverride.trim()
@@ -506,19 +753,33 @@ function UpstreamKeyEditDialog(props: UpstreamKeyEditDialogProps) {
         return
       }
     }
+    const freeAfterSave =
+      ratioOverrideEnabled && parsedRatio !== undefined
+        ? parsedRatio === 0
+        : !hasConversionRatioOverride(upstreamKey) &&
+          isFreeUpstreamKey(upstreamKey)
+    if (freeAfterSave && trimmedOverride !== '') {
+      toast.error(t('Free keys always use weight 2000.'))
+      return
+    }
+    const originalWeightOverride = upstreamKey.weight_override ?? null
+    if (!freeAfterSave) {
+      if (trimmedOverride === '' && originalWeightOverride !== null) {
+        payload.clear_weight = true
+      } else if (
+        parsedOverride !== undefined &&
+        parsedOverride !== originalWeightOverride
+      ) {
+        payload.weight_override = parsedOverride
+      }
+    }
 
     setIsSaving(true)
     try {
       const response = await patchUpstreamKey(
         props.channel.id,
         upstreamKey.id,
-        {
-          key_priority: keyPriority,
-          conversion_ratio: parsedRatio,
-          ...(trimmedOverride === ''
-            ? { clear_weight: true }
-            : { weight_override: parsedOverride }),
-        }
+        payload
       )
       if (!response.success) {
         throw createServerError(response, t('Operation failed'))
@@ -541,6 +802,14 @@ function UpstreamKeyEditDialog(props: UpstreamKeyEditDialogProps) {
   const title = props.upstreamKey
     ? `${t('Edit upstream key')}: ${getKeyDisplayName(props.upstreamKey)}`
     : t('Edit upstream key')
+  const sourceRatio = props.upstreamKey?.source_conversion_ratio
+  const inputRatio = Number(conversionRatio)
+  const isFreeWeight =
+    ratioOverrideEnabled &&
+    conversionRatio.trim() !== '' &&
+    Number.isFinite(inputRatio)
+      ? inputRatio === 0
+      : props.upstreamKey?.conversion_ratio === 0
 
   return (
     <Dialog
@@ -568,6 +837,24 @@ function UpstreamKeyEditDialog(props: UpstreamKeyEditDialogProps) {
       }
     >
       <div className='grid gap-4 py-4'>
+        <div className='bg-muted/30 grid gap-3 rounded-md border p-3 text-sm sm:grid-cols-2'>
+          <div className='min-w-0 space-y-1'>
+            <div className='text-muted-foreground text-xs'>
+              {t('Effective ratio')}
+            </div>
+            <div className='font-mono tabular-nums'>
+              {formatConversionRatio(props.upstreamKey?.conversion_ratio)}
+            </div>
+          </div>
+          <div className='min-w-0 space-y-1'>
+            <div className='text-muted-foreground text-xs'>
+              {t('Source ratio')}
+            </div>
+            <div className='font-mono tabular-nums'>
+              {formatConversionRatio(sourceRatio)}
+            </div>
+          </div>
+        </div>
         <div className='grid gap-2'>
           <Label>{t('Key priority')}</Label>
           <NumericSpinnerInput
@@ -576,16 +863,44 @@ function UpstreamKeyEditDialog(props: UpstreamKeyEditDialogProps) {
             onChange={setKeyPriority}
           />
         </div>
+        <div className='flex items-center justify-between gap-3 rounded-md border p-3'>
+          <Label htmlFor='upstream-key-ratio-override' className='text-sm'>
+            {t('Override conversion ratio')}
+          </Label>
+          <Switch
+            id='upstream-key-ratio-override'
+            checked={ratioOverrideEnabled}
+            onCheckedChange={(checked) => {
+              setRatioOverrideEnabled(checked)
+              if (props.upstreamKey) {
+                setConversionRatio(
+                  String(
+                    checked
+                      ? (props.upstreamKey.conversion_ratio_override ??
+                          props.upstreamKey.conversion_ratio)
+                      : props.upstreamKey.conversion_ratio
+                  )
+                )
+              }
+            }}
+          />
+        </div>
         <div className='grid gap-2'>
           <Label htmlFor='upstream-key-conversion-ratio'>
-            {t('Converted ratio')}
+            {t('Conversion ratio')}
           </Label>
           <Input
             id='upstream-key-conversion-ratio'
             inputMode='decimal'
             value={conversionRatio}
+            disabled={!ratioOverrideEnabled}
             onChange={(event) => setConversionRatio(event.target.value)}
           />
+          {!ratioOverrideEnabled && (
+            <p className='text-muted-foreground text-xs'>
+              {t('Automatic ratio will be restored after saving.')}
+            </p>
+          )}
         </div>
         <div className='grid gap-2'>
           <Label htmlFor='upstream-key-weight-override'>
@@ -596,10 +911,13 @@ function UpstreamKeyEditDialog(props: UpstreamKeyEditDialogProps) {
             inputMode='numeric'
             placeholder={t('Use automatic weight')}
             value={weightOverride}
+            disabled={isFreeWeight}
             onChange={(event) => setWeightOverride(event.target.value)}
           />
           <p className='text-muted-foreground text-xs'>
-            {t('Leave empty to use automatic weight.')}
+            {isFreeWeight
+              ? t('Free keys always use weight 2000.')
+              : t('Leave empty to use automatic weight.')}
           </p>
         </div>
       </div>
@@ -612,9 +930,34 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
   const { sensitiveVisible } = useChannels()
   const [editingKey, setEditingKey] = useState<UpstreamKey | null>(null)
   const keys = props.channel.upstream_keys || []
+  const selection = useUpstreamKeySelection(props.channel, keys)
+  const batchDisabled =
+    selection.isBatchUpdating || selection.selectedIdList.length === 0
 
   const columns = useMemo(
     () => [
+      {
+        id: 'select',
+        header: (
+          <Checkbox
+            checked={selection.allSelected}
+            indeterminate={selection.partiallySelected}
+            onCheckedChange={(value) => selection.toggleAll(!!value)}
+            aria-label={t('Select all upstream keys')}
+          />
+        ),
+        className: 'w-10 text-center',
+        cellClassName: 'text-center',
+        cell: (upstreamKey: UpstreamKey) => (
+          <Checkbox
+            checked={selection.selectedIds.has(upstreamKey.id)}
+            onCheckedChange={(value) =>
+              selection.toggleSelected(upstreamKey.id, !!value)
+            }
+            aria-label={t('Select upstream key')}
+          />
+        ),
+      },
       {
         id: 'name',
         header: t('Name'),
@@ -678,9 +1021,10 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
         id: 'converted-ratio',
         header: t('Converted ratio'),
         className: 'w-32 text-center',
-        cellClassName: 'text-center font-mono tabular-nums',
-        cell: (upstreamKey: UpstreamKey) =>
-          formatConversionRatio(upstreamKey.conversion_ratio),
+        cellClassName: 'text-center',
+        cell: (upstreamKey: UpstreamKey) => (
+          <UpstreamKeyRatioCell upstreamKey={upstreamKey} />
+        ),
       },
       {
         id: 'key-priority',
@@ -699,20 +1043,12 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
         ),
       },
       {
-        id: 'upstream-used',
-        header: t('Upstream used'),
-        className: 'w-32 text-center',
-        cellClassName: 'text-center',
-        cell: (upstreamKey: UpstreamKey) =>
-          formatOptionalQuota(upstreamKey.used_quota),
-      },
-      {
-        id: 'last-used',
-        header: t('Last used'),
+        id: 'last-sync',
+        header: t('Last sync'),
         className: 'w-36 text-center',
         cellClassName: 'text-center',
         cell: (upstreamKey: UpstreamKey) => (
-          <LastUsedCell timestamp={upstreamKey.last_used_at} />
+          <LastSyncCell timestamp={upstreamKey.last_sync_at} />
         ),
       },
       {
@@ -729,14 +1065,26 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
         ),
       },
     ],
-    [props.channel, sensitiveVisible, t]
+    [props.channel, selection, sensitiveVisible, t]
   )
 
   return (
     <div className='border-border bg-muted/20 border-y px-3 py-3'>
+      {keys.length > 0 && (
+        <UpstreamKeyBatchToolbar
+          allSelected={selection.allSelected}
+          disabled={batchDisabled}
+          onClear={selection.clearSelection}
+          onDisable={() => selection.updateSelectedStatus(2)}
+          onEnable={() => selection.updateSelectedStatus(1)}
+          onToggleAll={selection.toggleAll}
+          partiallySelected={selection.partiallySelected}
+          selectedCount={selection.selectedIdList.length}
+        />
+      )}
       <StaticDataTable
         className='bg-background rounded-md'
-        tableClassName='min-w-[1180px]'
+        tableClassName='min-w-[1320px]'
         data={keys}
         columns={columns}
         getRowKey={(upstreamKey) => upstreamKey.id}

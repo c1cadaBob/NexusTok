@@ -92,15 +92,13 @@ function upstreamKey(overrides: Partial<UpstreamKey> = {}): UpstreamKey {
     key_preview: 'sk-live...mask',
     models: ['gpt-key-only'],
     key_priority: 9,
+    source_conversion_ratio: 1,
     conversion_ratio: 0.1,
+    conversion_ratio_override: null,
     weight: 1900,
     weight_override: null,
-    used_quota: 12345,
-    remain_quota: 9000,
-    expires_at: null,
     status: 1,
     last_sync_at: 1_700_000_000,
-    last_used_at: 1_700_100_000,
     ...overrides,
   }
 }
@@ -128,8 +126,8 @@ test('平台站点展开区按密钥级字段展示且不暴露明文密钥', ()
   expect(screen.getByText('Converted ratio')).toBeInTheDocument()
   expect(screen.getByText('Key priority')).toBeInTheDocument()
   expect(screen.getByText('Key weight')).toBeInTheDocument()
-  expect(screen.getByText('Upstream used')).toBeInTheDocument()
-  expect(screen.getByText('Last used')).toBeInTheDocument()
+  expect(screen.getByText('Last sync')).toBeInTheDocument()
+  expect(screen.queryByText('Upstream used')).not.toBeInTheDocument()
   expect(screen.getByText('Production key')).toBeInTheDocument()
   expect(screen.getByText('sk-live...mask')).toBeInTheDocument()
   expect(screen.queryByText('sk-secret-real')).not.toBeInTheDocument()
@@ -138,9 +136,7 @@ test('平台站点展开区按密钥级字段展示且不暴露明文密钥', ()
 test('平台站点卡片展开区在窄布局中保留密钥字段和操作入口', () => {
   const key = upstreamKey()
 
-  renderWithProviders(
-    <UpstreamKeysMobileList channel={platformChannel(key)} />
-  )
+  renderWithProviders(<UpstreamKeysMobileList channel={platformChannel(key)} />)
 
   expect(screen.getByText('Upstream keys (1)')).toBeInTheDocument()
   expect(screen.getByText('sk-live...mask')).toBeInTheDocument()
@@ -148,9 +144,137 @@ test('平台站点卡片展开区在窄布局中保留密钥字段和操作入�
   expect(
     screen.getByRole('button', { name: 'Test Connection' })
   ).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Disable' })).toBeInTheDocument()
+})
+
+test('未开启倍率覆盖时保存子密钥会清除覆盖而不是写入有效倍率', async () => {
+  const user = userEvent.setup()
+  vi.mocked(channelsApi.patchUpstreamKey).mockResolvedValue({
+    success: true,
+    data: upstreamKey(),
+  })
+
+  renderWithProviders(<UpstreamKeysSubTable channel={platformChannel()} />)
+
+  await user.click(screen.getByRole('button', { name: 'Edit' }))
+  await user.click(await screen.findByRole('button', { name: 'Save' }))
+
+  await waitFor(() => {
+    expect(channelsApi.patchUpstreamKey).toHaveBeenCalledWith(
+      101,
+      7,
+      expect.objectContaining({
+        key_priority: 9,
+        clear_conversion_ratio: true,
+      })
+    )
+  })
+  const payload = vi.mocked(channelsApi.patchUpstreamKey).mock.calls[0]?.[2]
+  expect(payload).not.toHaveProperty('conversion_ratio')
+})
+
+test('开启倍率覆盖时保存子密钥会写入最终倍率覆盖', async () => {
+  const user = userEvent.setup()
+  vi.mocked(channelsApi.patchUpstreamKey).mockResolvedValue({
+    success: true,
+    data: upstreamKey({ conversion_ratio: 0.05 }),
+  })
+
+  renderWithProviders(<UpstreamKeysSubTable channel={platformChannel()} />)
+
+  await user.click(screen.getByRole('button', { name: 'Edit' }))
+  await user.click(
+    await screen.findByRole('switch', { name: 'Override conversion ratio' })
+  )
+  const ratioInput = screen.getByLabelText('Conversion ratio')
+  await user.clear(ratioInput)
+  await user.type(ratioInput, '0.05')
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+
+  await waitFor(() => {
+    expect(channelsApi.patchUpstreamKey).toHaveBeenCalledWith(
+      101,
+      7,
+      expect.objectContaining({
+        key_priority: 9,
+        conversion_ratio: 0.05,
+      })
+    )
+  })
+  const payload = vi.mocked(channelsApi.patchUpstreamKey).mock.calls[0]?.[2]
+  expect(payload).not.toHaveProperty('clear_conversion_ratio')
+})
+
+test('子密钥编辑弹窗展示上游原始倍率和覆盖状态', async () => {
+  const user = userEvent.setup()
+  const key = upstreamKey({
+    source_conversion_ratio: 0.5,
+    conversion_ratio: 0.2,
+    conversion_ratio_override: 0.2,
+  })
+
+  renderWithProviders(<UpstreamKeysSubTable channel={platformChannel(key)} />)
+
+  await user.click(screen.getByRole('button', { name: 'Edit' }))
+
+  expect(await screen.findByText('Source ratio')).toBeInTheDocument()
+  expect(screen.getByText('0.5')).toBeInTheDocument()
   expect(
-    screen.getByRole('button', { name: 'Disable' })
-  ).toBeInTheDocument()
+    screen.getByRole('switch', { name: 'Override conversion ratio' })
+  ).toBeChecked()
+})
+
+test('平台站点子密钥支持批量禁用选中项', async () => {
+  const user = userEvent.setup()
+  vi.mocked(channelsApi.batchUpdateUpstreamKeyStatus).mockResolvedValue({
+    success: true,
+    data: { updated: 1 },
+  })
+
+  renderWithProviders(<UpstreamKeysSubTable channel={platformChannel()} />)
+
+  await user.click(
+    screen.getByRole('checkbox', { name: 'Select upstream key' })
+  )
+  await user.click(
+    screen.getByRole('button', { name: 'Disable selected keys' })
+  )
+
+  await waitFor(() => {
+    expect(channelsApi.batchUpdateUpstreamKeyStatus).toHaveBeenCalledWith(
+      101,
+      [7],
+      2
+    )
+  })
+})
+
+test('平台站点子密钥部分选中时全选框展示半选状态', async () => {
+  const user = userEvent.setup()
+  const firstKey = upstreamKey()
+  const secondKey = upstreamKey({ id: 8, external_id: 'backup-key' })
+  const channel = {
+    ...platformChannel(firstKey),
+    upstream_keys: [firstKey, secondKey],
+  }
+
+  renderWithProviders(<UpstreamKeysSubTable channel={channel} />)
+
+  const rowCheckboxes = screen.getAllByRole('checkbox', {
+    name: 'Select upstream key',
+  })
+  const firstCheckbox = rowCheckboxes[0]
+  if (!firstCheckbox) {
+    throw new Error('未找到子密钥选择框')
+  }
+  await user.click(firstCheckbox)
+
+  const selectAllCheckboxes = screen.getAllByRole('checkbox', {
+    name: 'Select all upstream keys',
+  })
+  for (const checkbox of selectAllCheckboxes) {
+    expect(checkbox).toHaveAttribute('aria-checked', 'mixed')
+  }
 })
 
 test('密钥级更多菜单不显示渠道级复制和账号池入口', async () => {
