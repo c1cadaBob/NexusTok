@@ -657,6 +657,146 @@ func TestSelectChannelByUpstreamKeyMergesParentsAndFiltersChildren(t *testing.T)
 	assert.Equal(t, "sk-a", selected.SelectedUpstreamKey.Secret)
 }
 
+func TestSelectChannelByUpstreamKeyMergesOfficialKeyChannelWithPlatformKey(t *testing.T) {
+	previousDB := DB
+	previousSecret := common.CryptoSecret
+	common.CryptoSecret = "upstream-routing-official-key-test-secret"
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&Channel{},
+		&Ability{},
+		&PlatformSiteAccount{},
+		&UpstreamKey{},
+		&UpstreamKeyAbility{},
+	))
+	DB = db
+	t.Cleanup(func() {
+		DB = previousDB
+		common.CryptoSecret = previousSecret
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	priority := int64(6)
+	officialKeyPriority := int64(4)
+	platformKeyPriority := int64(4)
+	official := &Channel{
+		Id:              201,
+		Name:            "official",
+		Type:            1,
+		Key:             "sk-official",
+		Status:          common.ChannelStatusEnabled,
+		UpstreamKind:    UpstreamKindKeyChannel,
+		Models:          "gpt-4o",
+		Group:           "default",
+		Priority:        &priority,
+		KeyPriority:     officialKeyPriority,
+		ConversionRatio: 1,
+	}
+	platform := &Channel{
+		Id:           202,
+		Name:         "platform",
+		Status:       common.ChannelStatusEnabled,
+		UpstreamKind: UpstreamKindPlatformSite,
+		Models:       "gpt-4o",
+		Group:        "default",
+		Priority:     &priority,
+	}
+	require.NoError(t, db.Create(official).Error)
+	require.NoError(t, db.Create(platform).Error)
+	require.NoError(t, db.Create(&PlatformSiteAccount{
+		ChannelID:  platform.Id,
+		SyncStatus: UpstreamSiteSyncSuccess,
+	}).Error)
+
+	secret, err := EncryptPlatformSiteCredential(PlatformSiteCredential{AccessToken: "sk-platform"})
+	require.NoError(t, err)
+	remaining := int64(100)
+	require.NoError(t, db.Create(&UpstreamKey{
+		ChannelID:        platform.Id,
+		ExternalID:       "platform-key",
+		SecretCiphertext: secret,
+		Models:           "gpt-4o",
+		KeyPriority:      platformKeyPriority,
+		ConversionRatio:  0,
+		Weight:           2000,
+		RemainQuota:      &remaining,
+		Status:           UpstreamKeyStatusEnabled,
+	}).Error)
+
+	for range 10 {
+		selected := selectChannelByUpstreamKey([]*Channel{official, platform}, "default", "gpt-4o")
+		require.NotNil(t, selected)
+		if selected.Id == official.Id {
+			require.Empty(t, selected.SelectedUpstreamKey)
+		} else {
+			require.NotNil(t, selected.SelectedUpstreamKey)
+			assert.Equal(t, "sk-platform", selected.SelectedUpstreamKey.Secret)
+		}
+	}
+}
+
+func TestSelectChannelByUpstreamKeyFallsBackWhenAllWeightsAreZero(t *testing.T) {
+	previousDB := DB
+	previousSecret := common.CryptoSecret
+	common.CryptoSecret = "upstream-routing-zero-weight-test-secret"
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&Channel{},
+		&PlatformSiteAccount{},
+		&UpstreamKey{},
+	))
+	DB = db
+	t.Cleanup(func() {
+		DB = previousDB
+		common.CryptoSecret = previousSecret
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	priority := int64(1)
+	channels := []*Channel{
+		{
+			Id:              301,
+			Name:            "zero-a",
+			Status:          common.ChannelStatusEnabled,
+			UpstreamKind:    UpstreamKindKeyChannel,
+			Key:             "sk-a",
+			Models:          "gpt-4o",
+			Group:           "default",
+			Priority:        &priority,
+			KeyPriority:     1,
+			ConversionRatio: 2,
+		},
+		{
+			Id:              302,
+			Name:            "zero-b",
+			Status:          common.ChannelStatusEnabled,
+			UpstreamKind:    UpstreamKindKeyChannel,
+			Key:             "sk-b",
+			Models:          "gpt-4o",
+			Group:           "default",
+			Priority:        &priority,
+			KeyPriority:     1,
+			ConversionRatio: 3,
+		},
+	}
+
+	for range 10 {
+		selected := selectChannelByUpstreamKey(channels, "default", "gpt-4o")
+		require.NotNil(t, selected)
+		assert.Contains(t, []int{301, 302}, selected.Id)
+	}
+}
+
 func ptrTime(value time.Time) *time.Time {
 	return &value
 }

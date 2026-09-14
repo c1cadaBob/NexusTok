@@ -62,15 +62,19 @@ func selectChannelByUpstreamKey(channels []*Channel, group, modelName string) *C
 		}
 	}
 
-	totalWeight := 0
+	var totalWeight int64
 	for _, candidate := range filtered {
-		totalWeight += candidate.key.EffectiveWeight()
+		weight := candidate.key.EffectiveWeight()
+		if weight <= 0 {
+			continue
+		}
+		totalWeight += int64(weight)
 	}
 	selected := filtered[rand.Intn(len(filtered))]
 	if totalWeight > 0 {
-		value := rand.Intn(totalWeight)
+		value := rand.Int63n(totalWeight)
 		for _, candidate := range filtered {
-			value -= candidate.key.EffectiveWeight()
+			value -= int64(candidate.key.EffectiveWeight())
 			if value < 0 {
 				selected = candidate
 				break
