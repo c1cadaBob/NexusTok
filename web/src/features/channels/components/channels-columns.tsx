@@ -23,9 +23,6 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronRight,
-  CornerDownRight,
-  Eye,
-  EyeOff,
   ListOrdered,
   Shuffle,
   SlidersHorizontal,
@@ -60,12 +57,7 @@ import { handleServerError } from '@/lib/handle-server-error'
 import { createServerError } from '@/lib/server-error-message'
 import { truncateText } from '@/lib/utils'
 
-import {
-  batchUpdateUpstreamKeyStatus,
-  getCodexUsage,
-  patchUpstreamKey,
-  updateChannelBalance,
-} from '../api'
+import { getCodexUsage, updateChannelBalance } from '../api'
 import {
   CHANNEL_STATUS_CONFIG,
   CHANNEL_TYPE_TASK_PLUGIN,
@@ -275,200 +267,28 @@ function ChannelFieldCell({
   )
 }
 
-/**
- * Weight cell component with inline editing
- */
-function WeightCell({ channel }: { channel: Channel }) {
-  const { t } = useTranslation()
-  if (isTagAggregateRow(channel)) {
-    return <TagWeightCell channel={channel} />
-  }
-
-  if (channel.upstream_kind === 'platform_site') {
-    return <span className='text-muted-foreground text-xs'>-</span>
-  }
-
-  const ratio =
-    channel.conversion_ratio !== null &&
-    channel.conversion_ratio !== undefined &&
-    channel.conversion_ratio >= 0
-      ? channel.conversion_ratio
-      : 1
-  const automaticWeight = Math.max(
-    0,
-    Math.min(2000, Math.round(1000 + (1 - ratio) / 0.001))
-  )
-  const weight = channel.key_weight_override ?? automaticWeight
-
-  return (
-    <div className='flex items-center gap-1'>
-      <span className='font-mono text-sm tabular-nums'>{weight}</span>
-      {channel.key_weight_override !== null &&
-        channel.key_weight_override !== undefined && (
-          <StatusBadge
-            label={t('Override')}
-            variant='blue'
-            size='sm'
-            copyable={false}
-          />
-        )}
-    </div>
-  )
-}
-
-function UpstreamKeyPriorityCell({ channel }: { channel: Channel }) {
-  const { t } = useTranslation()
-  const key = channel.upstream_key
-  const queryClient = useQueryClient()
-  if (!key) return null
-  return (
-    <NumericSpinnerInput
-      value={key.key_priority}
-      min={-999}
-      onChange={(value) => {
-        void (async () => {
-          try {
-            const response = await patchUpstreamKey(
-              channel.parent_channel_id || key.channel_id,
-              key.id,
-              { key_priority: value }
-            )
-            if (!response.success) {
-              throw createServerError(response, t('Operation failed'))
-            }
-            await Promise.all([
-              queryClient.invalidateQueries({
-                queryKey: [
-                  'upstream-keys',
-                  channel.parent_channel_id || key.channel_id,
-                ],
-              }),
-              queryClient.invalidateQueries({
-                queryKey: channelsQueryKeys.lists(),
-              }),
-            ])
-          } catch (error) {
-            handleServerError(error, t('Operation failed'))
-          }
-        })()
-      }}
-    />
-  )
-}
-
-function UpstreamKeyWeightCell({ channel }: { channel: Channel }) {
-  const { t } = useTranslation()
-  const key = channel.upstream_key
-  if (!key) return null
-  return (
-    <div className='flex items-center gap-1'>
-      <span className='font-mono text-sm tabular-nums'>{key.weight}</span>
-      {key.weight_override !== null && key.weight_override !== undefined && (
-        <StatusBadge
-          label={t('Override')}
-          variant='blue'
-          size='sm'
-          copyable={false}
-        />
-      )}
-    </div>
-  )
-}
-
 function ConversionRatioCell({ channel }: { channel: Channel }) {
   if (isTagAggregateRow(channel)) {
     return <span className='text-muted-foreground text-xs'>-</span>
   }
 
   let ratio = channel.conversion_ratio
-  if (channel.is_upstream_key) {
-    ratio = channel.upstream_key?.conversion_ratio
-  } else if (channel.upstream_kind === 'platform_site') {
-    ratio = channel.upstream_site_status?.conversion_ratio
+  if (channel.upstream_kind === 'platform_site') {
+    const keyRatios = (channel.upstream_keys || [])
+      .filter((key) => key.status === 1)
+      .map((key) => key.conversion_ratio)
+      .filter((value) => Number.isFinite(value) && value >= 0)
+    if (keyRatios.length > 0) {
+      ratio = Math.min(...keyRatios)
+    } else {
+      ratio = channel.upstream_site_status?.conversion_ratio
+    }
   }
 
   return (
     <span className='font-mono text-sm tabular-nums'>
       {formatConversionRatio(ratio)}
     </span>
-  )
-}
-
-function UpstreamKeyBalanceCell({ channel }: { channel: Channel }) {
-  const { t } = useTranslation()
-  const key = channel.upstream_key
-  if (!key) return null
-  const remaining =
-    key.remain_quota === null || key.remain_quota === undefined
-      ? t('Unknown')
-      : key.remain_quota.toLocaleString()
-  return (
-    <div className='flex min-w-0 flex-col text-xs'>
-      <span className='text-muted-foreground truncate'>
-        {t('Used')}: {key.used_quota.toLocaleString()}
-      </span>
-      <span className='truncate'>
-        {t('Remaining')}: {remaining}
-      </span>
-    </div>
-  )
-}
-
-function UpstreamKeyStatusCell({ channel }: { channel: Channel }) {
-  const key = channel.upstream_key
-  const queryClient = useQueryClient()
-  const { t } = useTranslation()
-  if (!key) return null
-  const enabled = key.status === 1
-  const statusConfig =
-    CHANNEL_STATUS_CONFIG[key.status as keyof typeof CHANNEL_STATUS_CONFIG] ||
-    CHANNEL_STATUS_CONFIG[0]
-  return (
-    <div className='flex items-center gap-1.5'>
-      <StatusBadge
-        label={t(statusConfig.label)}
-        variant={statusConfig.variant}
-        size='sm'
-        copyable={false}
-      />
-      <Button
-        type='button'
-        variant='ghost'
-        size='icon'
-        className='size-7'
-        aria-label={enabled ? t('Disable key') : t('Enable key')}
-        title={enabled ? t('Disable key') : t('Enable key')}
-        onClick={() => {
-          void (async () => {
-            try {
-              const response = await batchUpdateUpstreamKeyStatus(
-                channel.parent_channel_id || key.channel_id,
-                [key.id],
-                enabled ? 2 : 1
-              )
-              if (!response.success) {
-                throw createServerError(response, t('Operation failed'))
-              }
-              await Promise.all([
-                queryClient.invalidateQueries({
-                  queryKey: [
-                    'upstream-keys',
-                    channel.parent_channel_id || key.channel_id,
-                  ],
-                }),
-                queryClient.invalidateQueries({
-                  queryKey: channelsQueryKeys.lists(),
-                }),
-              ])
-            } catch (error) {
-              handleServerError(error, t('Operation failed'))
-            }
-          })()
-        }}
-      >
-        {enabled ? <EyeOff /> : <Eye />}
-      </Button>
-    </div>
   )
 }
 
@@ -529,45 +349,6 @@ function UpstreamSiteSyncStatusCell({ channel }: { channel: Channel }) {
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>
-  )
-}
-
-function TagWeightCell({ channel }: { channel: TagRow }) {
-  const { t } = useTranslation()
-  const queryClient = useQueryClient()
-  const weight = channel.weight
-  const [confirmOpen, setConfirmOpen] = useState(false)
-  const [pendingValue, setPendingValue] = useState<number | null>(null)
-  const tag = channel.tag || ''
-  const channelCount = channel.children?.length || 0
-
-  return (
-    <>
-      <NumericSpinnerInput
-        value={weight ?? 0}
-        onChange={(value) => {
-          setPendingValue(value)
-          setConfirmOpen(true)
-        }}
-        min={0}
-      />
-      <ConfirmDialog
-        open={confirmOpen}
-        onOpenChange={setConfirmOpen}
-        title={t('Confirm Batch Update')}
-        desc={t(
-          'This will update the weight to {{value}} for all {{count}} channel(s) with tag "{{tag}}". Continue?',
-          { value: pendingValue, count: channelCount, tag }
-        )}
-        confirmText={t('Update')}
-        handleConfirm={() => {
-          if (pendingValue !== null) {
-            handleUpdateTagField(tag, 'weight', pendingValue, queryClient)
-          }
-          setConfirmOpen(false)
-        }}
-      />
-    </>
   )
 }
 
@@ -939,22 +720,6 @@ export function useChannelsColumns(
             )
           }
 
-          if (channel.is_upstream_key) {
-            return (
-              <div className='flex min-w-0 items-center gap-2 pl-6'>
-                <CornerDownRight
-                  className='text-muted-foreground size-4 shrink-0'
-                  aria-hidden='true'
-                />
-                <TruncatedText
-                  text={sensitiveVisible ? name : SENSITIVE_MASK}
-                  className='font-medium'
-                  maxWidth='max-w-full'
-                />
-              </div>
-            )
-          }
-
           // Regular channel row
           const settings = parseChannelSettings(channel.setting)
           const isPassThrough = settings.pass_through_body_enabled === true
@@ -1074,16 +839,6 @@ export function useChannelsColumns(
           const typeName = t(typeNameKey)
           const iconName = getChannelTypeIcon(type)
           const channel = row.original as Channel
-          if (channel.is_upstream_key) {
-            return (
-              <StatusBadge
-                label={t('Upstream key')}
-                variant='neutral'
-                size='sm'
-                copyable={false}
-              />
-            )
-          }
           const isMultiKey = isMultiKeyChannel(channel)
           const multiKeyMode = channel.channel_info?.multi_key_mode ?? 'random'
           const MultiKeyModeIcon =
@@ -1212,10 +967,6 @@ export function useChannelsColumns(
           const isTagRow = isTagAggregateRow(row.original)
           const status = row.getValue('status') as number
           const channel = row.original as Channel
-
-          if (channel.is_upstream_key) {
-            return <UpstreamKeyStatusCell channel={channel} />
-          }
 
           // Tag row: show aggregated status
           if (isTagRow) {
@@ -1411,6 +1162,16 @@ export function useChannelsColumns(
         enableSorting: false,
       },
 
+      // 转换倍率列
+      {
+        accessorKey: 'conversion_ratio',
+        header: t('Minimum ratio'),
+        meta: { mobileHidden: true },
+        cell: ({ row }) => <ConversionRatioCell channel={row.original} />,
+        size: 130,
+        enableSorting: false,
+      },
+
       // Tag column
       {
         accessorKey: 'tag',
@@ -1438,52 +1199,17 @@ export function useChannelsColumns(
       // Priority column
       {
         accessorKey: 'priority',
-        header: t('Priority'),
+        header: t('Channel priority'),
         meta: { mobileHidden: true },
-        cell: ({ row }) =>
-          row.original.is_upstream_key ? (
-            <UpstreamKeyPriorityCell channel={row.original} />
-          ) : (
-            <PriorityCell channel={row.original} />
-          ),
-        size: 100,
-      },
-
-      // 转换倍率列
-      {
-        accessorKey: 'conversion_ratio',
-        header: t('Conversion ratio'),
-        meta: { mobileHidden: true },
-        cell: ({ row }) => <ConversionRatioCell channel={row.original} />,
-        size: 130,
-        enableSorting: false,
-      },
-
-      // Weight column
-      {
-        accessorKey: 'weight',
-        header: t('Weight'),
-        meta: { mobileHidden: true },
-        cell: ({ row }) =>
-          row.original.is_upstream_key ? (
-            <UpstreamKeyWeightCell channel={row.original} />
-          ) : (
-            <WeightCell channel={row.original} />
-          ),
-        size: 90,
-        enableSorting: false,
+        cell: ({ row }) => <PriorityCell channel={row.original} />,
+        size: 120,
       },
 
       // Balance column (Used/Remaining)
       {
         accessorKey: 'balance',
         header: t('Used / Remaining'),
-        cell: ({ row }) =>
-          row.original.is_upstream_key ? (
-            <UpstreamKeyBalanceCell channel={row.original} />
-          ) : (
-            <BalanceCell channel={row.original} />
-          ),
+        cell: ({ row }) => <BalanceCell channel={row.original} />,
         size: 180,
       },
 
@@ -1512,7 +1238,7 @@ export function useChannelsColumns(
       // Test Time column
       {
         accessorKey: 'test_time',
-        header: t('Last Tested'),
+        header: t('Upstream tested at'),
         meta: { mobileHidden: true },
         cell: ({ row }) => {
           const testTime = row.getValue('test_time') as number
@@ -1556,9 +1282,6 @@ export function useChannelsColumns(
         id: 'actions',
         header: () => t('Actions'),
         cell: ({ row }) => {
-          if (row.original.is_upstream_key) {
-            return null
-          }
           // Check if this is a tag row (has children)
           const isTagRow = isTagAggregateRow(row.original)
 

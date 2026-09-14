@@ -678,6 +678,12 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 		// 必须设置为 false，否则在重试到单个 key 的时候会导致日志显示错误
 		common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, false)
 	}
+	if channel.SelectedUpstreamKey != nil {
+		common.SetContextKey(c, constant.ContextKeyUpstreamKeyId, int(channel.SelectedUpstreamKey.ID))
+		common.SetContextKey(c, constant.ContextKeyUpstreamKeyName, channel.SelectedUpstreamKey.Name)
+		common.SetContextKey(c, constant.ContextKeyUpstreamKeyRatio, channel.SelectedUpstreamKey.ConversionRatio)
+		common.SetContextKey(c, constant.ContextKeyUpstreamKeyWeight, channel.SelectedUpstreamKey.EffectiveWeight())
+	}
 	// c.Request.Header.Set("Authorization", fmt.Sprintf("Bearer %s", key))
 	common.SetContextKey(c, constant.ContextKeyChannelKey, key)
 	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, channel.GetBaseURL())

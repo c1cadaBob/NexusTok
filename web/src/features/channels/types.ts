@@ -83,6 +83,7 @@ export type Channel = z.infer<typeof channelSchema> & {
   children?: Channel[]
   is_upstream_key?: boolean
   upstream_key?: UpstreamKey
+  upstream_keys?: UpstreamKey[]
   upstream_site_status?: UpstreamSiteStatus
   parent_channel_id?: number
   upstream_group?: string
@@ -308,6 +309,7 @@ export interface SearchChannelsParams {
 
 export interface ChannelTestParams {
   test_model?: string
+  upstream_key_id?: number
 }
 
 export interface CopyChannelParams {
@@ -436,6 +438,7 @@ export interface UpstreamKey {
   channel_id: number
   external_id: string
   name: string
+  key_preview?: string
   models: string[]
   key_priority: number
   conversion_ratio: number
@@ -447,6 +450,7 @@ export interface UpstreamKey {
   status: number
   disabled_reason?: string
   last_sync_at: number
+  last_used_at: number
 }
 
 export interface UpstreamSiteStatusResponse {

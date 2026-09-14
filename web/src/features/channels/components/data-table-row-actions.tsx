@@ -43,6 +43,7 @@ import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuShortcut,
@@ -85,7 +86,8 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const { t } = useTranslation()
   const layout = useContext(ChannelRowActionsLayoutContext)
   const channel = row.original
-  const { setOpen, setCurrentRow, upstream } = useChannels()
+  const { setOpen, setCurrentRow, setCurrentUpstreamKey, upstream } =
+    useChannels()
   const queryClient = useQueryClient()
   const currentUser = useAuthStore((s) => s.auth.user)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
@@ -103,16 +105,23 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
 
   const handleEdit = () => {
     setCurrentRow(channel)
+    setCurrentUpstreamKey(null)
     setOpen('update-channel')
   }
 
   const handleTest = () => {
     setCurrentRow(channel)
+    setCurrentUpstreamKey(null)
     setOpen('test-channel')
   }
 
   const handleDirectTest = async (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation()
+    if (channel.upstream_kind === 'platform_site') {
+      handleTest()
+      return
+    }
+
     setIsTesting(true)
     try {
       await handleTestChannel(channel.id, { channelName: channel.name }, () => {
@@ -125,26 +134,31 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
 
   const handleQueryBalance = () => {
     setCurrentRow(channel)
+    setCurrentUpstreamKey(null)
     setOpen('balance-query')
   }
 
   const handleFetchModels = () => {
     setCurrentRow(channel)
+    setCurrentUpstreamKey(null)
     setOpen('fetch-models')
   }
 
   const handleManageOllamaModels = () => {
     setCurrentRow(channel)
+    setCurrentUpstreamKey(null)
     setOpen('ollama-models')
   }
 
   const handleCopy = () => {
     setCurrentRow(channel)
+    setCurrentUpstreamKey(null)
     setOpen('copy-channel')
   }
 
   const handleManageKeys = () => {
     setCurrentRow(channel)
+    setCurrentUpstreamKey(null)
     setOpen('multi-key-manage')
   }
 
@@ -297,38 +311,40 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           <span className='sr-only'>{t('Open menu')}</span>
         </DropdownMenuTrigger>
         <DropdownMenuContent align='end' className='w-48'>
-          {layout === 'card' && (
-            <DropdownMenuItem onClick={handleEdit}>
-              {t('Edit')}
+          <DropdownMenuGroup>
+            {layout === 'card' && (
+              <DropdownMenuItem onClick={handleEdit}>
+                {t('Edit')}
+                <DropdownMenuShortcut>
+                  <Pencil size={16} />
+                </DropdownMenuShortcut>
+              </DropdownMenuItem>
+            )}
+
+            {/* Test Connection */}
+            <DropdownMenuItem onClick={handleTest}>
+              {t('Test Connection')}
               <DropdownMenuShortcut>
-                <Pencil size={16} />
+                <PlugZap size={16} />
               </DropdownMenuShortcut>
             </DropdownMenuItem>
-          )}
 
-          {/* Test Connection */}
-          <DropdownMenuItem onClick={handleTest}>
-            {t('Test Connection')}
-            <DropdownMenuShortcut>
-              <PlugZap size={16} />
-            </DropdownMenuShortcut>
-          </DropdownMenuItem>
+            {/* Query Balance */}
+            <DropdownMenuItem onClick={handleQueryBalance}>
+              {t('Query Balance')}
+              <DropdownMenuShortcut>
+                <DollarSign size={16} />
+              </DropdownMenuShortcut>
+            </DropdownMenuItem>
 
-          {/* Query Balance */}
-          <DropdownMenuItem onClick={handleQueryBalance}>
-            {t('Query Balance')}
-            <DropdownMenuShortcut>
-              <DollarSign size={16} />
-            </DropdownMenuShortcut>
-          </DropdownMenuItem>
-
-          {/* Fetch Models */}
-          <DropdownMenuItem onClick={handleFetchModels}>
-            {t('Fetch Models')}
-            <DropdownMenuShortcut>
-              <Download size={16} />
-            </DropdownMenuShortcut>
-          </DropdownMenuItem>
+            {/* Fetch Models */}
+            <DropdownMenuItem onClick={handleFetchModels}>
+              {t('Fetch Models')}
+              <DropdownMenuShortcut>
+                <Download size={16} />
+              </DropdownMenuShortcut>
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
 
           {/* Detect Upstream Updates (only for fetchable channel types) */}
           {MODEL_FETCHABLE_TYPES.has(channel.type) && (
@@ -406,9 +422,9 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           )}
 
           {/* Manage Keys (only for multi-key channels) */}
-          {isMultiKey && (
+          {(isMultiKey || channel.upstream_kind === 'platform_site') && (
             <DropdownMenuItem onClick={handleManageKeys}>
-              {t('Manage Keys')}
+              {t('Account pool')}
               <DropdownMenuShortcut>
                 <Key size={16} />
               </DropdownMenuShortcut>

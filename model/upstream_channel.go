@@ -87,6 +87,7 @@ type UpstreamKey struct {
 	Status            int        `json:"status" gorm:"index"`
 	DisabledReason    string     `json:"disabled_reason" gorm:"type:varchar(255)"`
 	LastSyncAt        int64      `json:"last_sync_at" gorm:"bigint;index"`
+	LastUsedAt        int64      `json:"last_used_at" gorm:"bigint;index"`
 	MissingSince      int64      `json:"missing_since" gorm:"bigint"`
 	Secret            string     `json:"-" gorm:"-"`
 }
@@ -182,6 +183,55 @@ func (key *UpstreamKey) IsRoutable(now time.Time) bool {
 		return false
 	}
 	return key.RemainQuota == nil || *key.RemainQuota > 0
+}
+
+func (key *UpstreamKey) LoadSecret() error {
+	if key == nil {
+		return errors.New("upstream key is nil")
+	}
+	credential, err := DecryptPlatformSiteCredential(key.SecretCiphertext)
+	if err != nil {
+		return err
+	}
+	if credential.AccessToken == "" {
+		return errors.New("upstream key secret unavailable")
+	}
+	key.Secret = credential.AccessToken
+	return nil
+}
+
+func GetRoutableUpstreamKeyByID(channelID int, keyID uint, group, modelName string, now time.Time) (*UpstreamKey, error) {
+	var account PlatformSiteAccount
+	if err := DB.Select("sync_status", "disabled_at").
+		Where("channel_id = ?", channelID).
+		First(&account).Error; err != nil {
+		return nil, err
+	}
+	if account.SyncStatus != UpstreamSiteSyncSuccess || account.DisabledAt != 0 {
+		return nil, errors.New("platform site is not routable")
+	}
+
+	var key UpstreamKey
+	if err := DB.Where("id = ? AND channel_id = ?", keyID, channelID).First(&key).Error; err != nil {
+		return nil, err
+	}
+	if !key.IsRoutable(now) {
+		return nil, errors.New("upstream key is not routable")
+	}
+	if strings.TrimSpace(modelName) != "" && !upstreamKeySupportsModel(&key, group, modelName) {
+		return nil, errors.New("upstream key does not support the test model")
+	}
+	if err := key.LoadSecret(); err != nil {
+		return nil, err
+	}
+	return &key, nil
+}
+
+func UpdateUpstreamKeyLastUsed(keyID uint, unixTime int64) error {
+	if keyID == 0 || unixTime <= 0 {
+		return nil
+	}
+	return DB.Model(&UpstreamKey{}).Where("id = ?", keyID).Update("last_used_at", unixTime).Error
 }
 
 func DeleteUpstreamData(tx *gorm.DB, channelIDs []int) error {

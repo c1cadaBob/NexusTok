@@ -273,6 +273,7 @@ export async function handleTestChannel(
     channelName?: string
     testModel?: string
     endpointType?: string
+    upstreamKeyId?: number
     stream?: boolean
     silent?: boolean
   },
@@ -284,13 +285,20 @@ export async function handleTestChannel(
   ) => void
 ): Promise<void> {
   const payload =
-    options && (options.testModel || options.endpointType || options.stream)
+    options &&
+    (options.testModel ||
+      options.endpointType ||
+      options.stream ||
+      options.upstreamKeyId)
       ? {
           ...(options.testModel ? { model: options.testModel } : {}),
           ...(options.endpointType
             ? { endpoint_type: options.endpointType }
             : {}),
           ...(options.stream ? { stream: true } : {}),
+          ...(options.upstreamKeyId
+            ? { upstream_key_id: options.upstreamKeyId }
+            : {}),
         }
       : undefined
 

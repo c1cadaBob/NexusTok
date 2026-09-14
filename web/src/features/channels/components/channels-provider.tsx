@@ -28,7 +28,7 @@ import React, {
 
 import { useChannelUpstreamUpdates } from '../hooks/use-channel-upstream-updates'
 import { channelsQueryKeys } from '../lib'
-import type { Channel } from '../types'
+import type { Channel, UpstreamKey } from '../types'
 
 // ============================================================================
 // Types
@@ -54,6 +54,8 @@ type ChannelsContextType = {
   setOpen: (open: DialogType) => void
   currentRow: Channel | null
   setCurrentRow: (row: Channel | null) => void
+  currentUpstreamKey: UpstreamKey | null
+  setCurrentUpstreamKey: (key: UpstreamKey | null) => void
   currentTag: string | null
   setCurrentTag: (tag: string | null) => void
   enableTagMode: boolean
@@ -82,6 +84,8 @@ const ChannelsContext = createContext<ChannelsContextType | undefined>(
 export function ChannelsProvider({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState<DialogType>(null)
   const [currentRow, setCurrentRow] = useState<Channel | null>(null)
+  const [currentUpstreamKey, setCurrentUpstreamKey] =
+    useState<UpstreamKey | null>(null)
   const [currentTag, setCurrentTag] = useState<string | null>(null)
   const [enableTagMode, setEnableTagMode] = useState(() => {
     return localStorage.getItem('enable-tag-mode') === 'true'
@@ -107,6 +111,8 @@ export function ChannelsProvider({ children }: { children: React.ReactNode }) {
       setOpen,
       currentRow,
       setCurrentRow,
+      currentUpstreamKey,
+      setCurrentUpstreamKey,
       currentTag,
       setCurrentTag,
       enableTagMode,
@@ -122,6 +128,7 @@ export function ChannelsProvider({ children }: { children: React.ReactNode }) {
     [
       open,
       currentRow,
+      currentUpstreamKey,
       currentTag,
       enableTagMode,
       idSort,

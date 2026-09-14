@@ -69,7 +69,7 @@ func resolveChannelTestUserID(c *gin.Context) (int, error) {
 	return rootUser.Id, nil
 }
 
-func testChannel(ctx context.Context, channel *model.Channel, testUserID int, testModel string, endpointType string, isStream bool) testResult {
+func testChannel(ctx context.Context, channel *model.Channel, testUserID int, testModel string, endpointType string, isStream bool, upstreamKeyID uint) testResult {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -167,6 +167,20 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	c.Set("base_url", channel.GetBaseURL())
 	group, _ := model.GetUserGroup(testUserID, false)
 	c.Set("group", group)
+
+	if upstreamKeyID > 0 {
+		key, keyErr := model.GetRoutableUpstreamKeyByID(channel.Id, upstreamKeyID, group, testModel, time.Now())
+		if keyErr != nil {
+			return testResult{
+				context:     c,
+				localErr:    keyErr,
+				newAPIError: types.NewError(keyErr, types.ErrorCodeChannelNoAvailableKey),
+			}
+		}
+		channelCopy := *channel
+		channelCopy.SelectedUpstreamKey = key
+		channel = &channelCopy
+	}
 
 	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, testModel)
 	if newAPIError != nil {
@@ -516,6 +530,11 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		Other:            other,
 	})
 	common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
+	if upstreamKeyID := common.GetContextKeyInt(c, constant.ContextKeyUpstreamKeyId); upstreamKeyID > 0 {
+		if err := model.UpdateUpstreamKeyLastUsed(uint(upstreamKeyID), common.GetTimestamp()); err != nil {
+			common.SysError(fmt.Sprintf("failed to update upstream key last used: %v", err))
+		}
+	}
 	return testResult{
 		context:     c,
 		localErr:    nil,
@@ -864,6 +883,15 @@ func TestChannel(c *gin.Context) {
 	testModel := c.Query("model")
 	endpointType := c.Query("endpoint_type")
 	isStream, _ := strconv.ParseBool(c.Query("stream"))
+	upstreamKeyID := uint(0)
+	if rawUpstreamKeyID := strings.TrimSpace(c.Query("upstream_key_id")); rawUpstreamKeyID != "" {
+		parsedUpstreamKeyID, parseErr := strconv.ParseUint(rawUpstreamKeyID, 10, 64)
+		if parseErr != nil {
+			common.ApiError(c, parseErr)
+			return
+		}
+		upstreamKeyID = uint(parsedUpstreamKeyID)
+	}
 	testUserID, err := resolveChannelTestUserID(c)
 	if err != nil {
 		common.ApiError(c, err)
@@ -874,7 +902,7 @@ func TestChannel(c *gin.Context) {
 	if c.Request != nil {
 		requestCtx = c.Request.Context()
 	}
-	result := testChannel(requestCtx, channel, testUserID, testModel, endpointType, isStream)
+	result := testChannel(requestCtx, channel, testUserID, testModel, endpointType, isStream, upstreamKeyID)
 	if result.localErr != nil {
 		resp := gin.H{
 			"success": false,
@@ -921,7 +949,7 @@ func testChannelForHealthCheck(ctx context.Context, channel *model.Channel, test
 	summary := channelTestSummary{}
 	isChannelEnabled := channel.Status == common.ChannelStatusEnabled
 	tik := time.Now()
-	result := testChannel(ctx, channel, testUserID, "", "", shouldUseStreamForAutomaticChannelTest(channel))
+	result := testChannel(ctx, channel, testUserID, "", "", shouldUseStreamForAutomaticChannelTest(channel), 0)
 	milliseconds := time.Since(tik).Milliseconds()
 	if ctx.Err() != nil {
 		return summary

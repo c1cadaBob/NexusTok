@@ -25,18 +25,21 @@ import type {
   Row,
 } from '@tanstack/react-table'
 import { Eye, EyeOff } from 'lucide-react'
-import { useState, useMemo, useEffect } from 'react'
+import { Fragment, useState, useMemo, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
   DISABLED_ROW_DESKTOP,
   DISABLED_ROW_MOBILE,
   DataTablePage,
+  DataTableRow,
+  type DataTableRenderRowHelpers,
   useDebouncedColumnFilter,
   useDataTable,
 } from '@/components/data-table'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { TableCell, TableRow } from '@/components/ui/table'
 import {
   Tooltip,
   TooltipContent,
@@ -72,6 +75,7 @@ import { ChannelTypeLogo } from './channel-type-badge'
 import { useChannelsColumns } from './channels-columns'
 import { useChannels } from './channels-provider'
 import { DataTableBulkActions } from './data-table-bulk-actions'
+import { UpstreamKeysSubTable } from './upstream-keys-subtable'
 
 const route = getRouteApi('/_authenticated/channels/')
 const CHANNELS_COLUMN_VISIBILITY_STORAGE_KEY = 'channels:column-visibility'
@@ -92,6 +96,16 @@ function isDisabledChannelRow(channel: Channel) {
   return (
     !isTagAggregateRow(channel) && channel.status !== CHANNEL_STATUS.ENABLED
   )
+}
+
+function getChannelColumnClassName(columnId: string) {
+  if (columnId === 'select') {
+    return 'text-center'
+  }
+  if (['name', 'models', 'group', 'tag'].includes(columnId)) {
+    return 'text-left'
+  }
+  return 'text-center'
 }
 
 export function ChannelsTable() {
@@ -347,51 +361,33 @@ export function ChannelsTable() {
   // Apply tag aggregation if tag mode is enabled
   const channels = useMemo(() => {
     const rawChannels = data?.data?.items || []
-    const withUpstreamChildren = rawChannels.map((channel) => {
+    const withUpstreamData = rawChannels.map((channel) => {
       if (channel.upstream_kind !== 'platform_site') {
         return channel
       }
-      const children = filterUpstreamKeys(
+      const upstreamKeys = filterUpstreamKeys(
         upstreamKeysByChannelId.get(channel.id) || [],
         {
           keyword: globalFilter,
           model: modelFilter,
           status: statusFilter,
         }
-      ).map(
-        (key): Channel => ({
-          ...channel,
-          id: key.id,
-          name: key.name || key.external_id,
-          key: '',
-          models: key.models.join(','),
-          priority: key.key_priority,
-          conversion_ratio: key.conversion_ratio,
-          weight: key.weight,
-          status: key.status,
-          balance: key.remain_quota ?? 0,
-          used_quota: key.used_quota,
-          response_time: 0,
-          test_time: key.last_sync_at,
-          is_upstream_key: true,
-          upstream_key: key,
-          parent_channel_id: channel.id,
-          upstream_group: '',
-          children: undefined,
-        })
       )
+      const upstreamSiteStatus = upstreamSiteStatusByChannelId.get(channel.id)
       return {
         ...channel,
-        upstream_site_status: upstreamSiteStatusByChannelId.get(channel.id),
-        children,
+        upstream_site_status: upstreamSiteStatus,
+        upstream_keys: upstreamKeys,
+        balance: upstreamSiteStatus?.balance ?? channel.balance,
+        used_quota: upstreamSiteStatus?.used_quota ?? channel.used_quota,
       }
     })
 
-    if (enableTagMode && withUpstreamChildren.length > 0) {
-      return aggregateChannelsByTag(withUpstreamChildren)
+    if (enableTagMode && withUpstreamData.length > 0) {
+      return aggregateChannelsByTag(withUpstreamData)
     }
 
-    return withUpstreamChildren
+    return withUpstreamData
   }, [
     data,
     globalFilter,
@@ -414,10 +410,7 @@ export function ChannelsTable() {
     columns,
     totalCount,
     sorting,
-    initialColumnVisibility: {
-      models: false,
-      tag: false,
-    },
+    initialColumnVisibility: {},
     columnVisibilityStorageKey: CHANNELS_COLUMN_VISIBILITY_STORAGE_KEY,
     columnSizingStorageKey: isMobile
       ? false
@@ -433,7 +426,11 @@ export function ChannelsTable() {
     onPaginationChange,
     onGlobalFilterChange,
     getRowId: getChannelTableRowId,
-    getSubRows: (row: Channel & { children?: Channel[] }) => row.children,
+    getRowCanExpand: (row) =>
+      isTagAggregateRow(row.original) ||
+      row.original.upstream_kind === 'platform_site',
+    getSubRows: (row: Channel & { children?: Channel[] }) =>
+      isTagAggregateRow(row) ? row.children : undefined,
     manualPagination: true,
     manualSorting: true,
     manualFiltering: true,
@@ -447,6 +444,53 @@ export function ChannelsTable() {
       table.resetRowSelection()
     }
   }, [batchMode, table])
+
+  const getRowClassName = useCallback(
+    (row: Row<Channel>, { isMobile }: { isMobile: boolean }) => {
+      if (!isDisabledChannelRow(row.original)) {
+        return undefined
+      }
+      if (isMobile) {
+        return DISABLED_ROW_MOBILE
+      }
+      return DISABLED_ROW_DESKTOP
+    },
+    []
+  )
+
+  const renderTableRow = useCallback(
+    (row: Row<Channel>, helpers: DataTableRenderRowHelpers) => {
+      const channel = row.original
+      const shouldRenderUpstreamKeys =
+        !isTagAggregateRow(channel) &&
+        channel.upstream_kind === 'platform_site' &&
+        row.getIsExpanded()
+
+      return (
+        <Fragment key={row.id}>
+          <DataTableRow
+            row={row}
+            className={getRowClassName(row, { isMobile: false })}
+            getColumnClassName={(columnId) =>
+              helpers.getCellClassName(columnId)
+            }
+            cellRenderColumns={columns}
+          />
+          {shouldRenderUpstreamKeys && (
+            <TableRow className='bg-muted/20 hover:bg-muted/20'>
+              <TableCell
+                colSpan={row.getVisibleCells().length}
+                className='p-0 whitespace-normal'
+              >
+                <UpstreamKeysSubTable channel={channel} />
+              </TableCell>
+            </TableRow>
+          )}
+        </Fragment>
+      )
+    },
+    [columns, getRowClassName]
+  )
 
   // Prepare filter options from existing channel types only.
   const typeFilterOptions = useMemo(() => {
@@ -582,15 +626,9 @@ export function ChannelsTable() {
           </Tooltip>
         ),
       }}
-      getRowClassName={(row, { isMobile }) => {
-        if (!isDisabledChannelRow(row.original)) {
-          return undefined
-        }
-        if (isMobile) {
-          return DISABLED_ROW_MOBILE
-        }
-        return DISABLED_ROW_DESKTOP
-      }}
+      getRowClassName={getRowClassName}
+      renderRow={renderTableRow}
+      getColumnClassName={getChannelColumnClassName}
       bulkActions={batchMode ? <DataTableBulkActions table={table} /> : null}
     />
   )

@@ -13,6 +13,20 @@ type upstreamRouteCandidate struct {
 	key     *UpstreamKey
 }
 
+func buildKeyChannelRoutingKey(channel *Channel) *UpstreamKey {
+	weight := 1000
+	if channel.KeyWeightOverride != nil {
+		weight = max(MinUpstreamKeyWeight, min(MaxUpstreamKeyWeight, *channel.KeyWeightOverride))
+	} else if calculated, err := CalculateUpstreamKeyWeight(channel.ConversionRatio); err == nil {
+		weight = calculated
+	}
+	return &UpstreamKey{
+		KeyPriority:     channel.KeyPriority,
+		ConversionRatio: channel.ConversionRatio,
+		Weight:          weight,
+	}
+}
+
 func selectChannelByUpstreamKey(channels []*Channel, group, modelName string) *Channel {
 	candidates := make([]upstreamRouteCandidate, 0, len(channels))
 	for _, channel := range channels {
@@ -26,18 +40,9 @@ func selectChannelByUpstreamKey(channels []*Channel, group, modelName string) *C
 			}
 			continue
 		}
-		weight := 1000
-		if channel.KeyWeightOverride != nil {
-			weight = max(MinUpstreamKeyWeight, min(MaxUpstreamKeyWeight, *channel.KeyWeightOverride))
-		} else if calculated, err := CalculateUpstreamKeyWeight(channel.ConversionRatio); err == nil {
-			weight = calculated
-		}
 		candidates = append(candidates, upstreamRouteCandidate{
 			channel: channel,
-			key: &UpstreamKey{
-				KeyPriority: channel.KeyPriority,
-				Weight:      weight,
-			},
+			key:     buildKeyChannelRoutingKey(channel),
 		})
 	}
 	if len(candidates) == 0 {
@@ -101,11 +106,9 @@ func loadRoutableUpstreamKeys(channelID int, group, modelName string) []*Upstrea
 		if !key.IsRoutable(now) || !upstreamKeySupportsModel(key, group, modelName) {
 			continue
 		}
-		credential, err := DecryptPlatformSiteCredential(key.SecretCiphertext)
-		if err != nil || credential.AccessToken == "" {
+		if err := key.LoadSecret(); err != nil {
 			continue
 		}
-		key.Secret = credential.AccessToken
 		result = append(result, key)
 	}
 	return result

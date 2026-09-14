@@ -53,6 +53,7 @@ type UpstreamKeyResponse struct {
 	ChannelID       int        `json:"channel_id"`
 	ExternalID      string     `json:"external_id"`
 	Name            string     `json:"name"`
+	KeyPreview      string     `json:"key_preview"`
 	Models          []string   `json:"models"`
 	KeyPriority     int64      `json:"key_priority"`
 	ConversionRatio float64    `json:"conversion_ratio"`
@@ -64,6 +65,7 @@ type UpstreamKeyResponse struct {
 	Status          int        `json:"status"`
 	DisabledReason  string     `json:"disabled_reason"`
 	LastSyncAt      int64      `json:"last_sync_at"`
+	LastUsedAt      int64      `json:"last_used_at"`
 }
 
 type UpstreamKeyPatchRequest struct {
@@ -297,6 +299,7 @@ func toUpstreamKeyResponse(key *model.UpstreamKey) UpstreamKeyResponse {
 		ChannelID:       key.ChannelID,
 		ExternalID:      key.ExternalID,
 		Name:            key.Name,
+		KeyPreview:      upstreamKeyPreview(key),
 		Models:          key.GetModels(),
 		KeyPriority:     key.KeyPriority,
 		ConversionRatio: key.ConversionRatio,
@@ -308,7 +311,22 @@ func toUpstreamKeyResponse(key *model.UpstreamKey) UpstreamKeyResponse {
 		Status:          key.Status,
 		DisabledReason:  key.DisabledReason,
 		LastSyncAt:      key.LastSyncAt,
+		LastUsedAt:      key.LastUsedAt,
 	}
+}
+
+func upstreamKeyPreview(key *model.UpstreamKey) string {
+	if key == nil {
+		return ""
+	}
+	if key.Secret != "" {
+		return model.MaskTokenKey(key.Secret)
+	}
+	credential, err := model.DecryptPlatformSiteCredential(key.SecretCiphertext)
+	if err != nil || credential.AccessToken == "" {
+		return ""
+	}
+	return model.MaskTokenKey(credential.AccessToken)
 }
 
 func GetUpstreamSiteStatus(c *gin.Context) {

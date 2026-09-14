@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cadabob.dev
 */
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type {
   ColumnDef,
   RowSelectionState,
@@ -80,8 +80,9 @@ import {
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { handleServerError } from '@/lib/handle-server-error'
+import { requireServerSuccess } from '@/lib/server-error-message'
 
-import { updateChannel } from '../../api'
+import { getUpstreamKeys, updateChannel } from '../../api'
 import {
   channelsQueryKeys,
   formatResponseTime,
@@ -91,6 +92,7 @@ import type {
   Channel,
   GetChannelsResponse,
   SearchChannelsResponse,
+  UpstreamKey,
 } from '../../types'
 import { useChannels } from '../channels-provider'
 
@@ -101,6 +103,7 @@ type ChannelTestDialogProps = {
 
 type ChannelTestDialogContentProps = ChannelTestDialogProps & {
   currentRow: Channel
+  currentUpstreamKey: UpstreamKey | null
 }
 
 type ModelRow = {
@@ -294,7 +297,7 @@ export function ChannelTestDialog({
   open,
   onOpenChange,
 }: ChannelTestDialogProps) {
-  const { currentRow } = useChannels()
+  const { currentRow, currentUpstreamKey } = useChannels()
 
   if (!currentRow) {
     return null
@@ -302,10 +305,11 @@ export function ChannelTestDialog({
 
   return (
     <ChannelTestDialogContent
-      key={currentRow.id}
+      key={`${currentRow.id}:${currentUpstreamKey?.id ?? 'auto'}`}
       open={open}
       onOpenChange={onOpenChange}
       currentRow={currentRow}
+      currentUpstreamKey={currentUpstreamKey}
     />
   )
 }
@@ -314,6 +318,7 @@ function ChannelTestDialogContent({
   open,
   onOpenChange,
   currentRow,
+  currentUpstreamKey,
 }: ChannelTestDialogContentProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
@@ -345,6 +350,10 @@ function ChannelTestDialogContent({
     pageIndex: 0,
     pageSize: 30,
   })
+  const [selectedUpstreamKeyId, setSelectedUpstreamKeyId] = useState<
+    number | null
+  >(currentUpstreamKey?.id ?? null)
+  const isPlatformSite = currentRow.upstream_kind === 'platform_site'
   const endpointSelectItems = useMemo(
     () =>
       endpointTypeOptions.map((option) => ({
@@ -403,7 +412,86 @@ function ChannelTestDialogContent({
     setIsDeletingFailed(false)
     setFailureDetails(null)
     setPagination({ pageIndex: 0, pageSize: 30 })
+    setSelectedUpstreamKeyId(currentUpstreamKey?.id ?? null)
+  }, [currentUpstreamKey?.id])
+
+  const upstreamKeysQuery = useQuery({
+    queryKey: ['upstream-keys', currentChannelId],
+    queryFn: async () =>
+      requireServerSuccess(await getUpstreamKeys(currentChannelId)),
+    enabled: open && isPlatformSite,
+    staleTime: 30_000,
+  })
+
+  const upstreamKeys = useMemo(
+    () => upstreamKeysQuery.data?.data?.items ?? currentRow.upstream_keys ?? [],
+    [currentRow.upstream_keys, upstreamKeysQuery.data]
+  )
+
+  const selectedUpstreamKey = useMemo(
+    () =>
+      selectedUpstreamKeyId === null
+        ? null
+        : (upstreamKeys.find((key) => key.id === selectedUpstreamKeyId) ??
+          null),
+    [selectedUpstreamKeyId, upstreamKeys]
+  )
+
+  const upstreamKeySelectItems = useMemo(
+    () => [
+      {
+        value: 'auto',
+        label: t('Auto route'),
+        description: t('Use channel routing rules'),
+      },
+      ...upstreamKeys.map((key) => ({
+        value: String(key.id),
+        label: key.name || key.external_id || `#${key.id}`,
+        description: key.key_preview || t('No key preview'),
+      })),
+    ],
+    [t, upstreamKeys]
+  )
+
+  const resetModelTestState = useCallback(() => {
+    setSearchTerm('')
+    setTestResults({})
+    setRowSelection({})
+    setRemovedModels(() => new Set())
+    setFailureDetails(null)
+    setPagination({ pageIndex: 0, pageSize: 30 })
   }, [])
+
+  const handleUpstreamKeyChange = useCallback(
+    (value: string | null) => {
+      if (!value) return
+
+      if (value === 'auto') {
+        setSelectedUpstreamKeyId(null)
+      } else {
+        setSelectedUpstreamKeyId(Number(value))
+      }
+      resetModelTestState()
+    },
+    [resetModelTestState]
+  )
+
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+    setSelectedUpstreamKeyId(currentUpstreamKey?.id ?? null)
+  }, [currentUpstreamKey?.id, open])
+
+  useEffect(() => {
+    if (selectedUpstreamKeyId === null) {
+      return
+    }
+    if (!upstreamKeys.some((key) => key.id === selectedUpstreamKeyId)) {
+      setSelectedUpstreamKeyId(null)
+      resetModelTestState()
+    }
+  }, [resetModelTestState, selectedUpstreamKeyId, upstreamKeys])
 
   const streamDisabled = STREAM_INCOMPATIBLE_ENDPOINTS.has(endpointType)
   const effectiveStreamTest = !streamDisabled && isStreamTest
@@ -431,12 +519,17 @@ function ChannelTestDialogContent({
   const defaultTestModel = currentRow.test_model?.trim()
 
   const baseModels = useMemo(() => {
+    if (selectedUpstreamKey) {
+      return selectedUpstreamKey.models
+        .map((model) => model.trim())
+        .filter(Boolean)
+    }
     if (!modelsValue) return []
     return modelsValue
       .split(',')
       .map((model) => model.trim())
       .filter(Boolean)
-  }, [modelsValue])
+  }, [modelsValue, selectedUpstreamKey])
 
   const models = useMemo(
     () => baseModels.filter((model) => !removedModels.has(model)),
@@ -552,6 +645,7 @@ function ChannelTestDialogContent({
             testModel: model,
             endpointType: endpointType === 'auto' ? undefined : endpointType,
             stream: effectiveStreamTest || undefined,
+            upstreamKeyId: selectedUpstreamKey?.id,
             silent,
           },
           (success, responseTime, error, errorCode) => {
@@ -592,6 +686,7 @@ function ChannelTestDialogContent({
       effectiveStreamTest,
       markModelTesting,
       refreshChannelLists,
+      selectedUpstreamKey?.id,
       t,
       updateTestResult,
     ]
@@ -755,6 +850,14 @@ function ChannelTestDialogContent({
   }, [successModels])
 
   const handleDeleteFailedModels = useCallback(async () => {
+    if (selectedUpstreamKeyId !== null) {
+      toast.error(
+        t('Delete failed models is only available in auto route mode')
+      )
+      setIsDeleteFailedDialogOpen(false)
+      return
+    }
+
     const failed = models.filter(
       (model) => testResults[model]?.status === 'error'
     )
@@ -800,7 +903,14 @@ function ChannelTestDialogContent({
     } finally {
       setIsDeletingFailed(false)
     }
-  }, [currentRow.id, models, refreshChannelLists, t, testResults])
+  }, [
+    currentRow.id,
+    models,
+    refreshChannelLists,
+    selectedUpstreamKeyId,
+    t,
+    testResults,
+  ])
 
   const handleClose = useCallback(() => {
     resetState()
@@ -821,6 +931,17 @@ function ChannelTestDialogContent({
   const testAllButtonLabel = isFilteringModels
     ? t('Test {{count}} matching models', { count: filteredModels.length })
     : t('Test all {{count}} models', { count: filteredModels.length })
+  let upstreamKeyHelperText = t('Auto route uses the channel model list.')
+  if (upstreamKeysQuery.isFetching) {
+    upstreamKeyHelperText = t('Loading upstream keys...')
+  } else if (selectedUpstreamKey) {
+    upstreamKeyHelperText = t(
+      'Models are filtered by the selected upstream key.'
+    )
+  }
+  const emptyModelsText = selectedUpstreamKey
+    ? t('Selected upstream key has no synced models.')
+    : t('This channel has no configured models.')
 
   const columns = useMemo<ColumnDef<ModelRow>[]>(
     () => [
@@ -979,6 +1100,31 @@ function ChannelTestDialogContent({
         }
       >
         <div className='max-h-[78vh] space-y-4 overflow-y-auto py-4 pr-1'>
+          {isPlatformSite && (
+            <div className='grid gap-2'>
+              <Label htmlFor='upstream-test-key'>{t('Test key')}</Label>
+              <Combobox
+                options={upstreamKeySelectItems}
+                value={
+                  selectedUpstreamKeyId === null
+                    ? 'auto'
+                    : String(selectedUpstreamKeyId)
+                }
+                onValueChange={handleUpstreamKeyChange}
+                id='upstream-test-key'
+                className='w-full min-w-0'
+                placeholder={t('Auto route')}
+                emptyText={t('No upstream keys')}
+                disabled={
+                  upstreamKeysQuery.isFetching && upstreamKeys.length === 0
+                }
+              />
+              <p className='text-muted-foreground text-xs'>
+                {upstreamKeyHelperText}
+              </p>
+            </div>
+          )}
+
           <div className='grid gap-4 md:grid-cols-2'>
             <div className='grid gap-2'>
               <Label htmlFor='endpoint-type'>{t('Endpoint Type')}</Label>
@@ -1018,7 +1164,7 @@ function ChannelTestDialogContent({
           <div className='space-y-3 max-sm:has-[div[role="toolbar"]]:pb-16'>
             <div className='flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between'>
               <div className='min-w-0 space-y-2'>
-                <p className='text-sm font-medium'>{t('Channel models')}</p>
+                <p className='text-sm font-medium'>{t('Testable models')}</p>
                 <p className='text-muted-foreground text-xs'>
                   {t('Select models to run batch tests.')}
                 </p>
@@ -1055,18 +1201,19 @@ function ChannelTestDialogContent({
                           })}
                         </Button>
                       )}
-                      {failedModels.length > 0 && (
-                        <Button
-                          variant='outline'
-                          size='sm'
-                          onClick={() => setIsDeleteFailedDialogOpen(true)}
-                        >
-                          <Trash2 data-icon='inline-start' />
-                          {t('Delete failed models ({{count}})', {
-                            count: failedModels.length,
-                          })}
-                        </Button>
-                      )}
+                      {failedModels.length > 0 &&
+                        selectedUpstreamKeyId === null && (
+                          <Button
+                            variant='outline'
+                            size='sm'
+                            onClick={() => setIsDeleteFailedDialogOpen(true)}
+                          >
+                            <Trash2 data-icon='inline-start' />
+                            {t('Delete failed models ({{count}})', {
+                              count: failedModels.length,
+                            })}
+                          </Button>
+                        )}
                     </>
                   )}
                 </div>
@@ -1087,7 +1234,7 @@ function ChannelTestDialogContent({
                 containerClassName='rounded-md'
                 containerProps={{
                   role: 'region',
-                  'aria-label': t('Channel models'),
+                  'aria-label': t('Testable models'),
                 }}
                 tableContainerClassName='max-h-90 overflow-auto **:data-[slot=table-container]:overflow-visible'
                 tableClassName='w-max min-w-full table-auto'
@@ -1113,7 +1260,7 @@ function ChannelTestDialogContent({
                 emptyContent={
                   models.length
                     ? t('No models matched your search.')
-                    : t('This channel has no configured models.')
+                    : emptyModelsText
                 }
                 emptyCellClassName='text-muted-foreground h-16 text-center text-sm'
               />

@@ -78,6 +78,21 @@ func TestUpstreamKeyFreeWeightCannotBeOverridden(t *testing.T) {
 	assert.Equal(t, MaxUpstreamKeyWeight, key.EffectiveWeight())
 }
 
+func TestKeyChannelRoutingKeyPreservesConfiguredRatioAndWeight(t *testing.T) {
+	override := 321
+	channel := &Channel{
+		KeyPriority:       7,
+		ConversionRatio:   1,
+		KeyWeightOverride: &override,
+	}
+
+	routingKey := buildKeyChannelRoutingKey(channel)
+
+	require.Equal(t, int64(7), routingKey.KeyPriority)
+	require.Equal(t, 1.0, routingKey.ConversionRatio)
+	require.Equal(t, 321, routingKey.EffectiveWeight())
+}
+
 func TestPlatformSiteCredentialEncryptionRoundTrip(t *testing.T) {
 	previousSecret := common.CryptoSecret
 	common.CryptoSecret = "upstream-credential-test-secret"
@@ -260,6 +275,7 @@ func TestUpstreamChannelDatabaseCompatibility(t *testing.T) {
 				))
 				require.NoError(t, migrateUpstreamChannelDefaults())
 			}
+			assert.True(t, db.Migrator().HasColumn(&UpstreamKey{}, "LastUsedAt"))
 
 			var migratedLegacy Channel
 			require.NoError(t, db.First(&migratedLegacy, "id = ?", 41).Error)
@@ -318,6 +334,10 @@ func TestUpstreamChannelDatabaseCompatibility(t *testing.T) {
 				Status:           UpstreamKeyStatusEnabled,
 			}
 			require.NoError(t, db.Create(key).Error)
+			require.NoError(t, UpdateUpstreamKeyLastUsed(key.ID, 1_800_000_000))
+			var keyWithLastUsed UpstreamKey
+			require.NoError(t, db.First(&keyWithLastUsed, key.ID).Error)
+			assert.EqualValues(t, 1_800_000_000, keyWithLastUsed.LastUsedAt)
 			require.NoError(t, db.Create(&UpstreamKeyAbility{
 				UpstreamKeyID: key.ID,
 				Group:         "default",
@@ -378,6 +398,78 @@ func TestUpstreamKeyIsRoutable(t *testing.T) {
 	remaining = 100
 	key.MissingSince = now.Unix()
 	assert.False(t, key.IsRoutable(now))
+}
+
+func TestGetRoutableUpstreamKeyByIDLoadsSecretAndFiltersModels(t *testing.T) {
+	previousDB := DB
+	previousSecret := common.CryptoSecret
+	common.CryptoSecret = "upstream-key-by-id-test-secret"
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&Channel{},
+		&PlatformSiteAccount{},
+		&UpstreamKey{},
+		&UpstreamKeyAbility{},
+	))
+	DB = db
+	t.Cleanup(func() {
+		DB = previousDB
+		common.CryptoSecret = previousSecret
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	channel := &Channel{
+		Id:           701,
+		Name:         "platform-site",
+		Status:       common.ChannelStatusEnabled,
+		UpstreamKind: UpstreamKindPlatformSite,
+		Group:        "default",
+	}
+	require.NoError(t, db.Create(channel).Error)
+	require.NoError(t, db.Create(&PlatformSiteAccount{
+		ChannelID:  channel.Id,
+		Platform:   PlatformNewAPI,
+		BaseURL:    "https://upstream.example",
+		AuthType:   UpstreamAuthAccessToken,
+		SyncStatus: UpstreamSiteSyncSuccess,
+	}).Error)
+	secret, err := EncryptPlatformSiteCredential(PlatformSiteCredential{AccessToken: "sk-routable"})
+	require.NoError(t, err)
+	remaining := int64(100)
+	key := &UpstreamKey{
+		ChannelID:        channel.Id,
+		ExternalID:       "external-routable",
+		SecretCiphertext: secret,
+		Models:           "gpt-allowed",
+		KeyPriority:      3,
+		ConversionRatio:  0.2,
+		Weight:           1800,
+		RemainQuota:      &remaining,
+		Status:           UpstreamKeyStatusEnabled,
+	}
+	require.NoError(t, db.Create(key).Error)
+	require.NoError(t, db.Create(&UpstreamKeyAbility{
+		UpstreamKeyID: key.ID,
+		Group:         "default",
+		Model:         "gpt-allowed",
+		Enabled:       true,
+	}).Error)
+
+	selected, err := GetRoutableUpstreamKeyByID(channel.Id, key.ID, "default", "gpt-allowed", time.Now())
+	require.NoError(t, err)
+	assert.Equal(t, key.ID, selected.ID)
+	assert.Equal(t, "sk-routable", selected.Secret)
+
+	_, err = GetRoutableUpstreamKeyByID(channel.Id, key.ID, "default", "gpt-blocked", time.Now())
+	require.Error(t, err)
+
+	_, err = GetRoutableUpstreamKeyByID(channel.Id+1, key.ID, "default", "gpt-allowed", time.Now())
+	require.Error(t, err)
 }
 
 func TestSelectChannelByUpstreamKeyMergesParentsAndFiltersChildren(t *testing.T) {
