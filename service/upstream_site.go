@@ -40,9 +40,10 @@ const (
 )
 
 type PlatformSiteSession struct {
-	BaseURL string
-	Client  *http.Client
-	Headers http.Header
+	BaseURL          string
+	Client           *http.Client
+	Headers          http.Header
+	CredentialUpdate *model.PlatformSiteCredential
 }
 
 type PlatformSiteAdapter interface {
@@ -52,18 +53,20 @@ type PlatformSiteAdapter interface {
 }
 
 type UpstreamKeySnapshot struct {
-	ExternalID         string
-	Name               string
-	Secret             string
-	Group              string
-	Models             []string
-	ConversionRatio    float64
-	ConversionRatioSet bool
-	UsedQuota          int64
-	RemainQuota        *int64
-	ExpiresAt          *time.Time
-	Disabled           bool
-	SyncError          string
+	ExternalID               string
+	Name                     string
+	Secret                   string
+	Group                    string
+	Models                   []string
+	SourceConversionRatio    float64
+	SourceConversionRatioSet bool
+	ConversionRatio          float64
+	ConversionRatioSet       bool
+	UsedQuota                int64
+	RemainQuota              *int64
+	ExpiresAt                *time.Time
+	Disabled                 bool
+	SyncError                string
 }
 
 type PlatformSiteSnapshot struct {
@@ -557,9 +560,18 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 				return fmt.Errorf("%w: 上游密钥额度数据无效", ErrPlatformSiteResponse)
 			}
 			allModels = append(allModels, item.Models...)
-			effectiveRatio := ratio
-			if item.ConversionRatioSet || item.ConversionRatio > 0 {
-				effectiveRatio *= item.ConversionRatio
+			sourceRatio := item.SourceConversionRatio
+			sourceRatioSet := item.SourceConversionRatioSet
+			if !sourceRatioSet {
+				sourceRatio = item.ConversionRatio
+				sourceRatioSet = item.ConversionRatioSet || item.ConversionRatio > 0
+			}
+			if !sourceRatioSet {
+				sourceRatio = 1
+			}
+			effectiveRatio, ratioErr := model.CalculatePlatformKeyConversionRatio(ratio, sourceRatio)
+			if ratioErr != nil {
+				return ratioErr
 			}
 			weight, err := model.CalculateUpstreamKeyWeight(effectiveRatio)
 			if err != nil {
@@ -585,9 +597,20 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 			existing.SecretCiphertext = ciphertext
 			existing.SecretFingerprint = common.GenerateHMAC(item.Secret)
 			existing.Models = strings.Join(uniqueStrings(item.Models), ",")
-			existing.ConversionRatio = effectiveRatio
-			existing.Weight = weight
-			if effectiveRatio == 0 {
+			sourceRatioValue := sourceRatio
+			existing.SourceConversionRatio = &sourceRatioValue
+			if existing.ConversionRatioOverride != nil {
+				existing.ConversionRatio = *existing.ConversionRatioOverride
+				overrideWeight, overrideErr := model.CalculateUpstreamKeyWeight(existing.ConversionRatio)
+				if overrideErr != nil {
+					return overrideErr
+				}
+				existing.Weight = overrideWeight
+			} else {
+				existing.ConversionRatio = effectiveRatio
+				existing.Weight = weight
+			}
+			if existing.ConversionRatio == 0 {
 				existing.WeightOverride = nil
 			}
 			existing.UsedQuota = item.UsedQuota

@@ -103,16 +103,18 @@ func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *Platfo
 			itemModels = snapshot.Models
 		}
 		item := UpstreamKeySnapshot{
-			ExternalID:         externalID,
-			Name:               firstString(token, "name", "key_name", "token_name"),
-			Group:              firstString(token, "group", "group_name"),
-			Models:             itemModels,
-			ConversionRatio:    firstFloat(token, "ratio", "rate", "multiplier", "group_ratio"),
-			ConversionRatioSet: hasAnyField(token, "ratio", "rate", "multiplier", "group_ratio"),
-			UsedQuota:          firstInt64(token, "used_quota", "used", "quota_used"),
-			RemainQuota:        optionalInt64(token, "remain_quota", "remaining_quota", "quota"),
-			ExpiresAt:          firstTime(token, "expired_time", "expires_at", "expire_at"),
-			Disabled:           isUpstreamKeyDisabled(token),
+			ExternalID:               externalID,
+			Name:                     firstString(token, "name", "key_name", "token_name"),
+			Group:                    firstString(token, "group", "group_name"),
+			Models:                   itemModels,
+			SourceConversionRatio:    firstFloat(token, "ratio", "rate", "multiplier", "group_ratio"),
+			SourceConversionRatioSet: hasAnyField(token, "ratio", "rate", "multiplier", "group_ratio"),
+			ConversionRatio:          firstFloat(token, "ratio", "rate", "multiplier", "group_ratio"),
+			ConversionRatioSet:       hasAnyField(token, "ratio", "rate", "multiplier", "group_ratio"),
+			UsedQuota:                firstInt64(token, "used_quota", "used", "quota_used"),
+			RemainQuota:              optionalInt64(token, "remain_quota", "remaining_quota", "quota"),
+			ExpiresAt:                firstTime(token, "expired_time", "expires_at", "expire_at"),
+			Disabled:                 isUpstreamKeyDisabled(token),
 		}
 		secret := firstString(token, "key", "token", "api_key")
 		if secret == "" || strings.Contains(secret, "*") {
@@ -404,16 +406,18 @@ func fetchSub2APIKeys(ctx context.Context, session *PlatformSiteSession, rates m
 				ratio = rates[group]
 			}
 			keySnapshot := UpstreamKeySnapshot{
-				ExternalID:         externalID,
-				Name:               firstString(item, "name", "key_name"),
-				Group:              group,
-				Models:             stringsFromPayload(item["models"]),
-				ConversionRatio:    ratio,
-				ConversionRatioSet: ratioKeysPresent || groupRateSet,
-				UsedQuota:          firstInt64(item, "quota_used", "used_quota", "used"),
-				RemainQuota:        optionalInt64(item, "quota", "remain_quota", "remaining_quota"),
-				ExpiresAt:          firstTime(item, "expires_at", "expired_at", "expire_at"),
-				Disabled:           isUpstreamKeyDisabled(item),
+				ExternalID:               externalID,
+				Name:                     firstString(item, "name", "key_name"),
+				Group:                    group,
+				Models:                   stringsFromPayload(item["models"]),
+				SourceConversionRatio:    ratio,
+				SourceConversionRatioSet: ratioKeysPresent || groupRateSet,
+				ConversionRatio:          ratio,
+				ConversionRatioSet:       ratioKeysPresent || groupRateSet,
+				UsedQuota:                firstInt64(item, "quota_used", "used_quota", "used"),
+				RemainQuota:              optionalInt64(item, "quota", "remain_quota", "remaining_quota"),
+				ExpiresAt:                firstTime(item, "expires_at", "expired_at", "expire_at"),
+				Disabled:                 isUpstreamKeyDisabled(item),
 			}
 			secret := firstString(item, "key", "api_key", "token")
 			if secret == "" || strings.Contains(secret, "*") {
@@ -467,16 +471,18 @@ func fetchSub2APIAdminKeys(ctx context.Context, session *PlatformSiteSession, ra
 				itemModels = models
 			}
 			keySnapshot := UpstreamKeySnapshot{
-				ExternalID:         id,
-				Name:               firstString(item, "name", "account_name"),
-				Group:              group,
-				Models:             itemModels,
-				ConversionRatio:    ratio,
-				ConversionRatioSet: ratioKeysPresent || groupRateSet,
-				UsedQuota:          firstInt64(item, "quota_used", "used_quota", "used"),
-				RemainQuota:        optionalInt64(item, "quota", "remain_quota", "remaining_quota"),
-				ExpiresAt:          firstTime(item, "expires_at", "expired_at", "expire_at"),
-				Disabled:           isUpstreamKeyDisabled(item),
+				ExternalID:               id,
+				Name:                     firstString(item, "name", "account_name"),
+				Group:                    group,
+				Models:                   itemModels,
+				SourceConversionRatio:    ratio,
+				SourceConversionRatioSet: ratioKeysPresent || groupRateSet,
+				ConversionRatio:          ratio,
+				ConversionRatioSet:       ratioKeysPresent || groupRateSet,
+				UsedQuota:                firstInt64(item, "quota_used", "used_quota", "used"),
+				RemainQuota:              optionalInt64(item, "quota", "remain_quota", "remaining_quota"),
+				ExpiresAt:                firstTime(item, "expires_at", "expired_at", "expire_at"),
+				Disabled:                 isUpstreamKeyDisabled(item),
 			}
 			dataPayload, dataErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/admin/accounts/data", url.Values{
 				"ids":             {id},

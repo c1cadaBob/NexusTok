@@ -40,11 +40,12 @@ const (
 )
 
 type PlatformSiteCredential struct {
-	Username    string `json:"username,omitempty"`
-	Password    string `json:"password,omitempty"`
-	AccessToken string `json:"access_token,omitempty"`
-	AdminKey    string `json:"admin_key,omitempty"`
-	Cookie      string `json:"cookie,omitempty"`
+	Username     string `json:"username,omitempty"`
+	Password     string `json:"password,omitempty"`
+	AccessToken  string `json:"access_token,omitempty"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+	AdminKey     string `json:"admin_key,omitempty"`
+	Cookie       string `json:"cookie,omitempty"`
 }
 
 type PlatformSiteAccount struct {
@@ -70,26 +71,28 @@ type PlatformSiteAccount struct {
 }
 
 type UpstreamKey struct {
-	ID                uint       `json:"id" gorm:"primaryKey"`
-	ChannelID         int        `json:"channel_id" gorm:"not null;index;uniqueIndex:idx_upstream_key_channel_external"`
-	ExternalID        string     `json:"external_id" gorm:"type:varchar(255);not null;uniqueIndex:idx_upstream_key_channel_external"`
-	Name              string     `json:"name" gorm:"type:varchar(255)"`
-	SecretCiphertext  string     `json:"-" gorm:"type:text;not null"`
-	SecretFingerprint string     `json:"secret_fingerprint" gorm:"type:varchar(128);index"`
-	Models            string     `json:"models" gorm:"type:text"`
-	KeyPriority       int64      `json:"key_priority" gorm:"bigint;index"`
-	ConversionRatio   float64    `json:"conversion_ratio"`
-	Weight            int        `json:"weight" gorm:"index"`
-	WeightOverride    *int       `json:"weight_override" gorm:"index"`
-	UsedQuota         int64      `json:"used_quota" gorm:"bigint"`
-	RemainQuota       *int64     `json:"remain_quota" gorm:"bigint"`
-	ExpiresAt         *time.Time `json:"expires_at"`
-	Status            int        `json:"status" gorm:"index"`
-	DisabledReason    string     `json:"disabled_reason" gorm:"type:varchar(255)"`
-	LastSyncAt        int64      `json:"last_sync_at" gorm:"bigint;index"`
-	LastUsedAt        int64      `json:"last_used_at" gorm:"bigint;index"`
-	MissingSince      int64      `json:"missing_since" gorm:"bigint"`
-	Secret            string     `json:"-" gorm:"-"`
+	ID                      uint       `json:"id" gorm:"primaryKey"`
+	ChannelID               int        `json:"channel_id" gorm:"not null;index;uniqueIndex:idx_upstream_key_channel_external"`
+	ExternalID              string     `json:"external_id" gorm:"type:varchar(255);not null;uniqueIndex:idx_upstream_key_channel_external"`
+	Name                    string     `json:"name" gorm:"type:varchar(255)"`
+	SecretCiphertext        string     `json:"-" gorm:"type:text;not null"`
+	SecretFingerprint       string     `json:"secret_fingerprint" gorm:"type:varchar(128);index"`
+	Models                  string     `json:"models" gorm:"type:text"`
+	KeyPriority             int64      `json:"key_priority" gorm:"bigint;index"`
+	SourceConversionRatio   *float64   `json:"source_conversion_ratio"`
+	ConversionRatio         float64    `json:"conversion_ratio"`
+	ConversionRatioOverride *float64   `json:"conversion_ratio_override"`
+	Weight                  int        `json:"weight" gorm:"index"`
+	WeightOverride          *int       `json:"weight_override" gorm:"index"`
+	UsedQuota               int64      `json:"used_quota" gorm:"bigint"`
+	RemainQuota             *int64     `json:"remain_quota" gorm:"bigint"`
+	ExpiresAt               *time.Time `json:"expires_at"`
+	Status                  int        `json:"status" gorm:"index"`
+	DisabledReason          string     `json:"disabled_reason" gorm:"type:varchar(255)"`
+	LastSyncAt              int64      `json:"last_sync_at" gorm:"bigint;index"`
+	LastUsedAt              int64      `json:"last_used_at" gorm:"bigint;index"`
+	MissingSince            int64      `json:"missing_since" gorm:"bigint"`
+	Secret                  string     `json:"-" gorm:"-"`
 }
 
 type UpstreamKeyAbility struct {
@@ -104,6 +107,7 @@ func (credential PlatformSiteCredential) Fingerprint() string {
 		credential.Username,
 		credential.Password,
 		credential.AccessToken,
+		credential.RefreshToken,
 		credential.AdminKey,
 		credential.Cookie,
 	}, "\x00"))
@@ -155,6 +159,30 @@ func (key *UpstreamKey) EffectiveWeight() int {
 		return max(MinUpstreamKeyWeight, min(MaxUpstreamKeyWeight, *key.WeightOverride))
 	}
 	return max(MinUpstreamKeyWeight, min(MaxUpstreamKeyWeight, key.Weight))
+}
+
+func (key *UpstreamKey) EffectiveSourceConversionRatio() float64 {
+	if key == nil || key.SourceConversionRatio == nil {
+		return 1
+	}
+	return *key.SourceConversionRatio
+}
+
+func CalculatePlatformKeyConversionRatio(siteRatio, sourceRatio float64) (float64, error) {
+	if math.IsNaN(siteRatio) || math.IsInf(siteRatio, 0) || siteRatio < 0 ||
+		siteRatio > MaxUpstreamConversionRatio {
+		return 0, errors.New("site conversion ratio must be a finite non-negative number")
+	}
+	if math.IsNaN(sourceRatio) || math.IsInf(sourceRatio, 0) || sourceRatio < 0 ||
+		sourceRatio > MaxUpstreamConversionRatio {
+		return 0, errors.New("source conversion ratio must be a finite non-negative number")
+	}
+	ratio := siteRatio * sourceRatio
+	if math.IsNaN(ratio) || math.IsInf(ratio, 0) || ratio < 0 ||
+		ratio > MaxUpstreamConversionRatio {
+		return 0, errors.New("effective conversion ratio exceeds the supported range")
+	}
+	return ratio, nil
 }
 
 func (key *UpstreamKey) GetModels() []string {

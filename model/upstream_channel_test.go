@@ -68,6 +68,34 @@ func TestCalculateUpstreamKeyWeight(t *testing.T) {
 	}
 }
 
+func TestCalculatePlatformKeyConversionRatio(t *testing.T) {
+	tests := []struct {
+		name            string
+		siteRatio       float64
+		sourceRatio     float64
+		expected        float64
+		expectedFailure bool
+	}{
+		{name: "site ratio only", siteRatio: 0.1, sourceRatio: 1, expected: 0.1},
+		{name: "source ratio multiplies site ratio", siteRatio: 0.1, sourceRatio: 0.7, expected: 0.07},
+		{name: "free source ratio", siteRatio: 1, sourceRatio: 0, expected: 0},
+		{name: "product over limit rejected", siteRatio: 1000, sourceRatio: 2, expectedFailure: true},
+		{name: "negative source ratio rejected", siteRatio: 1, sourceRatio: -0.1, expectedFailure: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ratio, err := CalculatePlatformKeyConversionRatio(test.siteRatio, test.sourceRatio)
+			if test.expectedFailure {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.InDelta(t, test.expected, ratio, 1e-12)
+		})
+	}
+}
+
 func TestUpstreamKeyFreeWeightCannotBeOverridden(t *testing.T) {
 	override := 1
 	key := UpstreamKey{
@@ -165,6 +193,56 @@ func TestMigrateUpstreamChannelDefaultsIsIdempotent(t *testing.T) {
 	var marker Option
 	require.NoError(t, db.Where(commonKeyCol+" = ?", "migration.upstream_channel_defaults.v1").First(&marker).Error)
 	assert.Equal(t, "1", marker.Value)
+}
+
+func TestMigrateUpstreamKeyDefaultsInitializesMissingSourceRatioOnce(t *testing.T) {
+	previousDB := DB
+	previousMainType := common.MainDatabaseType()
+	previousLogType := common.LogDatabaseType()
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&UpstreamKey{}, &Option{}))
+	DB = db
+	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
+	initCol()
+	t.Cleanup(func() {
+		DB = previousDB
+		common.SetDatabaseTypes(previousMainType, previousLogType)
+		initCol()
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	require.NoError(t, db.Create(&UpstreamKey{
+		ChannelID:        1,
+		ExternalID:       "legacy",
+		SecretCiphertext: "ciphertext",
+	}).Error)
+	freeRatio := 0.0
+	require.NoError(t, db.Create(&UpstreamKey{
+		ChannelID:             1,
+		ExternalID:            "free",
+		SecretCiphertext:      "ciphertext",
+		SourceConversionRatio: &freeRatio,
+	}).Error)
+
+	require.NoError(t, migrateUpstreamKeyDefaults())
+
+	var legacy, free UpstreamKey
+	require.NoError(t, db.Where("external_id = ?", "legacy").First(&legacy).Error)
+	require.NoError(t, db.Where("external_id = ?", "free").First(&free).Error)
+	require.NotNil(t, legacy.SourceConversionRatio)
+	assert.Equal(t, 1.0, *legacy.SourceConversionRatio)
+	require.NotNil(t, free.SourceConversionRatio)
+	assert.Equal(t, 0.0, *free.SourceConversionRatio)
+
+	require.NoError(t, db.Model(&legacy).Update("source_conversion_ratio", 0.5).Error)
+	require.NoError(t, migrateUpstreamKeyDefaults())
+	require.NoError(t, db.First(&legacy, legacy.ID).Error)
+	assert.Equal(t, 0.5, *legacy.SourceConversionRatio)
 }
 
 func TestUpstreamChannelDatabaseCompatibility(t *testing.T) {

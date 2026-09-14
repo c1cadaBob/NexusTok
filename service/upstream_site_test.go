@@ -398,6 +398,89 @@ func TestPersistPlatformSiteSnapshotRebuildsAbilitiesAndAutoDisablesUnavailableK
 	assert.True(t, restoredKey.IsRoutable(time.Now()))
 }
 
+func TestPersistPlatformSiteSnapshotPreservesManualRatioAndWeightOverrides(t *testing.T) {
+	previousDB := model.DB
+	previousSecret := common.CryptoSecret
+	common.CryptoSecret = "upstream-site-override-test-secret"
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&model.Channel{},
+		&model.Ability{},
+		&model.PlatformSiteAccount{},
+		&model.UpstreamKey{},
+		&model.UpstreamKeyAbility{},
+	))
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = previousDB
+		common.CryptoSecret = previousSecret
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	priority := int64(3)
+	channel := &model.Channel{
+		Id:           14,
+		Name:         "override-site",
+		Status:       common.ChannelStatusEnabled,
+		UpstreamKind: model.UpstreamKindPlatformSite,
+		Group:        "default",
+		Priority:     &priority,
+	}
+	require.NoError(t, db.Create(channel).Error)
+	account := &model.PlatformSiteAccount{
+		ChannelID:       channel.Id,
+		Platform:        model.PlatformNewAPI,
+		BaseURL:         "https://upstream.example",
+		ConversionRatio: 0.1,
+	}
+	require.NoError(t, db.Create(account).Error)
+
+	ratioOverride := 0.42
+	weightOverride := 1777
+	secret, err := model.EncryptPlatformSiteCredential(model.PlatformSiteCredential{AccessToken: "sk-override"})
+	require.NoError(t, err)
+	key := &model.UpstreamKey{
+		ChannelID:               channel.Id,
+		ExternalID:              "override-key",
+		SecretCiphertext:        secret,
+		ConversionRatio:         ratioOverride,
+		ConversionRatioOverride: &ratioOverride,
+		Weight:                  1580,
+		WeightOverride:          &weightOverride,
+		Status:                  model.UpstreamKeyStatusEnabled,
+	}
+	require.NoError(t, db.Create(key).Error)
+
+	sourceRatio := 0.7
+	require.NoError(t, persistPlatformSiteSnapshot(context.Background(), account, PlatformSiteSnapshot{
+		Balance: 9,
+		Keys: []UpstreamKeySnapshot{{
+			ExternalID:               "override-key",
+			Name:                     "override",
+			Secret:                   "sk-override-next",
+			SourceConversionRatio:    sourceRatio,
+			SourceConversionRatioSet: true,
+			Models:                   []string{"gpt-4o"},
+		}},
+	}))
+
+	var saved model.UpstreamKey
+	require.NoError(t, db.First(&saved, key.ID).Error)
+	require.NotNil(t, saved.SourceConversionRatio)
+	assert.Equal(t, sourceRatio, *saved.SourceConversionRatio)
+	require.NotNil(t, saved.ConversionRatioOverride)
+	assert.Equal(t, ratioOverride, *saved.ConversionRatioOverride)
+	assert.Equal(t, ratioOverride, saved.ConversionRatio)
+	require.NotNil(t, saved.WeightOverride)
+	assert.Equal(t, weightOverride, *saved.WeightOverride)
+	assert.Equal(t, weightOverride, saved.EffectiveWeight())
+}
+
 func TestPlatformSiteRequestRejectsOversizedResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		_, _ = writer.Write([]byte(strings.Repeat("x", upstreamSiteResponseLimit+1)))

@@ -49,30 +49,33 @@ type UpstreamSiteStatusResponse struct {
 }
 
 type UpstreamKeyResponse struct {
-	ID              uint       `json:"id"`
-	ChannelID       int        `json:"channel_id"`
-	ExternalID      string     `json:"external_id"`
-	Name            string     `json:"name"`
-	KeyPreview      string     `json:"key_preview"`
-	Models          []string   `json:"models"`
-	KeyPriority     int64      `json:"key_priority"`
-	ConversionRatio float64    `json:"conversion_ratio"`
-	Weight          int        `json:"weight"`
-	WeightOverride  *int       `json:"weight_override"`
-	UsedQuota       int64      `json:"used_quota"`
-	RemainQuota     *int64     `json:"remain_quota"`
-	ExpiresAt       *time.Time `json:"expires_at"`
-	Status          int        `json:"status"`
-	DisabledReason  string     `json:"disabled_reason"`
-	LastSyncAt      int64      `json:"last_sync_at"`
-	LastUsedAt      int64      `json:"last_used_at"`
+	ID                      uint       `json:"id"`
+	ChannelID               int        `json:"channel_id"`
+	ExternalID              string     `json:"external_id"`
+	Name                    string     `json:"name"`
+	KeyPreview              string     `json:"key_preview"`
+	Models                  []string   `json:"models"`
+	KeyPriority             int64      `json:"key_priority"`
+	SourceConversionRatio   float64    `json:"source_conversion_ratio"`
+	ConversionRatio         float64    `json:"conversion_ratio"`
+	ConversionRatioOverride *float64   `json:"conversion_ratio_override"`
+	Weight                  int        `json:"weight"`
+	WeightOverride          *int       `json:"weight_override"`
+	UsedQuota               int64      `json:"used_quota"`
+	RemainQuota             *int64     `json:"remain_quota"`
+	ExpiresAt               *time.Time `json:"expires_at"`
+	Status                  int        `json:"status"`
+	DisabledReason          string     `json:"disabled_reason"`
+	LastSyncAt              int64      `json:"last_sync_at"`
+	LastUsedAt              int64      `json:"last_used_at"`
 }
 
 type UpstreamKeyPatchRequest struct {
-	KeyPriority     *int64   `json:"key_priority"`
-	ConversionRatio *float64 `json:"conversion_ratio"`
-	WeightOverride  *int     `json:"weight_override"`
-	ClearWeight     bool     `json:"clear_weight"`
+	KeyPriority          *int64   `json:"key_priority"`
+	ConversionRatio      *float64 `json:"conversion_ratio"`
+	ClearConversionRatio bool     `json:"clear_conversion_ratio"`
+	WeightOverride       *int     `json:"weight_override"`
+	ClearWeight          bool     `json:"clear_weight"`
 }
 
 type UpstreamKeyBatchStatusRequest struct {
@@ -295,23 +298,25 @@ func getPlatformSiteChannel(channelID int) (*model.Channel, error) {
 
 func toUpstreamKeyResponse(key *model.UpstreamKey) UpstreamKeyResponse {
 	return UpstreamKeyResponse{
-		ID:              key.ID,
-		ChannelID:       key.ChannelID,
-		ExternalID:      key.ExternalID,
-		Name:            key.Name,
-		KeyPreview:      upstreamKeyPreview(key),
-		Models:          key.GetModels(),
-		KeyPriority:     key.KeyPriority,
-		ConversionRatio: key.ConversionRatio,
-		Weight:          key.EffectiveWeight(),
-		WeightOverride:  key.WeightOverride,
-		UsedQuota:       key.UsedQuota,
-		RemainQuota:     key.RemainQuota,
-		ExpiresAt:       key.ExpiresAt,
-		Status:          key.Status,
-		DisabledReason:  key.DisabledReason,
-		LastSyncAt:      key.LastSyncAt,
-		LastUsedAt:      key.LastUsedAt,
+		ID:                      key.ID,
+		ChannelID:               key.ChannelID,
+		ExternalID:              key.ExternalID,
+		Name:                    key.Name,
+		KeyPreview:              upstreamKeyPreview(key),
+		Models:                  key.GetModels(),
+		KeyPriority:             key.KeyPriority,
+		SourceConversionRatio:   key.EffectiveSourceConversionRatio(),
+		ConversionRatio:         key.ConversionRatio,
+		ConversionRatioOverride: key.ConversionRatioOverride,
+		Weight:                  key.EffectiveWeight(),
+		WeightOverride:          key.WeightOverride,
+		UsedQuota:               key.UsedQuota,
+		RemainQuota:             key.RemainQuota,
+		ExpiresAt:               key.ExpiresAt,
+		Status:                  key.Status,
+		DisabledReason:          key.DisabledReason,
+		LastSyncAt:              key.LastSyncAt,
+		LastUsedAt:              key.LastUsedAt,
 	}
 }
 
@@ -394,22 +399,48 @@ func PatchUpstreamKey(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if request.ConversionRatio != nil && request.ClearConversionRatio {
+		common.ApiError(c, errors.New("不能同时设置和清除密钥倍率覆盖"))
+		return
+	}
 	updates := map[string]any{}
 	if request.KeyPriority != nil {
 		updates["key_priority"] = *request.KeyPriority
 	}
+	effectiveRatio := key.ConversionRatio
 	if request.ConversionRatio != nil {
 		weight, weightErr := model.CalculateUpstreamKeyWeight(*request.ConversionRatio)
 		if weightErr != nil {
 			common.ApiError(c, weightErr)
 			return
 		}
+		updates["conversion_ratio_override"] = *request.ConversionRatio
 		updates["conversion_ratio"] = *request.ConversionRatio
 		updates["weight"] = weight
-	}
-	effectiveRatio := key.ConversionRatio
-	if request.ConversionRatio != nil {
 		effectiveRatio = *request.ConversionRatio
+	} else if request.ClearConversionRatio {
+		var account model.PlatformSiteAccount
+		if err := model.DB.Where("channel_id = ?", channelID).First(&account).Error; err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		autoRatio, ratioErr := model.CalculatePlatformKeyConversionRatio(
+			account.ConversionRatio,
+			key.EffectiveSourceConversionRatio(),
+		)
+		if ratioErr != nil {
+			common.ApiError(c, ratioErr)
+			return
+		}
+		weight, weightErr := model.CalculateUpstreamKeyWeight(autoRatio)
+		if weightErr != nil {
+			common.ApiError(c, weightErr)
+			return
+		}
+		updates["conversion_ratio_override"] = nil
+		updates["conversion_ratio"] = autoRatio
+		updates["weight"] = weight
+		effectiveRatio = autoRatio
 	}
 	if effectiveRatio == 0 && (request.ClearWeight || request.WeightOverride != nil) {
 		common.ApiError(c, errors.New("免费密钥的权重固定为 2000，不允许修改"))
