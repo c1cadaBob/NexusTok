@@ -14,6 +14,8 @@ import (
 	"github.com/c1cadaBob/NexusTok/model"
 )
 
+const defaultNewAPIQuotaPerUnit = 1
+
 type NewAPIAdapter struct {
 	client *http.Client
 }
@@ -74,6 +76,9 @@ func (adapter *NewAPIAdapter) Authenticate(ctx context.Context, baseURL string, 
 		if token := findToken(payload); token != "" {
 			session.Headers.Set("Authorization", bearerToken(token))
 		}
+		if userID := findUserID(payload); userID != "" {
+			setNewAPICompatUserHeaders(session.Headers, userID)
+		}
 		if refreshToken := findRefreshToken(payload); refreshToken != "" {
 			updatedCredential := credential
 			updatedCredential.AccessToken = ""
@@ -89,24 +94,17 @@ func (adapter *NewAPIAdapter) Authenticate(ctx context.Context, baseURL string, 
 }
 
 func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *PlatformSiteSession) (PlatformSiteSnapshot, error) {
+	quotaPerUnit := fetchNewAPIQuotaPerUnit(ctx, session)
 	selfPayload, err := platformSiteRequest(ctx, session, http.MethodGet, "/api/user/self", nil, nil)
 	if err != nil {
 		return PlatformSiteSnapshot{}, err
 	}
 	self := firstRecord(selfPayload)
 	snapshot := PlatformSiteSnapshot{
-		Balance:   firstFloat(self, "quota", "balance", "money", "credit"),
+		Balance:   normalizeNewAPIQuota(firstFloat(self, "quota", "balance", "money", "credit"), quotaPerUnit),
 		UsedQuota: firstInt64(self, "used_quota", "used", "used_quota_amount"),
 	}
-	if modelsPayload, requestErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/user/models", nil, nil); requestErr == nil {
-		snapshot.Models = stringsFromPayload(modelsPayload)
-	}
-	if len(snapshot.Models) == 0 {
-		if groupsPayload, requestErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/user/self/groups", nil, nil); requestErr == nil {
-			snapshot.Models = modelsFromGroups(groupsPayload)
-		}
-	}
-
+	groupRates := fetchNewAPIGroupRates(ctx, session)
 	tokens, err := fetchNewAPITokens(ctx, session)
 	if err != nil {
 		return PlatformSiteSnapshot{}, err
@@ -117,19 +115,24 @@ func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *Platfo
 		if externalID == "" {
 			return PlatformSiteSnapshot{}, fmt.Errorf("%w: NewAPI 密钥缺少外部 ID", ErrPlatformSiteResponse)
 		}
-		itemModels := stringsFromPayload(token["models"])
-		if len(itemModels) == 0 {
-			itemModels = snapshot.Models
+		group := firstString(token, "group", "group_name")
+		ratioKeysPresent := hasAnyField(token, "ratio", "rate", "multiplier", "group_ratio")
+		ratio := firstFloat(token, "ratio", "rate", "multiplier", "group_ratio")
+		_, groupRateSet := groupRates[group]
+		if !ratioKeysPresent {
+			ratio = groupRates[group]
 		}
+		itemModels := modelsFromRecord(token)
 		item := UpstreamKeySnapshot{
 			ExternalID:               externalID,
 			Name:                     firstString(token, "name", "key_name", "token_name"),
-			Group:                    firstString(token, "group", "group_name"),
+			Group:                    group,
 			Models:                   itemModels,
-			SourceConversionRatio:    firstFloat(token, "ratio", "rate", "multiplier", "group_ratio"),
-			SourceConversionRatioSet: hasAnyField(token, "ratio", "rate", "multiplier", "group_ratio"),
-			ConversionRatio:          firstFloat(token, "ratio", "rate", "multiplier", "group_ratio"),
-			ConversionRatioSet:       hasAnyField(token, "ratio", "rate", "multiplier", "group_ratio"),
+			ModelsSynced:             len(itemModels) > 0,
+			SourceConversionRatio:    ratio,
+			SourceConversionRatioSet: ratioKeysPresent || groupRateSet,
+			ConversionRatio:          ratio,
+			ConversionRatioSet:       ratioKeysPresent || groupRateSet,
 			UsedQuota:                firstInt64(token, "used_quota", "used", "quota_used"),
 			RemainQuota:              optionalInt64(token, "remain_quota", "remaining_quota", "quota"),
 			ExpiresAt:                firstTime(token, "expired_time", "expires_at", "expire_at"),
@@ -154,6 +157,15 @@ func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *Platfo
 			continue
 		}
 		item.Secret = secret
+		if !item.ModelsSynced {
+			models, modelsErr := fetchModelsForSecret(ctx, session, secret)
+			if modelsErr == nil && len(models) > 0 {
+				item.Models = models
+				item.ModelsSynced = true
+			} else {
+				item.SyncError = upstreamKeySyncErrorModelsUnavailable
+			}
+		}
 		snapshot.Keys = append(snapshot.Keys, item)
 	}
 	return snapshot, nil
@@ -242,17 +254,33 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 		Balance:   firstFloat(me, "balance", "quota", "credit"),
 		UsedQuota: firstInt64(me, "used_quota", "quota_used", "used"),
 	}
-	rates := map[string]float64{}
-	if payload, requestErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/groups/rates", nil, nil); requestErr == nil {
-		rates = parseGroupRates(payload)
+	if payload, requestErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/user/profile", nil, nil); requestErr == nil {
+		profile := firstRecord(payload)
+		if balance := firstFloat(profile, "balance", "quota", "credit"); balance > 0 {
+			snapshot.Balance = balance
+		}
 	}
-	if modelsPayload, requestErr := platformSiteRequest(ctx, session, http.MethodGet, "/v1/models", nil, nil); requestErr == nil {
-		snapshot.Models = stringsFromPayload(modelsPayload)
+	if payload, requestErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/usage/dashboard/stats", nil, nil); requestErr == nil {
+		usage := firstRecord(payload)
+		if used := firstInt64(usage, "total_actual_cost", "total_cost", "today_actual_cost"); used > 0 {
+			snapshot.UsedQuota = used
+		}
+	}
+	rates := map[string]float64{}
+	if payload, requestErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/groups/available", nil, nil); requestErr == nil {
+		for key, value := range parseGroupRates(payload) {
+			rates[key] = value
+		}
+	}
+	if payload, requestErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/groups/rates", nil, nil); requestErr == nil {
+		for key, value := range parseGroupRates(payload) {
+			rates[key] = value
+		}
 	}
 	if session.Headers.Get("x-api-key") != "" {
-		snapshot.Keys, err = fetchSub2APIAdminKeys(ctx, session, rates, snapshot.Models)
+		snapshot.Keys, err = fetchSub2APIAdminKeys(ctx, session, rates)
 	} else {
-		snapshot.Keys, err = fetchSub2APIKeys(ctx, session, rates, snapshot.Models)
+		snapshot.Keys, err = fetchSub2APIKeys(ctx, session, rates)
 	}
 	if err != nil {
 		return PlatformSiteSnapshot{}, err
@@ -320,6 +348,40 @@ func findRefreshToken(payload any) string {
 		}
 	}
 	return ""
+}
+
+func findUserID(payload any) string {
+	record := firstRecord(payload)
+	if userID := firstString(record, "id", "user_id", "userId"); userID != "" {
+		return userID
+	}
+	for _, key := range []string{"data", "result", "user", "account"} {
+		if nested, ok := record[key]; ok {
+			if userID := findUserID(nested); userID != "" {
+				return userID
+			}
+		}
+	}
+	return ""
+}
+
+func setNewAPICompatUserHeaders(headers http.Header, userID string) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return
+	}
+	for _, name := range []string{
+		"New-API-User",
+		"X-ModelFlare-User",
+		"Veloera-User",
+		"X-Api-User",
+		"voapi-user",
+		"User-id",
+		"Rix-Api-User",
+		"neo-api-user",
+	} {
+		headers.Set(name, userID)
+	}
 }
 
 func findTokenExpiresAt(payload any) int64 {
@@ -398,7 +460,7 @@ func isUpstreamKeyDisabled(record map[string]any) bool {
 	for _, key := range []string{"status", "state"} {
 		status := strings.ToLower(strings.TrimSpace(firstString(record, key)))
 		switch status {
-		case "disabled", "inactive", "revoked", "suspended", "expired", "error":
+		case "2", "3", "disabled", "inactive", "revoked", "suspended", "expired", "error", "deleted", "quota_exhausted":
 			return true
 		}
 	}
@@ -423,6 +485,11 @@ func stringFromPayload(payload any) string {
 func stringsFromPayload(payload any) []string {
 	payload = unwrapPlatformData(payload)
 	switch value := payload.(type) {
+	case string:
+		parts := strings.FieldsFunc(value, func(r rune) bool {
+			return r == ',' || r == '\n'
+		})
+		return uniqueStrings(parts)
 	case []any:
 		result := make([]string, 0, len(value))
 		for _, item := range value {
@@ -447,6 +514,85 @@ func stringsFromPayload(payload any) []string {
 	return nil
 }
 
+func fetchNewAPIQuotaPerUnit(ctx context.Context, session *PlatformSiteSession) float64 {
+	payload, err := platformSiteRequest(ctx, session, http.MethodGet, "/api/status", nil, nil)
+	if err != nil {
+		return defaultNewAPIQuotaPerUnit
+	}
+	quotaPerUnit := firstFloat(firstRecord(payload), "quota_per_unit", "quotaPerUnit")
+	if quotaPerUnit <= 0 || math.IsNaN(quotaPerUnit) || math.IsInf(quotaPerUnit, 0) {
+		return defaultNewAPIQuotaPerUnit
+	}
+	return quotaPerUnit
+}
+
+func normalizeNewAPIQuota(value float64, quotaPerUnit float64) float64 {
+	if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0
+	}
+	if quotaPerUnit <= 1 || math.IsNaN(quotaPerUnit) || math.IsInf(quotaPerUnit, 0) {
+		return value
+	}
+	return value / quotaPerUnit
+}
+
+func fetchNewAPIGroupRates(ctx context.Context, session *PlatformSiteSession) map[string]float64 {
+	for _, path := range []string{"/api/user/self/groups", "/api/user/groups"} {
+		payload, err := platformSiteRequest(ctx, session, http.MethodGet, path, nil, nil)
+		if err != nil {
+			continue
+		}
+		if rates := parseGroupRates(payload); len(rates) > 0 {
+			return rates
+		}
+	}
+	return map[string]float64{}
+}
+
+func modelsFromRecord(record map[string]any) []string {
+	for _, key := range []string{
+		"models",
+		"model_limits",
+		"modelLimits",
+		"model_limit",
+		"modelLimit",
+		"allowed_models",
+		"allowedModels",
+		"model_ids",
+		"modelIds",
+		"model_names",
+		"modelNames",
+	} {
+		if value, ok := record[key]; ok {
+			if models := stringsFromPayload(value); len(models) > 0 {
+				return models
+			}
+		}
+	}
+	return nil
+}
+
+func fetchModelsForSecret(ctx context.Context, session *PlatformSiteSession, secret string) ([]string, error) {
+	if session == nil || strings.TrimSpace(secret) == "" {
+		return nil, errors.New("上游密钥为空")
+	}
+	keySession := *session
+	keySession.Headers = session.Headers.Clone()
+	keySession.Headers.Del("x-api-key")
+	keySession.Headers.Del("New-Api-Key")
+	keySession.Headers.Del("Cookie")
+	keySession.Headers.Set("Authorization", bearerToken(secret))
+	payload, err := platformSiteRequest(ctx, &keySession, http.MethodGet, "/v1/models", nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	models := stringsFromPayload(payload)
+	if len(models) == 0 {
+		return nil, fmt.Errorf("%w: 子密钥模型列表为空", ErrPlatformSiteResponse)
+	}
+	return models, nil
+}
+
 func modelsFromGroups(payload any) []string {
 	records := recordsFromPayload(payload)
 	models := make([]string, 0)
@@ -469,12 +615,55 @@ func optionalInt64(record map[string]any, keys ...string) *int64 {
 	return nil
 }
 
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func firstGroupRate(rates map[string]float64, values ...string) float64 {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if ratio, ok := rates[value]; ok {
+			return ratio
+		}
+	}
+	return 0
+}
+
+func sub2APIGroupIdentifiers(item map[string]any) (string, string) {
+	groupID := firstString(item, "group_id", "groupId")
+	groupName := firstString(item, "group_name", "groupName")
+	switch group := item["group"].(type) {
+	case string:
+		if groupName == "" {
+			groupName = strings.TrimSpace(group)
+		}
+	case map[string]any:
+		if groupID == "" {
+			groupID = firstString(group, "id", "group_id", "groupId")
+		}
+		if groupName == "" {
+			groupName = firstString(group, "name", "group", "group_name", "groupName")
+		}
+	}
+	return groupID, groupName
+}
+
 func fetchNewAPITokens(ctx context.Context, session *PlatformSiteSession) ([]map[string]any, error) {
 	result := make([]map[string]any, 0)
 	for page := 1; page <= upstreamSiteMaxPages; page++ {
 		payload, err := platformSiteRequest(ctx, session, http.MethodGet, "/api/token/", url.Values{
-			"p":    {fmt.Sprint(page)},
-			"size": {fmt.Sprint(upstreamSitePageSize)},
+			"p":         {fmt.Sprint(page)},
+			"page_size": {fmt.Sprint(upstreamSitePageSize)},
+			"size":      {fmt.Sprint(upstreamSitePageSize)},
 		}, nil)
 		if err != nil {
 			return nil, err
@@ -488,7 +677,7 @@ func fetchNewAPITokens(ctx context.Context, session *PlatformSiteSession) ([]map
 	return nil, errors.New("NewAPI 密钥分页超过安全上限")
 }
 
-func fetchSub2APIKeys(ctx context.Context, session *PlatformSiteSession, rates map[string]float64, models []string) ([]UpstreamKeySnapshot, error) {
+func fetchSub2APIKeys(ctx context.Context, session *PlatformSiteSession, rates map[string]float64) ([]UpstreamKeySnapshot, error) {
 	result := make([]UpstreamKeySnapshot, 0)
 	for page := 1; page <= upstreamSiteMaxPages; page++ {
 		payload, err := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/keys", url.Values{
@@ -504,18 +693,23 @@ func fetchSub2APIKeys(ctx context.Context, session *PlatformSiteSession, rates m
 			if externalID == "" {
 				return nil, fmt.Errorf("%w: Sub2API 密钥缺少外部 ID", ErrPlatformSiteResponse)
 			}
-			group := firstString(item, "group", "group_name")
+			groupID, groupName := sub2APIGroupIdentifiers(item)
 			ratioKeysPresent := hasAnyField(item, "rate_multiplier", "ratio", "rate", "multiplier")
 			ratio := firstFloat(item, "rate_multiplier", "ratio", "rate", "multiplier")
-			_, groupRateSet := rates[group]
-			if !ratioKeysPresent {
-				ratio = rates[group]
+			_, groupRateSet := rates[groupID]
+			if !groupRateSet {
+				_, groupRateSet = rates[groupName]
 			}
+			if !ratioKeysPresent {
+				ratio = firstGroupRate(rates, groupID, groupName)
+			}
+			itemModels := modelsFromRecord(item)
 			keySnapshot := UpstreamKeySnapshot{
 				ExternalID:               externalID,
 				Name:                     firstString(item, "name", "key_name"),
-				Group:                    group,
-				Models:                   stringsFromPayload(item["models"]),
+				Group:                    firstNonEmptyString(groupName, groupID),
+				Models:                   itemModels,
+				ModelsSynced:             len(itemModels) > 0,
 				SourceConversionRatio:    ratio,
 				SourceConversionRatioSet: ratioKeysPresent || groupRateSet,
 				ConversionRatio:          ratio,
@@ -532,21 +726,25 @@ func fetchSub2APIKeys(ctx context.Context, session *PlatformSiteSession, rates m
 				continue
 			}
 			keySnapshot.Secret = secret
+			if !keySnapshot.ModelsSynced {
+				models, modelsErr := fetchModelsForSecret(ctx, session, secret)
+				if modelsErr == nil && len(models) > 0 {
+					keySnapshot.Models = models
+					keySnapshot.ModelsSynced = true
+				} else {
+					keySnapshot.SyncError = upstreamKeySyncErrorModelsUnavailable
+				}
+			}
 			result = append(result, keySnapshot)
 		}
 		if len(items) == 0 || len(items) < upstreamSitePageSize || page >= payloadPageCount(payload) {
 			break
 		}
 	}
-	for i := range result {
-		if len(result[i].Models) == 0 {
-			result[i].Models = models
-		}
-	}
 	return result, nil
 }
 
-func fetchSub2APIAdminKeys(ctx context.Context, session *PlatformSiteSession, rates map[string]float64, models []string) ([]UpstreamKeySnapshot, error) {
+func fetchSub2APIAdminKeys(ctx context.Context, session *PlatformSiteSession, rates map[string]float64) ([]UpstreamKeySnapshot, error) {
 	result := make([]UpstreamKeySnapshot, 0)
 	for page := 1; page <= upstreamSiteMaxPages; page++ {
 		payload, err := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/admin/accounts", url.Values{
@@ -565,22 +763,23 @@ func fetchSub2APIAdminKeys(ctx context.Context, session *PlatformSiteSession, ra
 			if id == "" {
 				return nil, fmt.Errorf("%w: Sub2API 密钥缺少外部 ID", ErrPlatformSiteResponse)
 			}
-			group := firstString(item, "group", "group_name")
+			groupID, groupName := sub2APIGroupIdentifiers(item)
 			ratioKeysPresent := hasAnyField(item, "rate_multiplier", "ratio", "rate", "multiplier")
 			ratio := firstFloat(item, "rate_multiplier", "ratio", "rate", "multiplier")
-			_, groupRateSet := rates[group]
+			_, groupRateSet := rates[groupID]
+			if !groupRateSet {
+				_, groupRateSet = rates[groupName]
+			}
 			if !ratioKeysPresent {
-				ratio = rates[group]
+				ratio = firstGroupRate(rates, groupID, groupName)
 			}
-			itemModels := stringsFromPayload(item["models"])
-			if len(itemModels) == 0 {
-				itemModels = models
-			}
+			itemModels := modelsFromRecord(item)
 			keySnapshot := UpstreamKeySnapshot{
 				ExternalID:               id,
 				Name:                     firstString(item, "name", "account_name"),
-				Group:                    group,
+				Group:                    firstNonEmptyString(groupName, groupID),
 				Models:                   itemModels,
+				ModelsSynced:             len(itemModels) > 0,
 				SourceConversionRatio:    ratio,
 				SourceConversionRatioSet: ratioKeysPresent || groupRateSet,
 				ConversionRatio:          ratio,
@@ -616,6 +815,15 @@ func fetchSub2APIAdminKeys(ctx context.Context, session *PlatformSiteSession, ra
 				continue
 			}
 			keySnapshot.Secret = secret
+			if !keySnapshot.ModelsSynced {
+				models, modelsErr := fetchModelsForSecret(ctx, session, secret)
+				if modelsErr == nil && len(models) > 0 {
+					keySnapshot.Models = models
+					keySnapshot.ModelsSynced = true
+				} else {
+					keySnapshot.SyncError = upstreamKeySyncErrorModelsUnavailable
+				}
+			}
 			result = append(result, keySnapshot)
 		}
 		if len(items) == 0 || len(items) < upstreamSitePageSize || page >= payloadPageCount(payload) {
@@ -683,6 +891,14 @@ func parseGroupRates(payload any) map[string]float64 {
 			case float64:
 				if isValidConversionRatio(parsed) {
 					rates[key] = parsed
+				}
+			case map[string]any:
+				ratio := firstFloat(parsed, "rate_multiplier", "ratio", "rate", "multiplier")
+				if isValidConversionRatio(ratio) {
+					rates[key] = ratio
+					if name := firstString(parsed, "name", "group", "group_name", "id"); name != "" {
+						rates[name] = ratio
+					}
 				}
 			case string:
 				if ratio, err := strconv.ParseFloat(strings.TrimSpace(parsed), 64); err == nil && isValidConversionRatio(ratio) {

@@ -36,6 +36,7 @@ var (
 
 const (
 	upstreamKeySyncErrorSecretUnavailable = "上游密钥读取失败"
+	upstreamKeySyncErrorModelsUnavailable = "上游密钥模型能力读取失败"
 	upstreamKeySyncErrorInvalidData       = "上游密钥数据无效"
 )
 
@@ -58,6 +59,7 @@ type UpstreamKeySnapshot struct {
 	Secret                   string
 	Group                    string
 	Models                   []string
+	ModelsSynced             bool
 	SourceConversionRatio    float64
 	SourceConversionRatioSet bool
 	ConversionRatio          float64
@@ -543,7 +545,7 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 			return err
 		}
 		seen := make(map[string]struct{}, len(snapshot.Keys))
-		allModels := append([]string{}, snapshot.Models...)
+		allModels := make([]string, 0)
 		for _, item := range snapshot.Keys {
 			if item.ExternalID == "" {
 				return fmt.Errorf("%w: 上游密钥数据不完整", ErrPlatformSiteResponse)
@@ -553,6 +555,49 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 				var existing model.UpstreamKey
 				findErr := tx.Where("channel_id = ? AND external_id = ?", account.ChannelID, item.ExternalID).First(&existing).Error
 				if errors.Is(findErr, gorm.ErrRecordNotFound) {
+					sourceRatio := item.SourceConversionRatio
+					if !item.SourceConversionRatioSet {
+						sourceRatio = item.ConversionRatio
+					}
+					if !isValidConversionRatio(sourceRatio) {
+						sourceRatio = 1
+					}
+					effectiveRatio, ratioErr := model.CalculatePlatformKeyConversionRatio(
+						ratio,
+						sourceRatio,
+					)
+					if ratioErr != nil {
+						return ratioErr
+					}
+					weight, weightErr := model.CalculateUpstreamKeyWeight(effectiveRatio)
+					if weightErr != nil {
+						return weightErr
+					}
+					existing = model.UpstreamKey{
+						ChannelID:             account.ChannelID,
+						ExternalID:            item.ExternalID,
+						Name:                  item.Name,
+						SourceConversionRatio: &sourceRatio,
+						ConversionRatio:       effectiveRatio,
+						Weight:                weight,
+						ModelsSynced:          false,
+						Status:                model.UpstreamKeyStatusAutoDisabled,
+						DisabledReason:        upstreamKeySyncErrorReason(item.SyncError),
+						LastSyncAt:            now,
+					}
+					if item.Secret != "" {
+						ciphertext, encryptErr := model.EncryptPlatformSiteCredential(
+							model.PlatformSiteCredential{AccessToken: item.Secret},
+						)
+						if encryptErr != nil {
+							return encryptErr
+						}
+						existing.SecretCiphertext = ciphertext
+						existing.SecretFingerprint = common.GenerateHMAC(item.Secret)
+					}
+					if err := tx.Create(&existing).Error; err != nil {
+						return err
+					}
 					continue
 				}
 				if findErr != nil {
@@ -561,6 +606,18 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 				updates := map[string]any{
 					"last_sync_at":  now,
 					"missing_since": 0,
+					"models_synced": false,
+					"name":          item.Name,
+				}
+				if item.Secret != "" {
+					ciphertext, encryptErr := model.EncryptPlatformSiteCredential(
+						model.PlatformSiteCredential{AccessToken: item.Secret},
+					)
+					if encryptErr != nil {
+						return encryptErr
+					}
+					updates["secret_ciphertext"] = ciphertext
+					updates["secret_fingerprint"] = common.GenerateHMAC(item.Secret)
 				}
 				if existing.Status != model.UpstreamKeyStatusManualDisabled {
 					updates["status"] = model.UpstreamKeyStatusAutoDisabled
@@ -577,7 +634,11 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 			if item.UsedQuota < 0 {
 				return fmt.Errorf("%w: 上游密钥额度数据无效", ErrPlatformSiteResponse)
 			}
-			allModels = append(allModels, item.Models...)
+			models := uniqueStrings(item.Models)
+			modelsSynced := item.ModelsSynced && len(models) > 0
+			if modelsSynced {
+				allModels = append(allModels, item.Models...)
+			}
 			sourceRatio := item.SourceConversionRatio
 			sourceRatioSet := item.SourceConversionRatioSet
 			if !sourceRatioSet {
@@ -611,10 +672,16 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 			} else if findErr != nil {
 				return findErr
 			}
+			previousModels := existing.Models
 			existing.Name = item.Name
 			existing.SecretCiphertext = ciphertext
 			existing.SecretFingerprint = common.GenerateHMAC(item.Secret)
-			existing.Models = strings.Join(uniqueStrings(item.Models), ",")
+			if !modelsSynced && previousModels != "" {
+				existing.Models = previousModels
+			} else {
+				existing.Models = strings.Join(models, ",")
+			}
+			existing.ModelsSynced = modelsSynced
 			sourceRatioValue := sourceRatio
 			existing.SourceConversionRatio = &sourceRatioValue
 			if existing.ConversionRatioOverride != nil {
@@ -639,6 +706,9 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 				case item.Disabled:
 					existing.Status = model.UpstreamKeyStatusAutoDisabled
 					existing.DisabledReason = "上游平台已禁用"
+				case !modelsSynced:
+					existing.Status = model.UpstreamKeyStatusAutoDisabled
+					existing.DisabledReason = upstreamKeySyncErrorModelsUnavailable
 				case item.ExpiresAt != nil && !item.ExpiresAt.After(time.Unix(now, 0)):
 					existing.Status = model.UpstreamKeyStatusAutoDisabled
 					existing.DisabledReason = "密钥已过期"
@@ -655,17 +725,19 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 			if err := tx.Save(&existing).Error; err != nil {
 				return err
 			}
-			if err := tx.Where("upstream_key_id = ?", existing.ID).Delete(&model.UpstreamKeyAbility{}).Error; err != nil {
-				return err
-			}
-			for _, modelName := range uniqueStrings(item.Models) {
-				if err := tx.Create(&model.UpstreamKeyAbility{
-					UpstreamKeyID: existing.ID,
-					Group:         item.Group,
-					Model:         modelName,
-					Enabled:       true,
-				}).Error; err != nil {
+			if modelsSynced {
+				if err := tx.Where("upstream_key_id = ?", existing.ID).Delete(&model.UpstreamKeyAbility{}).Error; err != nil {
 					return err
+				}
+				for _, modelName := range models {
+					if err := tx.Create(&model.UpstreamKeyAbility{
+						UpstreamKeyID: existing.ID,
+						Group:         "",
+						Model:         modelName,
+						Enabled:       true,
+					}).Error; err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -705,9 +777,6 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 		if err := tx.Where("channel_id = ?", channel.Id).Delete(&model.Ability{}).Error; err != nil {
 			return err
 		}
-		if err := channel.AddAbilities(tx); err != nil {
-			return err
-		}
 		return nil
 	})
 }
@@ -716,6 +785,8 @@ func upstreamKeySyncErrorReason(reason string) string {
 	switch reason {
 	case upstreamKeySyncErrorSecretUnavailable:
 		return upstreamKeySyncErrorSecretUnavailable
+	case upstreamKeySyncErrorModelsUnavailable:
+		return upstreamKeySyncErrorModelsUnavailable
 	case upstreamKeySyncErrorInvalidData:
 		return upstreamKeySyncErrorInvalidData
 	default:

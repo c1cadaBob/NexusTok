@@ -33,6 +33,11 @@ func InitChannelCache() {
 	newChannel2advancedCustomConfig := make(map[int]*kitdto.AdvancedCustomConfig)
 	var channels []*Channel
 	DB.Find(&channels)
+	activePlatformChannels, _ := getActivePlatformSiteChannels("")
+	activePlatformIDs := make(map[int]struct{}, len(activePlatformChannels))
+	for _, channel := range activePlatformChannels {
+		activePlatformIDs[channel.Id] = struct{}{}
+	}
 	for _, channel := range channels {
 		newChannelId2channel[channel.Id] = channel
 		if channel.Type == constant.ChannelTypeAdvancedCustom {
@@ -47,6 +52,22 @@ func InitChannelCache() {
 	for _, ability := range abilities {
 		groups[ability.Group] = true
 	}
+	for _, channel := range channels {
+		if channel.Status != common.ChannelStatusEnabled {
+			continue
+		}
+		if channel.UpstreamKind == UpstreamKindPlatformSite {
+			if _, ok := activePlatformIDs[channel.Id]; !ok {
+				continue
+			}
+		}
+		for group := range strings.SplitSeq(channel.Group, ",") {
+			group = strings.TrimSpace(group)
+			if group != "" {
+				groups[group] = true
+			}
+		}
+	}
 	newGroup2model2channels := make(map[string]map[string][]int)
 	for group := range groups {
 		newGroup2model2channels[group] = make(map[string][]int)
@@ -55,9 +76,17 @@ func InitChannelCache() {
 		if channel.Status != common.ChannelStatusEnabled {
 			continue // skip disabled channels
 		}
+		if channel.UpstreamKind == UpstreamKindPlatformSite {
+			if _, ok := activePlatformIDs[channel.Id]; !ok {
+				continue
+			}
+		}
 		groups := strings.SplitSeq(channel.Group, ",")
 		for group := range groups {
 			models := channel.GetModels()
+			if channel.UpstreamKind == UpstreamKindPlatformSite {
+				models = platformSiteRoutingModels(channel)
+			}
 			for _, model := range models {
 				if _, ok := newGroup2model2channels[group][model]; !ok {
 					newGroup2model2channels[group][model] = make([]int, 0)
@@ -136,6 +165,22 @@ func GetRandomSatisfiedChannel(
 		channels, _ = filterCandidateIDs(group2model2channels[group][normalizedModel], model, filters)
 	}
 
+	if len(channels) == 0 {
+		return nil, nil
+	}
+	routableChannels := make([]int, 0, len(channels))
+	for _, channelID := range channels {
+		channel, ok := channelsIDM[channelID]
+		if !ok {
+			continue
+		}
+		if channel.UpstreamKind == UpstreamKindPlatformSite &&
+			len(loadRoutableUpstreamKeys(channel, group, model)) == 0 {
+			continue
+		}
+		routableChannels = append(routableChannels, channelID)
+	}
+	channels = routableChannels
 	if len(channels) == 0 {
 		return nil, nil
 	}

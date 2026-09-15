@@ -29,14 +29,19 @@ func TestNewAPIAdapterPasswordAuthenticationAndSnapshot(t *testing.T) {
 			assert.Contains(t, string(body), `"username":"operator"`)
 			writer.WriteHeader(http.StatusOK)
 			_, _ = writer.Write([]byte(`{"success":true,"data":{"token":"newapi-session"}}`))
+		case request.URL.Path == "/api/status":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"quota_per_unit":10}}`))
 		case request.URL.Path == "/api/user/self":
 			assert.Equal(t, "Bearer newapi-session", request.Header.Get("Authorization"))
 			_, _ = writer.Write([]byte(`{"success":true,"data":{"quota":12.5,"used_quota":3}}`))
+		case request.URL.Path == "/api/user/self/groups":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"default":{"ratio":0.7,"desc":"默认组"}}}`))
 		case request.URL.Path == "/api/user/models":
 			_, _ = writer.Write([]byte(`{"success":true,"data":["gpt-4o","claude-3-7-sonnet"]}`))
 		case request.URL.Path == "/api/token/":
 			assert.Equal(t, "1", request.URL.Query().Get("p"))
-			_, _ = writer.Write([]byte(`{"success":true,"data":{"items":[{"id":7,"name":"primary","key":"sk-newapi","quota":8,"expired_time":"4102444800","models":["gpt-4o"]}]}}`))
+			assert.Equal(t, "100", request.URL.Query().Get("page_size"))
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"items":[{"id":7,"name":"primary","key":"sk-newapi","group":"default","quota":8,"expired_time":"4102444800","model_limits":"gpt-4o,claude-3-7-sonnet"}]}}`))
 		default:
 			http.NotFound(writer, request)
 		}
@@ -52,10 +57,45 @@ func TestNewAPIAdapterPasswordAuthenticationAndSnapshot(t *testing.T) {
 
 	snapshot, err := adapter.FetchSnapshot(context.Background(), session)
 	require.NoError(t, err)
-	assert.Equal(t, 12.5, snapshot.Balance)
+	assert.Equal(t, 1.25, snapshot.Balance)
 	require.Len(t, snapshot.Keys, 1)
 	assert.Equal(t, "sk-newapi", snapshot.Keys[0].Secret)
 	assert.Equal(t, int64(8), *snapshot.Keys[0].RemainQuota)
+	assert.Equal(t, []string{"gpt-4o", "claude-3-7-sonnet"}, snapshot.Keys[0].Models)
+	assert.Equal(t, 0.7, snapshot.Keys[0].SourceConversionRatio)
+}
+
+func TestNewAPIAdapterPasswordAuthenticationAddsCompatUserHeader(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch {
+		case request.Method == http.MethodPost && request.URL.Path == "/api/user/login":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"id":275,"username":"operator","status":1}}`))
+		case request.URL.Path == "/api/user/self":
+			assert.Empty(t, request.Header.Get("Authorization"))
+			assert.Equal(t, "275", request.Header.Get("New-API-User"))
+			assert.Equal(t, "275", request.Header.Get("X-ModelFlare-User"))
+			assert.Equal(t, "275", request.Header.Get("User-id"))
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"quota":12.5,"used_quota":3}}`))
+		case request.URL.Path == "/api/token/":
+			assert.Equal(t, "275", request.Header.Get("New-API-User"))
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"items":[{"id":7,"name":"primary","key":"sk-newapi","models":["gpt-4o"]}]}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	adapter := NewNewAPIAdapter(server.Client())
+	session, err := adapter.Authenticate(context.Background(), server.URL, model.PlatformSiteCredential{
+		Username: "operator",
+		Password: "synthetic-password",
+	})
+	require.NoError(t, err)
+
+	snapshot, err := adapter.FetchSnapshot(context.Background(), session)
+	require.NoError(t, err)
+	require.Len(t, snapshot.Keys, 1)
 	assert.Equal(t, []string{"gpt-4o"}, snapshot.Keys[0].Models)
 }
 
@@ -203,6 +243,49 @@ func TestSub2APIAdapterAdminKeyReadsNestedCredentialAndPagination(t *testing.T) 
 	assert.Equal(t, []string{"gpt-4o"}, snapshot.Keys[0].Models)
 }
 
+func TestSub2APIAdapterUsesProfileUsageGroupAliasesAndModelAliases(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v1/auth/login":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"access_token":"sub2api-session"}}`))
+		case "/api/v1/auth/me":
+			assert.Equal(t, "Bearer sub2api-session", request.Header.Get("Authorization"))
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"id":9,"balance":0}}`))
+		case "/api/v1/user/profile":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"balance":6.5}}`))
+		case "/api/v1/usage/dashboard/stats":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"total_actual_cost":2}}`))
+		case "/api/v1/groups/available":
+			_, _ = writer.Write([]byte(`{"code":0,"data":[{"id":"group-1","name":"default","rate_multiplier":0.25}]}`))
+		case "/api/v1/groups/rates":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{}}`))
+		case "/api/v1/keys":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"items":[{"id":"key-1","name":"primary","key":"sk-sub2api","group":{"id":"group-1","name":"default"},"model_limits":"gpt-4o,gemini-2.5-pro","quota":9,"quota_used":2}],"total":1,"page_size":100}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	adapter := NewSub2APIAdapter(server.Client())
+	session, err := adapter.Authenticate(context.Background(), server.URL, model.PlatformSiteCredential{
+		Username: "operator@example.com",
+		Password: "synthetic-password",
+	})
+	require.NoError(t, err)
+
+	snapshot, err := adapter.FetchSnapshot(context.Background(), session)
+	require.NoError(t, err)
+	assert.Equal(t, 6.5, snapshot.Balance)
+	assert.Equal(t, int64(2), snapshot.UsedQuota)
+	require.Len(t, snapshot.Keys, 1)
+	assert.Equal(t, "default", snapshot.Keys[0].Group)
+	assert.Equal(t, 0.25, snapshot.Keys[0].SourceConversionRatio)
+	assert.Equal(t, []string{"gpt-4o", "gemini-2.5-pro"}, snapshot.Keys[0].Models)
+	assert.True(t, snapshot.Keys[0].ModelsSynced)
+}
+
 func TestNewAPIAdapterReturnsUnavailableKeyWhenKeyRevealFails(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
@@ -312,11 +395,12 @@ func TestPersistPlatformSiteSnapshotIsolatesUnavailableKeys(t *testing.T) {
 				SyncError:  upstreamKeySyncErrorSecretUnavailable,
 			},
 			{
-				ExternalID: "healthy-key",
-				Name:       "healthy",
-				Secret:     "sk-healthy",
-				Group:      "default",
-				Models:     []string{"gpt-4o"},
+				ExternalID:   "healthy-key",
+				Name:         "healthy",
+				Secret:       "sk-healthy",
+				Group:        "default",
+				Models:       []string{"gpt-4o"},
+				ModelsSynced: true,
 			},
 		},
 	}))
@@ -331,7 +415,11 @@ func TestPersistPlatformSiteSnapshotIsolatesUnavailableKeys(t *testing.T) {
 	assert.Equal(t, "sk-old", oldCredential.AccessToken)
 
 	var newKey model.UpstreamKey
-	assert.ErrorIs(t, db.Where("channel_id = ? AND external_id = ?", channel.Id, "new-key").First(&newKey).Error, gorm.ErrRecordNotFound)
+	require.NoError(t, db.Where("channel_id = ? AND external_id = ?", channel.Id, "new-key").First(&newKey).Error)
+	assert.Equal(t, model.UpstreamKeyStatusAutoDisabled, newKey.Status)
+	assert.Equal(t, upstreamKeySyncErrorSecretUnavailable, newKey.DisabledReason)
+	assert.False(t, newKey.ModelsSynced)
+	assert.Empty(t, newKey.SecretCiphertext)
 
 	var healthyKey model.UpstreamKey
 	require.NoError(t, db.Where("channel_id = ? AND external_id = ?", channel.Id, "healthy-key").First(&healthyKey).Error)
@@ -434,12 +522,13 @@ func TestPersistPlatformSiteSnapshotRebuildsAbilitiesAndAutoDisablesUnavailableK
 		Balance: 5,
 		Models:  []string{"gpt-4o"},
 		Keys: []UpstreamKeySnapshot{{
-			ExternalID:  "key-1",
-			Name:        "key",
-			Secret:      "sk-test",
-			Group:       "default",
-			Models:      []string{"gpt-4o"},
-			RemainQuota: &remaining,
+			ExternalID:   "key-1",
+			Name:         "key",
+			Secret:       "sk-test",
+			Group:        "default",
+			Models:       []string{"gpt-4o"},
+			ModelsSynced: true,
+			RemainQuota:  &remaining,
 		}},
 	}))
 
@@ -455,12 +544,18 @@ func TestPersistPlatformSiteSnapshotRebuildsAbilitiesAndAutoDisablesUnavailableK
 	assert.Equal(t, int64(0), savedAccount.UsedQuota)
 
 	var ability model.Ability
-	require.NoError(t, db.Where(&model.Ability{
+	assert.ErrorIs(t, db.Where(&model.Ability{
 		ChannelId: channel.Id,
 		Group:     "default",
 		Model:     "gpt-4o",
-	}).First(&ability).Error)
-	assert.True(t, ability.Enabled)
+	}).First(&ability).Error, gorm.ErrRecordNotFound)
+	var keyAbility model.UpstreamKeyAbility
+	require.NoError(t, db.Where(&model.UpstreamKeyAbility{
+		UpstreamKeyID: key.ID,
+		Group:         "",
+		Model:         "gpt-4o",
+	}).First(&keyAbility).Error)
+	assert.True(t, keyAbility.Enabled)
 
 	require.NoError(t, persistPlatformSiteSnapshot(context.Background(), account, PlatformSiteSnapshot{
 		Balance: 5,
@@ -486,12 +581,13 @@ func TestPersistPlatformSiteSnapshotRebuildsAbilitiesAndAutoDisablesUnavailableK
 		Balance: 5,
 		Models:  []string{"gpt-4o"},
 		Keys: []UpstreamKeySnapshot{{
-			ExternalID:  "key-1",
-			Name:        "key",
-			Secret:      "sk-test",
-			Group:       "default",
-			Models:      []string{"gpt-4o"},
-			RemainQuota: &remaining,
+			ExternalID:   "key-1",
+			Name:         "key",
+			Secret:       "sk-test",
+			Group:        "default",
+			Models:       []string{"gpt-4o"},
+			ModelsSynced: true,
+			RemainQuota:  &remaining,
 		}},
 	}))
 
@@ -570,6 +666,7 @@ func TestPersistPlatformSiteSnapshotPreservesManualRatioAndWeightOverrides(t *te
 			SourceConversionRatio:    sourceRatio,
 			SourceConversionRatioSet: true,
 			Models:                   []string{"gpt-4o"},
+			ModelsSynced:             true,
 		}},
 	}))
 

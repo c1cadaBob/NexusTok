@@ -30,6 +30,7 @@ type PlatformSiteFieldsProps = {
 }
 
 const RATIO_COMPARE_EPSILON = 0.0000001
+const RATIO_INPUT_PRECISION = 1000000
 
 function normalizePlatformNumber(
   value: number | null | undefined,
@@ -39,6 +40,14 @@ function normalizePlatformNumber(
     return fallback
   }
   return value
+}
+
+function normalizePlatformRatio(value: number): number {
+  return Math.round(value * RATIO_INPUT_PRECISION) / RATIO_INPUT_PRECISION
+}
+
+function formatPlatformRatioInput(value: number): string {
+  return String(normalizePlatformRatio(normalizePlatformNumber(value, 1)))
 }
 
 export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
@@ -68,11 +77,13 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
   const creditedAmount = normalizePlatformNumber(watchedCreditedAmount)
   const conversionRatio = normalizePlatformNumber(watchedConversionRatio, 1)
   const previewRatio =
-    creditedAmount > 0 ? rechargeAmount / creditedAmount : undefined
+    creditedAmount > 0
+      ? normalizePlatformRatio(rechargeAmount / creditedAmount)
+      : undefined
   const ratioIsOverridden = watchedRatioIsOverridden === true
 
   useEffect(() => {
-    if (props.isEditing || ratioIsOverridden || previewRatio === undefined) {
+    if (ratioIsOverridden || previewRatio === undefined) {
       return
     }
     if (Math.abs(conversionRatio - previewRatio) <= RATIO_COMPARE_EPSILON) {
@@ -82,7 +93,7 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
       shouldDirty: false,
       shouldValidate: false,
     })
-  }, [conversionRatio, form, previewRatio, props.isEditing, ratioIsOverridden])
+  }, [conversionRatio, form, previewRatio, ratioIsOverridden])
 
   return (
     <fieldset
@@ -358,9 +369,14 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
                       min='0'
                       step='0.001'
                       {...field}
+                      value={formatPlatformRatioInput(field.value)}
                       onChange={(event) => {
                         field.onChange(
-                          normalizePlatformNumber(event.target.valueAsNumber)
+                          normalizePlatformRatio(
+                            normalizePlatformNumber(
+                              event.target.valueAsNumber
+                            )
+                          )
                         )
                         form.setValue(
                           'platform_site_conversion_ratio_override',

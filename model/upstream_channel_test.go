@@ -460,9 +460,10 @@ func TestUpstreamKeyIsRoutable(t *testing.T) {
 	now := time.Unix(1_000, 0)
 	remaining := int64(100)
 	key := UpstreamKey{
-		Status:      UpstreamKeyStatusEnabled,
-		RemainQuota: &remaining,
-		ExpiresAt:   ptrTime(now.Add(time.Minute)),
+		Status:       UpstreamKeyStatusEnabled,
+		ModelsSynced: true,
+		RemainQuota:  &remaining,
+		ExpiresAt:    ptrTime(now.Add(time.Minute)),
 	}
 	assert.True(t, key.IsRoutable(now))
 
@@ -529,6 +530,7 @@ func TestGetRoutableUpstreamKeyByIDLoadsSecretAndFiltersModels(t *testing.T) {
 		Weight:           1800,
 		RemainQuota:      &remaining,
 		Status:           UpstreamKeyStatusEnabled,
+		ModelsSynced:     true,
 	}
 	require.NoError(t, db.Create(key).Error)
 	require.NoError(t, db.Create(&UpstreamKeyAbility{
@@ -623,6 +625,7 @@ func TestSelectChannelByUpstreamKeyMergesParentsAndFiltersChildren(t *testing.T)
 			Weight:           1900,
 			RemainQuota:      &remaining,
 			Status:           UpstreamKeyStatusEnabled,
+			ModelsSynced:     true,
 		},
 		{
 			ChannelID:        102,
@@ -634,6 +637,7 @@ func TestSelectChannelByUpstreamKeyMergesParentsAndFiltersChildren(t *testing.T)
 			Weight:           1000,
 			RemainQuota:      &remaining,
 			Status:           UpstreamKeyStatusEnabled,
+			ModelsSynced:     true,
 		},
 	}
 	require.NoError(t, db.Create(&keys).Error)
@@ -655,6 +659,106 @@ func TestSelectChannelByUpstreamKeyMergesParentsAndFiltersChildren(t *testing.T)
 	require.NotNil(t, selected.SelectedUpstreamKey)
 	assert.Equal(t, uint(keys[0].ID), selected.SelectedUpstreamKey.ID)
 	assert.Equal(t, "sk-a", selected.SelectedUpstreamKey.Secret)
+}
+
+func TestPlatformSiteRoutingUsesModelMappingWithChildAbilities(t *testing.T) {
+	previousDB := DB
+	previousSecret := common.CryptoSecret
+	previousMemoryCacheEnabled := common.MemoryCacheEnabled
+	previousGroup2Model2Channels := group2model2channels
+	previousChannelsIDM := channelsIDM
+	previousAdvancedCustomConfig := channel2advancedCustomConfig
+	common.CryptoSecret = "upstream-routing-model-mapping-test-secret"
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&Channel{},
+		&Ability{},
+		&PlatformSiteAccount{},
+		&UpstreamKey{},
+		&UpstreamKeyAbility{},
+	))
+	DB = db
+	t.Cleanup(func() {
+		DB = previousDB
+		common.CryptoSecret = previousSecret
+		common.MemoryCacheEnabled = previousMemoryCacheEnabled
+		channelSyncLock.Lock()
+		group2model2channels = previousGroup2Model2Channels
+		channelsIDM = previousChannelsIDM
+		channel2advancedCustomConfig = previousAdvancedCustomConfig
+		channelSyncLock.Unlock()
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	mappingBytes, err := common.Marshal(map[string]string{"alias-model": "gpt-real"})
+	require.NoError(t, err)
+	mapping := string(mappingBytes)
+	priority := int64(7)
+	channel := &Channel{
+		Id:           401,
+		Name:         "mapped-platform",
+		Status:       common.ChannelStatusEnabled,
+		UpstreamKind: UpstreamKindPlatformSite,
+		Models:       "gpt-real",
+		Group:        "default",
+		Priority:     &priority,
+		ModelMapping: &mapping,
+	}
+	require.NoError(t, db.Create(channel).Error)
+	require.NoError(t, db.Create(&PlatformSiteAccount{
+		ChannelID:  channel.Id,
+		Platform:   PlatformNewAPI,
+		BaseURL:    "https://upstream.example",
+		AuthType:   UpstreamAuthAccessToken,
+		SyncStatus: UpstreamSiteSyncSuccess,
+	}).Error)
+	secret, err := EncryptPlatformSiteCredential(PlatformSiteCredential{AccessToken: "sk-real"})
+	require.NoError(t, err)
+	remaining := int64(100)
+	key := &UpstreamKey{
+		ChannelID:        channel.Id,
+		ExternalID:       "mapped-key",
+		SecretCiphertext: secret,
+		Models:           "gpt-real",
+		KeyPriority:      2,
+		ConversionRatio:  0.1,
+		Weight:           1900,
+		RemainQuota:      &remaining,
+		Status:           UpstreamKeyStatusEnabled,
+		ModelsSynced:     true,
+	}
+	require.NoError(t, db.Create(key).Error)
+	require.NoError(t, db.Create(&UpstreamKeyAbility{
+		UpstreamKeyID: key.ID,
+		Model:         "gpt-real",
+		Enabled:       true,
+	}).Error)
+
+	selected := selectChannelByUpstreamKey([]*Channel{channel}, "default", "alias-model")
+	require.NotNil(t, selected)
+	require.NotNil(t, selected.SelectedUpstreamKey)
+	assert.Equal(t, key.ID, selected.SelectedUpstreamKey.ID)
+	assert.Equal(t, "sk-real", selected.SelectedUpstreamKey.Secret)
+
+	common.MemoryCacheEnabled = false
+	assert.True(t, IsChannelEnabledForGroupModel("default", "alias-model", channel.Id))
+	assert.False(t, IsChannelEnabledForGroupModel("default", "blocked-model", channel.Id))
+
+	common.MemoryCacheEnabled = true
+	InitChannelCache()
+	cached, err := GetRandomSatisfiedChannel("default", "alias-model", 0, nil)
+	require.NoError(t, err)
+	require.NotNil(t, cached)
+	require.NotNil(t, cached.SelectedUpstreamKey)
+	assert.Equal(t, channel.Id, cached.Id)
+	assert.Equal(t, key.ID, cached.SelectedUpstreamKey.ID)
+
+	assert.Contains(t, GetGroupEnabledModels("default"), "alias-model")
 }
 
 func TestSelectChannelByUpstreamKeyMergesOfficialKeyChannelWithPlatformKey(t *testing.T) {
@@ -726,6 +830,7 @@ func TestSelectChannelByUpstreamKeyMergesOfficialKeyChannelWithPlatformKey(t *te
 		Weight:           2000,
 		RemainQuota:      &remaining,
 		Status:           UpstreamKeyStatusEnabled,
+		ModelsSynced:     true,
 	}).Error)
 
 	for range 10 {

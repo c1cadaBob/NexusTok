@@ -55,6 +55,22 @@ export const channelsQueryKeys = {
   detail: (id: number) => [...channelsQueryKeys.details(), id] as const,
 }
 
+export async function invalidatePlatformChannelQueries(
+  queryClient: QueryClient,
+  channelId: number
+): Promise<void> {
+  await Promise.all([
+    queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() }),
+    queryClient.invalidateQueries({
+      queryKey: channelsQueryKeys.detail(channelId),
+    }),
+    queryClient.invalidateQueries({ queryKey: ['upstream-keys', channelId] }),
+    queryClient.invalidateQueries({
+      queryKey: ['upstream-site-status', channelId],
+    }),
+  ])
+}
+
 function getChannelTestResponseTime(
   response: ChannelTestResponse
 ): number | undefined {

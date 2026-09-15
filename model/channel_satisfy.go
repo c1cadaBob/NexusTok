@@ -45,6 +45,15 @@ func IsChannelEnabledForAnyGroupModel(groups []string, modelName string, channel
 }
 
 func isChannelEnabledForGroupModelDB(group string, modelName string, channelID int) bool {
+	var channel Channel
+	if err := DB.Where("id = ?", channelID).First(&channel).Error; err == nil &&
+		channel.UpstreamKind == UpstreamKindPlatformSite {
+		if channel.Status != common.ChannelStatusEnabled || !channelSupportsGroup(&channel, group) {
+			return false
+		}
+		return len(loadRoutableUpstreamKeys(&channel, group, modelName)) > 0
+	}
+
 	var count int64
 	err := DB.Model(&Ability{}).
 		Where(commonGroupCol+" = ? and model = ? and channel_id = ? and enabled = ?", group, modelName, channelID, true).

@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -455,6 +456,19 @@ func fetchAdvancedCustomBalance(channel *model.Channel) (channelBalanceResult, e
 }
 
 func updateChannelBalance(channel *model.Channel) (channelBalanceResult, error) {
+	if channel.UpstreamKind == model.UpstreamKindPlatformSite {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		err := service.SyncUpstreamSite(ctx, channel.Id)
+		if err != nil {
+			return channelBalanceResult{}, err
+		}
+		var account model.PlatformSiteAccount
+		if err := model.DB.Where("channel_id = ?", channel.Id).First(&account).Error; err != nil {
+			return channelBalanceResult{}, err
+		}
+		return channelBalanceResult{Balance: account.Balance}, nil
+	}
 	if channel.Type == constant.ChannelTypeAdvancedCustom {
 		return fetchAdvancedCustomBalance(channel)
 	}
@@ -540,6 +554,54 @@ func UpdateChannelBalance(c *gin.Context) {
 	}
 	if channel.Type == constant.ChannelTypeTaskPlugin {
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": "Task Plugin channels do not support balance queries"})
+		return
+	}
+	if channel.UpstreamKind == model.UpstreamKindPlatformSite {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+		defer cancel()
+		err := service.SyncUpstreamSite(ctx, id)
+		var account model.PlatformSiteAccount
+		accountErr := model.DB.Where("channel_id = ?", id).First(&account).Error
+		if err != nil {
+			response := gin.H{
+				"success": false,
+				"message": safeUpstreamErrorForResponse(err),
+			}
+			if refreshedChannel, refreshErr := model.GetChannelById(id, true); refreshErr == nil {
+				channel = refreshedChannel
+			}
+			if accountErr == nil {
+				response["balance"] = account.Balance
+				response["used_quota"] = account.UsedQuota
+				response["balance_updated_time"] = channel.BalanceUpdatedTime
+				response["sync_status"] = account.SyncStatus
+			}
+			c.JSON(http.StatusOK, response)
+			return
+		}
+		if accountErr != nil {
+			common.ApiError(c, accountErr)
+			return
+		}
+		channel, _ = model.GetChannelById(id, true)
+		var keys []model.UpstreamKey
+		_ = model.DB.Where("channel_id = ?", id).Find(&keys).Error
+		routableKeyCount := 0
+		for index := range keys {
+			if keys[index].ModelsSynced && keys[index].IsRoutable(time.Now()) {
+				routableKeyCount++
+			}
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"success":              true,
+			"message":              "",
+			"balance":              account.Balance,
+			"used_quota":           account.UsedQuota,
+			"balance_updated_time": channel.BalanceUpdatedTime,
+			"sync_status":          account.SyncStatus,
+			"key_count":            len(keys),
+			"routable_key_count":   routableKeyCount,
+		})
 		return
 	}
 	if channel.ChannelInfo.IsMultiKey {

@@ -225,7 +225,7 @@ export const channelFormSchema = z
     task_plugin_key: z.string().optional(),
     key: z.string(),
     openai_organization: z.string().optional(),
-    models: z.string().min(1, ERROR_MESSAGES.REQUIRED_MODELS),
+    models: z.string(),
     group: z.array(z.string()).min(1, ERROR_MESSAGES.REQUIRED_GROUP),
     model_mapping: z
       .string()
@@ -323,6 +323,8 @@ export const channelFormSchema = z
           '到账金额必须大于 0'
         )
       }
+    } else if (!data.models.trim()) {
+      addRequiredIssue(ctx, 'models', ERROR_MESSAGES.REQUIRED_MODELS)
     }
     if (
       [3, 8, 36, 45, CHANNEL_TYPE_NEW_API, CHANNEL_TYPE_TASK_PLUGIN].includes(
@@ -879,7 +881,8 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
     conversion_ratio: formData.conversion_ratio,
     key_weight_override: formData.key_weight_override ?? null,
     openai_organization: formData.openai_organization || null,
-    models: formData.models,
+    models:
+      formData.upstream_kind === 'platform_site' ? '' : formData.models,
     group: formatGroups(formData.group),
     model_mapping: formData.model_mapping || null,
     priority: formData.priority || null,
@@ -955,7 +958,8 @@ export function transformFormDataToUpdatePayload(
     conversion_ratio: formData.conversion_ratio,
     key_weight_override: formData.key_weight_override ?? null,
     openai_organization: formData.openai_organization || null,
-    models: formData.models,
+    models:
+      formData.upstream_kind === 'platform_site' ? '' : formData.models,
     group: formatGroups(formData.group),
     model_mapping: formData.model_mapping || null,
     priority: formData.priority ?? 0,

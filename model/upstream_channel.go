@@ -80,6 +80,7 @@ type UpstreamKey struct {
 	SecretCiphertext        string     `json:"-" gorm:"type:text;not null"`
 	SecretFingerprint       string     `json:"secret_fingerprint" gorm:"type:varchar(128);index"`
 	Models                  string     `json:"models" gorm:"type:text"`
+	ModelsSynced            bool       `json:"models_synced"`
 	KeyPriority             int64      `json:"key_priority" gorm:"bigint;index"`
 	SourceConversionRatio   *float64   `json:"source_conversion_ratio"`
 	ConversionRatio         float64    `json:"conversion_ratio"`
@@ -154,6 +155,17 @@ func CalculateUpstreamKeyWeight(conversionRatio float64) (int, error) {
 	return weight, nil
 }
 
+func (key *UpstreamKey) AutoWeight() int {
+	if key == nil {
+		return MinUpstreamKeyWeight
+	}
+	weight, err := CalculateUpstreamKeyWeight(key.ConversionRatio)
+	if err != nil {
+		return MinUpstreamKeyWeight
+	}
+	return weight
+}
+
 func (key *UpstreamKey) EffectiveWeight() int {
 	if key.ConversionRatio == 0 {
 		return MaxUpstreamKeyWeight
@@ -161,7 +173,7 @@ func (key *UpstreamKey) EffectiveWeight() int {
 	if key.WeightOverride != nil {
 		return max(MinUpstreamKeyWeight, min(MaxUpstreamKeyWeight, *key.WeightOverride))
 	}
-	return max(MinUpstreamKeyWeight, min(MaxUpstreamKeyWeight, key.Weight))
+	return max(MinUpstreamKeyWeight, min(MaxUpstreamKeyWeight, key.AutoWeight()))
 }
 
 func (key *UpstreamKey) EffectiveSourceConversionRatio() float64 {
@@ -204,7 +216,7 @@ func (key *UpstreamKey) GetModels() []string {
 }
 
 func (key *UpstreamKey) IsRoutable(now time.Time) bool {
-	if key.Status != UpstreamKeyStatusEnabled {
+	if key == nil || !key.ModelsSynced || key.Status != UpstreamKeyStatusEnabled {
 		return false
 	}
 	if key.MissingSince != 0 {
@@ -248,6 +260,9 @@ func GetRoutableUpstreamKeyByID(channelID int, keyID uint, group, modelName stri
 	}
 	if !key.IsRoutable(now) {
 		return nil, errors.New("upstream key is not routable")
+	}
+	if !key.ModelsSynced {
+		return nil, errors.New("upstream key model capability is not synchronized")
 	}
 	if strings.TrimSpace(modelName) != "" && !upstreamKeySupportsModel(&key, group, modelName) {
 		return nil, errors.New("upstream key does not support the test model")

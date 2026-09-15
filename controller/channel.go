@@ -662,6 +662,7 @@ func AddChannel(c *gin.Context) {
 		baseURL := strings.TrimRight(strings.TrimSpace(addChannelRequest.PlatformSite.BaseURL), "/")
 		addChannelRequest.Channel.BaseURL = &baseURL
 		addChannelRequest.Channel.Key = ""
+		addChannelRequest.Channel.Models = ""
 		addChannelRequest.Mode = "single"
 	}
 
@@ -1092,6 +1093,7 @@ func UpdateChannel(c *gin.Context) {
 		return
 	}
 	if channel.UpstreamKind == model.UpstreamKindPlatformSite {
+		channel.Models = originChannel.Models
 		if err := ensurePlatformSiteChannel(&channel.Channel, channel.PlatformSite); err != nil {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,

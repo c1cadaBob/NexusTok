@@ -43,10 +43,13 @@ type UpstreamSiteStatusResponse struct {
 	ConversionRatio     float64 `json:"conversion_ratio"`
 	Balance             float64 `json:"balance"`
 	UsedQuota           int64   `json:"used_quota"`
+	BalanceUpdatedTime  int64   `json:"balance_updated_time"`
 	SyncStatus          string  `json:"sync_status"`
 	LastSyncAt          int64   `json:"last_sync_at"`
 	LastSyncError       string  `json:"last_sync_error"`
 	ConsecutiveFailures int     `json:"consecutive_failures"`
+	KeyCount            int     `json:"key_count"`
+	RoutableKeyCount    int     `json:"routable_key_count"`
 }
 
 type UpstreamKeyResponse struct {
@@ -56,11 +59,13 @@ type UpstreamKeyResponse struct {
 	Name                    string   `json:"name"`
 	KeyPreview              string   `json:"key_preview"`
 	Models                  []string `json:"models"`
+	ModelsSynced            bool     `json:"models_synced"`
 	KeyPriority             int64    `json:"key_priority"`
 	SourceConversionRatio   float64  `json:"source_conversion_ratio"`
 	ConversionRatio         float64  `json:"conversion_ratio"`
 	ConversionRatioOverride *float64 `json:"conversion_ratio_override"`
 	Weight                  int      `json:"weight"`
+	AutoWeight              int      `json:"auto_weight"`
 	WeightOverride          *int     `json:"weight_override"`
 	Status                  int      `json:"status"`
 	DisabledReason          string   `json:"disabled_reason"`
@@ -288,7 +293,7 @@ func platformSiteStatus(account *model.PlatformSiteAccount) UpstreamSiteStatusRe
 
 func getPlatformSiteChannel(channelID int) (*model.Channel, error) {
 	var channel model.Channel
-	if err := model.DB.Select("id", "upstream_kind").First(&channel, "id = ?", channelID).Error; err != nil {
+	if err := model.DB.Select("id", "upstream_kind", "balance_updated_time").First(&channel, "id = ?", channelID).Error; err != nil {
 		return nil, err
 	}
 	if channel.UpstreamKind != model.UpstreamKindPlatformSite {
@@ -314,7 +319,9 @@ func toUpstreamKeyResponse(key *model.UpstreamKey) UpstreamKeyResponse {
 		ConversionRatio:         key.ConversionRatio,
 		ConversionRatioOverride: key.ConversionRatioOverride,
 		Weight:                  key.EffectiveWeight(),
+		AutoWeight:              key.AutoWeight(),
 		WeightOverride:          key.WeightOverride,
+		ModelsSynced:            key.ModelsSynced,
 		Status:                  key.Status,
 		DisabledReason:          key.DisabledReason,
 		LastSyncAt:              key.LastSyncAt,
@@ -341,7 +348,8 @@ func GetUpstreamSiteStatus(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if _, err := getPlatformSiteChannel(channelID); err != nil {
+	channel, err := getPlatformSiteChannel(channelID)
+	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -350,7 +358,18 @@ func GetUpstreamSiteStatus(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, platformSiteStatus(&account))
+	response := platformSiteStatus(&account)
+	response.BalanceUpdatedTime = channel.BalanceUpdatedTime
+	var keys []model.UpstreamKey
+	if err := model.DB.Where("channel_id = ?", channelID).Find(&keys).Error; err == nil {
+		response.KeyCount = len(keys)
+		for index := range keys {
+			if keys[index].ModelsSynced && keys[index].IsRoutable(time.Now()) {
+				response.RoutableKeyCount++
+			}
+		}
+	}
+	common.ApiSuccess(c, response)
 }
 
 func GetUpstreamKeys(c *gin.Context) {
@@ -463,7 +482,9 @@ func PatchUpstreamKey(c *gin.Context) {
 		common.ApiError(c, errors.New("没有可更新的字段"))
 		return
 	}
-	if err := model.DB.Model(&key).Updates(updates).Error; err != nil {
+	if err := model.DB.Transaction(func(tx *gorm.DB) error {
+		return tx.Model(&key).Updates(updates).Error
+	}); err != nil {
 		common.ApiError(c, err)
 		return
 	}

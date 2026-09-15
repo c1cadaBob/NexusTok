@@ -27,7 +27,7 @@ import {
   Shuffle,
   SlidersHorizontal,
 } from 'lucide-react'
-import { useState, useMemo, useContext, useEffect } from 'react'
+import { useState, useMemo, useContext, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -80,6 +80,7 @@ import {
   createChannelFieldUpdateScheduler,
   isTagAggregateRow,
   formatConversionRatio,
+  invalidatePlatformChannelQueries,
   type TagRow,
 } from '../lib'
 import { parseUpstreamUpdateMeta } from '../lib/upstream-update-utils'
@@ -371,6 +372,7 @@ export function BalanceCell({ channel }: { channel: Channel }) {
   const balance = channel.balance || 0
   const usedQuota = channel.used_quota || 0
   const [isUpdating, setIsUpdating] = useState(false)
+  const isUpdatingRef = useRef(false)
   const [rawBalanceResponse, setRawBalanceResponse] = useState<string | null>(
     null
   )
@@ -459,10 +461,11 @@ export function BalanceCell({ channel }: { channel: Channel }) {
   const variant = getBalanceVariant(balance)
 
   const handleClickUpdate = async () => {
-    if (isUpdating) {
+    if (isUpdatingRef.current) {
       return
     }
 
+    isUpdatingRef.current = true
     setIsUpdating(true)
     if (channel.type === 57) {
       try {
@@ -475,6 +478,7 @@ export function BalanceCell({ channel }: { channel: Channel }) {
       } catch (error) {
         handleServerError(error, t('Failed to fetch usage'))
       } finally {
+        isUpdatingRef.current = false
         setIsUpdating(false)
       }
       return
@@ -483,6 +487,8 @@ export function BalanceCell({ channel }: { channel: Channel }) {
     try {
       const response = await updateChannelBalance(channel.id)
       if (response.success && response.balance !== undefined) {
+        const balanceUpdatedTime =
+          response.balance_updated_time ?? channel.balance_updated_time
         toast.success(
           t('Balance updated: {{balance}}', {
             balance: formatCurrencyFromUSD(response.balance, {
@@ -492,9 +498,40 @@ export function BalanceCell({ channel }: { channel: Channel }) {
             }),
           })
         )
-        void queryClient.invalidateQueries({
-          queryKey: channelsQueryKeys.lists(),
+        const upstreamSiteStatus =
+          channel.upstream_site_status &&
+          channel.upstream_kind === 'platform_site'
+            ? {
+                ...channel.upstream_site_status,
+                balance: response.balance,
+                used_quota:
+                  response.used_quota ??
+                  channel.upstream_site_status.used_quota,
+                balance_updated_time: balanceUpdatedTime,
+                sync_status:
+                  response.sync_status ??
+                  channel.upstream_site_status.sync_status,
+                key_count:
+                  response.key_count ?? channel.upstream_site_status.key_count,
+                routable_key_count:
+                  response.routable_key_count ??
+                  channel.upstream_site_status.routable_key_count,
+              }
+            : channel.upstream_site_status
+        setCurrentRow({
+          ...channel,
+          balance: response.balance,
+          used_quota: response.used_quota ?? channel.used_quota,
+          balance_updated_time: balanceUpdatedTime,
+          upstream_site_status: upstreamSiteStatus,
         })
+        if (channel.upstream_kind === 'platform_site') {
+          void invalidatePlatformChannelQueries(queryClient, channel.id)
+        } else {
+          void queryClient.invalidateQueries({
+            queryKey: channelsQueryKeys.lists(),
+          })
+        }
       } else if (response.success && response.raw_response !== undefined) {
         setCurrentRow(channel)
         setRawBalanceResponse(response.raw_response)
@@ -504,6 +541,7 @@ export function BalanceCell({ channel }: { channel: Channel }) {
     } catch (error: unknown) {
       handleServerError(error, t('Failed to update balance'))
     } finally {
+      isUpdatingRef.current = false
       setIsUpdating(false)
     }
   }
@@ -524,6 +562,13 @@ export function BalanceCell({ channel }: { channel: Channel }) {
     remainingBadgeVariant = 'info'
   } else if (isUpdating) {
     remainingBadgeVariant = 'neutral'
+  }
+  const handleBalanceKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key !== 'Enter' && event.key !== ' ') {
+      return
+    }
+    event.preventDefault()
+    void handleClickUpdate()
   }
 
   return (
@@ -556,7 +601,16 @@ export function BalanceCell({ channel }: { channel: Channel }) {
                 copyable={false}
                 showDot={false}
                 className='cursor-pointer'
+                role='button'
+                tabIndex={isUpdating ? -1 : 0}
+                aria-disabled={isUpdating}
+                aria-label={
+                  channel.type === 57
+                    ? t('Click to view Codex usage')
+                    : t('Update Balance')
+                }
                 onClick={handleClickUpdate}
+                onKeyDown={handleBalanceKeyDown}
               />
             }
           />

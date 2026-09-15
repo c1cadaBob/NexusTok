@@ -44,6 +44,13 @@ func GetGroupEnabledModels(group string) []string {
 	var models []string
 	// Find distinct models
 	DB.Table("abilities").Where(commonGroupCol+" = ? and enabled = ?", group, true).Distinct("model").Pluck("model", &models)
+	platformChannels, err := getActivePlatformSiteChannels(group)
+	if err == nil {
+		for _, channel := range platformChannels {
+			models = append(models, platformSiteRoutingModels(channel)...)
+		}
+	}
+	models = uniqueModelNames(models)
 	return models
 }
 
@@ -51,7 +58,76 @@ func GetEnabledModels() []string {
 	var models []string
 	// Find distinct models
 	DB.Table("abilities").Where("enabled = ?", true).Distinct("model").Pluck("model", &models)
+	platformChannels, err := getActivePlatformSiteChannels("")
+	if err == nil {
+		for _, channel := range platformChannels {
+			models = append(models, platformSiteRoutingModels(channel)...)
+		}
+	}
+	models = uniqueModelNames(models)
 	return models
+}
+
+func uniqueModelNames(models []string) []string {
+	seen := make(map[string]struct{}, len(models))
+	result := make([]string, 0, len(models))
+	for _, modelName := range models {
+		modelName = strings.TrimSpace(modelName)
+		if modelName == "" {
+			continue
+		}
+		if _, exists := seen[modelName]; exists {
+			continue
+		}
+		seen[modelName] = struct{}{}
+		result = append(result, modelName)
+	}
+	return result
+}
+
+func getActivePlatformSiteChannels(group string) ([]*Channel, error) {
+	if !DB.Migrator().HasTable(&PlatformSiteAccount{}) {
+		return nil, nil
+	}
+
+	query := ApplyChannelGroupFilter(DB.Where(
+		"upstream_kind = ? AND status = ?",
+		UpstreamKindPlatformSite,
+		common.ChannelStatusEnabled,
+	), group)
+	var channels []*Channel
+	if err := query.Find(&channels).Error; err != nil {
+		return nil, err
+	}
+	if len(channels) == 0 {
+		return channels, nil
+	}
+
+	channelIDs := make([]int, 0, len(channels))
+	for _, channel := range channels {
+		channelIDs = append(channelIDs, channel.Id)
+	}
+	var accounts []PlatformSiteAccount
+	if err := DB.Where(
+		"channel_id IN ? AND sync_status = ? AND disabled_at = ?",
+		channelIDs,
+		UpstreamSiteSyncSuccess,
+		0,
+	).Find(&accounts).Error; err != nil {
+		return nil, err
+	}
+	activeAccountIDs := make(map[int]struct{}, len(accounts))
+	for _, account := range accounts {
+		activeAccountIDs[account.ChannelID] = struct{}{}
+	}
+
+	activeChannels := make([]*Channel, 0, len(accounts))
+	for _, channel := range channels {
+		if _, ok := activeAccountIDs[channel.Id]; ok {
+			activeChannels = append(activeChannels, channel)
+		}
+	}
+	return activeChannels, nil
 }
 
 func GetAllEnableAbilities() []Ability {
@@ -117,31 +193,6 @@ func GetChannel(
 		return nil, err
 	}
 	abilities = filterAbilitiesByConstraints(abilities, model, filters)
-	if len(abilities) > 0 {
-		priorities := make([]int64, 0)
-		seen := make(map[int64]bool)
-		for _, ability := range abilities {
-			priority := int64(0)
-			if ability.Priority != nil {
-				priority = *ability.Priority
-			}
-			if !seen[priority] {
-				seen[priority] = true
-				priorities = append(priorities, priority)
-			}
-		}
-		sort.Slice(priorities, func(i, j int) bool { return priorities[i] > priorities[j] })
-		if retry >= len(priorities) {
-			retry = len(priorities) - 1
-		}
-		targetPriority := priorities[retry]
-		abilities = lo.Filter(abilities, func(ability Ability, _ int) bool {
-			return ability.Priority == nil && targetPriority == 0 || ability.Priority != nil && *ability.Priority == targetPriority
-		})
-	}
-	if len(abilities) == 0 {
-		return nil, nil
-	}
 	channelIDs := make([]int, 0, len(abilities))
 	seenChannels := make(map[int]struct{}, len(abilities))
 	for _, ability := range abilities {
@@ -152,16 +203,44 @@ func GetChannel(
 		channelIDs = append(channelIDs, ability.ChannelId)
 	}
 	var channels []*Channel
-	if err := DB.Where("id IN ?", channelIDs).Find(&channels).Error; err != nil {
-		return nil, err
-	}
-	var targetPriority int64
-	if len(abilities) > 0 {
-		targetPriority = 0
-		if abilities[0].Priority != nil {
-			targetPriority = *abilities[0].Priority
+	if len(channelIDs) > 0 {
+		if err := DB.Where("id IN ?", channelIDs).Find(&channels).Error; err != nil {
+			return nil, err
 		}
 	}
+
+	platformChannels, err := getActivePlatformSiteChannels(group)
+	if err != nil {
+		return nil, err
+	}
+	for _, channel := range platformChannels {
+		if ok, _ := ChannelSatisfiesFilters(channel, model, filters); !ok {
+			continue
+		}
+		if len(loadRoutableUpstreamKeys(channel, group, model)) == 0 {
+			continue
+		}
+		channels = append(channels, channel)
+	}
+
+	if len(channels) == 0 {
+		return nil, nil
+	}
+	priorities := make([]int64, 0, len(channels))
+	seenPriorities := make(map[int64]struct{}, len(channels))
+	for _, channel := range channels {
+		priority := channel.GetPriority()
+		if _, exists := seenPriorities[priority]; exists {
+			continue
+		}
+		seenPriorities[priority] = struct{}{}
+		priorities = append(priorities, priority)
+	}
+	sort.Slice(priorities, func(i, j int) bool { return priorities[i] > priorities[j] })
+	if retry >= len(priorities) {
+		retry = len(priorities) - 1
+	}
+	targetPriority := priorities[retry]
 	targetChannels := make([]*Channel, 0, len(channels))
 	for _, channel := range channels {
 		if channel.GetPriority() == targetPriority {
@@ -205,6 +284,9 @@ func filterAbilitiesByConstraints(abilities []Ability, modelName string, filters
 	filtered := make([]Ability, 0, len(abilities))
 	for _, ability := range abilities {
 		channel := channelsByID[ability.ChannelId]
+		if channel != nil && channel.UpstreamKind == UpstreamKindPlatformSite {
+			continue
+		}
 		if ok, _ := ChannelSatisfiesFilters(channel, modelName, filters); ok {
 			filtered = append(filtered, ability)
 		}
@@ -222,6 +304,9 @@ func identityFilterRequiresKey(filters []dto.ChannelFilter) bool {
 }
 
 func (channel *Channel) AddAbilities(tx *gorm.DB) error {
+	if channel.UpstreamKind == UpstreamKindPlatformSite {
+		return nil
+	}
 	models_ := strings.Split(channel.Models, ",")
 	groups_ := strings.Split(channel.Group, ",")
 	abilitySet := make(map[string]struct{})
@@ -291,6 +376,13 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 			tx.Rollback()
 		}
 		return err
+	}
+
+	if channel.UpstreamKind == UpstreamKindPlatformSite {
+		if isNewTx {
+			return tx.Commit().Error
+		}
+		return nil
 	}
 
 	// Then add new abilities

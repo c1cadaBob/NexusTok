@@ -84,23 +84,25 @@ function renderWithProviders(ui: React.ReactNode) {
 }
 
 function upstreamKey(overrides: Partial<UpstreamKey> = {}): UpstreamKey {
-  return {
+  const key: UpstreamKey = {
     id: 7,
     channel_id: 101,
     external_id: 'prod-key',
     name: 'Production key',
     key_preview: 'sk-live...mask',
     models: ['gpt-key-only'],
+    models_synced: true,
     key_priority: 9,
     source_conversion_ratio: 1,
     conversion_ratio: 0.1,
     conversion_ratio_override: null,
     weight: 1900,
+    auto_weight: 1900,
     weight_override: null,
     status: 1,
     last_sync_at: 1_700_000_000,
-    ...overrides,
   }
+  return { ...key, ...overrides }
 }
 
 function platformChannel(key: UpstreamKey = upstreamKey()): Channel {

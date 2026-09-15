@@ -211,6 +211,11 @@ export interface ChannelBalanceResponse {
   success: boolean
   message?: string
   balance?: number
+  used_quota?: number
+  balance_updated_time?: number
+  sync_status?: string
+  key_count?: number
+  routable_key_count?: number
   currency?: string
   raw_response?: string
 }
@@ -427,10 +432,13 @@ export interface UpstreamSiteStatus {
   conversion_ratio: number
   balance: number
   used_quota: number
+  balance_updated_time: number
   sync_status: string
   last_sync_at: number
   last_sync_error?: string
   consecutive_failures: number
+  key_count?: number
+  routable_key_count?: number
 }
 
 export interface UpstreamKey {
@@ -440,11 +448,13 @@ export interface UpstreamKey {
   name: string
   key_preview?: string
   models: string[]
+  models_synced: boolean
   key_priority: number
   source_conversion_ratio: number
   conversion_ratio: number
   conversion_ratio_override?: number | null
   weight: number
+  auto_weight: number
   weight_override?: number | null
   status: number
   disabled_reason?: string

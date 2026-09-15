@@ -32,6 +32,7 @@ import {
 import { PlatformSiteFields } from '../platform-site-fields'
 
 type PlatformSiteFormProps = {
+  isEditing?: boolean
   onSubmit?: (values: ChannelFormValues) => void
 }
 
@@ -51,7 +52,10 @@ function PlatformSiteForm(props: PlatformSiteFormProps) {
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit((values) => props.onSubmit?.(values))}>
-        <PlatformSiteFields disabled={false} isEditing={false} />
+        <PlatformSiteFields
+          disabled={false}
+          isEditing={props.isEditing === true}
+        />
         <button type='submit'>Save</button>
       </form>
     </Form>
@@ -114,6 +118,28 @@ test('连续输入到账金额字符不会产生递归渲染并保持有限倍�
     expect(
       screen.getByRole('spinbutton', { name: 'Conversion ratio' })
     ).toHaveValue(0.00001)
+  })
+})
+
+test('编辑平台站点时修改充值和到账金额也会刷新自动倍率', async () => {
+  const user = userEvent.setup()
+  render(<PlatformSiteForm isEditing />)
+
+  await enterNumber(
+    user,
+    screen.getByRole('spinbutton', { name: 'Recharge amount' }),
+    '1'
+  )
+  await enterNumber(
+    user,
+    screen.getByRole('spinbutton', { name: 'Credited amount' }),
+    '10'
+  )
+
+  await waitFor(() => {
+    expect(
+      screen.getByRole('spinbutton', { name: 'Conversion ratio' })
+    ).toHaveValue(0.1)
   })
 })
 

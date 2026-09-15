@@ -36,7 +36,7 @@ import { handleServerError } from '@/lib/handle-server-error'
 import { createServerError } from '@/lib/server-error-message'
 
 import { getCodexUsage, updateChannelBalance } from '../../api'
-import { channelsQueryKeys } from '../../lib'
+import { channelsQueryKeys, invalidatePlatformChannelQueries } from '../../lib'
 import { useChannels } from '../channels-provider'
 import {
   CodexUsageDialog,
@@ -93,28 +93,58 @@ export function BalanceQueryDialog(props: BalanceQueryDialogProps) {
   if (!currentRow) return null
 
   const handleQueryBalance = async () => {
+    if (isQuerying) {
+      return
+    }
+    const row = currentRow
     setIsQuerying(true)
     try {
-      const response = await updateChannelBalance(currentRow.id)
+      const response = await updateChannelBalance(row.id)
       if (response.success && response.balance !== undefined) {
         const newBalance = response.balance
-        const now = Math.floor(Date.now() / 1000)
+        const updatedTime =
+          response.balance_updated_time ?? row.balance_updated_time
 
         setBalance(newBalance)
-        setBalanceUpdatedTime(now)
-        toast.success(t('Balance updated successfully'))
+        setBalanceUpdatedTime(updatedTime)
+        toast.success(
+          t('Balance updated: {{balance}}', {
+            balance: formatBalance(newBalance),
+          })
+        )
 
-        // Update currentRow immediately with new balance and timestamp
+        const upstreamSiteStatus =
+          row.upstream_site_status && row.upstream_kind === 'platform_site'
+            ? {
+                ...row.upstream_site_status,
+                balance: newBalance,
+                used_quota:
+                  response.used_quota ?? row.upstream_site_status.used_quota,
+                balance_updated_time: updatedTime,
+                sync_status:
+                  response.sync_status ?? row.upstream_site_status.sync_status,
+                key_count:
+                  response.key_count ?? row.upstream_site_status.key_count,
+                routable_key_count:
+                  response.routable_key_count ??
+                  row.upstream_site_status.routable_key_count,
+              }
+            : row.upstream_site_status
         setCurrentRow({
-          ...currentRow,
+          ...row,
           balance: newBalance,
-          balance_updated_time: now,
+          used_quota: response.used_quota ?? row.used_quota,
+          balance_updated_time: updatedTime,
+          upstream_site_status: upstreamSiteStatus,
         })
 
-        // Invalidate queries to refresh the table
-        await queryClient.invalidateQueries({
-          queryKey: channelsQueryKeys.lists(),
-        })
+        if (row.upstream_kind === 'platform_site') {
+          await invalidatePlatformChannelQueries(queryClient, row.id)
+        } else {
+          await queryClient.invalidateQueries({
+            queryKey: channelsQueryKeys.lists(),
+          })
+        }
         setRawResponse(null)
       } else if (response.success && response.raw_response !== undefined) {
         setRawResponse(response.raw_response)

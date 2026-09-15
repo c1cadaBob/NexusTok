@@ -483,11 +483,13 @@ func TestPatchUpstreamKeyClearsWeightWhenRestoredRatioIsFree(t *testing.T) {
 			"name": "",
 			"key_preview": "",
 			"models": [],
+			"models_synced": false,
 			"key_priority": 0,
 			"source_conversion_ratio": 1,
 			"conversion_ratio": 0,
 			"conversion_ratio_override": null,
 			"weight": 2000,
+			"auto_weight": 2000,
 			"weight_override": null,
 			"status": 1,
 			"disabled_reason": "",
@@ -501,6 +503,77 @@ func TestPatchUpstreamKeyClearsWeightWhenRestoredRatioIsFree(t *testing.T) {
 	assert.Nil(t, saved.ConversionRatioOverride)
 	assert.Equal(t, model.MaxUpstreamKeyWeight, saved.Weight)
 	assert.Nil(t, saved.WeightOverride)
+}
+
+func TestGetUpstreamSiteStatusReturnsBalanceRefreshAndKeyCounts(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(
+		&model.PlatformSiteAccount{},
+		&model.UpstreamKey{},
+	))
+
+	channel := &model.Channel{
+		Name:               "NewAPI platform site",
+		Type:               constant.ChannelTypeNewAPI,
+		UpstreamKind:       model.UpstreamKindPlatformSite,
+		Status:             common.ChannelStatusEnabled,
+		BalanceUpdatedTime: 1_800_000_000,
+	}
+	require.NoError(t, db.Create(channel).Error)
+	require.NoError(t, db.Create(&model.PlatformSiteAccount{
+		ChannelID:       channel.Id,
+		Platform:        model.PlatformNewAPI,
+		BaseURL:         "https://upstream.example",
+		AuthType:        model.UpstreamAuthPassword,
+		RechargeAmount:  1,
+		CreditedAmount:  10,
+		ConversionRatio: 0.1,
+		Balance:         8,
+		UsedQuota:       20,
+		SyncStatus:      model.UpstreamSiteSyncSuccess,
+		LastSyncAt:      1_800_000_000,
+	}).Error)
+	require.NoError(t, db.Create(&[]model.UpstreamKey{
+		{
+			ChannelID:    channel.Id,
+			ExternalID:   "routable-key",
+			ModelsSynced: true,
+			Status:       model.UpstreamKeyStatusEnabled,
+		},
+		{
+			ChannelID:    channel.Id,
+			ExternalID:   "unknown-models",
+			ModelsSynced: false,
+			Status:       model.UpstreamKeyStatusEnabled,
+		},
+		{
+			ChannelID:    channel.Id,
+			ExternalID:   "disabled-key",
+			ModelsSynced: true,
+			Status:       model.UpstreamKeyStatusManualDisabled,
+		},
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "id", Value: strconv.Itoa(channel.Id)}}
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/channel/upstream-sync", nil)
+
+	GetUpstreamSiteStatus(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Success bool                       `json:"success"`
+		Message string                     `json:"message"`
+		Data    UpstreamSiteStatusResponse `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success, response.Message)
+	assert.Equal(t, int64(1_800_000_000), response.Data.BalanceUpdatedTime)
+	assert.Equal(t, float64(8), response.Data.Balance)
+	assert.Equal(t, int64(20), response.Data.UsedQuota)
+	assert.Equal(t, 3, response.Data.KeyCount)
+	assert.Equal(t, 1, response.Data.RoutableKeyCount)
 }
 
 func TestNormalizeModelNames(t *testing.T) {

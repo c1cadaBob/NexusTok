@@ -5,7 +5,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/c1cadaBob/NexusTok/common"
 	"github.com/c1cadaBob/NexusTok/setting/ratio_setting"
+	"github.com/c1cadaBob/NexusTok/setting/reasoning"
 )
 
 type upstreamRouteCandidate struct {
@@ -14,17 +16,16 @@ type upstreamRouteCandidate struct {
 }
 
 func buildKeyChannelRoutingKey(channel *Channel) *UpstreamKey {
-	weight := 1000
-	if channel.KeyWeightOverride != nil {
-		weight = max(MinUpstreamKeyWeight, min(MaxUpstreamKeyWeight, *channel.KeyWeightOverride))
-	} else if calculated, err := CalculateUpstreamKeyWeight(channel.ConversionRatio); err == nil {
-		weight = calculated
-	}
-	return &UpstreamKey{
+	key := &UpstreamKey{
 		KeyPriority:     channel.KeyPriority,
 		ConversionRatio: channel.ConversionRatio,
-		Weight:          weight,
 	}
+	if channel.KeyWeightOverride != nil && channel.ConversionRatio != 0 {
+		override := max(MinUpstreamKeyWeight, min(MaxUpstreamKeyWeight, *channel.KeyWeightOverride))
+		key.WeightOverride = &override
+	}
+	key.Weight = key.AutoWeight()
+	return key
 }
 
 func selectChannelByUpstreamKey(channels []*Channel, group, modelName string) *Channel {
@@ -34,7 +35,7 @@ func selectChannelByUpstreamKey(channels []*Channel, group, modelName string) *C
 			continue
 		}
 		if channel.UpstreamKind == UpstreamKindPlatformSite {
-			keys := loadRoutableUpstreamKeys(channel.Id, group, modelName)
+			keys := loadRoutableUpstreamKeys(channel, group, modelName)
 			for _, key := range keys {
 				candidates = append(candidates, upstreamRouteCandidate{channel: channel, key: key})
 			}
@@ -90,24 +91,30 @@ func selectChannelByUpstreamKey(channels []*Channel, group, modelName string) *C
 	return &channelCopy
 }
 
-func loadRoutableUpstreamKeys(channelID int, group, modelName string) []*UpstreamKey {
+func loadRoutableUpstreamKeys(channel *Channel, group, modelName string) []*UpstreamKey {
+	if channel == nil {
+		return nil
+	}
 	var account PlatformSiteAccount
 	if err := DB.Select("sync_status", "disabled_at").
-		Where("channel_id = ?", channelID).
+		Where("channel_id = ?", channel.Id).
 		First(&account).Error; err != nil ||
 		account.SyncStatus != UpstreamSiteSyncSuccess ||
 		account.DisabledAt != 0 {
 		return nil
 	}
 	var keys []UpstreamKey
-	if err := DB.Where("channel_id = ? AND status = ?", channelID, UpstreamKeyStatusEnabled).Find(&keys).Error; err != nil {
+	if err := DB.Where("channel_id = ? AND status = ?", channel.Id, UpstreamKeyStatusEnabled).Find(&keys).Error; err != nil {
 		return nil
 	}
 	now := time.Now()
+	upstreamModelName := resolveChannelUpstreamModelName(channel, modelName)
 	result := make([]*UpstreamKey, 0, len(keys))
 	for index := range keys {
 		key := &keys[index]
-		if !key.IsRoutable(now) || !upstreamKeySupportsModel(key, group, modelName) {
+		if !key.ModelsSynced ||
+			!key.IsRoutable(now) ||
+			!upstreamKeySupportsModel(key, group, upstreamModelName) {
 			continue
 		}
 		if err := key.LoadSecret(); err != nil {
@@ -116,6 +123,79 @@ func loadRoutableUpstreamKeys(channelID int, group, modelName string) []*Upstrea
 		result = append(result, key)
 	}
 	return result
+}
+
+func parseChannelModelMappingForRouting(channel *Channel) map[string]string {
+	if channel == nil || strings.TrimSpace(channel.GetModelMapping()) == "" || channel.GetModelMapping() == "{}" {
+		return nil
+	}
+	parsed := make(map[string]string)
+	if err := common.UnmarshalJsonStr(channel.GetModelMapping(), &parsed); err != nil {
+		return nil
+	}
+	normalized := make(map[string]string, len(parsed))
+	for source, target := range parsed {
+		source = strings.TrimSpace(source)
+		target = strings.TrimSpace(target)
+		if source != "" && target != "" {
+			normalized[source] = target
+		}
+	}
+	if len(normalized) == 0 {
+		return nil
+	}
+	return normalized
+}
+
+func resolveChannelUpstreamModelName(channel *Channel, modelName string) string {
+	modelMap := parseChannelModelMappingForRouting(channel)
+	if len(modelMap) == 0 || strings.TrimSpace(modelName) == "" {
+		return modelName
+	}
+	currentModel := modelName
+	visitedModels := map[string]bool{currentModel: true}
+	for {
+		mappedModel, exists := modelMap[currentModel]
+		baseModel := reasoning.BaseModelName(currentModel)
+		if (!exists || mappedModel == "") && baseModel != currentModel {
+			mappedModel, exists = modelMap[baseModel]
+		}
+		if !exists || mappedModel == "" {
+			return currentModel
+		}
+		if visitedModels[mappedModel] {
+			return currentModel
+		}
+		visitedModels[mappedModel] = true
+		currentModel = mappedModel
+	}
+}
+
+func platformSiteRoutingModels(channel *Channel) []string {
+	if channel == nil {
+		return nil
+	}
+	models := uniqueModelNames(channel.GetModels())
+	if channel.UpstreamKind != UpstreamKindPlatformSite {
+		return models
+	}
+	modelSet := make(map[string]struct{}, len(models))
+	normalizedModelSet := make(map[string]struct{}, len(models))
+	for _, modelName := range models {
+		modelSet[modelName] = struct{}{}
+		normalizedModelSet[ratio_setting.RoutingMatchModelName(modelName)] = struct{}{}
+	}
+	for source := range parseChannelModelMappingForRouting(channel) {
+		target := resolveChannelUpstreamModelName(channel, source)
+		if _, ok := modelSet[target]; ok {
+			models = append(models, source)
+			continue
+		}
+		if _, ok := normalizedModelSet[ratio_setting.RoutingMatchModelName(target)]; ok {
+			models = append(models, source)
+		}
+	}
+	return uniqueModelNames(models)
 }
 
 func upstreamKeySupportsModel(key *UpstreamKey, group, modelName string) bool {
@@ -132,12 +212,16 @@ func upstreamKeySupportsModel(key *UpstreamKey, group, modelName string) bool {
 		}
 		return false
 	}
-	for _, item := range key.GetModels() {
-		if item == modelName || ratio_setting.RoutingMatchModelName(item) == ratio_setting.RoutingMatchModelName(modelName) {
-			return true
+	if key.ModelsSynced {
+		normalizedModel := ratio_setting.RoutingMatchModelName(modelName)
+		for _, item := range key.GetModels() {
+			if item == modelName || ratio_setting.RoutingMatchModelName(item) == normalizedModel {
+				return true
+			}
 		}
+		return false
 	}
-	return true
+	return false
 }
 
 func upstreamChannelCandidatesByPriority(channels []*Channel, priority int64) []*Channel {

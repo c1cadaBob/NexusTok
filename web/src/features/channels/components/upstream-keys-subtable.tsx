@@ -117,7 +117,7 @@ function getEffectiveWeight(upstreamKey: UpstreamKey): number {
   if (upstreamKey.conversion_ratio === 0) {
     return 2000
   }
-  return upstreamKey.weight_override ?? upstreamKey.weight
+  return upstreamKey.weight
 }
 
 function useUpstreamKeySelection(channel: Channel, keys: UpstreamKey[]) {
@@ -291,6 +291,12 @@ function UpstreamKeyWeightCell({ upstreamKey }: { upstreamKey: UpstreamKey }) {
   return (
     <div className='flex items-center justify-center gap-1'>
       <span className='font-mono text-sm tabular-nums'>{weight}</span>
+      <span
+        className='text-muted-foreground font-mono text-[11px] tabular-nums'
+        title={t('Automatic weight')}
+      >
+        ({upstreamKey.auto_weight ?? upstreamKey.weight})
+      </span>
       {hasOverride && (
         <StatusBadge
           label={t('Override')}
@@ -327,6 +333,32 @@ function UpstreamKeyRatioCell({ upstreamKey }: { upstreamKey: UpstreamKey }) {
           copyable={false}
         />
       )}
+    </div>
+  )
+}
+
+function UpstreamKeyModelsCell({ upstreamKey }: { upstreamKey: UpstreamKey }) {
+  const { t } = useTranslation()
+
+  return (
+    <div className='min-w-0 space-y-1'>
+      <BadgeListCell
+        items={upstreamKey.models.map((model) => (
+          <StatusBadge
+            key={model}
+            label={model}
+            autoColor={model}
+            size='sm'
+            className='font-mono'
+          />
+        ))}
+      />
+      <StatusBadge
+        label={upstreamKey.models_synced ? t('Synced') : t('Unavailable')}
+        variant={upstreamKey.models_synced ? 'success' : 'warning'}
+        size='sm'
+        copyable={false}
+      />
     </div>
   )
 }
@@ -636,11 +668,7 @@ export function UpstreamKeysMobileList(props: UpstreamKeysSubTableProps) {
                     </span>
                   </UpstreamKeyMobileField>
                   <UpstreamKeyMobileField label={t('Models')}>
-                    <span className='block max-w-full truncate font-mono text-xs'>
-                      {upstreamKey.models.length > 0
-                        ? upstreamKey.models.join(', ')
-                        : '-'}
-                    </span>
+                    <UpstreamKeyModelsCell upstreamKey={upstreamKey} />
                   </UpstreamKeyMobileField>
                   <UpstreamKeyMobileField label={t('Converted ratio')}>
                     <UpstreamKeyRatioCell upstreamKey={upstreamKey} />
@@ -1004,17 +1032,7 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
         className: 'min-w-56 text-left',
         cellClassName: 'text-left',
         cell: (upstreamKey: UpstreamKey) => (
-          <BadgeListCell
-            items={upstreamKey.models.map((model) => (
-              <StatusBadge
-                key={model}
-                label={model}
-                autoColor={model}
-                size='sm'
-                className='font-mono'
-              />
-            ))}
-          />
+          <UpstreamKeyModelsCell upstreamKey={upstreamKey} />
         ),
       },
       {

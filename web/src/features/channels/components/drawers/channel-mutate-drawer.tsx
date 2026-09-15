@@ -996,7 +996,8 @@ export function ChannelMutateDrawer({
     (!providerRequiresOther || currentOther?.trim())
   )
   const modelsComplete = Boolean(
-    currentModelsArray.length > 0 && currentGroups?.length
+    (currentUpstreamKind === 'platform_site' || currentModelsArray.length > 0) &&
+      currentGroups?.length
   )
   const requiredCompletedCount = [
     identityComplete,
@@ -3512,7 +3513,54 @@ export function ChannelMutateDrawer({
                     >
                       <ChannelModelsSection>
                         <div className='space-y-5'>
-                          <div className='border-border/60 bg-muted/10 rounded-lg border p-4'>
+                          {currentUpstreamKind === 'platform_site' && (
+                            <div className='border-border/60 bg-muted/10 rounded-lg border p-4'>
+                              <div className='space-y-1'>
+                                <FormLabel>{t('Synced models')}</FormLabel>
+                                <FormDescription>
+                                  {t(
+                                    'Platform site models are discovered from each upstream key and cannot be edited here.'
+                                  )}
+                                </FormDescription>
+                              </div>
+                              <div className='mt-3 flex flex-wrap gap-1.5'>
+                                {currentModelsArray.length > 0 ? (
+                                  currentModelsArray.map((modelName) => (
+                                    <Badge
+                                      key={modelName}
+                                      variant='outline'
+                                      className='font-mono'
+                                    >
+                                      {modelName}
+                                    </Badge>
+                                  ))
+                                ) : (
+                                  <span className='text-muted-foreground text-sm'>
+                                    {upstreamSiteData?.data?.sync_status ===
+                                    'failed'
+                                      ? t('No models fetched yet.')
+                                      : t('Waiting')}
+                                  </span>
+                                )}
+                              </div>
+                              <div className='text-muted-foreground mt-3 text-xs'>
+                                {t('Selected {{count}}', {
+                                  count: currentModelsArray.length,
+                                })}
+                                {upstreamSiteData?.data?.sync_status
+                                  ? ` · ${t('Sync status')}: ${upstreamSiteData.data.sync_status}`
+                                  : ''}
+                              </div>
+                            </div>
+                          )}
+
+                          <div
+                            className={cn(
+                              'border-border/60 bg-muted/10 rounded-lg border p-4',
+                              currentUpstreamKind === 'platform_site' &&
+                                'hidden'
+                            )}
+                          >
                             <FormField
                               control={form.control}
                               name='models'

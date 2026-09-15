@@ -387,6 +387,9 @@ func migrateDB() error {
 	if err := migrateUpstreamKeyDefaults(); err != nil {
 		return err
 	}
+	if err := migrateUpstreamKeyModelSyncDefaults(); err != nil {
+		return err
+	}
 	if err := InitializeUserAuthVersions(); err != nil {
 		return err
 	}
@@ -489,6 +492,30 @@ func migrateUpstreamKeyDefaults() error {
 		if err := tx.Model(&UpstreamKey{}).
 			Where("source_conversion_ratio IS NULL").
 			Update("source_conversion_ratio", 1).Error; err != nil {
+			return err
+		}
+		return tx.Create(&Option{Key: migrationKey, Value: "1"}).Error
+	})
+}
+
+func migrateUpstreamKeyModelSyncDefaults() error {
+	const migrationKey = "migration.upstream_key_models_synced.v1"
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var marker Option
+		err := tx.Where(commonKeyCol+" = ?", migrationKey).First(&marker).Error
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+
+		platformChannelIDs := tx.Model(&Channel{}).
+			Select("id").
+			Where("upstream_kind = ?", UpstreamKindPlatformSite)
+		if err := tx.Model(&UpstreamKey{}).
+			Where("channel_id IN (?)", platformChannelIDs).
+			Update("models_synced", false).Error; err != nil {
 			return err
 		}
 		return tx.Create(&Option{Key: migrationKey, Value: "1"}).Error
