@@ -19,11 +19,27 @@ import (
 	"gorm.io/gorm"
 )
 
+type platformSiteRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn platformSiteRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return fn(request)
+}
+
+func platformSiteJSONResponse(status int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+}
+
 func TestNewAPIAdapterPasswordAuthenticationAndSnapshot(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		switch {
 		case request.Method == http.MethodPost && request.URL.Path == "/api/user/login":
+			_, hasTurnstile := request.URL.Query()["turnstile"]
+			assert.True(t, hasTurnstile)
 			body, readErr := io.ReadAll(request.Body)
 			require.NoError(t, readErr)
 			assert.Contains(t, string(body), `"username":"operator"`)
@@ -63,6 +79,129 @@ func TestNewAPIAdapterPasswordAuthenticationAndSnapshot(t *testing.T) {
 	assert.Equal(t, int64(8), *snapshot.Keys[0].RemainQuota)
 	assert.Equal(t, []string{"gpt-4o", "claude-3-7-sonnet"}, snapshot.Keys[0].Models)
 	assert.Equal(t, 0.7, snapshot.Keys[0].SourceConversionRatio)
+}
+
+func TestNewAPIAdapterFallbacksBatchRevealUnlimitedQuotaAndPerKeyModels(t *testing.T) {
+	loginAttempts := 0
+	client := &http.Client{
+		Transport: platformSiteRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+			switch {
+			case request.Method == http.MethodPost && request.URL.Path == "/api/user/login":
+				_, hasTurnstile := request.URL.Query()["turnstile"]
+				assert.True(t, hasTurnstile)
+				body, readErr := io.ReadAll(request.Body)
+				require.NoError(t, readErr)
+				loginAttempts++
+				if strings.Contains(string(body), `"username"`) &&
+					!strings.Contains(string(body), `"email"`) {
+					return platformSiteJSONResponse(http.StatusUnauthorized, `{"success":false,"message":"bad username field"}`), nil
+				}
+				assert.Contains(t, string(body), `"email":"operator@example.com"`)
+				return platformSiteJSONResponse(http.StatusOK, `{"success":true,"data":{"access_token":"newapi-session","user":{"uid":888}}}`), nil
+			case request.URL.Path == "/api/status":
+				return platformSiteJSONResponse(http.StatusOK, `{"success":true,"data":{"quota_per_unit":500000}}`), nil
+			case request.URL.Path == "/api/user/self":
+				return platformSiteJSONResponse(http.StatusNotFound, `{"success":false,"message":"missing"}`), nil
+			case request.URL.Path == "/api/user/me":
+				assert.Equal(t, "Bearer newapi-session", request.Header.Get("Authorization"))
+				assert.Equal(t, "888", request.Header.Get("New-API-User"))
+				return platformSiteJSONResponse(http.StatusOK, `{"success":true,"data":{"user":{"quota":5000000,"used_quota":1000000}}}`), nil
+			case request.URL.Path == "/api/user/self/groups":
+				return platformSiteJSONResponse(http.StatusOK, `{"success":true,"data":{"default":{"ratio":0.1}}}`), nil
+			case request.URL.Path == "/api/token/":
+				return platformSiteJSONResponse(http.StatusNotFound, `{"success":false,"message":"missing"}`), nil
+			case request.URL.Path == "/api/token":
+				return platformSiteJSONResponse(http.StatusOK, `{"success":true,"data":{"records":[{"id":"7","name":"primary","key":"sk-****","group":"default","unlimited_quota":true,"remain_quota":0}],"total":1,"page_size":100}}`), nil
+			case request.Method == http.MethodPost && request.URL.Path == "/api/token/batch/keys":
+				return platformSiteJSONResponse(http.StatusOK, `{"success":true,"data":{"keys":{"7":"fixture-newapi-real-key"}}}`), nil
+			case request.URL.Path == "/v1/models":
+				assert.Equal(t, "Bearer fixture-newapi-real-key", request.Header.Get("Authorization"))
+				assert.Equal(t, "fixture-newapi-real-key", request.Header.Get("x-api-key"))
+				assert.Empty(t, request.Header.Get("Cookie"))
+				return platformSiteJSONResponse(http.StatusOK, `{"data":[{"id":"gpt-5.5"},{"id":"gpt-4o"}]}`), nil
+			default:
+				return platformSiteJSONResponse(http.StatusNotFound, `{"success":false,"message":"unexpected"}`), nil
+			}
+		}),
+	}
+	adapter := NewNewAPIAdapter(client)
+	session, err := adapter.Authenticate(context.Background(), "https://example.com", model.PlatformSiteCredential{
+		Username: "operator@example.com",
+		Password: "synthetic-password",
+	})
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, loginAttempts, 2)
+
+	snapshot, err := adapter.FetchSnapshot(context.Background(), session)
+	require.NoError(t, err)
+	assert.Equal(t, 10.0, snapshot.Balance)
+	assert.Equal(t, int64(1000000), snapshot.UsedQuota)
+	require.Len(t, snapshot.Keys, 1)
+	assert.Equal(t, "fixture-newapi-real-key", snapshot.Keys[0].Secret)
+	assert.Nil(t, snapshot.Keys[0].RemainQuota)
+	assert.Equal(t, []string{"gpt-5.5", "gpt-4o"}, snapshot.Keys[0].Models)
+	assert.True(t, snapshot.Keys[0].ModelsSynced)
+	assert.Equal(t, 0.1, snapshot.Keys[0].SourceConversionRatio)
+}
+
+func TestNewAPIAdapterBatchRevealPreservesNumericTokenIDs(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch {
+		case request.Method == http.MethodPost && request.URL.Path == "/api/user/login":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"access_token":"newapi-session","user":{"id":88}}}`))
+		case request.URL.Path == "/api/user/self":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"quota":500000}}`))
+		case request.URL.Path == "/api/status":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"quota_per_unit":500000}}`))
+		case request.URL.Path == "/api/user/self/groups":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"default":{"ratio":1}}}`))
+		case request.Method == http.MethodGet && request.URL.Path == "/api/token/":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"items":[{"id":7,"name":"primary","key":"sk-****","group":"default","models":["gpt-5.5"]}],"total":1,"page_size":100}}`))
+		case request.Method == http.MethodPost && request.URL.Path == "/api/token/batch/keys":
+			body, readErr := io.ReadAll(request.Body)
+			require.NoError(t, readErr)
+			assert.Contains(t, string(body), `"ids":[7]`)
+			assert.NotContains(t, string(body), `"ids":["7"]`)
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"keys":{"7":"fixture-newapi-real-key"}}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	adapter := NewNewAPIAdapter(server.Client())
+	session, err := adapter.Authenticate(context.Background(), server.URL, model.PlatformSiteCredential{
+		Username: "operator",
+		Password: "synthetic-password",
+	})
+	require.NoError(t, err)
+
+	snapshot, err := adapter.FetchSnapshot(context.Background(), session)
+	require.NoError(t, err)
+	require.Len(t, snapshot.Keys, 1)
+	assert.Equal(t, "fixture-newapi-real-key", snapshot.Keys[0].Secret)
+	assert.Equal(t, []string{"gpt-5.5"}, snapshot.Keys[0].Models)
+}
+
+func TestNewAPITokenKeyParsesDirectDataString(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch {
+		case request.Method == http.MethodPost && request.URL.Path == "/api/token/7/key":
+			_, _ = writer.Write([]byte(`{"success":true,"data":"fixture-direct-data-key"}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	session, err := newPlatformSiteSession(server.URL, nil)
+	require.NoError(t, err)
+	session.Client = server.Client()
+	key, err := fetchNewAPITokenKey(context.Background(), session, "7")
+	require.NoError(t, err)
+	assert.Equal(t, "fixture-direct-data-key", key)
 }
 
 func TestNewAPIAdapterPasswordAuthenticationAddsCompatUserHeader(t *testing.T) {
@@ -286,6 +425,67 @@ func TestSub2APIAdapterUsesProfileUsageGroupAliasesAndModelAliases(t *testing.T)
 	assert.True(t, snapshot.Keys[0].ModelsSynced)
 }
 
+func TestSub2APIAdapterDiscoversRelayModelsAndTreatsZeroQuotaAsUnlimited(t *testing.T) {
+	loginAttempts := 0
+	modelRequests := 0
+	client := &http.Client{
+		Transport: platformSiteRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+			switch {
+			case request.Method == http.MethodGet && (request.URL.Path == "" || request.URL.Path == "/"):
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"text/html"}},
+					Body:       io.NopCloser(strings.NewReader(`<script>window.__APP_CONFIG__={"api_base_url":"https://example.com/v1"}</script>`)),
+				}, nil
+			case request.Method == http.MethodPost && request.URL.Path == "/api/v1/auth/login":
+				body, readErr := io.ReadAll(request.Body)
+				require.NoError(t, readErr)
+				loginAttempts++
+				if strings.Contains(string(body), `"email"`) &&
+					!strings.Contains(string(body), `"username"`) {
+					return platformSiteJSONResponse(http.StatusUnauthorized, `{"code":401,"message":"email field is unsupported"}`), nil
+				}
+				return platformSiteJSONResponse(http.StatusOK, `{"code":0,"data":{"access_token":"sub2api-session"}}`), nil
+			case request.Method == http.MethodGet && request.URL.Path == "/api/v1/auth/me":
+				return platformSiteJSONResponse(http.StatusOK, `{"code":0,"data":{"balance":3}}`), nil
+			case request.Method == http.MethodGet && request.URL.Path == "/api/v1/user/profile":
+				return platformSiteJSONResponse(http.StatusNotFound, `{"code":404}`), nil
+			case request.Method == http.MethodGet && request.URL.Path == "/api/v1/usage/dashboard/stats":
+				return platformSiteJSONResponse(http.StatusNotFound, `{"code":404}`), nil
+			case request.Method == http.MethodGet && request.URL.Path == "/api/v1/groups/available":
+				return platformSiteJSONResponse(http.StatusOK, `{"code":0,"data":[]}`), nil
+			case request.Method == http.MethodGet && request.URL.Path == "/api/v1/groups/rates":
+				return platformSiteJSONResponse(http.StatusOK, `{"code":0,"data":{}}`), nil
+			case request.Method == http.MethodGet && request.URL.Path == "/api/v1/keys":
+				return platformSiteJSONResponse(http.StatusOK, `{"code":0,"data":{"items":[{"id":"key-1","name":"unlimited","key":"sk-sub2api","quota":0,"quota_used":42}],"total":1,"page_size":100}}`), nil
+			case request.Method == http.MethodGet && request.URL.Path == "/v1/models":
+				modelRequests++
+				assert.Equal(t, "Bearer sk-sub2api", request.Header.Get("Authorization"))
+				assert.Equal(t, "sk-sub2api", request.Header.Get("x-api-key"))
+				return platformSiteJSONResponse(http.StatusOK, `{"data":[{"id":"gpt-5.5"}]}`), nil
+			default:
+				return platformSiteJSONResponse(http.StatusNotFound, `{"code":404}`), nil
+			}
+		}),
+	}
+	adapter := NewSub2APIAdapter(client)
+	session, err := adapter.Authenticate(context.Background(), "https://example.com/", model.PlatformSiteCredential{
+		Username: "operator@example.com",
+		Password: "synthetic-password",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "https://example.com/v1", session.ModelBaseURL)
+	assert.GreaterOrEqual(t, loginAttempts, 2)
+
+	snapshot, err := adapter.FetchSnapshot(context.Background(), session)
+	require.NoError(t, err)
+	require.Len(t, snapshot.Keys, 1)
+	assert.Nil(t, snapshot.Keys[0].RemainQuota)
+	assert.Equal(t, []string{"gpt-5.5"}, snapshot.Keys[0].Models)
+	assert.True(t, snapshot.Keys[0].ModelsSynced)
+	assert.Equal(t, 1, modelRequests)
+}
+
 func TestNewAPIAdapterReturnsUnavailableKeyWhenKeyRevealFails(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
@@ -413,6 +613,11 @@ func TestPersistPlatformSiteSnapshotIsolatesUnavailableKeys(t *testing.T) {
 	oldCredential, err := model.DecryptPlatformSiteCredential(savedOld.SecretCiphertext)
 	require.NoError(t, err)
 	assert.Equal(t, "sk-old", oldCredential.AccessToken)
+	var oldAbilityCount int64
+	require.NoError(t, db.Model(&model.UpstreamKeyAbility{}).
+		Where("upstream_key_id = ?", savedOld.ID).
+		Count(&oldAbilityCount).Error)
+	assert.Zero(t, oldAbilityCount)
 
 	var newKey model.UpstreamKey
 	require.NoError(t, db.Where("channel_id = ? AND external_id = ?", channel.Id, "new-key").First(&newKey).Error)
@@ -420,6 +625,11 @@ func TestPersistPlatformSiteSnapshotIsolatesUnavailableKeys(t *testing.T) {
 	assert.Equal(t, upstreamKeySyncErrorSecretUnavailable, newKey.DisabledReason)
 	assert.False(t, newKey.ModelsSynced)
 	assert.Empty(t, newKey.SecretCiphertext)
+	var newAbilityCount int64
+	require.NoError(t, db.Model(&model.UpstreamKeyAbility{}).
+		Where("upstream_key_id = ?", newKey.ID).
+		Count(&newAbilityCount).Error)
+	assert.Zero(t, newAbilityCount)
 
 	var healthyKey model.UpstreamKey
 	require.NoError(t, db.Where("channel_id = ? AND external_id = ?", channel.Id, "healthy-key").First(&healthyKey).Error)

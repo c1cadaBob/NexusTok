@@ -505,6 +505,71 @@ func TestPatchUpstreamKeyClearsWeightWhenRestoredRatioIsFree(t *testing.T) {
 	assert.Nil(t, saved.WeightOverride)
 }
 
+func TestSavePlatformSiteAccountAllowsCredentialReplacementWhenStoredCiphertextIsInvalid(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.PlatformSiteAccount{}))
+
+	previousSecret := common.CryptoSecret
+	common.CryptoSecret = "old-platform-site-secret"
+	oldCiphertext, err := model.EncryptPlatformSiteCredential(model.PlatformSiteCredential{
+		Username: "old-user",
+		Password: "old-password",
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		common.CryptoSecret = previousSecret
+	})
+	common.CryptoSecret = "new-platform-site-secret"
+
+	channel := &model.Channel{
+		Name:         "NewAPI platform site",
+		Type:         constant.ChannelTypeNewAPI,
+		UpstreamKind: model.UpstreamKindPlatformSite,
+		Status:       common.ChannelStatusEnabled,
+	}
+	require.NoError(t, db.Create(channel).Error)
+	account := &model.PlatformSiteAccount{
+		ChannelID:            channel.Id,
+		Platform:             model.PlatformNewAPI,
+		BaseURL:              "https://example.com",
+		AuthType:             model.UpstreamAuthPassword,
+		CredentialCiphertext: oldCiphertext,
+		CredentialKeyVersion: "v1",
+		RechargeAmount:       1,
+		CreditedAmount:       10,
+		ConversionRatio:      0.1,
+		SyncStatus:           model.UpstreamSiteSyncFailed,
+		LastSyncError:        "上游平台同步失败（凭据解密）",
+		DisabledAt:           1,
+		DisabledReason:       "上游平台同步失败（凭据解密）",
+	}
+	require.NoError(t, db.Create(account).Error)
+
+	rechargeAmount := 1.0
+	creditedAmount := 10.0
+	err = savePlatformSiteAccount(channel.Id, &PlatformSiteInput{
+		Platform:       model.PlatformNewAPI,
+		BaseURL:        "https://example.com",
+		AuthType:       model.UpstreamAuthPassword,
+		Username:       "new-user",
+		Password:       "new-password",
+		RechargeAmount: &rechargeAmount,
+		CreditedAmount: &creditedAmount,
+	}, account)
+	require.NoError(t, err)
+
+	var saved model.PlatformSiteAccount
+	require.NoError(t, db.Where("channel_id = ?", channel.Id).First(&saved).Error)
+	assert.Equal(t, model.UpstreamSiteSyncIdle, saved.SyncStatus)
+	assert.Empty(t, saved.LastSyncError)
+	assert.Zero(t, saved.DisabledAt)
+	assert.Empty(t, saved.DisabledReason)
+	credential, err := model.DecryptPlatformSiteCredential(saved.CredentialCiphertext)
+	require.NoError(t, err)
+	assert.Equal(t, "new-user", credential.Username)
+	assert.Equal(t, "new-password", credential.Password)
+}
+
 func TestGetUpstreamSiteStatusReturnsBalanceRefreshAndKeyCounts(t *testing.T) {
 	db := setupModelListControllerTestDB(t)
 	require.NoError(t, db.AutoMigrate(

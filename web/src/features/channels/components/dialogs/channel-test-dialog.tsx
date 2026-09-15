@@ -207,6 +207,7 @@ const MODEL_PRICE_ERROR_CODE = 'model_price_error'
 const FAILURE_SUMMARY_MAX_LENGTH = 96
 const BATCH_TEST_CONCURRENCY = 5
 const BATCH_TEST_DELAY_MS = 100
+const ENABLED_UPSTREAM_KEY_STATUS = 1
 
 type FailureStatusDisplay = {
   summary: string
@@ -217,6 +218,29 @@ type FailureDetailsState = {
   model: string
   summary: string
   details: string
+}
+
+function isRoutableUpstreamKey(
+  upstreamKey: UpstreamKey | null | undefined
+): boolean {
+  if (!upstreamKey) return false
+
+  return (
+    upstreamKey.status === ENABLED_UPSTREAM_KEY_STATUS &&
+    upstreamKey.models_synced &&
+    upstreamKey.models.some((model) => model.trim().length > 0)
+  )
+}
+
+function getRoutableUpstreamKeyId(upstreamKey: UpstreamKey | null | undefined) {
+  if (!upstreamKey) return null
+  if (!isRoutableUpstreamKey(upstreamKey)) return null
+
+  return upstreamKey.id
+}
+
+function uniqueModelNames(models: string[]) {
+  return [...new Set(models.map((model) => model.trim()).filter(Boolean))]
 }
 
 function sleep(ms: number) {
@@ -352,7 +376,7 @@ function ChannelTestDialogContent({
   })
   const [selectedUpstreamKeyId, setSelectedUpstreamKeyId] = useState<
     number | null
-  >(currentUpstreamKey?.id ?? null)
+  >(() => getRoutableUpstreamKeyId(currentUpstreamKey))
   const isPlatformSite = currentRow.upstream_kind === 'platform_site'
   const endpointSelectItems = useMemo(
     () =>
@@ -412,8 +436,8 @@ function ChannelTestDialogContent({
     setIsDeletingFailed(false)
     setFailureDetails(null)
     setPagination({ pageIndex: 0, pageSize: 30 })
-    setSelectedUpstreamKeyId(currentUpstreamKey?.id ?? null)
-  }, [currentUpstreamKey?.id])
+    setSelectedUpstreamKeyId(getRoutableUpstreamKeyId(currentUpstreamKey))
+  }, [currentUpstreamKey])
 
   const upstreamKeysQuery = useQuery({
     queryKey: ['upstream-keys', currentChannelId],
@@ -428,14 +452,21 @@ function ChannelTestDialogContent({
     [currentRow.upstream_keys, upstreamKeysQuery.data]
   )
 
-  const selectedUpstreamKey = useMemo(
-    () =>
-      selectedUpstreamKeyId === null
-        ? null
-        : (upstreamKeys.find((key) => key.id === selectedUpstreamKeyId) ??
-          null),
-    [selectedUpstreamKeyId, upstreamKeys]
+  const routableUpstreamKeys = useMemo(
+    () => upstreamKeys.filter(isRoutableUpstreamKey),
+    [upstreamKeys]
   )
+
+  const platformSiteSyncStatus = currentRow.upstream_site_status?.sync_status
+  const platformSiteSyncFailed =
+    isPlatformSite && platformSiteSyncStatus === 'failed'
+
+  const selectedUpstreamKey = useMemo(() => {
+    if (selectedUpstreamKeyId === null) return null
+
+    const key = upstreamKeys.find((item) => item.id === selectedUpstreamKeyId)
+    return isRoutableUpstreamKey(key) ? key : null
+  }, [selectedUpstreamKeyId, upstreamKeys])
 
   const upstreamKeySelectItems = useMemo(
     () => [
@@ -447,7 +478,18 @@ function ChannelTestDialogContent({
       ...upstreamKeys.map((key) => ({
         value: String(key.id),
         label: key.name || key.external_id || `#${key.id}`,
-        description: key.key_preview || t('No key preview'),
+        description: [
+          key.key_preview || t('No key preview'),
+          isRoutableUpstreamKey(key)
+            ? undefined
+            : key.disabled_reason ||
+              (key.models_synced
+                ? t('Disabled')
+                : t('Selected upstream key has no synced models.')),
+        ]
+          .filter(Boolean)
+          .join(' · '),
+        disabled: !isRoutableUpstreamKey(key),
       })),
     ],
     [t, upstreamKeys]
@@ -469,25 +511,33 @@ function ChannelTestDialogContent({
       if (value === 'auto') {
         setSelectedUpstreamKeyId(null)
       } else {
-        setSelectedUpstreamKeyId(Number(value))
+        const nextKeyId = Number(value)
+        const nextKey = upstreamKeys.find((key) => key.id === nextKeyId)
+        if (!isRoutableUpstreamKey(nextKey)) return
+
+        setSelectedUpstreamKeyId(nextKeyId)
       }
       resetModelTestState()
     },
-    [resetModelTestState]
+    [resetModelTestState, upstreamKeys]
   )
 
   useEffect(() => {
     if (!open) {
       return
     }
-    setSelectedUpstreamKeyId(currentUpstreamKey?.id ?? null)
-  }, [currentUpstreamKey?.id, open])
+    setSelectedUpstreamKeyId(getRoutableUpstreamKeyId(currentUpstreamKey))
+  }, [currentUpstreamKey, open])
 
   useEffect(() => {
     if (selectedUpstreamKeyId === null) {
       return
     }
-    if (!upstreamKeys.some((key) => key.id === selectedUpstreamKeyId)) {
+    if (
+      !upstreamKeys.some(
+        (key) => key.id === selectedUpstreamKeyId && isRoutableUpstreamKey(key)
+      )
+    ) {
       setSelectedUpstreamKeyId(null)
       resetModelTestState()
     }
@@ -520,16 +570,25 @@ function ChannelTestDialogContent({
 
   const baseModels = useMemo(() => {
     if (selectedUpstreamKey) {
-      return selectedUpstreamKey.models
-        .map((model) => model.trim())
-        .filter(Boolean)
+      return uniqueModelNames(selectedUpstreamKey.models)
+    }
+    if (isPlatformSite) {
+      const modelsFromKeys = uniqueModelNames(
+        routableUpstreamKeys.flatMap((key) => key.models)
+      )
+      if (modelsFromKeys.length > 0 || upstreamKeys.length > 0) {
+        return modelsFromKeys
+      }
     }
     if (!modelsValue) return []
-    return modelsValue
-      .split(',')
-      .map((model) => model.trim())
-      .filter(Boolean)
-  }, [modelsValue, selectedUpstreamKey])
+    return uniqueModelNames(modelsValue.split(','))
+  }, [
+    isPlatformSite,
+    modelsValue,
+    routableUpstreamKeys,
+    selectedUpstreamKey,
+    upstreamKeys.length,
+  ])
 
   const models = useMemo(
     () => baseModels.filter((model) => !removedModels.has(model)),
@@ -850,6 +909,11 @@ function ChannelTestDialogContent({
   }, [successModels])
 
   const handleDeleteFailedModels = useCallback(async () => {
+    if (isPlatformSite) {
+      setIsDeleteFailedDialogOpen(false)
+      return
+    }
+
     if (selectedUpstreamKeyId !== null) {
       toast.error(
         t('Delete failed models is only available in auto route mode')
@@ -905,6 +969,7 @@ function ChannelTestDialogContent({
     }
   }, [
     currentRow.id,
+    isPlatformSite,
     models,
     refreshChannelLists,
     selectedUpstreamKeyId,
@@ -931,17 +996,32 @@ function ChannelTestDialogContent({
   const testAllButtonLabel = isFilteringModels
     ? t('Test {{count}} matching models', { count: filteredModels.length })
     : t('Test all {{count}} models', { count: filteredModels.length })
-  let upstreamKeyHelperText = t('Auto route uses the channel model list.')
+  let upstreamKeyHelperText = isPlatformSite
+    ? t('Auto route uses routable upstream keys.')
+    : t('Auto route uses the channel model list.')
   if (upstreamKeysQuery.isFetching) {
     upstreamKeyHelperText = t('Loading upstream keys...')
+  } else if (platformSiteSyncFailed) {
+    upstreamKeyHelperText = t(
+      'Please sync this platform site successfully before testing.'
+    )
   } else if (selectedUpstreamKey) {
     upstreamKeyHelperText = t(
       'Models are filtered by the selected upstream key.'
     )
+  } else if (isPlatformSite && routableUpstreamKeys.length === 0) {
+    upstreamKeyHelperText = t('No routable upstream keys')
   }
-  const emptyModelsText = selectedUpstreamKey
-    ? t('Selected upstream key has no synced models.')
-    : t('This channel has no configured models.')
+  let emptyModelsText = t('This channel has no configured models.')
+  if (platformSiteSyncFailed) {
+    emptyModelsText = t(
+      'Please sync this platform site successfully before testing.'
+    )
+  } else if (selectedUpstreamKey) {
+    emptyModelsText = t('Selected upstream key has no synced models.')
+  } else if (isPlatformSite) {
+    emptyModelsText = t('No routable upstream key models are available.')
+  }
 
   const columns = useMemo<ColumnDef<ModelRow>[]>(
     () => [
@@ -1202,6 +1282,7 @@ function ChannelTestDialogContent({
                         </Button>
                       )}
                       {failedModels.length > 0 &&
+                        !isPlatformSite &&
                         selectedUpstreamKeyId === null && (
                           <Button
                             variant='outline'

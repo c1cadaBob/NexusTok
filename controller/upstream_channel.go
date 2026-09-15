@@ -188,30 +188,33 @@ func savePlatformSiteAccount(channelID int, input *PlatformSiteInput, existing *
 		if existing.CredentialCiphertext != "" {
 			credential, decryptErr := model.DecryptPlatformSiteCredential(existing.CredentialCiphertext)
 			if decryptErr != nil {
-				return decryptErr
-			}
-			switch strings.ToLower(strings.TrimSpace(merged.AuthType)) {
-			case model.UpstreamAuthPassword:
-				if strings.TrimSpace(merged.Username) == "" {
-					merged.Username = credential.Username
+				if !hasPlatformSiteCredentialForAuthType(&merged) {
+					return decryptErr
 				}
-				if merged.Password == "" {
-					merged.Password = credential.Password
-				}
-			case model.UpstreamAuthAccessToken:
-				if merged.AccessToken == "" {
-					merged.AccessToken = credential.AccessToken
-				}
-				if merged.RefreshToken == "" {
-					merged.RefreshToken = credential.RefreshToken
-				}
-			case model.UpstreamAuthAdminKey:
-				if merged.AdminKey == "" {
-					merged.AdminKey = credential.AdminKey
-				}
-			case model.UpstreamAuthCookie:
-				if merged.Cookie == "" {
-					merged.Cookie = credential.Cookie
+			} else {
+				switch strings.ToLower(strings.TrimSpace(merged.AuthType)) {
+				case model.UpstreamAuthPassword:
+					if strings.TrimSpace(merged.Username) == "" {
+						merged.Username = credential.Username
+					}
+					if merged.Password == "" {
+						merged.Password = credential.Password
+					}
+				case model.UpstreamAuthAccessToken:
+					if merged.AccessToken == "" {
+						merged.AccessToken = credential.AccessToken
+					}
+					if merged.RefreshToken == "" {
+						merged.RefreshToken = credential.RefreshToken
+					}
+				case model.UpstreamAuthAdminKey:
+					if merged.AdminKey == "" {
+						merged.AdminKey = credential.AdminKey
+					}
+				case model.UpstreamAuthCookie:
+					if merged.Cookie == "" {
+						merged.Cookie = credential.Cookie
+					}
 				}
 			}
 		}
@@ -264,6 +267,24 @@ func savePlatformSiteAccount(channelID int, input *PlatformSiteInput, existing *
 
 func hasCredentialInput(input *PlatformSiteInput) bool {
 	return input != nil && (input.Username != "" || input.Password != "" || input.AccessToken != "" || input.RefreshToken != "" || input.AdminKey != "" || input.Cookie != "")
+}
+
+func hasPlatformSiteCredentialForAuthType(input *PlatformSiteInput) bool {
+	if input == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(input.AuthType)) {
+	case model.UpstreamAuthPassword:
+		return strings.TrimSpace(input.Username) != "" && input.Password != ""
+	case model.UpstreamAuthAccessToken:
+		return strings.TrimSpace(input.AccessToken) != ""
+	case model.UpstreamAuthAdminKey:
+		return strings.TrimSpace(input.AdminKey) != ""
+	case model.UpstreamAuthCookie:
+		return input.Cookie != ""
+	default:
+		return false
+	}
 }
 
 func redactBaseURL(raw string) string {
@@ -556,23 +577,7 @@ func SyncUpstreamSiteNow(c *gin.Context) {
 }
 
 func safeUpstreamErrorForResponse(err error) string {
-	return serviceSafeUpstreamError(err)
-}
-
-func serviceSafeUpstreamError(err error) string {
-	if err == nil {
-		return ""
-	}
-	switch {
-	case errors.Is(err, service.ErrPlatformSiteAuth):
-		return "上游平台认证失败，请检查认证方式或凭据"
-	case errors.Is(err, service.ErrPlatformSiteResponse):
-		return "上游平台返回了无效或不完整的数据"
-	case errors.Is(err, service.ErrUnsupportedPlatformSite):
-		return "不支持的平台站点类型"
-	default:
-		return "上游平台同步失败，请稍后重试"
-	}
+	return service.SafePlatformSiteError(err)
 }
 
 func EnqueueUpstreamSiteSync(c *gin.Context) {

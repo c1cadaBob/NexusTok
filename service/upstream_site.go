@@ -42,6 +42,7 @@ const (
 
 type PlatformSiteSession struct {
 	BaseURL          string
+	ModelBaseURL     string
 	Client           *http.Client
 	Headers          http.Header
 	CredentialUpdate *model.PlatformSiteCredential
@@ -76,6 +77,35 @@ type PlatformSiteSnapshot struct {
 	UsedQuota int64
 	Models    []string
 	Keys      []UpstreamKeySnapshot
+}
+
+type platformSiteStageError struct {
+	stage string
+	err   error
+}
+
+func (err *platformSiteStageError) Error() string {
+	if err == nil {
+		return ""
+	}
+	if err.err == nil {
+		return err.stage
+	}
+	return err.stage + ": " + common.MaskSensitiveInfo(err.err.Error())
+}
+
+func (err *platformSiteStageError) Unwrap() error {
+	if err == nil {
+		return nil
+	}
+	return err.err
+}
+
+func wrapPlatformSiteStage(stage string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &platformSiteStageError{stage: stage, err: err}
 }
 
 type upstreamSiteSyncLock struct {
@@ -295,7 +325,7 @@ func recordsFromPayload(payload any) []map[string]any {
 		}
 		return records
 	case map[string]any:
-		for _, key := range []string{"items", "data", "list", "tokens", "keys", "accounts"} {
+		for _, key := range []string{"items", "data", "list", "records", "rows", "tokens", "keys", "accounts"} {
 			if items, ok := value[key]; ok {
 				return recordsFromPayload(items)
 			}
@@ -444,9 +474,15 @@ func syncPlatformSite(ctx context.Context, channelID int) error {
 
 	var credential model.PlatformSiteCredential
 	credential, err := model.DecryptPlatformSiteCredential(account.CredentialCiphertext)
+	if err != nil {
+		err = wrapPlatformSiteStage("凭据解密", err)
+	}
 	if err == nil {
 		var adapter PlatformSiteAdapter
 		adapter, err = adapterForPlatform(account.Platform)
+		if err != nil {
+			err = wrapPlatformSiteStage("适配器选择", err)
+		}
 		if err == nil {
 			session, authenticateErr := adapter.Authenticate(ctx, account.BaseURL, credential)
 			err = authenticateErr
@@ -455,8 +491,14 @@ func syncPlatformSite(ctx context.Context, channelID int) error {
 				snapshot, err = adapter.FetchSnapshot(ctx, session)
 				if err == nil {
 					err = persistPlatformSiteSnapshot(ctx, &account, snapshot)
+					if err != nil {
+						err = wrapPlatformSiteStage("同步写库", err)
+					}
 					if err == nil && session.CredentialUpdate != nil {
 						err = persistPlatformSiteCredential(&account, *session.CredentialUpdate)
+						if err != nil {
+							err = wrapPlatformSiteStage("凭据更新", err)
+						}
 					}
 				}
 			}
@@ -511,18 +553,27 @@ func persistPlatformSiteCredential(account *model.PlatformSiteAccount, credentia
 }
 
 func safeUpstreamError(err error) string {
+	return SafePlatformSiteError(err)
+}
+
+func SafePlatformSiteError(err error) string {
 	if err == nil {
 		return ""
 	}
+	var stageErr *platformSiteStageError
+	stage := ""
+	if errors.As(err, &stageErr) {
+		stage = "（" + stageErr.stage + "）"
+	}
 	switch {
 	case errors.Is(err, ErrPlatformSiteAuth):
-		return "上游平台认证失败"
+		return "上游平台认证失败" + stage
 	case errors.Is(err, ErrPlatformSiteResponse):
-		return "上游平台响应无效"
+		return "上游平台响应无效" + stage
 	case errors.Is(err, ErrUnsupportedPlatformSite):
-		return "不支持的平台站点类型"
+		return "不支持的平台站点类型" + stage
 	default:
-		return "上游平台同步失败"
+		return "上游平台同步失败" + stage
 	}
 }
 
@@ -624,6 +675,9 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 					updates["disabled_reason"] = upstreamKeySyncErrorReason(item.SyncError)
 				}
 				if err := tx.Model(&existing).Updates(updates).Error; err != nil {
+					return err
+				}
+				if err := tx.Where("upstream_key_id = ?", existing.ID).Delete(&model.UpstreamKeyAbility{}).Error; err != nil {
 					return err
 				}
 				continue
@@ -739,6 +793,8 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 						return err
 					}
 				}
+			} else if err := tx.Where("upstream_key_id = ?", existing.ID).Delete(&model.UpstreamKeyAbility{}).Error; err != nil {
+				return err
 			}
 		}
 		var existingKeys []model.UpstreamKey

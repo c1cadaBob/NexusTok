@@ -295,13 +295,13 @@ test('密钥级更多菜单不显示渠道级复制和账号池入口', async ()
 
 function ChannelTestHarness(props: {
   channel: Channel
-  upstreamKey: UpstreamKey
+  upstreamKey?: UpstreamKey | null
 }) {
   const { setCurrentRow, setCurrentUpstreamKey } = useChannels()
 
   React.useEffect(() => {
     setCurrentRow(props.channel)
-    setCurrentUpstreamKey(props.upstreamKey)
+    setCurrentUpstreamKey(props.upstreamKey ?? null)
   }, [props.channel, props.upstreamKey, setCurrentRow, setCurrentUpstreamKey])
 
   return <ChannelTestDialog open onOpenChange={() => undefined} />
@@ -345,4 +345,104 @@ test('平台站点测试弹窗按所选密钥过滤模型并透传 upstream_key_
       expect.any(Function)
     )
   })
+})
+
+test('平台站点测试弹窗遇到禁用当前密钥时回退自动路由并仅显示可路由模型', async () => {
+  const user = userEvent.setup()
+  const disabledKey = upstreamKey({
+    id: 7,
+    name: 'Disabled key',
+    models: ['gpt-disabled'],
+    status: 3,
+    disabled_reason: '上游密钥模型能力读取失败',
+  })
+  const routableKey = upstreamKey({
+    id: 8,
+    name: 'Routable key',
+    models: ['gpt-live'],
+    status: 1,
+  })
+  const channel = {
+    ...platformChannel(disabledKey),
+    models: 'gpt-parent,gpt-disabled',
+    upstream_keys: [disabledKey, routableKey],
+  } as Channel
+  vi.mocked(channelsApi.getUpstreamKeys).mockResolvedValue({
+    success: true,
+    data: { items: [disabledKey, routableKey], total: 2 },
+  })
+
+  renderWithProviders(
+    <ChannelTestHarness channel={channel} upstreamKey={disabledKey} />
+  )
+
+  expect(await screen.findByDisplayValue('Auto route')).toBeInTheDocument()
+  expect(await screen.findByText('gpt-live')).toBeInTheDocument()
+  expect(screen.queryByText('gpt-parent')).not.toBeInTheDocument()
+  expect(screen.queryByText('gpt-disabled')).not.toBeInTheDocument()
+
+  await user.keyboard('{Escape}')
+
+  const testButtons = screen.getAllByRole('button', {
+    name: 'Test Connection',
+  })
+  const testButton = testButtons.at(-1)
+  if (!testButton) {
+    throw new Error('未找到模型测试按钮')
+  }
+  await user.click(testButton)
+
+  await waitFor(() => {
+    expect(channelsLib.handleTestChannel).toHaveBeenCalledWith(
+      101,
+      expect.objectContaining({
+        testModel: 'gpt-live',
+        upstreamKeyId: undefined,
+      }),
+      expect.any(Function)
+    )
+  })
+})
+
+test('平台站点测试弹窗在父站点失败时提示先同步成功', async () => {
+  const disabledKey = upstreamKey({
+    models: ['gpt-disabled'],
+    status: 3,
+    disabled_reason: '上游密钥读取失败',
+  })
+  const channel = {
+    ...platformChannel(disabledKey),
+    models: 'gpt-parent',
+    upstream_site_status: {
+      channel_id: 101,
+      platform: 'newapi',
+      base_url: 'https://upstream.example',
+      auth_type: 'password',
+      recharge_amount: 1,
+      credited_amount: 10,
+      conversion_ratio: 0.1,
+      balance: 0,
+      used_quota: 0,
+      balance_updated_time: 0,
+      sync_status: 'failed',
+      last_sync_at: 0,
+      consecutive_failures: 1,
+      key_count: 1,
+      routable_key_count: 0,
+    },
+    upstream_keys: [disabledKey],
+  } as Channel
+  vi.mocked(channelsApi.getUpstreamKeys).mockResolvedValue({
+    success: true,
+    data: { items: [disabledKey], total: 1 },
+  })
+
+  renderWithProviders(<ChannelTestHarness channel={channel} />)
+
+  expect(
+    await screen.findAllByText(
+      'Please sync this platform site successfully before testing.'
+    )
+  ).not.toHaveLength(0)
+  expect(screen.queryByText('gpt-parent')).not.toBeInTheDocument()
 })
