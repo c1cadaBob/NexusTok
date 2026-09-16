@@ -45,29 +45,8 @@ func (adapter *NewAPIAdapter) Authenticate(ctx context.Context, baseURL string, 
 	if adapter.client != nil {
 		session.Client = adapter.client
 	}
-	if credential.RefreshToken != "" && credential.Username == "" &&
-		credential.AdminKey == "" && credential.Cookie == "" {
-		if err := refreshPlatformSiteSession(
-			ctx,
-			session,
-			"/api/user/auth/refresh",
-			&credential,
-		); err != nil {
-			return nil, wrapPlatformSiteStage("NewAPI 刷新令牌", err)
-		}
-	}
-	if credential.AccessToken != "" {
-		headers.Set("Authorization", bearerToken(credential.AccessToken))
-	}
-	if credential.AdminKey != "" {
-		headers.Set("Authorization", bearerToken(credential.AdminKey))
-		headers.Set("x-api-key", credential.AdminKey)
-		headers.Set("New-Api-Key", credential.AdminKey)
-	}
-	if credential.Cookie != "" {
-		headers.Set("Cookie", credential.Cookie)
-	}
-	if credential.AccessToken == "" && credential.AdminKey == "" && credential.Cookie == "" {
+	switch platformSiteCredentialAuthType(credential) {
+	case model.UpstreamAuthPassword:
 		payload, requestErr := loginNewAPIWithPassword(ctx, session, credential)
 		if requestErr != nil {
 			return nil, wrapPlatformSiteStage("NewAPI 登录", requestErr)
@@ -81,13 +60,35 @@ func (adapter *NewAPIAdapter) Authenticate(ctx context.Context, baseURL string, 
 		if userID := findUserID(payload); userID != "" {
 			setNewAPICompatUserHeaders(session.Headers, userID)
 		}
-		if refreshToken := findRefreshToken(payload); refreshToken != "" {
-			updatedCredential := credential
-			updatedCredential.AccessToken = ""
-			updatedCredential.RefreshToken = refreshToken
-			updatedCredential.TokenExpiresAt = findTokenExpiresAt(payload)
-			session.CredentialUpdate = &updatedCredential
+	case model.UpstreamAuthAccessToken:
+		if credential.RefreshToken != "" {
+			if err := refreshPlatformSiteSession(
+				ctx,
+				session,
+				"/api/user/auth/refresh",
+				&credential,
+			); err != nil {
+				return nil, wrapPlatformSiteStage("NewAPI 刷新令牌", err)
+			}
+		} else if credential.AccessToken != "" {
+			headers.Set("Authorization", bearerToken(credential.AccessToken))
+		} else {
+			return nil, wrapPlatformSiteStage("NewAPI 认证", fmt.Errorf("%w: 缺少访问令牌", ErrPlatformSiteAuth))
 		}
+	case model.UpstreamAuthAdminKey:
+		if credential.AdminKey == "" {
+			return nil, wrapPlatformSiteStage("NewAPI 认证", fmt.Errorf("%w: 缺少 Admin Key", ErrPlatformSiteAuth))
+		}
+		headers.Set("Authorization", bearerToken(credential.AdminKey))
+		headers.Set("x-api-key", credential.AdminKey)
+		headers.Set("New-Api-Key", credential.AdminKey)
+	case model.UpstreamAuthCookie:
+		if credential.Cookie == "" {
+			return nil, wrapPlatformSiteStage("NewAPI 认证", fmt.Errorf("%w: 缺少 Cookie", ErrPlatformSiteAuth))
+		}
+		headers.Set("Cookie", credential.Cookie)
+	default:
+		return nil, wrapPlatformSiteStage("NewAPI 认证", fmt.Errorf("%w: 认证方式不受支持", ErrPlatformSiteAuth))
 	}
 	if _, err := fetchNewAPICurrentUser(ctx, session); err != nil {
 		return nil, wrapPlatformSiteStage("NewAPI 当前用户", err)
@@ -197,27 +198,8 @@ func (adapter *Sub2APIAdapter) Authenticate(ctx context.Context, baseURL string,
 	if modelBaseURL, ok := discoverSub2APIModelBaseURL(ctx, session); ok {
 		session.ModelBaseURL = modelBaseURL
 	}
-	if credential.RefreshToken != "" && credential.Username == "" &&
-		credential.AdminKey == "" && credential.Cookie == "" {
-		if err := refreshPlatformSiteSession(
-			ctx,
-			session,
-			"/api/v1/auth/refresh",
-			&credential,
-		); err != nil {
-			return nil, wrapPlatformSiteStage("Sub2API 刷新令牌", err)
-		}
-	}
-	switch {
-	case credential.AdminKey != "":
-		headers.Set("Authorization", bearerToken(credential.AdminKey))
-		headers.Set("x-api-key", credential.AdminKey)
-	case credential.AccessToken != "":
-		headers.Set("Authorization", bearerToken(credential.AccessToken))
-	case credential.Cookie != "":
-		headers.Set("Cookie", credential.Cookie)
-	}
-	if credential.AdminKey == "" && credential.AccessToken == "" && credential.Cookie == "" {
+	switch platformSiteCredentialAuthType(credential) {
+	case model.UpstreamAuthPassword:
 		payload, requestErr := loginSub2APIWithPassword(ctx, session, credential)
 		if requestErr != nil {
 			return nil, wrapPlatformSiteStage("Sub2API 登录", requestErr)
@@ -228,18 +210,49 @@ func (adapter *Sub2APIAdapter) Authenticate(ctx context.Context, baseURL string,
 		if token := findToken(payload); token != "" {
 			session.Headers.Set("Authorization", bearerToken(token))
 		}
-		if refreshToken := findRefreshToken(payload); refreshToken != "" {
-			updatedCredential := credential
-			updatedCredential.AccessToken = ""
-			updatedCredential.RefreshToken = refreshToken
-			updatedCredential.TokenExpiresAt = findTokenExpiresAt(payload)
-			session.CredentialUpdate = &updatedCredential
+	case model.UpstreamAuthAccessToken:
+		if credential.RefreshToken != "" {
+			if err := refreshPlatformSiteSession(
+				ctx,
+				session,
+				"/api/v1/auth/refresh",
+				&credential,
+			); err != nil {
+				return nil, wrapPlatformSiteStage("Sub2API 刷新令牌", err)
+			}
+		} else if credential.AccessToken != "" {
+			headers.Set("Authorization", bearerToken(credential.AccessToken))
+		} else {
+			return nil, wrapPlatformSiteStage("Sub2API 认证", fmt.Errorf("%w: 缺少访问令牌", ErrPlatformSiteAuth))
 		}
+	case model.UpstreamAuthAdminKey:
+		if credential.AdminKey == "" {
+			return nil, wrapPlatformSiteStage("Sub2API 认证", fmt.Errorf("%w: 缺少 Admin Key", ErrPlatformSiteAuth))
+		}
+		headers.Set("Authorization", bearerToken(credential.AdminKey))
+		headers.Set("x-api-key", credential.AdminKey)
+	case model.UpstreamAuthCookie:
+		if credential.Cookie == "" {
+			return nil, wrapPlatformSiteStage("Sub2API 认证", fmt.Errorf("%w: 缺少 Cookie", ErrPlatformSiteAuth))
+		}
+		headers.Set("Cookie", credential.Cookie)
+	default:
+		return nil, wrapPlatformSiteStage("Sub2API 认证", fmt.Errorf("%w: 认证方式不受支持", ErrPlatformSiteAuth))
 	}
 	if _, err := fetchSub2APICurrentUser(ctx, session); err != nil {
 		return nil, wrapPlatformSiteStage("Sub2API 当前用户", err)
 	}
 	return session, nil
+}
+
+func platformSiteCredentialAuthType(credential model.PlatformSiteCredential) string {
+	switch authType := strings.ToLower(strings.TrimSpace(credential.AuthType)); authType {
+	case model.UpstreamAuthPassword, model.UpstreamAuthAccessToken,
+		model.UpstreamAuthAdminKey, model.UpstreamAuthCookie:
+		return authType
+	default:
+		return ""
+	}
 }
 
 func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *PlatformSiteSession) (PlatformSiteSnapshot, error) {

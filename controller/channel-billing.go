@@ -575,6 +575,8 @@ func UpdateChannelBalance(c *gin.Context) {
 				response["used_quota"] = account.UsedQuota
 				response["balance_updated_time"] = channel.BalanceUpdatedTime
 				response["sync_status"] = account.SyncStatus
+				response["last_sync_at"] = account.LastSyncAt
+				response["last_sync_error"] = account.LastSyncError
 			}
 			c.JSON(http.StatusOK, response)
 			return
@@ -588,7 +590,9 @@ func UpdateChannelBalance(c *gin.Context) {
 		_ = model.DB.Where("channel_id = ?", id).Find(&keys).Error
 		routableKeyCount := 0
 		for index := range keys {
-			if keys[index].ModelsSynced && keys[index].IsRoutable(time.Now()) {
+			if channel.Status == common.ChannelStatusEnabled &&
+				model.PlatformSiteSnapshotUsable(&account) &&
+				keys[index].IsRoutable(time.Now()) {
 				routableKeyCount++
 			}
 		}
@@ -599,6 +603,8 @@ func UpdateChannelBalance(c *gin.Context) {
 			"used_quota":           account.UsedQuota,
 			"balance_updated_time": channel.BalanceUpdatedTime,
 			"sync_status":          account.SyncStatus,
+			"last_sync_at":         account.LastSyncAt,
+			"last_sync_error":      account.LastSyncError,
 			"key_count":            len(keys),
 			"routable_key_count":   routableKeyCount,
 		})

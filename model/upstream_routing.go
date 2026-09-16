@@ -92,15 +92,14 @@ func selectChannelByUpstreamKey(channels []*Channel, group, modelName string) *C
 }
 
 func loadRoutableUpstreamKeys(channel *Channel, group, modelName string) []*UpstreamKey {
-	if channel == nil {
+	if channel == nil || channel.Status != common.ChannelStatusEnabled ||
+		channel.UpstreamKind != UpstreamKindPlatformSite {
 		return nil
 	}
 	var account PlatformSiteAccount
-	if err := DB.Select("sync_status", "disabled_at").
+	if err := DB.Select("sync_status", "last_sync_at").
 		Where("channel_id = ?", channel.Id).
-		First(&account).Error; err != nil ||
-		account.SyncStatus != UpstreamSiteSyncSuccess ||
-		account.DisabledAt != 0 {
+		First(&account).Error; err != nil || !PlatformSiteSnapshotUsable(&account) {
 		return nil
 	}
 	var keys []UpstreamKey

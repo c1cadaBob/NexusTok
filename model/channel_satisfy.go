@@ -23,11 +23,22 @@ func IsChannelEnabledForGroupModel(group string, modelName string, channelID int
 	}
 
 	if isChannelIDInList(group2model2channels[group][modelName], channelID) {
+		if channel, ok := channelsIDM[channelID]; ok &&
+			channel.UpstreamKind == UpstreamKindPlatformSite {
+			return len(loadRoutableUpstreamKeys(channel, group, modelName)) > 0
+		}
 		return true
 	}
 	normalized := ratio_setting.RoutingMatchModelName(modelName)
 	if normalized != "" && normalized != modelName {
-		return isChannelIDInList(group2model2channels[group][normalized], channelID)
+		if !isChannelIDInList(group2model2channels[group][normalized], channelID) {
+			return false
+		}
+		if channel, ok := channelsIDM[channelID]; ok &&
+			channel.UpstreamKind == UpstreamKindPlatformSite {
+			return len(loadRoutableUpstreamKeys(channel, group, modelName)) > 0
+		}
+		return true
 	}
 	return false
 }

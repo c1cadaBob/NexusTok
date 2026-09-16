@@ -13,6 +13,7 @@ import (
 
 	"github.com/c1cadaBob/NexusTok/common"
 	"github.com/c1cadaBob/NexusTok/model"
+	"github.com/c1cadaBob/NexusTok/setting/system_setting"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -66,6 +67,7 @@ func TestNewAPIAdapterPasswordAuthenticationAndSnapshot(t *testing.T) {
 
 	adapter := NewNewAPIAdapter(server.Client())
 	session, err := adapter.Authenticate(context.Background(), server.URL, model.PlatformSiteCredential{
+		AuthType: model.UpstreamAuthPassword,
 		Username: "operator",
 		Password: "synthetic-password",
 	})
@@ -126,6 +128,7 @@ func TestNewAPIAdapterFallbacksBatchRevealUnlimitedQuotaAndPerKeyModels(t *testi
 	}
 	adapter := NewNewAPIAdapter(client)
 	session, err := adapter.Authenticate(context.Background(), "https://example.com", model.PlatformSiteCredential{
+		AuthType: model.UpstreamAuthPassword,
 		Username: "operator@example.com",
 		Password: "synthetic-password",
 	})
@@ -172,6 +175,7 @@ func TestNewAPIAdapterBatchRevealPreservesNumericTokenIDs(t *testing.T) {
 
 	adapter := NewNewAPIAdapter(server.Client())
 	session, err := adapter.Authenticate(context.Background(), server.URL, model.PlatformSiteCredential{
+		AuthType: model.UpstreamAuthPassword,
 		Username: "operator",
 		Password: "synthetic-password",
 	})
@@ -227,6 +231,7 @@ func TestNewAPIAdapterPasswordAuthenticationAddsCompatUserHeader(t *testing.T) {
 
 	adapter := NewNewAPIAdapter(server.Client())
 	session, err := adapter.Authenticate(context.Background(), server.URL, model.PlatformSiteCredential{
+		AuthType: model.UpstreamAuthPassword,
 		Username: "operator",
 		Password: "synthetic-password",
 	})
@@ -255,9 +260,120 @@ func TestNewAPIAdapterAdminKeySkipsPasswordLogin(t *testing.T) {
 
 	adapter := NewNewAPIAdapter(server.Client())
 	_, err := adapter.Authenticate(context.Background(), server.URL, model.PlatformSiteCredential{
+		AuthType: model.UpstreamAuthAdminKey,
 		AdminKey: "admin-secret",
 	})
 	require.NoError(t, err)
+}
+
+func TestPlatformSitePasswordAuthenticationDoesNotDriftToTokenRefresh(t *testing.T) {
+	tests := []struct {
+		name        string
+		newAdapter  func(*http.Client) PlatformSiteAdapter
+		loginPath   string
+		refreshPath string
+		selfPath    string
+		loginBody   string
+		selfBody    string
+	}{
+		{
+			name:        "NewAPI",
+			newAdapter:  func(client *http.Client) PlatformSiteAdapter { return NewNewAPIAdapter(client) },
+			loginPath:   "/api/user/login",
+			refreshPath: "/api/user/auth/refresh",
+			selfPath:    "/api/user/self",
+			loginBody:   `{"success":true,"data":{"access_token":"session","refresh_token":"rotated"}}`,
+			selfBody:    `{"success":true,"data":{"quota":1}}`,
+		},
+		{
+			name:        "Sub2API",
+			newAdapter:  func(client *http.Client) PlatformSiteAdapter { return NewSub2APIAdapter(client) },
+			loginPath:   "/api/v1/auth/login",
+			refreshPath: "/api/v1/auth/refresh",
+			selfPath:    "/api/v1/auth/me",
+			loginBody:   `{"code":0,"data":{"access_token":"session","refresh_token":"rotated"}}`,
+			selfBody:    `{"code":0,"data":{"balance":1}}`,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				writer.Header().Set("Content-Type", "application/json")
+				switch request.URL.Path {
+				case testCase.refreshPath:
+					t.Fatalf("密码认证不应尝试刷新令牌")
+				case testCase.loginPath:
+					_, _ = writer.Write([]byte(testCase.loginBody))
+				case testCase.selfPath:
+					assert.Equal(t, "Bearer session", request.Header.Get("Authorization"))
+					_, _ = writer.Write([]byte(testCase.selfBody))
+				default:
+					http.NotFound(writer, request)
+				}
+			}))
+			defer server.Close()
+
+			credential := model.PlatformSiteCredential{
+				AuthType:     model.UpstreamAuthPassword,
+				Username:     "operator",
+				Password:     "synthetic-password",
+				AccessToken:  "stale-access",
+				RefreshToken: "stale-refresh",
+			}
+			session, err := testCase.newAdapter(server.Client()).Authenticate(context.Background(), server.URL, credential)
+			require.NoError(t, err)
+			assert.Nil(t, session.CredentialUpdate)
+		})
+	}
+}
+
+func TestPlatformSiteAccessTokenAuthenticationDoesNotFallbackToPassword(t *testing.T) {
+	tests := []struct {
+		name        string
+		newAdapter  func(*http.Client) PlatformSiteAdapter
+		refreshPath string
+		loginPath   string
+	}{
+		{
+			name:        "NewAPI",
+			newAdapter:  func(client *http.Client) PlatformSiteAdapter { return NewNewAPIAdapter(client) },
+			refreshPath: "/api/user/auth/refresh",
+			loginPath:   "/api/user/login",
+		},
+		{
+			name:        "Sub2API",
+			newAdapter:  func(client *http.Client) PlatformSiteAdapter { return NewSub2APIAdapter(client) },
+			refreshPath: "/api/v1/auth/refresh",
+			loginPath:   "/api/v1/auth/login",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				switch request.URL.Path {
+				case testCase.loginPath:
+					t.Fatalf("访问令牌刷新失败后不应回退账号密码")
+				case testCase.refreshPath:
+					http.Error(writer, `{"success":false}`, http.StatusUnauthorized)
+				default:
+					http.NotFound(writer, request)
+				}
+			}))
+			defer server.Close()
+
+			_, err := testCase.newAdapter(server.Client()).Authenticate(context.Background(), server.URL, model.PlatformSiteCredential{
+				AuthType:     model.UpstreamAuthAccessToken,
+				Username:     "operator",
+				Password:     "synthetic-password",
+				AccessToken:  "stale-access",
+				RefreshToken: "stale-refresh",
+			})
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrPlatformSiteAuth)
+		})
+	}
 }
 
 func TestNewAPIAdapterRefreshesRotatingSession(t *testing.T) {
@@ -281,6 +397,7 @@ func TestNewAPIAdapterRefreshesRotatingSession(t *testing.T) {
 
 	adapter := NewNewAPIAdapter(server.Client())
 	session, err := adapter.Authenticate(context.Background(), server.URL, model.PlatformSiteCredential{
+		AuthType:     model.UpstreamAuthAccessToken,
 		AccessToken:  "old-access",
 		RefreshToken: "old-refresh",
 	})
@@ -304,6 +421,7 @@ func TestNewAPIAdapterRejectsInteractiveLoginVerification(t *testing.T) {
 
 	adapter := NewNewAPIAdapter(server.Client())
 	_, err := adapter.Authenticate(context.Background(), server.URL, model.PlatformSiteCredential{
+		AuthType: model.UpstreamAuthPassword,
 		Username: "operator",
 		Password: "synthetic-password",
 	})
@@ -333,6 +451,7 @@ func TestSub2APIAdapterRefreshesRotatingSession(t *testing.T) {
 
 	adapter := NewSub2APIAdapter(server.Client())
 	session, err := adapter.Authenticate(context.Background(), server.URL, model.PlatformSiteCredential{
+		AuthType:     model.UpstreamAuthAccessToken,
 		AccessToken:  "old-access",
 		RefreshToken: "old-refresh",
 	})
@@ -369,6 +488,7 @@ func TestSub2APIAdapterAdminKeyReadsNestedCredentialAndPagination(t *testing.T) 
 
 	adapter := NewSub2APIAdapter(server.Client())
 	session, err := adapter.Authenticate(context.Background(), server.URL, model.PlatformSiteCredential{
+		AuthType: model.UpstreamAuthAdminKey,
 		AdminKey: "admin-secret",
 	})
 	require.NoError(t, err)
@@ -409,6 +529,7 @@ func TestSub2APIAdapterUsesProfileUsageGroupAliasesAndModelAliases(t *testing.T)
 
 	adapter := NewSub2APIAdapter(server.Client())
 	session, err := adapter.Authenticate(context.Background(), server.URL, model.PlatformSiteCredential{
+		AuthType: model.UpstreamAuthPassword,
 		Username: "operator@example.com",
 		Password: "synthetic-password",
 	})
@@ -470,6 +591,7 @@ func TestSub2APIAdapterDiscoversRelayModelsAndTreatsZeroQuotaAsUnlimited(t *test
 	}
 	adapter := NewSub2APIAdapter(client)
 	session, err := adapter.Authenticate(context.Background(), "https://example.com/", model.PlatformSiteCredential{
+		AuthType: model.UpstreamAuthPassword,
 		Username: "operator@example.com",
 		Password: "synthetic-password",
 	})
@@ -507,6 +629,7 @@ func TestNewAPIAdapterReturnsUnavailableKeyWhenKeyRevealFails(t *testing.T) {
 
 	adapter := NewNewAPIAdapter(server.Client())
 	session, err := adapter.Authenticate(context.Background(), server.URL, model.PlatformSiteCredential{
+		AuthType:    model.UpstreamAuthAccessToken,
 		AccessToken: "session-token",
 	})
 	require.NoError(t, err)
@@ -664,6 +787,7 @@ func TestPersistPlatformSiteCredentialStoresOnlyEncryptedRotatedValues(t *testin
 		ChannelID:            15,
 		Platform:             model.PlatformSub2API,
 		BaseURL:              "https://upstream.example",
+		AuthType:             model.UpstreamAuthAccessToken,
 		CredentialCiphertext: "old-ciphertext",
 		CredentialKeyVersion: "v1",
 	}
@@ -682,7 +806,126 @@ func TestPersistPlatformSiteCredentialStoresOnlyEncryptedRotatedValues(t *testin
 	assert.NotEqual(t, "old-ciphertext", saved.CredentialCiphertext)
 	decrypted, err := model.DecryptPlatformSiteCredential(saved.CredentialCiphertext)
 	require.NoError(t, err)
-	assert.Equal(t, credential, decrypted)
+	assert.Equal(t, model.UpstreamAuthAccessToken, decrypted.AuthType)
+	assert.Equal(t, credential.AccessToken, decrypted.AccessToken)
+	assert.Equal(t, credential.RefreshToken, decrypted.RefreshToken)
+	assert.Equal(t, credential.TokenExpiresAt, decrypted.TokenExpiresAt)
+}
+
+func TestSyncPlatformSiteFailurePreservesLastSuccessfulSnapshot(t *testing.T) {
+	previousDB := model.DB
+	previousSecret := common.CryptoSecret
+	previousMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.CryptoSecret = "upstream-site-sync-failure-test-secret"
+	common.MemoryCacheEnabled = false
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&model.Channel{},
+		&model.Ability{},
+		&model.PlatformSiteAccount{},
+		&model.UpstreamKey{},
+		&model.UpstreamKeyAbility{},
+	))
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = previousDB
+		common.CryptoSecret = previousSecret
+		common.MemoryCacheEnabled = previousMemoryCacheEnabled
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	failSync := false
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		if failSync && request.URL.Path == "/api/user/self" {
+			http.Error(writer, `{"success":false}`, http.StatusUnauthorized)
+			return
+		}
+		switch request.URL.Path {
+		case "/api/user/self":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"quota":5000000,"used_quota":1000000}}`))
+		case "/api/status":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"quota_per_unit":500000}}`))
+		case "/api/token/":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"items":[{"id":7,"name":"primary","key":"sk-sync-stable","models":["gpt-5.5"]}]}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+	previousHTTPClient := httpClient
+	previousProtectedHTTPClient := ssrfProtectedHTTPClient
+	previousFetchSetting := *system_setting.GetFetchSetting()
+	httpClient = server.Client()
+	ssrfProtectedHTTPClient = server.Client()
+	system_setting.GetFetchSetting().EnableSSRFProtection = false
+	t.Cleanup(func() {
+		httpClient = previousHTTPClient
+		ssrfProtectedHTTPClient = previousProtectedHTTPClient
+		*system_setting.GetFetchSetting() = previousFetchSetting
+	})
+
+	channel := &model.Channel{
+		Id:           901,
+		Name:         "sync-reuse",
+		Status:       common.ChannelStatusEnabled,
+		UpstreamKind: model.UpstreamKindPlatformSite,
+		Group:        "default",
+	}
+	require.NoError(t, db.Create(channel).Error)
+	credentialCiphertext, err := model.EncryptPlatformSiteCredential(model.PlatformSiteCredential{
+		AuthType:    model.UpstreamAuthAccessToken,
+		AccessToken: "session-token",
+	})
+	require.NoError(t, err)
+	account := &model.PlatformSiteAccount{
+		ChannelID:            channel.Id,
+		Platform:             model.PlatformNewAPI,
+		BaseURL:              server.URL,
+		AuthType:             model.UpstreamAuthAccessToken,
+		CredentialCiphertext: credentialCiphertext,
+		ConversionRatio:      0.1,
+		SyncStatus:           model.UpstreamSiteSyncIdle,
+	}
+	require.NoError(t, db.Create(account).Error)
+
+	require.NoError(t, SyncUpstreamSite(context.Background(), channel.Id))
+	var savedAccount model.PlatformSiteAccount
+	require.NoError(t, db.Where("channel_id = ?", channel.Id).First(&savedAccount).Error)
+	require.Equal(t, model.UpstreamSiteSyncSuccess, savedAccount.SyncStatus)
+	require.NotZero(t, savedAccount.LastSyncAt)
+	successfulSyncAt := savedAccount.LastSyncAt
+
+	var savedKey model.UpstreamKey
+	require.NoError(t, db.Where("channel_id = ?", channel.Id).First(&savedKey).Error)
+	var savedAbility model.UpstreamKeyAbility
+	require.NoError(t, db.Where("upstream_key_id = ?", savedKey.ID).First(&savedAbility).Error)
+	successfulBalance := savedAccount.Balance
+
+	failSync = true
+	require.Error(t, SyncUpstreamSite(context.Background(), channel.Id))
+
+	require.NoError(t, db.Where("channel_id = ?", channel.Id).First(&savedAccount).Error)
+	assert.Equal(t, model.UpstreamSiteSyncFailed, savedAccount.SyncStatus)
+	assert.Equal(t, successfulSyncAt, savedAccount.LastSyncAt)
+	assert.Equal(t, successfulBalance, savedAccount.Balance)
+	assert.Equal(t, 1, savedAccount.ConsecutiveFailures)
+	assert.Zero(t, savedAccount.DisabledAt)
+
+	var failedKey model.UpstreamKey
+	require.NoError(t, db.First(&failedKey, savedKey.ID).Error)
+	assert.Equal(t, savedKey.SecretCiphertext, failedKey.SecretCiphertext)
+	assert.Equal(t, savedKey.Models, failedKey.Models)
+	assert.Equal(t, savedKey.ConversionRatio, failedKey.ConversionRatio)
+	assert.Equal(t, savedKey.Weight, failedKey.Weight)
+	var preservedAbility model.UpstreamKeyAbility
+	require.NoError(t, db.Where("upstream_key_id = ?", failedKey.ID).First(&preservedAbility).Error)
+	assert.Equal(t, savedAbility.Model, preservedAbility.Model)
 }
 
 func TestPersistPlatformSiteSnapshotRebuildsAbilitiesAndAutoDisablesUnavailableKeys(t *testing.T) {

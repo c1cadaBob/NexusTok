@@ -102,7 +102,7 @@ weight = clamp(round(2000 - conversion_ratio * 1000), 0, 2000)
 | `conversion_ratio` | 充值金额除以到账金额 |
 | `balance` | 站点共享余额 |
 | `used_quota` | 站点已用额度 |
-| `last_sync_at` | 最近成功或失败同步时间 |
+| `last_sync_at` | 最近一次成功同步时间；失败或运行状态不会覆盖该时间 |
 | `sync_status` | `idle`、`running`、`success`、`failed` |
 | `last_sync_error` | 脱敏错误摘要 |
 | `consecutive_failures` | 连续失败次数 |
@@ -138,6 +138,16 @@ weight = clamp(round(2000 - conversion_ratio * 1000), 0, 2000)
 | `missing_since` | 最近一次完整同步中未出现的时间 |
 
 唯一约束为 `channel_id + external_id`。同步只使用完整分页成功的数据处理缺失密钥，部分失败不得清理现有密钥。
+
+平台站点快照的可用性由父渠道状态和同步状态共同决定：
+
+- 父渠道被管理员禁用时永远不可路由；
+- `success` 可使用当前快照；
+- `failed` 或 `running` 且 `last_sync_at > 0` 时继续使用最近一次成功快照；
+- `idle` 或从未成功同步的 `failed`/`running` 不可路由。
+
+`disabled_at` 和 `disabled_reason` 不再因为一次自动同步失败而阻断已有成功快照；
+管理员对父渠道的禁用仍以 `channels.status` 为准。
 
 平台站点子密钥的自动倍率为：
 
@@ -244,7 +254,19 @@ Sub2API 首期协议范围：
 
 适配器不能绕过验证码、交互式二次验证或站点风控。密码登录无法完成时返回可识别的认证状态，管理员可以切换为 Cookie 或令牌认证。
 
-适配器会把登录或刷新接口返回的新访问令牌、刷新令牌和过期时间写入 `PlatformSiteSession.CredentialUpdate`。宿主同步流程只在完整快照成功后加密保存这组旋转后的凭据；密码模式仍在每次同步时重新登录，不把明文密码写入日志或响应。
+`PlatformSiteCredential.auth_type` 是非敏感的认证方式标识，保存后固定使用该分支：
+
+- `password` 每次同步重新使用账号密码登录，登录返回的会话令牌只用于当前同步；
+- `access_token` 只使用访问令牌和刷新令牌，刷新失败不回退账号密码；
+- `admin_key` 只使用 Admin Key；
+- `cookie` 只使用 Cookie。
+
+账号密码模式不会因为登录响应包含刷新令牌而改写成令牌模式。更新凭据时，
+服务端只保存当前认证方式需要的字段，避免残留字段再次触发认证方式漂移。
+
+只有 `access_token` 模式会把刷新接口返回的新访问令牌、刷新令牌和过期时间写入
+`PlatformSiteSession.CredentialUpdate`。宿主同步流程只在完整快照成功后加密保存这组
+旋转后的凭据；密码模式不会持久化登录响应中的令牌，不把明文密码写入日志或响应。
 
 Sub2API 普通用户接口如果只能返回掩码密钥，不会伪造真实密钥。无法取得真实密钥的新记录会自动禁用；已有密钥保留旧密文并继续按同步状态过滤。
 
@@ -255,7 +277,9 @@ Sub2API 普通用户接口如果只能返回掩码密钥，不会伪造真实密
 - 同一站点使用互斥锁。
 - 支持管理员手动同步。
 - 分页全部成功后再开启数据库事务并 upsert。
-- 同步失败保留旧密钥、旧模型和旧余额。
+- 同步开始只切换为 `running`，失败时只记录 `failed`、脱敏错误和连续失败次数；
+  不删除旧密钥、不清理旧模型能力、不标记旧密钥 `missing`、不覆盖旧余额，
+  并继续复用最近一次成功快照。
 - 单个子密钥的模型能力获取失败时保留最近一次模型快照，但设置
   `models_synced=false` 并自动禁用该子密钥；新密钥没有真实能力时只创建为
   不可路由记录。
@@ -330,6 +354,12 @@ POST  /api/channel/:id/upstream-keys/batch-status
 - 平台密码、Cookie、访问令牌、Admin Key、刷新令牌和上游 API Key 不能明文保存。
 - 使用 AES-GCM 或项目现有等价的信封加密能力，包含 nonce、认证标签和密钥版本。
 - 数据库只保存密文和不可逆指纹。
+- `SESSION_SECRET` 优先于 `SESSION_SECRET_FILE`；未显式设置时从持久化文件读取或
+  首次生成并以 `0600` 权限保存。`CRYPTO_SECRET` 优先于
+  `CRYPTO_SECRET_FILE`，否则回退到会话密钥，保证容器重启后旧凭据可解密。
+- 启动迁移会为能够正常解密的历史平台账号补齐固定认证方式
+  `PlatformSiteAccount.auth_type`；无法解密的历史密文不会被当作明文、不会尝试猜测旧密钥，
+  管理员需要按原认证方式重新保存一次凭据，重新使用当前稳定密钥加密。
 - 支持加密密钥版本轮换。
 - 审计事件不能包含密码、Cookie、令牌、API Key、验证码、TOTP、私钥或可使用的会话信息。
 - 站点 URL 必须进行 SSRF、DNS rebinding、内网地址和恶意重定向防护。
@@ -392,6 +422,9 @@ POST  /api/channel/:id/upstream-keys/batch-status
 - `models_synced=false` 的子密钥不可路由，站点级模型不得回退分配；
 - 渠道优先级、密钥优先级和权重选择；
 - 子密钥错误不误伤父站点；
+- 成功快照后的认证失败、凭据解密失败和站点接口失败继续路由旧快照；
+- 密码、令牌、Cookie 和 Admin Key 模式不会互相漂移；
+- 会话/加密密钥文件重启后仍能解密旧平台凭据；
 - 凭据加密和审计脱敏；
 - SSRF 和重定向防护。
 

@@ -172,6 +172,8 @@ test('平台站点余额刷新失败时展示错误且不清空已有余额', as
     used_quota: 10,
     balance_updated_time: 1_700_000_000,
     sync_status: 'failed',
+    last_sync_at: 1_700_000_000,
+    last_sync_error: 'refresh failed',
   })
   const { invalidateSpy } = renderBalanceDialog(platformChannel())
 

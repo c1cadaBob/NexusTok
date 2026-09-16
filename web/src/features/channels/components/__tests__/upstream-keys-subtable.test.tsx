@@ -105,7 +105,24 @@ function upstreamKey(overrides: Partial<UpstreamKey> = {}): UpstreamKey {
   return { ...key, ...overrides }
 }
 
-function platformChannel(key: UpstreamKey = upstreamKey()): Channel {
+function platformChannel(
+  key: UpstreamKey = upstreamKey(),
+  status: Channel['upstream_site_status'] = {
+    channel_id: 101,
+    platform: 'newapi',
+    base_url: 'https://upstream.example',
+    auth_type: 'password',
+    recharge_amount: 1,
+    credited_amount: 10,
+    conversion_ratio: 0.1,
+    balance: 10,
+    used_quota: 0,
+    balance_updated_time: 1_700_000_000,
+    sync_status: 'success',
+    last_sync_at: 1_700_000_000,
+    consecutive_failures: 0,
+  }
+): Channel {
   return {
     id: 101,
     name: 'NewAPI upstream',
@@ -116,6 +133,7 @@ function platformChannel(key: UpstreamKey = upstreamKey()): Channel {
     models: 'gpt-parent',
     group: 'default',
     upstream_keys: [key],
+    upstream_site_status: status,
   } as Channel
 }
 
@@ -347,6 +365,38 @@ test('平台站点测试弹窗按所选密钥过滤模型并透传 upstream_key_
   })
 })
 
+test('平台站点首次同步失败时不展示旧子密钥模型', async () => {
+  const key = upstreamKey()
+  const channel = platformChannel(key, {
+    channel_id: 101,
+    platform: 'newapi',
+    base_url: 'https://upstream.example',
+    auth_type: 'password',
+    recharge_amount: 1,
+    credited_amount: 10,
+    conversion_ratio: 0.1,
+    balance: 10,
+    used_quota: 0,
+    balance_updated_time: 1_700_000_000,
+    sync_status: 'failed',
+    last_sync_at: 0,
+    consecutive_failures: 1,
+  })
+  vi.mocked(channelsApi.getUpstreamKeys).mockResolvedValue({
+    success: true,
+    data: { items: [key], total: 1 },
+  })
+
+  renderWithProviders(<ChannelTestHarness channel={channel} />)
+
+  expect(
+    await screen.findByText(
+      'Please sync this platform site successfully before testing.'
+    )
+  ).toBeInTheDocument()
+  expect(screen.queryByText('gpt-key-only')).not.toBeInTheDocument()
+})
+
 test('平台站点测试弹窗遇到禁用当前密钥时回退自动路由并仅显示可路由模型', async () => {
   const user = userEvent.setup()
   const disabledKey = upstreamKey({
@@ -404,7 +454,7 @@ test('平台站点测试弹窗遇到禁用当前密钥时回退自动路由并�
   })
 })
 
-test('平台站点测试弹窗在父站点失败时提示先同步成功', async () => {
+test('平台站点测试弹窗在从未成功同步时提示先同步成功', async () => {
   const disabledKey = upstreamKey({
     models: ['gpt-disabled'],
     status: 3,
@@ -445,4 +495,51 @@ test('平台站点测试弹窗在父站点失败时提示先同步成功', async
     )
   ).not.toHaveLength(0)
   expect(screen.queryByText('gpt-parent')).not.toBeInTheDocument()
+})
+
+test('平台站点测试弹窗在刷新失败时继续使用最近一次成功快照', async () => {
+  const routableKey = upstreamKey({
+    models: ['gpt-live'],
+    status: 1,
+  })
+  const channel = {
+    ...platformChannel(routableKey),
+    models: 'gpt-live',
+    upstream_site_status: {
+      channel_id: 101,
+      platform: 'newapi',
+      base_url: 'https://upstream.example',
+      auth_type: 'password',
+      recharge_amount: 1,
+      credited_amount: 10,
+      conversion_ratio: 0.1,
+      balance: 1,
+      used_quota: 2,
+      balance_updated_time: 1_700_000_000,
+      sync_status: 'failed',
+      last_sync_at: 1_700_000_000,
+      consecutive_failures: 1,
+      key_count: 1,
+      routable_key_count: 1,
+    },
+    upstream_keys: [routableKey],
+  } as Channel
+  vi.mocked(channelsApi.getUpstreamKeys).mockResolvedValue({
+    success: true,
+    data: { items: [routableKey], total: 1 },
+  })
+
+  renderWithProviders(<ChannelTestHarness channel={channel} />)
+
+  expect(
+    await screen.findByText(
+      'Current refresh failed; using the last successful snapshot.'
+    )
+  ).toBeInTheDocument()
+  expect(screen.getByText('gpt-live')).toBeInTheDocument()
+  expect(
+    screen.queryByText(
+      'Please sync this platform site successfully before testing.'
+    )
+  ).not.toBeInTheDocument()
 })

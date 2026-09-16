@@ -107,6 +107,7 @@ func validatePlatformSiteInput(input *PlatformSiteInput, existing *model.Platfor
 		return model.PlatformSiteCredential{}, 0, err
 	}
 	credential := model.PlatformSiteCredential{
+		AuthType:     input.AuthType,
 		Username:     strings.TrimSpace(input.Username),
 		Password:     input.Password,
 		AccessToken:  strings.TrimSpace(input.AccessToken),
@@ -119,18 +120,39 @@ func validatePlatformSiteInput(input *PlatformSiteInput, existing *model.Platfor
 		if credential.Username == "" || credential.Password == "" {
 			return model.PlatformSiteCredential{}, 0, errors.New("账号密码认证需要用户名和密码")
 		}
+		credential.AccessToken = ""
+		credential.RefreshToken = ""
+		credential.TokenExpiresAt = 0
+		credential.AdminKey = ""
+		credential.Cookie = ""
 	case model.UpstreamAuthAccessToken:
 		if credential.AccessToken == "" {
 			return model.PlatformSiteCredential{}, 0, errors.New("访问令牌不能为空")
 		}
+		credential.Username = ""
+		credential.Password = ""
+		credential.AdminKey = ""
+		credential.Cookie = ""
 	case model.UpstreamAuthAdminKey:
 		if credential.AdminKey == "" {
 			return model.PlatformSiteCredential{}, 0, errors.New("Admin Key 不能为空")
 		}
+		credential.Username = ""
+		credential.Password = ""
+		credential.AccessToken = ""
+		credential.RefreshToken = ""
+		credential.TokenExpiresAt = 0
+		credential.Cookie = ""
 	case model.UpstreamAuthCookie:
 		if credential.Cookie == "" {
 			return model.PlatformSiteCredential{}, 0, errors.New("Cookie 不能为空")
 		}
+		credential.Username = ""
+		credential.Password = ""
+		credential.AccessToken = ""
+		credential.RefreshToken = ""
+		credential.TokenExpiresAt = 0
+		credential.AdminKey = ""
 	}
 	rechargeAmount := 0.0
 	if input.RechargeAmount != nil {
@@ -192,6 +214,9 @@ func savePlatformSiteAccount(channelID int, input *PlatformSiteInput, existing *
 					return decryptErr
 				}
 			} else {
+				if strings.TrimSpace(merged.AuthType) == "" {
+					merged.AuthType = model.InferPlatformSiteAuthType(credential)
+				}
 				switch strings.ToLower(strings.TrimSpace(merged.AuthType)) {
 				case model.UpstreamAuthPassword:
 					if strings.TrimSpace(merged.Username) == "" {
@@ -314,7 +339,7 @@ func platformSiteStatus(account *model.PlatformSiteAccount) UpstreamSiteStatusRe
 
 func getPlatformSiteChannel(channelID int) (*model.Channel, error) {
 	var channel model.Channel
-	if err := model.DB.Select("id", "upstream_kind", "balance_updated_time").First(&channel, "id = ?", channelID).Error; err != nil {
+	if err := model.DB.Select("id", "status", "upstream_kind", "balance_updated_time").First(&channel, "id = ?", channelID).Error; err != nil {
 		return nil, err
 	}
 	if channel.UpstreamKind != model.UpstreamKindPlatformSite {
@@ -385,7 +410,9 @@ func GetUpstreamSiteStatus(c *gin.Context) {
 	if err := model.DB.Where("channel_id = ?", channelID).Find(&keys).Error; err == nil {
 		response.KeyCount = len(keys)
 		for index := range keys {
-			if keys[index].ModelsSynced && keys[index].IsRoutable(time.Now()) {
+			if channel.Status == common.ChannelStatusEnabled &&
+				model.PlatformSiteSnapshotUsable(&account) &&
+				keys[index].IsRoutable(time.Now()) {
 				response.RoutableKeyCount++
 			}
 		}

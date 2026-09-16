@@ -384,6 +384,9 @@ func migrateDB() error {
 	if err := migrateUpstreamChannelDefaults(); err != nil {
 		return err
 	}
+	if err := migratePlatformSiteAuthTypes(); err != nil {
+		return err
+	}
 	if err := migrateUpstreamKeyDefaults(); err != nil {
 		return err
 	}
@@ -473,6 +476,40 @@ func migrateUpstreamChannelDefaults() error {
 			Where("upstream_kind = ? AND (conversion_ratio IS NULL OR conversion_ratio = ?)", UpstreamKindKeyChannel, 0).
 			Update("conversion_ratio", 1).Error; err != nil {
 			return err
+		}
+		return tx.Create(&Option{Key: migrationKey, Value: "1"}).Error
+	})
+}
+
+func migratePlatformSiteAuthTypes() error {
+	const migrationKey = "migration.platform_site_auth_types.v1"
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var marker Option
+		err := tx.Where(commonKeyCol+" = ?", migrationKey).First(&marker).Error
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+
+		var accounts []PlatformSiteAccount
+		if err := tx.Where("auth_type IS NULL OR auth_type = ?", "").Find(&accounts).Error; err != nil {
+			return err
+		}
+		for index := range accounts {
+			credential, decryptErr := DecryptPlatformSiteCredential(accounts[index].CredentialCiphertext)
+			if decryptErr != nil {
+				// 旧密文可能使用已经丢失的密钥，不能猜测或降级为明文。
+				continue
+			}
+			authType := InferPlatformSiteAuthType(credential)
+			if authType == "" {
+				continue
+			}
+			if err := tx.Model(&accounts[index]).Update("auth_type", authType).Error; err != nil {
+				return err
+			}
 		}
 		return tx.Create(&Option{Key: migrationKey, Value: "1"}).Error
 	})

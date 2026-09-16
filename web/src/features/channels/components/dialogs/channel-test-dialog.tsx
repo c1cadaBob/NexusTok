@@ -232,6 +232,20 @@ function isRoutableUpstreamKey(
   )
 }
 
+function isPlatformSiteSnapshotUsable(channel: Channel): boolean {
+  if (channel.upstream_kind !== 'platform_site') return true
+  if (channel.status !== 1) return false
+
+  const status = channel.upstream_site_status
+  if (!status) return false
+  if (status.sync_status === 'success') return true
+
+  return (
+    (status.sync_status === 'failed' || status.sync_status === 'running') &&
+    status.last_sync_at > 0
+  )
+}
+
 function getRoutableUpstreamKeyId(upstreamKey: UpstreamKey | null | undefined) {
   if (!upstreamKey) return null
   if (!isRoutableUpstreamKey(upstreamKey)) return null
@@ -453,20 +467,35 @@ function ChannelTestDialogContent({
   )
 
   const routableUpstreamKeys = useMemo(
-    () => upstreamKeys.filter(isRoutableUpstreamKey),
-    [upstreamKeys]
+    () =>
+      isPlatformSiteSnapshotUsable(currentRow)
+        ? upstreamKeys.filter(isRoutableUpstreamKey)
+        : [],
+    [currentRow, upstreamKeys]
   )
 
   const platformSiteSyncStatus = currentRow.upstream_site_status?.sync_status
+  const hasPlatformSiteSnapshot =
+    (currentRow.upstream_site_status?.last_sync_at ?? 0) > 0
   const platformSiteSyncFailed =
-    isPlatformSite && platformSiteSyncStatus === 'failed'
+    isPlatformSite &&
+    platformSiteSyncStatus === 'failed' &&
+    !hasPlatformSiteSnapshot
+  const platformSiteUsingLastSnapshot =
+    isPlatformSite &&
+    (platformSiteSyncStatus === 'failed' ||
+      platformSiteSyncStatus === 'running') &&
+    hasPlatformSiteSnapshot
 
   const selectedUpstreamKey = useMemo(() => {
     if (selectedUpstreamKeyId === null) return null
 
     const key = upstreamKeys.find((item) => item.id === selectedUpstreamKeyId)
-    return isRoutableUpstreamKey(key) ? key : null
-  }, [selectedUpstreamKeyId, upstreamKeys])
+    return isPlatformSiteSnapshotUsable(currentRow) &&
+      isRoutableUpstreamKey(key)
+      ? key
+      : null
+  }, [currentRow, selectedUpstreamKeyId, upstreamKeys])
 
   const upstreamKeySelectItems = useMemo(
     () => [
@@ -489,10 +518,12 @@ function ChannelTestDialogContent({
         ]
           .filter(Boolean)
           .join(' · '),
-        disabled: !isRoutableUpstreamKey(key),
+        disabled:
+          !isPlatformSiteSnapshotUsable(currentRow) ||
+          !isRoutableUpstreamKey(key),
       })),
     ],
-    [t, upstreamKeys]
+    [currentRow, t, upstreamKeys]
   )
 
   const resetModelTestState = useCallback(() => {
@@ -513,13 +544,18 @@ function ChannelTestDialogContent({
       } else {
         const nextKeyId = Number(value)
         const nextKey = upstreamKeys.find((key) => key.id === nextKeyId)
-        if (!isRoutableUpstreamKey(nextKey)) return
+        if (
+          !isPlatformSiteSnapshotUsable(currentRow) ||
+          !isRoutableUpstreamKey(nextKey)
+        ) {
+          return
+        }
 
         setSelectedUpstreamKeyId(nextKeyId)
       }
       resetModelTestState()
     },
-    [resetModelTestState, upstreamKeys]
+    [currentRow, resetModelTestState, upstreamKeys]
   )
 
   useEffect(() => {
@@ -534,6 +570,7 @@ function ChannelTestDialogContent({
       return
     }
     if (
+      !isPlatformSiteSnapshotUsable(currentRow) ||
       !upstreamKeys.some(
         (key) => key.id === selectedUpstreamKeyId && isRoutableUpstreamKey(key)
       )
@@ -541,7 +578,7 @@ function ChannelTestDialogContent({
       setSelectedUpstreamKeyId(null)
       resetModelTestState()
     }
-  }, [resetModelTestState, selectedUpstreamKeyId, upstreamKeys])
+  }, [currentRow, resetModelTestState, selectedUpstreamKeyId, upstreamKeys])
 
   const streamDisabled = STREAM_INCOMPATIBLE_ENDPOINTS.has(endpointType)
   const effectiveStreamTest = !streamDisabled && isStreamTest
@@ -1005,6 +1042,11 @@ function ChannelTestDialogContent({
     upstreamKeyHelperText = t(
       'Please sync this platform site successfully before testing.'
     )
+  } else if (platformSiteUsingLastSnapshot) {
+    upstreamKeyHelperText =
+      platformSiteSyncStatus === 'running'
+        ? t('Sync is running; using the last successful snapshot.')
+        : t('Current refresh failed; using the last successful snapshot.')
   } else if (selectedUpstreamKey) {
     upstreamKeyHelperText = t(
       'Models are filtered by the selected upstream key.'

@@ -214,6 +214,8 @@ export interface ChannelBalanceResponse {
   used_quota?: number
   balance_updated_time?: number
   sync_status?: string
+  last_sync_at?: number
+  last_sync_error?: string
   key_count?: number
   routable_key_count?: number
   currency?: string

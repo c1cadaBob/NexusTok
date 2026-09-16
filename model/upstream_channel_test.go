@@ -245,6 +245,45 @@ func TestMigrateUpstreamKeyDefaultsInitializesMissingSourceRatioOnce(t *testing.
 	assert.Equal(t, 0.5, *legacy.SourceConversionRatio)
 }
 
+func TestMigratePlatformSiteAuthTypesBackfillsDecryptableLegacyAccounts(t *testing.T) {
+	previousDB := DB
+	previousSecret := common.CryptoSecret
+	common.CryptoSecret = "platform-site-auth-migration-secret"
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&PlatformSiteAccount{}, &Option{}))
+	DB = db
+	t.Cleanup(func() {
+		DB = previousDB
+		common.CryptoSecret = previousSecret
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	ciphertext, err := EncryptPlatformSiteCredential(PlatformSiteCredential{
+		Username:     "operator",
+		Password:     "synthetic-password",
+		AccessToken:  "stale-access",
+		RefreshToken: "stale-refresh",
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&PlatformSiteAccount{
+		ChannelID:            991,
+		Platform:             PlatformNewAPI,
+		BaseURL:              "https://upstream.example",
+		CredentialCiphertext: ciphertext,
+	}).Error)
+
+	require.NoError(t, migratePlatformSiteAuthTypes())
+
+	var account PlatformSiteAccount
+	require.NoError(t, db.Where("channel_id = ?", 991).First(&account).Error)
+	assert.Equal(t, UpstreamAuthPassword, account.AuthType)
+}
+
 func TestUpstreamChannelDatabaseCompatibility(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -545,11 +584,98 @@ func TestGetRoutableUpstreamKeyByIDLoadsSecretAndFiltersModels(t *testing.T) {
 	assert.Equal(t, key.ID, selected.ID)
 	assert.Equal(t, "sk-routable", selected.Secret)
 
+	require.NoError(t, db.Model(&PlatformSiteAccount{}).
+		Where("channel_id = ?", channel.Id).
+		Updates(map[string]any{
+			"sync_status":  UpstreamSiteSyncFailed,
+			"last_sync_at": int64(1_700_000_000),
+			"disabled_at":  int64(1_700_000_001),
+		}).Error)
+	selected, err = GetRoutableUpstreamKeyByID(channel.Id, key.ID, "default", "gpt-allowed", time.Now())
+	require.NoError(t, err)
+	assert.Equal(t, key.ID, selected.ID)
+
+	require.NoError(t, db.Model(&PlatformSiteAccount{}).
+		Where("channel_id = ?", channel.Id).
+		Updates(map[string]any{
+			"sync_status":  UpstreamSiteSyncRunning,
+			"last_sync_at": int64(1_700_000_000),
+		}).Error)
+	selected, err = GetRoutableUpstreamKeyByID(channel.Id, key.ID, "default", "gpt-allowed", time.Now())
+	require.NoError(t, err)
+	assert.Equal(t, key.ID, selected.ID)
+
+	require.NoError(t, db.Model(&PlatformSiteAccount{}).
+		Where("channel_id = ?", channel.Id).
+		Updates(map[string]any{
+			"sync_status":  UpstreamSiteSyncFailed,
+			"last_sync_at": int64(0),
+		}).Error)
+	_, err = GetRoutableUpstreamKeyByID(channel.Id, key.ID, "default", "gpt-allowed", time.Now())
+	require.Error(t, err)
+
+	require.NoError(t, db.Model(&PlatformSiteAccount{}).
+		Where("channel_id = ?", channel.Id).
+		Updates(map[string]any{
+			"sync_status":  UpstreamSiteSyncSuccess,
+			"last_sync_at": int64(0),
+			"disabled_at":  int64(1_700_000_001),
+		}).Error)
+
+	require.NoError(t, db.Model(&Channel{}).
+		Where("id = ?", channel.Id).
+		Update("status", common.ChannelStatusManuallyDisabled).Error)
+	_, err = GetRoutableUpstreamKeyByID(channel.Id, key.ID, "default", "gpt-allowed", time.Now())
+	require.Error(t, err)
+	require.NoError(t, db.Model(&Channel{}).
+		Where("id = ?", channel.Id).
+		Update("status", common.ChannelStatusEnabled).Error)
+
 	_, err = GetRoutableUpstreamKeyByID(channel.Id, key.ID, "default", "gpt-blocked", time.Now())
 	require.Error(t, err)
 
 	_, err = GetRoutableUpstreamKeyByID(channel.Id+1, key.ID, "default", "gpt-allowed", time.Now())
 	require.Error(t, err)
+}
+
+func TestGetActivePlatformSiteChannelsReusesLastSuccessfulSnapshot(t *testing.T) {
+	previousDB := DB
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&Channel{}, &PlatformSiteAccount{}))
+	DB = db
+	t.Cleanup(func() {
+		DB = previousDB
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	channels := []Channel{
+		{Id: 801, Name: "success", UpstreamKind: UpstreamKindPlatformSite, Status: common.ChannelStatusEnabled, Group: "default"},
+		{Id: 802, Name: "failed-with-snapshot", UpstreamKind: UpstreamKindPlatformSite, Status: common.ChannelStatusEnabled, Group: "default"},
+		{Id: 803, Name: "running-with-snapshot", UpstreamKind: UpstreamKindPlatformSite, Status: common.ChannelStatusEnabled, Group: "default"},
+		{Id: 804, Name: "failed-empty", UpstreamKind: UpstreamKindPlatformSite, Status: common.ChannelStatusEnabled, Group: "default"},
+		{Id: 805, Name: "disabled-parent", UpstreamKind: UpstreamKindPlatformSite, Status: common.ChannelStatusManuallyDisabled, Group: "default"},
+	}
+	require.NoError(t, db.Create(&channels).Error)
+	require.NoError(t, db.Create(&[]PlatformSiteAccount{
+		{ChannelID: 801, SyncStatus: UpstreamSiteSyncSuccess},
+		{ChannelID: 802, SyncStatus: UpstreamSiteSyncFailed, LastSyncAt: 1_700_000_000, DisabledAt: 1_700_000_001},
+		{ChannelID: 803, SyncStatus: UpstreamSiteSyncRunning, LastSyncAt: 1_700_000_000},
+		{ChannelID: 804, SyncStatus: UpstreamSiteSyncFailed},
+		{ChannelID: 805, SyncStatus: UpstreamSiteSyncSuccess},
+	}).Error)
+
+	active, err := getActivePlatformSiteChannels("default")
+	require.NoError(t, err)
+	ids := make([]int, 0, len(active))
+	for _, channel := range active {
+		ids = append(ids, channel.Id)
+	}
+	assert.ElementsMatch(t, []int{801, 802, 803}, ids)
 }
 
 func TestSelectChannelByUpstreamKeyMergesParentsAndFiltersChildren(t *testing.T) {

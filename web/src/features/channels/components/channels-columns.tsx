@@ -317,6 +317,16 @@ function UpstreamSiteSyncStatusCell({ channel }: { channel: Channel }) {
         )
       : t('Never')
 
+  const usingLastSnapshot =
+    (status.sync_status === 'failed' || status.sync_status === 'running') &&
+    status.last_sync_at > 0
+  const effectiveStatusConfig = usingLastSnapshot
+    ? {
+        label: t('Using last successful snapshot'),
+        variant: 'warning' as const,
+      }
+    : statusConfig
+
   return (
     <TooltipProvider>
       <Tooltip>
@@ -324,8 +334,8 @@ function UpstreamSiteSyncStatusCell({ channel }: { channel: Channel }) {
           render={
             <div className='flex min-w-0 flex-col items-start gap-1'>
               <StatusBadge
-                label={statusConfig.label}
-                variant={statusConfig.variant}
+                label={effectiveStatusConfig.label}
+                variant={effectiveStatusConfig.variant}
                 size='sm'
                 copyable={false}
               />
@@ -343,6 +353,15 @@ function UpstreamSiteSyncStatusCell({ channel }: { channel: Channel }) {
             {status.consecutive_failures > 0 && (
               <div>
                 {t('Consecutive failures')}: {status.consecutive_failures}
+              </div>
+            )}
+            {usingLastSnapshot && (
+              <div>
+                {status.sync_status === 'running'
+                  ? t('Sync is running; using the last successful snapshot.')
+                  : t(
+                      'Current refresh failed; using the last successful snapshot.'
+                    )}
               </div>
             )}
             {status.last_sync_error && <div>{status.last_sync_error}</div>}
@@ -511,6 +530,12 @@ export function BalanceCell({ channel }: { channel: Channel }) {
                 sync_status:
                   response.sync_status ??
                   channel.upstream_site_status.sync_status,
+                last_sync_at:
+                  response.last_sync_at ??
+                  channel.upstream_site_status.last_sync_at,
+                last_sync_error:
+                  response.last_sync_error ??
+                  channel.upstream_site_status.last_sync_error,
                 key_count:
                   response.key_count ?? channel.upstream_site_status.key_count,
                 routable_key_count:

@@ -123,6 +123,11 @@ export function BalanceQueryDialog(props: BalanceQueryDialogProps) {
                 balance_updated_time: updatedTime,
                 sync_status:
                   response.sync_status ?? row.upstream_site_status.sync_status,
+                last_sync_at:
+                  response.last_sync_at ?? row.upstream_site_status.last_sync_at,
+                last_sync_error:
+                  response.last_sync_error ??
+                  row.upstream_site_status.last_sync_error,
                 key_count:
                   response.key_count ?? row.upstream_site_status.key_count,
                 routable_key_count:

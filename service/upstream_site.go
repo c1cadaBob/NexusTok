@@ -478,6 +478,22 @@ func syncPlatformSite(ctx context.Context, channelID int) error {
 		err = wrapPlatformSiteStage("凭据解密", err)
 	}
 	if err == nil {
+		authType := strings.ToLower(strings.TrimSpace(account.AuthType))
+		if !model.IsPlatformSiteAuthType(authType) {
+			authType = model.InferPlatformSiteAuthType(credential)
+			if authType != "" {
+				account.AuthType = authType
+				if updateErr := model.DB.Model(&account).Update("auth_type", authType).Error; updateErr != nil {
+					err = wrapPlatformSiteStage("认证方式修复", updateErr)
+				}
+			}
+		}
+		if err == nil && !model.IsPlatformSiteAuthType(authType) {
+			err = wrapPlatformSiteStage("认证方式", errors.New("平台站点认证方式未配置"))
+		}
+		credential.AuthType = authType
+	}
+	if err == nil {
 		var adapter PlatformSiteAdapter
 		adapter, err = adapterForPlatform(account.Platform)
 		if err != nil {
@@ -508,17 +524,14 @@ func syncPlatformSite(ctx context.Context, channelID int) error {
 		account.SyncStatus = model.UpstreamSiteSyncFailed
 		account.LastSyncError = safeUpstreamError(err)
 		account.ConsecutiveFailures++
-		account.DisabledAt = common.GetTimestamp()
-		account.DisabledReason = account.LastSyncError
 		if updateErr := model.DB.Model(&account).Updates(map[string]any{
 			"sync_status":          account.SyncStatus,
 			"last_sync_error":      account.LastSyncError,
 			"consecutive_failures": account.ConsecutiveFailures,
-			"disabled_at":          account.DisabledAt,
-			"disabled_reason":      account.DisabledReason,
 		}).Error; updateErr != nil {
 			return errors.Join(err, updateErr)
 		}
+		model.InitChannelCache()
 		logger.LogWarn(ctx, fmt.Sprintf("upstream site sync failed: channel_id=%d platform=%s error=%s", channelID, account.Platform, safeUpstreamError(err)))
 		return err
 	}
@@ -541,6 +554,7 @@ func persistPlatformSiteCredential(account *model.PlatformSiteAccount, credentia
 	if account == nil {
 		return errors.New("平台站点不存在")
 	}
+	credential.AuthType = account.AuthType
 	ciphertext, err := model.EncryptPlatformSiteCredential(credential)
 	if err != nil {
 		return err

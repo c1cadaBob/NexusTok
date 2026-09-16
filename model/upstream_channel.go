@@ -41,6 +41,7 @@ const (
 )
 
 type PlatformSiteCredential struct {
+	AuthType       string `json:"auth_type,omitempty"`
 	Username       string `json:"username,omitempty"`
 	Password       string `json:"password,omitempty"`
 	AccessToken    string `json:"access_token,omitempty"`
@@ -51,11 +52,12 @@ type PlatformSiteCredential struct {
 }
 
 type PlatformSiteAccount struct {
-	ID                    uint    `json:"id" gorm:"primaryKey"`
-	ChannelID             int     `json:"channel_id" gorm:"not null;uniqueIndex"`
-	Platform              string  `json:"platform" gorm:"type:varchar(32);not null;index"`
-	BaseURL               string  `json:"base_url" gorm:"type:varchar(1024);not null"`
-	AuthType              string  `json:"auth_type" gorm:"type:varchar(32);not null"`
+	ID        uint   `json:"id" gorm:"primaryKey"`
+	ChannelID int    `json:"channel_id" gorm:"not null;uniqueIndex"`
+	Platform  string `json:"platform" gorm:"type:varchar(32);not null;index"`
+	BaseURL   string `json:"base_url" gorm:"type:varchar(1024);not null"`
+	// AuthType 对旧数据库允许为空，迁移和同步会为可解密的历史凭据补齐。
+	AuthType              string  `json:"auth_type" gorm:"type:varchar(32);index"`
 	CredentialCiphertext  string  `json:"-" gorm:"type:text;not null"`
 	CredentialKeyVersion  string  `json:"-" gorm:"type:varchar(32);not null"`
 	CredentialFingerprint string  `json:"credential_fingerprint" gorm:"type:varchar(128);index"`
@@ -74,8 +76,8 @@ type PlatformSiteAccount struct {
 
 type UpstreamKey struct {
 	ID                      uint       `json:"id" gorm:"primaryKey"`
-	ChannelID               int        `json:"channel_id" gorm:"not null;index;uniqueIndex:idx_upstream_key_channel_external"`
-	ExternalID              string     `json:"external_id" gorm:"type:varchar(255);not null;uniqueIndex:idx_upstream_key_channel_external"`
+	ChannelID               int        `json:"channel_id" gorm:"not null;index;uniqueIndex:idx_upstream_key_channel_external,priority:1"`
+	ExternalID              string     `json:"external_id" gorm:"type:varchar(255);not null;uniqueIndex:idx_upstream_key_channel_external,priority:2"`
 	Name                    string     `json:"name" gorm:"type:varchar(255)"`
 	SecretCiphertext        string     `json:"-" gorm:"type:text;not null"`
 	SecretFingerprint       string     `json:"secret_fingerprint" gorm:"type:varchar(128);index"`
@@ -107,6 +109,7 @@ type UpstreamKeyAbility struct {
 
 func (credential PlatformSiteCredential) Fingerprint() string {
 	return common.GenerateHMAC(strings.Join([]string{
+		credential.AuthType,
 		credential.Username,
 		credential.Password,
 		credential.AccessToken,
@@ -115,6 +118,49 @@ func (credential PlatformSiteCredential) Fingerprint() string {
 		credential.AdminKey,
 		credential.Cookie,
 	}, "\x00"))
+}
+
+func IsPlatformSiteAuthType(authType string) bool {
+	switch strings.ToLower(strings.TrimSpace(authType)) {
+	case UpstreamAuthPassword, UpstreamAuthAccessToken, UpstreamAuthAdminKey, UpstreamAuthCookie:
+		return true
+	default:
+		return false
+	}
+}
+
+// InferPlatformSiteAuthType 仅用于升级旧数据和修复缺少 AuthType 的记录。
+// 正常同步必须使用 PlatformSiteAccount.AuthType，不再根据凭据字段动态选择认证方式。
+func InferPlatformSiteAuthType(credential PlatformSiteCredential) string {
+	if IsPlatformSiteAuthType(credential.AuthType) {
+		return strings.ToLower(strings.TrimSpace(credential.AuthType))
+	}
+	switch {
+	case strings.TrimSpace(credential.Username) != "" || credential.Password != "":
+		return UpstreamAuthPassword
+	case strings.TrimSpace(credential.AdminKey) != "":
+		return UpstreamAuthAdminKey
+	case strings.TrimSpace(credential.AccessToken) != "" || strings.TrimSpace(credential.RefreshToken) != "":
+		return UpstreamAuthAccessToken
+	case strings.TrimSpace(credential.Cookie) != "":
+		return UpstreamAuthCookie
+	default:
+		return ""
+	}
+}
+
+func PlatformSiteSnapshotUsable(account *PlatformSiteAccount) bool {
+	if account == nil {
+		return false
+	}
+	switch account.SyncStatus {
+	case UpstreamSiteSyncSuccess:
+		return true
+	case UpstreamSiteSyncFailed, UpstreamSiteSyncRunning:
+		return account.LastSyncAt > 0
+	default:
+		return false
+	}
 }
 
 func EncryptPlatformSiteCredential(credential PlatformSiteCredential) (string, error) {
@@ -244,13 +290,24 @@ func (key *UpstreamKey) LoadSecret() error {
 }
 
 func GetRoutableUpstreamKeyByID(channelID int, keyID uint, group, modelName string, now time.Time) (*UpstreamKey, error) {
+	var channel Channel
+	if err := DB.Select("id", "status", "upstream_kind").
+		Where("id = ?", channelID).
+		First(&channel).Error; err != nil {
+		return nil, err
+	}
+	if channel.UpstreamKind != UpstreamKindPlatformSite ||
+		channel.Status != common.ChannelStatusEnabled {
+		return nil, errors.New("platform site is not routable")
+	}
+
 	var account PlatformSiteAccount
-	if err := DB.Select("sync_status", "disabled_at").
+	if err := DB.Select("sync_status", "last_sync_at").
 		Where("channel_id = ?", channelID).
 		First(&account).Error; err != nil {
 		return nil, err
 	}
-	if account.SyncStatus != UpstreamSiteSyncSuccess || account.DisabledAt != 0 {
+	if !PlatformSiteSnapshotUsable(&account) {
 		return nil, errors.New("platform site is not routable")
 	}
 

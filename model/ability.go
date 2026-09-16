@@ -108,16 +108,14 @@ func getActivePlatformSiteChannels(group string) ([]*Channel, error) {
 		channelIDs = append(channelIDs, channel.Id)
 	}
 	var accounts []PlatformSiteAccount
-	if err := DB.Where(
-		"channel_id IN ? AND sync_status = ? AND disabled_at = ?",
-		channelIDs,
-		UpstreamSiteSyncSuccess,
-		0,
-	).Find(&accounts).Error; err != nil {
+	if err := DB.Where("channel_id IN ?", channelIDs).Find(&accounts).Error; err != nil {
 		return nil, err
 	}
 	activeAccountIDs := make(map[int]struct{}, len(accounts))
 	for _, account := range accounts {
+		if !PlatformSiteSnapshotUsable(&account) {
+			continue
+		}
 		activeAccountIDs[account.ChannelID] = struct{}{}
 	}
 
