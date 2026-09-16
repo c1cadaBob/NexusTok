@@ -270,14 +270,57 @@ function LastSyncCell({ timestamp }: { timestamp: number }) {
 function UpstreamKeyStatusBadge({ upstreamKey }: { upstreamKey: UpstreamKey }) {
   const { t } = useTranslation()
   const config = getUpstreamKeyStatusConfig(upstreamKey.status)
+  let availabilityLabel = t(config.label)
+  let availabilityVariant: StatusBadgeProps['variant'] = config.variant
+  switch (upstreamKey.availability_reason) {
+    case 'credential_unavailable':
+      availabilityLabel = t('Credential unavailable')
+      availabilityVariant = 'danger'
+      break
+    case 'models_unavailable':
+      availabilityLabel = t('Model capability unavailable')
+      break
+    case 'snapshot_only':
+      availabilityLabel = t('Historical snapshot')
+      break
+    case 'missing':
+      availabilityLabel = t('Missing')
+      break
+    case 'expired':
+      availabilityLabel = t('Expired')
+      break
+    case 'quota_exhausted':
+      availabilityLabel = t('Quota exhausted')
+      break
+    case 'upstream_disabled':
+      availabilityLabel = t('Upstream disabled')
+      break
+    case 'manual_disabled':
+      availabilityLabel = t('Manually disabled')
+      break
+  }
 
   return (
-    <StatusBadge
-      label={t(config.label)}
-      variant={config.variant}
-      size='sm'
-      copyable={false}
-    />
+    <div className='flex flex-wrap items-center justify-center gap-1'>
+      <StatusBadge
+        label={
+          upstreamKey.routable === true
+            ? t('Routable')
+            : availabilityLabel
+        }
+        variant={upstreamKey.routable === true ? 'success' : availabilityVariant}
+        size='sm'
+        copyable={false}
+      />
+      {upstreamKey.snapshot_only && (
+        <StatusBadge
+          label={t('Historical snapshot')}
+          variant='warning'
+          size='sm'
+          copyable={false}
+        />
+      )}
+    </div>
   )
 }
 

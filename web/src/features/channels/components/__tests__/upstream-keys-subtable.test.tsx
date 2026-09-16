@@ -101,6 +101,7 @@ function upstreamKey(overrides: Partial<UpstreamKey> = {}): UpstreamKey {
     weight_override: null,
     status: 1,
     last_sync_at: 1_700_000_000,
+    routable: true,
   }
   return { ...key, ...overrides }
 }
@@ -405,12 +406,14 @@ test('平台站点测试弹窗遇到禁用当前密钥时回退自动路由并�
     models: ['gpt-disabled'],
     status: 3,
     disabled_reason: '上游密钥模型能力读取失败',
+    routable: false,
   })
   const routableKey = upstreamKey({
     id: 8,
     name: 'Routable key',
     models: ['gpt-live'],
     status: 1,
+    routable: true,
   })
   const channel = {
     ...platformChannel(disabledKey),
@@ -459,6 +462,7 @@ test('平台站点测试弹窗在从未成功同步时提示先同步成功', as
     models: ['gpt-disabled'],
     status: 3,
     disabled_reason: '上游密钥读取失败',
+    routable: false,
   })
   const channel = {
     ...platformChannel(disabledKey),
@@ -501,6 +505,7 @@ test('平台站点测试弹窗在刷新失败时继续使用最近一次成功�
   const routableKey = upstreamKey({
     models: ['gpt-live'],
     status: 1,
+    routable: true,
   })
   const channel = {
     ...platformChannel(routableKey),

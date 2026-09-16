@@ -227,6 +227,7 @@ function isRoutableUpstreamKey(
 
   return (
     upstreamKey.status === ENABLED_UPSTREAM_KEY_STATUS &&
+    upstreamKey.routable === true &&
     upstreamKey.models_synced &&
     upstreamKey.models.some((model) => model.trim().length > 0)
   )

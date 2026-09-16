@@ -50,6 +50,12 @@ type UpstreamSiteStatusResponse struct {
 	ConsecutiveFailures int     `json:"consecutive_failures"`
 	KeyCount            int     `json:"key_count"`
 	RoutableKeyCount    int     `json:"routable_key_count"`
+	SnapshotUsable      bool    `json:"snapshot_usable,omitempty"`
+	UsingLastSnapshot   bool    `json:"using_last_snapshot,omitempty"`
+	CredentialAvailable bool    `json:"credential_available,omitempty"`
+	NeedsCredentialSave bool    `json:"needs_credential_save,omitempty"`
+	Routable            bool    `json:"routable"`
+	AvailabilityReason  string  `json:"availability_reason,omitempty"`
 }
 
 type UpstreamKeyResponse struct {
@@ -70,6 +76,10 @@ type UpstreamKeyResponse struct {
 	Status                  int      `json:"status"`
 	DisabledReason          string   `json:"disabled_reason"`
 	LastSyncAt              int64    `json:"last_sync_at"`
+	Routable                bool     `json:"routable"`
+	AvailabilityReason      string   `json:"availability_reason,omitempty"`
+	SnapshotOnly            bool     `json:"snapshot_only,omitempty"`
+	CredentialUnavailable   bool     `json:"credential_unavailable,omitempty"`
 }
 
 type UpstreamKeyPatchRequest struct {
@@ -211,7 +221,7 @@ func savePlatformSiteAccount(channelID int, input *PlatformSiteInput, existing *
 			credential, decryptErr := model.DecryptPlatformSiteCredential(existing.CredentialCiphertext)
 			if decryptErr != nil {
 				if !hasPlatformSiteCredentialForAuthType(&merged) {
-					return decryptErr
+					return errors.New("平台凭据无法解密，请重新保存平台凭据")
 				}
 			} else {
 				if strings.TrimSpace(merged.AuthType) == "" {
@@ -320,6 +330,18 @@ func redactBaseURL(raw string) string {
 }
 
 func platformSiteStatus(account *model.PlatformSiteAccount) UpstreamSiteStatusResponse {
+	credentialAvailable := model.PlatformSiteCredentialAvailable(account)
+	snapshotUsable := model.PlatformSiteSnapshotUsable(account)
+	usingLastSnapshot := model.PlatformSiteUsingLastSnapshot(account)
+	availabilityReason := model.UpstreamAvailabilityRoutable
+	switch {
+	case !credentialAvailable:
+		availabilityReason = model.UpstreamAvailabilityCredentialUnavailable
+	case !snapshotUsable:
+		availabilityReason = model.UpstreamAvailabilitySiteSyncUnavailable
+	case usingLastSnapshot:
+		availabilityReason = model.UpstreamAvailabilitySnapshotOnly
+	}
 	return UpstreamSiteStatusResponse{
 		ChannelID:           account.ChannelID,
 		Platform:            account.Platform,
@@ -334,6 +356,11 @@ func platformSiteStatus(account *model.PlatformSiteAccount) UpstreamSiteStatusRe
 		LastSyncAt:          account.LastSyncAt,
 		LastSyncError:       account.LastSyncError,
 		ConsecutiveFailures: account.ConsecutiveFailures,
+		SnapshotUsable:      snapshotUsable,
+		UsingLastSnapshot:   usingLastSnapshot,
+		CredentialAvailable: credentialAvailable,
+		NeedsCredentialSave: !credentialAvailable,
+		AvailabilityReason:  availabilityReason,
 	}
 }
 
@@ -374,6 +401,39 @@ func toUpstreamKeyResponse(key *model.UpstreamKey) UpstreamKeyResponse {
 	}
 }
 
+func toPlatformSiteKeyResponse(
+	key *model.UpstreamKey,
+	account *model.PlatformSiteAccount,
+	channel *model.Channel,
+) UpstreamKeyResponse {
+	response := toUpstreamKeyResponse(key)
+	response.SnapshotOnly = model.PlatformSiteUsingLastSnapshot(account)
+	if channel == nil || channel.Status != common.ChannelStatusEnabled {
+		response.Routable = false
+		response.AvailabilityReason = model.UpstreamAvailabilityManualDisabled
+		return response
+	}
+	if !model.PlatformSiteSnapshotUsable(account) {
+		response.Routable = false
+		response.AvailabilityReason = model.UpstreamAvailabilitySiteSyncUnavailable
+		return response
+	}
+	response.AvailabilityReason = key.AvailabilityReason(time.Now())
+	if response.AvailabilityReason != model.UpstreamAvailabilityRoutable {
+		response.CredentialUnavailable =
+			response.AvailabilityReason == model.UpstreamAvailabilityCredentialUnavailable
+		return response
+	}
+	if err := key.LoadSecret(); err != nil {
+		response.Routable = false
+		response.CredentialUnavailable = true
+		response.AvailabilityReason = model.UpstreamAvailabilityCredentialUnavailable
+		return response
+	}
+	response.Routable = true
+	return response
+}
+
 func upstreamKeyPreview(key *model.UpstreamKey) string {
 	if key == nil {
 		return ""
@@ -412,11 +472,15 @@ func GetUpstreamSiteStatus(c *gin.Context) {
 		for index := range keys {
 			if channel.Status == common.ChannelStatusEnabled &&
 				model.PlatformSiteSnapshotUsable(&account) &&
-				keys[index].IsRoutable(time.Now()) {
+				keys[index].IsRoutable(time.Now()) &&
+				keys[index].LoadSecret() == nil {
 				response.RoutableKeyCount++
 			}
 		}
 	}
+	response.Routable = channel.Status == common.ChannelStatusEnabled &&
+		response.SnapshotUsable &&
+		response.RoutableKeyCount > 0
 	common.ApiSuccess(c, response)
 }
 
@@ -430,6 +494,16 @@ func GetUpstreamKeys(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	var account model.PlatformSiteAccount
+	if err := model.DB.Where("channel_id = ?", channelID).First(&account).Error; err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	channel, err := getPlatformSiteChannel(channelID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	var keys []model.UpstreamKey
 	if err := model.DB.Where("channel_id = ?", channelID).Order("key_priority DESC, weight DESC, id ASC").Find(&keys).Error; err != nil {
 		common.ApiError(c, err)
@@ -437,7 +511,7 @@ func GetUpstreamKeys(c *gin.Context) {
 	}
 	result := make([]UpstreamKeyResponse, 0, len(keys))
 	for _, key := range keys {
-		result = append(result, toUpstreamKeyResponse(&key))
+		result = append(result, toPlatformSiteKeyResponse(&key, &account, channel))
 	}
 	common.ApiSuccess(c, gin.H{"items": result, "total": len(result)})
 }

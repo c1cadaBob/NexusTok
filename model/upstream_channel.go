@@ -35,6 +35,19 @@ const (
 )
 
 const (
+	UpstreamAvailabilityRoutable              = "routable"
+	UpstreamAvailabilityCredentialUnavailable = "credential_unavailable"
+	UpstreamAvailabilityModelsUnavailable     = "models_unavailable"
+	UpstreamAvailabilitySnapshotOnly          = "snapshot_only"
+	UpstreamAvailabilitySiteSyncUnavailable   = "site_sync_unavailable"
+	UpstreamAvailabilityManualDisabled        = "manual_disabled"
+	UpstreamAvailabilityUpstreamDisabled      = "upstream_disabled"
+	UpstreamAvailabilityMissing               = "missing"
+	UpstreamAvailabilityExpired               = "expired"
+	UpstreamAvailabilityQuotaExhausted        = "quota_exhausted"
+)
+
+const (
 	MinUpstreamKeyWeight       = 0
 	MaxUpstreamKeyWeight       = 2000
 	MaxUpstreamConversionRatio = 1000
@@ -163,6 +176,59 @@ func PlatformSiteSnapshotUsable(account *PlatformSiteAccount) bool {
 	}
 }
 
+func PlatformSiteUsingLastSnapshot(account *PlatformSiteAccount) bool {
+	if account == nil || account.LastSyncAt <= 0 {
+		return false
+	}
+	return account.SyncStatus == UpstreamSiteSyncFailed ||
+		account.SyncStatus == UpstreamSiteSyncRunning
+}
+
+func PlatformSiteCredentialAvailable(account *PlatformSiteAccount) bool {
+	if account == nil || strings.TrimSpace(account.CredentialCiphertext) == "" {
+		return false
+	}
+	_, err := DecryptPlatformSiteCredential(account.CredentialCiphertext)
+	return err == nil
+}
+
+func (key *UpstreamKey) AvailabilityReason(now time.Time) string {
+	if key == nil {
+		return UpstreamAvailabilityCredentialUnavailable
+	}
+	if key.Status == UpstreamKeyStatusManualDisabled {
+		return UpstreamAvailabilityManualDisabled
+	}
+	if key.Status == UpstreamKeyStatusMissing || key.MissingSince != 0 {
+		return UpstreamAvailabilityMissing
+	}
+	if key.Status != UpstreamKeyStatusEnabled {
+		switch strings.TrimSpace(key.DisabledReason) {
+		case "credential_unavailable":
+			return UpstreamAvailabilityCredentialUnavailable
+		case "models_unavailable", "上游密钥模型能力读取失败":
+			return UpstreamAvailabilityModelsUnavailable
+		case "expired", "密钥已过期":
+			return UpstreamAvailabilityExpired
+		case "quota_exhausted", "密钥剩余额度不足":
+			return UpstreamAvailabilityQuotaExhausted
+		case "upstream_disabled", "上游平台已禁用":
+			return UpstreamAvailabilityUpstreamDisabled
+		}
+		return UpstreamAvailabilityUpstreamDisabled
+	}
+	if !key.ModelsSynced || len(key.GetModels()) == 0 {
+		return UpstreamAvailabilityModelsUnavailable
+	}
+	if key.ExpiresAt != nil && !key.ExpiresAt.After(now) {
+		return UpstreamAvailabilityExpired
+	}
+	if key.RemainQuota != nil && *key.RemainQuota <= 0 {
+		return UpstreamAvailabilityQuotaExhausted
+	}
+	return UpstreamAvailabilityRoutable
+}
+
 func EncryptPlatformSiteCredential(credential PlatformSiteCredential) (string, error) {
 	payload, err := common.Marshal(credential)
 	if err != nil {
@@ -262,16 +328,7 @@ func (key *UpstreamKey) GetModels() []string {
 }
 
 func (key *UpstreamKey) IsRoutable(now time.Time) bool {
-	if key == nil || !key.ModelsSynced || key.Status != UpstreamKeyStatusEnabled {
-		return false
-	}
-	if key.MissingSince != 0 {
-		return false
-	}
-	if key.ExpiresAt != nil && !key.ExpiresAt.After(now) {
-		return false
-	}
-	return key.RemainQuota == nil || *key.RemainQuota > 0
+	return key != nil && key.AvailabilityReason(now) == UpstreamAvailabilityRoutable
 }
 
 func (key *UpstreamKey) LoadSecret() error {

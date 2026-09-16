@@ -320,12 +320,22 @@ function UpstreamSiteSyncStatusCell({ channel }: { channel: Channel }) {
   const usingLastSnapshot =
     (status.sync_status === 'failed' || status.sync_status === 'running') &&
     status.last_sync_at > 0
-  const effectiveStatusConfig = usingLastSnapshot
-    ? {
-        label: t('Using last successful snapshot'),
-        variant: 'warning' as const,
-      }
-    : statusConfig
+  const credentialUnavailable = status.needs_credential_save === true
+  let effectiveStatusConfig: {
+    label: string
+    variant: StatusBadgeProps['variant']
+  } = statusConfig
+  if (credentialUnavailable) {
+    effectiveStatusConfig = {
+      label: t('Credential unavailable; resave platform credentials'),
+      variant: 'danger' as const,
+    }
+  } else if (usingLastSnapshot) {
+    effectiveStatusConfig = {
+      label: t('Using last successful snapshot'),
+      variant: 'warning' as const,
+    }
+  }
 
   return (
     <TooltipProvider>
@@ -363,6 +373,9 @@ function UpstreamSiteSyncStatusCell({ channel }: { channel: Channel }) {
                       'Current refresh failed; using the last successful snapshot.'
                     )}
               </div>
+            )}
+            {credentialUnavailable && (
+              <div>{t('Credential cannot be decrypted; resave platform credentials.')}</div>
             )}
             {status.last_sync_error && <div>{status.last_sync_error}</div>}
           </div>

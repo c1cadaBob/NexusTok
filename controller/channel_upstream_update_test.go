@@ -493,7 +493,8 @@ func TestPatchUpstreamKeyClearsWeightWhenRestoredRatioIsFree(t *testing.T) {
 			"weight_override": null,
 			"status": 1,
 			"disabled_reason": "",
-			"last_sync_at": 0
+			"last_sync_at": 0,
+			"routable": false
 		}
 	}`, recorder.Body.String())
 
@@ -598,12 +599,18 @@ func TestGetUpstreamSiteStatusReturnsBalanceRefreshAndKeyCounts(t *testing.T) {
 		SyncStatus:      model.UpstreamSiteSyncSuccess,
 		LastSyncAt:      1_800_000_000,
 	}).Error)
+	secretCiphertext, err := model.EncryptPlatformSiteCredential(
+		model.PlatformSiteCredential{AccessToken: "synthetic-routable-key"},
+	)
+	require.NoError(t, err)
 	require.NoError(t, db.Create(&[]model.UpstreamKey{
 		{
-			ChannelID:    channel.Id,
-			ExternalID:   "routable-key",
-			ModelsSynced: true,
-			Status:       model.UpstreamKeyStatusEnabled,
+			ChannelID:        channel.Id,
+			ExternalID:       "routable-key",
+			SecretCiphertext: secretCiphertext,
+			Models:           "gpt-4o",
+			ModelsSynced:     true,
+			Status:           model.UpstreamKeyStatusEnabled,
 		},
 		{
 			ChannelID:    channel.Id,

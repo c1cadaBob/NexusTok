@@ -195,6 +195,7 @@ func (adapter *Sub2APIAdapter) Authenticate(ctx context.Context, baseURL string,
 	if adapter.client != nil {
 		session.Client = adapter.client
 	}
+	setSub2APIBrowserHeaders(session)
 	if modelBaseURL, ok := discoverSub2APIModelBaseURL(ctx, session); ok {
 		session.ModelBaseURL = modelBaseURL
 	}
@@ -209,6 +210,8 @@ func (adapter *Sub2APIAdapter) Authenticate(ctx context.Context, baseURL string,
 		}
 		if token := findToken(payload); token != "" {
 			session.Headers.Set("Authorization", bearerToken(token))
+		} else {
+			return nil, wrapPlatformSiteStage("Sub2API 登录未返回访问令牌", ErrSub2APILoginToken)
 		}
 	case model.UpstreamAuthAccessToken:
 		if credential.RefreshToken != "" {
@@ -347,12 +350,39 @@ func loginSub2APIWithPassword(ctx context.Context, session *PlatformSiteSession,
 		if err == nil {
 			return payload, nil
 		}
-		lastErr = err
+		lastErr = classifySub2APILoginError(err)
 	}
 	if lastErr == nil {
-		lastErr = fmt.Errorf("%w: Sub2API 登录失败", ErrPlatformSiteAuth)
+		lastErr = ErrSub2APILoginRequest
 	}
 	return nil, lastErr
+}
+
+func classifySub2APILoginError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, ErrPlatformSiteResponse) {
+		return fmt.Errorf("%w: %w", ErrSub2APILoginResponse, err)
+	}
+	if errors.Is(err, ErrPlatformSiteAuth) {
+		return fmt.Errorf("%w: %w", ErrSub2APILoginHTTPStatus, err)
+	}
+	return fmt.Errorf("%w: %w", ErrSub2APILoginRequest, err)
+}
+
+func setSub2APIBrowserHeaders(session *PlatformSiteSession) {
+	if session == nil {
+		return
+	}
+	parsed, err := url.Parse(session.BaseURL)
+	if err != nil {
+		return
+	}
+	origin := parsed.Scheme + "://" + parsed.Host
+	session.Headers.Set("Origin", origin)
+	session.Headers.Set("Referer", origin+"/login")
+	session.Headers.Set("User-Agent", "NexusTok-UpstreamSite/1.0")
 }
 
 func fetchNewAPICurrentUser(ctx context.Context, session *PlatformSiteSession) (any, error) {
@@ -382,7 +412,7 @@ func fetchSub2APICurrentUser(ctx context.Context, session *PlatformSiteSession) 
 	if lastErr == nil {
 		lastErr = fmt.Errorf("%w: Sub2API 当前用户接口不可用", ErrPlatformSiteAuth)
 	}
-	return nil, lastErr
+	return nil, errors.Join(ErrSub2APICurrentUser, lastErr)
 }
 
 func bearerToken(token string) string {
@@ -1235,7 +1265,7 @@ func normalizeSub2APIBaseURL(raw string) string {
 		return raw
 	}
 	switch strings.TrimRight(parsed.EscapedPath(), "/") {
-	case "/login", "/dashboard", "/register", "/setup", "/home":
+	case "", "/", "/v1", "/login", "/dashboard", "/register", "/setup", "/home":
 		parsed.Path = ""
 		parsed.RawPath = ""
 		parsed.RawQuery = ""
@@ -1275,7 +1305,7 @@ func discoverSub2APIModelBaseURL(ctx context.Context, session *PlatformSiteSessi
 	if decoded, err := url.QueryUnescape(candidate); err == nil && strings.HasPrefix(decoded, "http") {
 		candidate = decoded
 	}
-	normalized, err := normalizePlatformSiteURL(normalizeSub2APIBaseURL(candidate))
+	normalized, err := normalizePlatformSiteURL(candidate)
 	if err != nil || validatePlatformSiteURL(normalized) != nil {
 		return "", false
 	}

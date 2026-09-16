@@ -441,6 +441,12 @@ export interface UpstreamSiteStatus {
   consecutive_failures: number
   key_count?: number
   routable_key_count?: number
+  snapshot_usable?: boolean
+  using_last_snapshot?: boolean
+  credential_available?: boolean
+  needs_credential_save?: boolean
+  routable?: boolean
+  availability_reason?: string
 }
 
 export interface UpstreamKey {
@@ -461,6 +467,10 @@ export interface UpstreamKey {
   status: number
   disabled_reason?: string
   last_sync_at: number
+  routable?: boolean
+  availability_reason?: string
+  snapshot_only?: boolean
+  credential_unavailable?: boolean
 }
 
 export interface UpstreamSiteStatusResponse {

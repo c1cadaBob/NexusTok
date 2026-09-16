@@ -32,12 +32,18 @@ var (
 	ErrUnsupportedPlatformSite = errors.New("unsupported upstream platform site")
 	ErrPlatformSiteAuth        = errors.New("platform site authentication failed")
 	ErrPlatformSiteResponse    = errors.New("platform site returned an invalid response")
+	ErrPlatformSiteCredential  = errors.New("platform site credential unavailable")
+	ErrSub2APILoginRequest     = errors.New("sub2api login request failed")
+	ErrSub2APILoginHTTPStatus  = errors.New("sub2api login http status failed")
+	ErrSub2APILoginResponse    = errors.New("sub2api login response format failed")
+	ErrSub2APILoginToken       = errors.New("sub2api login token missing")
+	ErrSub2APICurrentUser      = errors.New("sub2api current user request failed")
 )
 
 const (
-	upstreamKeySyncErrorSecretUnavailable = "上游密钥读取失败"
-	upstreamKeySyncErrorModelsUnavailable = "上游密钥模型能力读取失败"
-	upstreamKeySyncErrorInvalidData       = "上游密钥数据无效"
+	upstreamKeySyncErrorSecretUnavailable = "credential_unavailable"
+	upstreamKeySyncErrorModelsUnavailable = "models_unavailable"
+	upstreamKeySyncErrorInvalidData       = "invalid_data"
 )
 
 type PlatformSiteSession struct {
@@ -475,7 +481,7 @@ func syncPlatformSite(ctx context.Context, channelID int) error {
 	var credential model.PlatformSiteCredential
 	credential, err := model.DecryptPlatformSiteCredential(account.CredentialCiphertext)
 	if err != nil {
-		err = wrapPlatformSiteStage("凭据解密", err)
+		err = wrapPlatformSiteStage("凭据解密", errors.Join(ErrPlatformSiteCredential, err))
 	}
 	if err == nil {
 		authType := strings.ToLower(strings.TrimSpace(account.AuthType))
@@ -573,6 +579,20 @@ func safeUpstreamError(err error) string {
 func SafePlatformSiteError(err error) string {
 	if err == nil {
 		return ""
+	}
+	switch {
+	case errors.Is(err, ErrPlatformSiteCredential):
+		return "平台凭据无法解密，请重新保存平台凭据"
+	case errors.Is(err, ErrSub2APILoginRequest):
+		return "Sub2API 登录请求失败"
+	case errors.Is(err, ErrSub2APILoginHTTPStatus):
+		return "Sub2API 登录 HTTP 状态失败"
+	case errors.Is(err, ErrSub2APILoginResponse):
+		return "Sub2API 登录响应格式错误"
+	case errors.Is(err, ErrSub2APILoginToken):
+		return "Sub2API 登录未返回访问令牌"
+	case errors.Is(err, ErrSub2APICurrentUser):
+		return "Sub2API 当前用户接口失败"
 	}
 	var stageErr *platformSiteStageError
 	stage := ""

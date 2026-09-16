@@ -501,6 +501,7 @@ func TestUpstreamKeyIsRoutable(t *testing.T) {
 	key := UpstreamKey{
 		Status:       UpstreamKeyStatusEnabled,
 		ModelsSynced: true,
+		Models:       "gpt-test",
 		RemainQuota:  &remaining,
 		ExpiresAt:    ptrTime(now.Add(time.Minute)),
 	}
