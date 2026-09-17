@@ -28,6 +28,22 @@ func TestGetRequestURLAlphaSearch(t *testing.T) {
 	assert.Equal(t, "https://sub2api.example/v1/alpha/search", url)
 }
 
+func TestGetRequestURLDoesNotDuplicateVersionPrefix(t *testing.T) {
+	adaptor := &Adaptor{}
+	info := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType:    constant.ChannelTypeSub2API,
+			ChannelBaseUrl: "https://sub2api.example",
+		},
+		RequestURLPath: "/v1/chat/completions",
+	}
+
+	url, err := adaptor.GetRequestURL(info)
+	require.NoError(t, err)
+	assert.Equal(t, "https://sub2api.example/v1/chat/completions", url)
+	assert.NotContains(t, url, "/v1/v1/")
+}
+
 func TestAdaptorInheritsNewAPIResponsesCompactSupport(t *testing.T) {
 	adaptor := &Adaptor{}
 	info := &relaycommon.RelayInfo{

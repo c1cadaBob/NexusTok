@@ -592,7 +592,8 @@ func UpdateChannelBalance(c *gin.Context) {
 		for index := range keys {
 			if channel.Status == common.ChannelStatusEnabled &&
 				model.PlatformSiteSnapshotUsable(&account) &&
-				keys[index].IsRoutable(time.Now()) {
+				keys[index].IsRoutable(time.Now()) &&
+				keys[index].LoadSecret() == nil {
 				routableKeyCount++
 			}
 		}

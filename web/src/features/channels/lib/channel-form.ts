@@ -49,6 +49,16 @@ const SUPPORTED_PROXY_PROTOCOLS = new Set([
   'socks5:',
   'socks5h:',
 ])
+const PLATFORM_SITE_TYPE_BY_PLATFORM = {
+  newapi: CHANNEL_TYPE_NEW_API,
+  sub2api: CHANNEL_TYPE_SUB2_API,
+} as const
+
+function platformSiteChannelType(
+  platform: keyof typeof PLATFORM_SITE_TYPE_BY_PLATFORM
+): number {
+  return PLATFORM_SITE_TYPE_BY_PLATFORM[platform]
+}
 
 function isOptionalProxyURL(value: string | undefined): boolean {
   const trimmedValue = value?.trim() || ''
@@ -308,6 +318,9 @@ export const channelFormSchema = z
   .superRefine((data, ctx) => {
     if (data.upstream_kind === 'platform_site') {
       if (![CHANNEL_TYPE_NEW_API, CHANNEL_TYPE_SUB2_API].includes(data.type)) {
+        addRequiredIssue(ctx, 'type', '平台站点仅支持 NewAPI 或 Sub2API')
+      }
+      if (data.type !== platformSiteChannelType(data.platform_site_platform)) {
         addRequiredIssue(ctx, 'type', '平台站点仅支持 NewAPI 或 Sub2API')
       }
       if (!data.base_url?.trim()) {
@@ -871,10 +884,14 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
   platform_site?: PlatformSiteInput
 } {
   const mode = formData.multi_key_mode || 'single'
+  const channelType =
+    formData.upstream_kind === 'platform_site'
+      ? platformSiteChannelType(formData.platform_site_platform)
+      : formData.type
 
   const channel: Partial<Channel> = {
     name: formData.name,
-    type: formData.type,
+    type: channelType,
     base_url: normalizeBaseUrl(formData.base_url) || null,
     key: formData.key,
     key_priority: formData.key_priority,
@@ -949,10 +966,14 @@ export function transformFormDataToUpdatePayload(
   formData: ChannelFormValues,
   channelId: number
 ): Partial<Channel> & { platform_site?: PlatformSiteInput } {
+  const channelType =
+    formData.upstream_kind === 'platform_site'
+      ? platformSiteChannelType(formData.platform_site_platform)
+      : formData.type
   const payload: Partial<Channel> & { platform_site?: PlatformSiteInput } = {
     id: channelId,
     name: formData.name,
-    type: formData.type,
+    type: channelType,
     base_url: normalizeBaseUrl(formData.base_url) || null,
     key_priority: formData.key_priority,
     conversion_ratio: formData.conversion_ratio,

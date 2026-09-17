@@ -31,6 +31,7 @@ const (
 var (
 	ErrUnsupportedPlatformSite = errors.New("unsupported upstream platform site")
 	ErrPlatformSiteAuth        = errors.New("platform site authentication failed")
+	ErrPlatformSiteHTTPStatus  = errors.New("platform site http status failed")
 	ErrPlatformSiteResponse    = errors.New("platform site returned an invalid response")
 	ErrPlatformSiteCredential  = errors.New("platform site credential unavailable")
 	ErrSub2APILoginRequest     = errors.New("sub2api login request failed")
@@ -79,10 +80,11 @@ type UpstreamKeySnapshot struct {
 }
 
 type PlatformSiteSnapshot struct {
-	Balance   float64
-	UsedQuota int64
-	Models    []string
-	Keys      []UpstreamKeySnapshot
+	Balance      float64
+	UsedQuota    int64
+	Models       []string
+	Keys         []UpstreamKeySnapshot
+	RelayBaseURL string
 }
 
 type platformSiteStageError struct {
@@ -284,7 +286,7 @@ func platformSiteRequest(
 		return nil, errors.New("平台站点响应体超过限制")
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("%w: HTTP %d", ErrPlatformSiteAuth, response.StatusCode)
+		return nil, fmt.Errorf("%w: HTTP %d", ErrPlatformSiteHTTPStatus, response.StatusCode)
 	}
 	if len(strings.TrimSpace(string(data))) == 0 {
 		return map[string]any{}, nil
@@ -858,10 +860,25 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 		}).Error; err != nil {
 			return err
 		}
-		if err := tx.Model(account).Updates(map[string]any{
+		accountUpdates := map[string]any{
 			"balance":    snapshot.Balance,
 			"used_quota": snapshot.UsedQuota,
-		}).Error; err != nil {
+		}
+		relayBaseURL := strings.TrimRight(strings.TrimSpace(snapshot.RelayBaseURL), "/")
+		if relayBaseURL == "" && account.Platform == model.PlatformSub2API {
+			relayBaseURL = strings.TrimRight(strings.TrimSpace(account.RelayBaseURL), "/")
+		}
+		if relayBaseURL != "" && account.Platform == model.PlatformSub2API {
+			accountUpdates["relay_base_url"] = relayBaseURL
+			channelBaseURL := model.NormalizeSub2APIRelayBaseURL(relayBaseURL)
+			if channelBaseURL == "" {
+				channelBaseURL = relayBaseURL
+			}
+			if err := tx.Model(&channel).Update("base_url", channelBaseURL).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Model(account).Updates(accountUpdates).Error; err != nil {
 			return err
 		}
 		if err := tx.Where("channel_id = ?", channel.Id).Delete(&model.Ability{}).Error; err != nil {

@@ -569,6 +569,39 @@ func TestSavePlatformSiteAccountAllowsCredentialReplacementWhenStoredCiphertextI
 	require.NoError(t, err)
 	assert.Equal(t, "new-user", credential.Username)
 	assert.Equal(t, "new-password", credential.Password)
+	assert.Equal(t, model.UpstreamAuthPassword, credential.AuthType)
+
+	err = savePlatformSiteAccount(channel.Id, &PlatformSiteInput{
+		Platform: model.PlatformNewAPI,
+		BaseURL:  "https://example.com",
+		AuthType: model.UpstreamAuthPassword,
+		Username: "",
+		Password: "",
+	}, &saved)
+	require.NoError(t, err)
+
+	require.NoError(t, db.Where("channel_id = ?", channel.Id).First(&saved).Error)
+	credential, err = model.DecryptPlatformSiteCredential(saved.CredentialCiphertext)
+	require.NoError(t, err)
+	assert.Equal(t, "new-user", credential.Username)
+	assert.Equal(t, "new-password", credential.Password)
+	assert.Equal(t, model.UpstreamAuthPassword, credential.AuthType)
+
+	err = savePlatformSiteAccount(channel.Id, &PlatformSiteInput{
+		Platform:    model.PlatformNewAPI,
+		BaseURL:     "https://example.com",
+		AuthType:    model.UpstreamAuthAccessToken,
+		AccessToken: "new-access-token",
+	}, &saved)
+	require.NoError(t, err)
+
+	require.NoError(t, db.Where("channel_id = ?", channel.Id).First(&saved).Error)
+	credential, err = model.DecryptPlatformSiteCredential(saved.CredentialCiphertext)
+	require.NoError(t, err)
+	assert.Equal(t, model.UpstreamAuthAccessToken, credential.AuthType)
+	assert.Equal(t, "new-access-token", credential.AccessToken)
+	assert.Empty(t, credential.Username)
+	assert.Empty(t, credential.Password)
 }
 
 func TestGetUpstreamSiteStatusReturnsBalanceRefreshAndKeyCounts(t *testing.T) {

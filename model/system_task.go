@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/c1cadaBob/NexusTok/common"
 
@@ -91,6 +92,13 @@ func GenerateSystemTaskID() (string, error) {
 }
 
 func CreateSystemTask(taskType string, payload any, state any) (*SystemTask, error) {
+	return CreateSystemTaskWithActiveKey(taskType, taskType, payload, state)
+}
+
+// CreateSystemTaskWithActiveKey 使用调用方指定的活跃键创建任务。
+// 大多数系统任务按类型全局去重，平台站点同步按渠道去重，避免一个站点
+// 的编辑操作抑制另一个站点的首次同步。
+func CreateSystemTaskWithActiveKey(taskType, activeKey string, payload any, state any) (*SystemTask, error) {
 	taskID, err := GenerateSystemTaskID()
 	if err != nil {
 		return nil, err
@@ -108,7 +116,7 @@ func CreateSystemTask(taskType string, payload any, state any) (*SystemTask, err
 		TaskID:    taskID,
 		Type:      taskType,
 		Status:    SystemTaskStatusPending,
-		ActiveKey: &taskType,
+		ActiveKey: stringPointerOrNil(activeKey),
 		Payload:   payloadText,
 		State:     stateText,
 	}
@@ -117,6 +125,24 @@ func CreateSystemTask(taskType string, payload any, state any) (*SystemTask, err
 		return nil, err
 	}
 	return task, nil
+}
+
+func GetActiveSystemTaskByActiveKey(activeKey string) (*SystemTask, error) {
+	activeKey = strings.TrimSpace(activeKey)
+	if activeKey == "" {
+		return nil, nil
+	}
+	var task SystemTask
+	err := DB.Where("active_key = ? AND status IN ?", activeKey, activeSystemTaskStatuses()).
+		Order("id desc").
+		First(&task).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &task, nil
 }
 
 func GetSystemTaskByTaskID(taskID string) (*SystemTask, error) {
@@ -460,6 +486,14 @@ func marshalSystemTaskJSON(v any) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+func stringPointerOrNil(value string) *string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 func decodeSystemTaskJSONString(data string, v any) error {

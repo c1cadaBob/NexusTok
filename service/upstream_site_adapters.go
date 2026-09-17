@@ -265,8 +265,9 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 	}
 	me := firstNestedRecord(mePayload, "user", "account", "profile")
 	snapshot := PlatformSiteSnapshot{
-		Balance:   firstFloat(me, "balance", "quota", "credit"),
-		UsedQuota: firstInt64(me, "used_quota", "quota_used", "used"),
+		Balance:      firstFloat(me, "balance", "quota", "credit"),
+		UsedQuota:    firstInt64(me, "used_quota", "quota_used", "used"),
+		RelayBaseURL: strings.TrimRight(strings.TrimSpace(session.ModelBaseURL), "/"),
 	}
 	if payload, requestErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/user/profile", nil, nil); requestErr == nil {
 		profile := firstRecord(payload)
@@ -345,12 +346,14 @@ func loginSub2APIWithPassword(ctx context.Context, session *PlatformSiteSession,
 		{"email": firstNonEmptyString(email, username), "username": username, "password": credential.Password},
 	})
 	var lastErr error
-	for _, body := range bodies {
-		payload, err := platformSiteRequest(ctx, session, http.MethodPost, "/api/v1/auth/login", nil, body)
-		if err == nil {
-			return payload, nil
+	for _, path := range []string{"/api/v1/auth/login", "/api/auth/login", "/auth/login"} {
+		for _, body := range bodies {
+			payload, err := platformSiteRequest(ctx, session, http.MethodPost, path, nil, body)
+			if err == nil {
+				return payload, nil
+			}
+			lastErr = classifySub2APILoginError(err)
 		}
-		lastErr = classifySub2APILoginError(err)
 	}
 	if lastErr == nil {
 		lastErr = ErrSub2APILoginRequest
@@ -361,6 +364,9 @@ func loginSub2APIWithPassword(ctx context.Context, session *PlatformSiteSession,
 func classifySub2APILoginError(err error) error {
 	if err == nil {
 		return nil
+	}
+	if errors.Is(err, ErrPlatformSiteHTTPStatus) {
+		return fmt.Errorf("%w: %w", ErrSub2APILoginHTTPStatus, err)
 	}
 	if errors.Is(err, ErrPlatformSiteResponse) {
 		return fmt.Errorf("%w: %w", ErrSub2APILoginResponse, err)
@@ -383,6 +389,7 @@ func setSub2APIBrowserHeaders(session *PlatformSiteSession) {
 	session.Headers.Set("Origin", origin)
 	session.Headers.Set("Referer", origin+"/login")
 	session.Headers.Set("User-Agent", "NexusTok-UpstreamSite/1.0")
+	session.Headers.Set("X-Requested-With", "XMLHttpRequest")
 }
 
 func fetchNewAPICurrentUser(ctx context.Context, session *PlatformSiteSession) (any, error) {
@@ -453,18 +460,22 @@ func refreshPlatformSiteSession(
 
 func findToken(payload any) string {
 	record := firstRecord(payload)
-	if token := firstString(record, "access_token", "token", "accessToken", "jwt"); token != "" {
+	if token := firstString(record, "access_token", "accessToken", "auth_token", "authToken", "id_token", "idToken", "token", "jwt"); token != "" {
 		return token
 	}
-	if data, ok := record["data"]; ok {
-		return findToken(data)
+	for _, key := range []string{"data", "result", "auth", "session", "user", "account", "auth_bundle"} {
+		if nested, ok := record[key]; ok {
+			if token := findToken(nested); token != "" {
+				return token
+			}
+		}
 	}
 	return ""
 }
 
 func findRefreshToken(payload any) string {
 	record := firstRecord(payload)
-	if token := firstString(record, "refresh_token", "refreshToken"); token != "" {
+	if token := firstString(record, "refresh_token", "refreshToken", "refresh"); token != "" {
 		return token
 	}
 	for _, key := range []string{"data", "result", "auth_bundle"} {
@@ -482,7 +493,7 @@ func findUserID(payload any) string {
 	if userID := firstString(record, "id", "user_id", "userId", "uid"); userID != "" {
 		return userID
 	}
-	for _, key := range []string{"data", "result", "user", "account"} {
+	for _, key := range []string{"data", "result", "user", "account", "profile", "auth"} {
 		if nested, ok := record[key]; ok {
 			if userID := findUserID(nested); userID != "" {
 				return userID
@@ -1027,9 +1038,13 @@ func fetchNewAPITokenKey(ctx context.Context, session *PlatformSiteSession, exte
 func stringsMapFromPayload(payload any) map[string]string {
 	payload = unwrapPlatformData(payload)
 	if record, ok := payload.(map[string]any); ok {
-		if keys, exists := record["keys"]; exists {
-			payload = unwrapPlatformData(keys)
-			record, _ = payload.(map[string]any)
+		for _, field := range []string{"keys", "data", "items", "list", "records", "rows"} {
+			if nested, exists := record[field]; exists {
+				candidate := stringsMapFromPayload(nested)
+				if len(candidate) > 0 {
+					return candidate
+				}
+			}
 		}
 		result := make(map[string]string, len(record))
 		for key, value := range record {
@@ -1112,6 +1127,16 @@ func fetchSub2APIKeys(ctx context.Context, session *PlatformSiteSession, rates m
 			}
 			secret := firstString(item, "key", "api_key", "token")
 			if secret == "" || strings.Contains(secret, "*") {
+				detail, detailErr := fetchSub2APIKeyDetail(ctx, session, externalID)
+				if detailErr == nil {
+					if len(keySnapshot.Models) == 0 {
+						keySnapshot.Models = modelsFromRecord(detail)
+						keySnapshot.ModelsSynced = len(keySnapshot.Models) > 0
+					}
+					secret = stringFromPayload(detail)
+				}
+			}
+			if secret == "" || strings.Contains(secret, "*") {
 				keySnapshot.SyncError = upstreamKeySyncErrorSecretUnavailable
 				result = append(result, keySnapshot)
 				continue
@@ -1133,6 +1158,32 @@ func fetchSub2APIKeys(ctx context.Context, session *PlatformSiteSession, rates m
 		}
 	}
 	return result, nil
+}
+
+func fetchSub2APIKeyDetail(
+	ctx context.Context,
+	session *PlatformSiteSession,
+	externalID string,
+) (map[string]any, error) {
+	if strings.TrimSpace(externalID) == "" {
+		return nil, errors.New("Sub2API 密钥 ID 为空")
+	}
+	payload, err := platformSiteRequest(
+		ctx,
+		session,
+		http.MethodGet,
+		"/api/v1/keys/"+url.PathEscape(externalID),
+		nil,
+		nil,
+	)
+	if err != nil {
+		return nil, err
+	}
+	record := firstRecord(payload)
+	if len(record) == 0 {
+		return nil, fmt.Errorf("%w: Sub2API 密钥详情为空", ErrPlatformSiteResponse)
+	}
+	return record, nil
 }
 
 func fetchSub2APIAdminKeys(ctx context.Context, session *PlatformSiteSession, rates map[string]float64) ([]UpstreamKeySnapshot, error) {
@@ -1302,8 +1353,15 @@ func discoverSub2APIModelBaseURL(ctx context.Context, session *PlatformSiteSessi
 		return "", false
 	}
 	candidate := strings.TrimSpace(strings.ReplaceAll(match[1], `\/`, `/`))
-	if decoded, err := url.QueryUnescape(candidate); err == nil && strings.HasPrefix(decoded, "http") {
+	if decoded, err := url.QueryUnescape(candidate); err == nil {
 		candidate = decoded
+	}
+	if parsedCandidate, err := url.Parse(candidate); err == nil && !parsedCandidate.IsAbs() {
+		baseURL, baseErr := url.Parse(session.BaseURL)
+		if baseErr != nil {
+			return "", false
+		}
+		candidate = baseURL.ResolveReference(parsedCandidate).String()
 	}
 	normalized, err := normalizePlatformSiteURL(candidate)
 	if err != nil || validatePlatformSiteURL(normalized) != nil {

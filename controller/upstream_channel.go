@@ -691,8 +691,7 @@ func EnqueueUpstreamSiteSync(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	payload := map[string]any{"channel_id": channelID}
-	task, created, err := service.EnqueueSystemTask(model.SystemTaskTypeUpstreamSync, payload)
+	task, created, err := service.EnqueueUpstreamSiteSync(channelID)
 	if err != nil {
 		common.ApiError(c, err)
 		return

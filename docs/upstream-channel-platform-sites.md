@@ -93,6 +93,7 @@ weight = clamp(round(2000 - conversion_ratio * 1000), 0, 2000)
 | `channel_id` | 父渠道 ID，唯一 |
 | `platform` | `newapi`、`sub2api` |
 | `base_url` | 规范化站点地址 |
+| `relay_base_url` | Sub2API 页面发现的实际 OpenAI 兼容转发地址；管理接口仍使用 `base_url` |
 | `auth_type` | `password`、`access_token`、`admin_key`、`cookie` |
 | `credential_ciphertext` | 加密后的凭据对象 |
 | `credential_key_version` | 凭据加密密钥版本 |
@@ -242,17 +243,28 @@ ModelFlare、Veloera、V-API、VoAPI、Super-API、Rix-Api 和 Neo-API 派生站
 Sub2API 首期协议范围：
 
 - `/api/v1/auth/login`
+- `/api/auth/login`
+- `/auth/login`
 - `/api/v1/auth/me`
+- `/api/v1/user/profile`
 - `/api/v1/auth/refresh`
 - `/api/v1/groups/available`
 - `/api/v1/groups/rates`
 - `/api/v1/keys`
+- `/api/v1/keys/{id}`
 - `/api/v1/admin/accounts`
 - `/api/v1/admin/accounts/{id}`
 - `/api/v1/admin/accounts/data`
 - `/v1/models`
 
 适配器不能绕过验证码、交互式二次验证或站点风控。密码登录无法完成时返回可识别的认证状态，管理员可以切换为 Cookie 或令牌认证。
+
+Sub2API 管理地址和转发地址分离处理：账号、分组和密钥接口始终使用
+`base_url` 指向的管理站地址；页面配置中的 `api_base_url` 用于发现 OpenAI
+兼容转发地址。`api_base_url` 可以是绝对 URL，也可以是相对路径。相对路径会按
+同源解析，并继续执行 SSRF、重定向和关联主机校验。发现到的转发地址保存到
+`relay_base_url`，写入渠道 `base_url` 前会移除结尾 `/v1`，避免转发时形成
+`/v1/v1/...`。
 
 `PlatformSiteCredential.auth_type` 是非敏感的认证方式标识，保存后固定使用该分支：
 
@@ -347,6 +359,10 @@ POST  /api/channel/:id/upstream-keys/batch-status
 失败时返回脱敏错误，保留最近一次成功余额、模型和密钥快照，不把上游响应正文
 或凭据内容传递给前端。
 
+`routable_key_count` 只统计父渠道启用、平台快照可用、子密钥状态可路由、
+模型能力已确认且实际密钥能够解密的子密钥。无法解密的历史密钥、缺少模型能力
+或仅保留展示快照的记录不会计入可路由数量。
+
 所有接口必须经过管理员权限校验。敏感凭据查看必须经过现有安全验证机制，默认只返回指纹和掩码。
 
 ## 7. 安全要求
@@ -376,6 +392,11 @@ POST  /api/channel/:id/upstream-keys/batch-status
 - `v5.0.0-14.*`：管理员审计日志脱敏和安全事件可追踪。
 
 同时参考 OWASP Authentication、Session Management、Password Storage、OAuth、CSRF、Logging、Cryptographic Storage 和 Server Side Request Forgery Prevention Cheat Sheet。审计事件只记录站点 ID、渠道 ID、平台类型、操作类型、结果、操作者、请求 ID 和脱敏错误，不记录密码、Cookie、令牌、Admin Key、刷新令牌或实际密钥。
+
+2026-09-17 复核时通过 OWASP 官方项目页和 ASVS 仓库确认 ASVS 最新稳定版本
+仍为 `5.0.0`，发布日期为 2025-05；安全核对范围仅覆盖本功能涉及的平台凭据
+保存、管理员操作、外部站点请求边界、脱敏错误和审计日志，不宣称覆盖项目全部
+认证/会话实现。
 
 ## 8. 前端交互
 
@@ -454,3 +475,40 @@ bun run build
 - 数据库：SQLite、MySQL、PostgreSQL 的真实版本、迁移命令、连续两次迁移结果、upsert 和缺失密钥回滚结果；
 - 真实站点：NewAPI 站点倍率 `0.1`、Sub2API 站点倍率 `1`，只读采集余额、密钥、模型和倍率，输出必须脱敏；
 - 前端页面：MCP/Chrome DevTools 或 Playwright 桌面端、移动端检查结果。
+
+### 9.1 2026-09-17 修复验证记录
+
+本轮修复覆盖 NewAPI/Sub2API 平台站点同步凭据、认证方式固定、失败快照复用、
+Sub2API 转发地址发现、平台/type 表单联动、测试弹窗选取真实可路由子密钥和
+余额刷新可路由数量统计。
+
+已完成的自动化验证：
+
+```bash
+go test -p 1 ./common ./model ./service ./controller ./relay/channel/sub2api -count=1
+cd web && bun run test -- src/features/channels/lib/__tests__/new-api-channel.test.ts
+cd web && bun run test -- src/features/channels/components/__tests__/upstream-keys-subtable.test.tsx src/features/channels/components/__tests__/balance-refresh.test.tsx src/features/channels/components/drawers/__tests__/platform-site-fields.test.tsx
+cd web && bun run typecheck
+cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-drawer.tsx src/features/channels/components/drawers/platform-site-fields.tsx src/features/channels/lib/channel-form.ts src/features/channels/lib/__tests__/new-api-channel.test.ts
+```
+
+说明：
+
+- NewAPI 和 Sub2API 真实站点只读适配器测试通过本地临时环境变量执行，验证内容包含账号密码登录、余额、密钥分页、真实子密钥模型能力和站点倍率；测试不记录真实凭据、Cookie、Token 或实际密钥。
+- `go test ./common ./model ./service ./controller ./relay/channel/sub2api -count=1` 在多包并行模式下曾受历史测试全局数据库状态互相干扰，controller 单包和 `-p 1` 串行模式通过。
+- 当前仓库不存在 `src/features/channels/components/dialogs/__tests__/channel-test-dialog.test.tsx`，因此本轮未运行该文件；测试弹窗能力由后端 `controller/channel-test.go`、模型路由测试和现有前端交互检查继续覆盖。
+- 三数据库平台站点兼容测试已通过：
+  - SQLite：临时文件库；
+  - MySQL：`mysql 8.2.0` 测试容器；
+  - PostgreSQL：`PostgreSQL 15.19` 热环境容器；
+  - 命令：
+    `TEST_MYSQL_DSN=... TEST_POSTGRES_DSN=... go test ./model -run TestUpstreamChannelDatabaseCompatibility -count=1 -v`。
+- 完整后端测试已通过：`go test -p 1 ./... -count=1`。首次在前端构建前运行根包测试时因 `web/dist/index.html` 尚不存在失败，执行 `cd web && bun run build` 后复跑通过。
+- 开发容器已通过 `docker compose -f docker-compose.hot.yml up -d --build nexustok` 重建，`nexustok-api-hot` 健康检查为 `healthy`。
+- MCP/Chrome 页面验收已完成：
+  - 登录本地热环境后，在上游渠道页重新保存 NewAPI 和 Sub2API 的密码模式凭据，表单没有覆盖用户新输入的敏感字段；
+  - NewAPI 保存后通过余额刷新触发完整只读同步，历史 `credential_unavailable` 子密钥恢复为真实可解密子密钥，子密钥模型能力、倍率和权重刷新成功，站点倍率为 `0.1`，自动权重示例包含 `1900`；
+  - Sub2API 保存后通过余额刷新触发完整只读同步，余额刷新成功，子密钥恢复为可路由状态，站点倍率为 `1`，存在倍率为 `1` 的不可路由模型能力缺失子密钥展示为权重 `1000`；
+  - 测试弹窗默认使用自动路由，并且模型列表来自可路由子密钥的真实模型能力；NewAPI 测试请求已路由到上游但因上游账号余额不足返回脱敏的上游错误，Sub2API 测试请求已路由到上游但目标模型返回上游临时不可用错误；
+  - 余额刷新按钮具备加载禁用状态，刷新成功后列表、父渠道状态和子密钥状态同步更新；
+  - 桌面端和移动端均无白屏，Chrome 控制台无 error，未观察到保存前请求风暴。

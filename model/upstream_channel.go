@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"math"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -69,6 +70,8 @@ type PlatformSiteAccount struct {
 	ChannelID int    `json:"channel_id" gorm:"not null;uniqueIndex"`
 	Platform  string `json:"platform" gorm:"type:varchar(32);not null;index"`
 	BaseURL   string `json:"base_url" gorm:"type:varchar(1024);not null"`
+	// RelayBaseURL 保存平台页面发现的实际转发地址，BaseURL 始终保留管理接口地址。
+	RelayBaseURL string `json:"relay_base_url" gorm:"type:varchar(1024)"`
 	// AuthType 对旧数据库允许为空，迁移和同步会为可解密的历史凭据补齐。
 	AuthType              string  `json:"auth_type" gorm:"type:varchar(32);index"`
 	CredentialCiphertext  string  `json:"-" gorm:"type:text;not null"`
@@ -89,8 +92,8 @@ type PlatformSiteAccount struct {
 
 type UpstreamKey struct {
 	ID                      uint       `json:"id" gorm:"primaryKey"`
-	ChannelID               int        `json:"channel_id" gorm:"not null;index;uniqueIndex:idx_upstream_key_channel_external,priority:1"`
-	ExternalID              string     `json:"external_id" gorm:"type:varchar(255);not null;uniqueIndex:idx_upstream_key_channel_external,priority:2"`
+	ChannelID               int        `json:"channel_id" gorm:"not null;index;uniqueIndex:,composite:channel_external,priority:1"`
+	ExternalID              string     `json:"external_id" gorm:"type:varchar(255);not null;uniqueIndex:,composite:channel_external,priority:2"`
 	Name                    string     `json:"name" gorm:"type:varchar(255)"`
 	SecretCiphertext        string     `json:"-" gorm:"type:text;not null"`
 	SecretFingerprint       string     `json:"secret_fingerprint" gorm:"type:varchar(128);index"`
@@ -140,6 +143,31 @@ func IsPlatformSiteAuthType(authType string) bool {
 	default:
 		return false
 	}
+}
+
+// NormalizeSub2APIRelayBaseURL 将页面发现的 OpenAI 兼容端点转换为转发适配器
+// 使用的渠道基础地址。转发请求路径已经包含 /v1 前缀，而 Sub2API 页面配置
+// 常见返回值本身以 /v1 结尾。
+func NormalizeSub2APIRelayBaseURL(raw string) string {
+	normalized := strings.TrimRight(strings.TrimSpace(raw), "/")
+	if normalized == "" {
+		return ""
+	}
+	parsed, err := url.Parse(normalized)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return normalized
+	}
+	path := strings.TrimRight(parsed.Path, "/")
+	if path == "/v1" {
+		parsed.Path = ""
+		parsed.RawPath = ""
+	} else if strings.HasSuffix(path, "/v1") {
+		parsed.Path = strings.TrimSuffix(path, "/v1")
+		parsed.RawPath = ""
+	}
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return strings.TrimRight(parsed.String(), "/")
 }
 
 // InferPlatformSiteAuthType 仅用于升级旧数据和修复缺少 AuthType 的记录。

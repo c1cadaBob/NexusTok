@@ -219,6 +219,38 @@ func EnqueueSystemTask(taskType string, payload any) (*model.SystemTask, bool, e
 	return task, true, nil
 }
 
+// EnqueueUpstreamSiteSync 按渠道排队平台站点同步任务。任务执行器仍按类型串行
+// 调度，但不同渠道不再共享全局活跃任务去重键。
+func EnqueueUpstreamSiteSync(channelID int) (*model.SystemTask, bool, error) {
+	if channelID <= 0 {
+		return nil, false, errors.New("平台站点渠道 ID 无效")
+	}
+	activeKey := fmt.Sprintf("%s:%d", model.SystemTaskTypeUpstreamSync, channelID)
+	activeTask, err := model.GetActiveSystemTaskByActiveKey(activeKey)
+	if err != nil {
+		return nil, false, err
+	}
+	if activeTask != nil {
+		return activeTask, false, nil
+	}
+
+	task, err := model.CreateSystemTaskWithActiveKey(
+		model.SystemTaskTypeUpstreamSync,
+		activeKey,
+		map[string]any{"channel_id": channelID},
+		nil,
+	)
+	if err != nil {
+		activeTask, activeErr := model.GetActiveSystemTaskByActiveKey(activeKey)
+		if activeErr == nil && activeTask != nil {
+			return activeTask, false, nil
+		}
+		return nil, false, err
+	}
+	notifySystemTaskRunner()
+	return task, true, nil
+}
+
 // runSystemTaskClaimPass tries to claim one pending task per registered type
 // and dispatches each claimed task in its own goroutine so a long-running
 // handler (e.g. channel test) never blocks another type (e.g. log cleanup).

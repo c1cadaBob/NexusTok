@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +20,72 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+func TestRealPlatformSiteAdaptersReadOnly(t *testing.T) {
+	newAPIBaseURL := strings.TrimSpace(os.Getenv("NEXUSTOK_REAL_NEWAPI_BASE_URL"))
+	newAPIUsername := strings.TrimSpace(os.Getenv("NEXUSTOK_REAL_NEWAPI_USERNAME"))
+	newAPIPassword := os.Getenv("NEXUSTOK_REAL_NEWAPI_PASSWORD")
+	sub2APIBaseURL := strings.TrimSpace(os.Getenv("NEXUSTOK_REAL_SUB2API_BASE_URL"))
+	sub2APIUsername := strings.TrimSpace(os.Getenv("NEXUSTOK_REAL_SUB2API_USERNAME"))
+	sub2APIPassword := os.Getenv("NEXUSTOK_REAL_SUB2API_PASSWORD")
+	if newAPIBaseURL == "" || newAPIUsername == "" || newAPIPassword == "" ||
+		sub2APIBaseURL == "" || sub2APIUsername == "" || sub2APIPassword == "" {
+		t.Skip("未配置真实平台只读验证环境变量")
+	}
+
+	testCases := []struct {
+		name       string
+		adapter    PlatformSiteAdapter
+		baseURL    string
+		username   string
+		password   string
+		wantModels bool
+	}{
+		{
+			name:       "NewAPI",
+			adapter:    NewNewAPIAdapter(nil),
+			baseURL:    newAPIBaseURL,
+			username:   newAPIUsername,
+			password:   newAPIPassword,
+			wantModels: true,
+		},
+		{
+			name:       "Sub2API",
+			adapter:    NewSub2APIAdapter(nil),
+			baseURL:    sub2APIBaseURL,
+			username:   sub2APIUsername,
+			password:   sub2APIPassword,
+			wantModels: true,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			session, err := testCase.adapter.Authenticate(
+				context.Background(),
+				testCase.baseURL,
+				model.PlatformSiteCredential{
+					AuthType: model.UpstreamAuthPassword,
+					Username: testCase.username,
+					Password: testCase.password,
+				},
+			)
+			require.NoError(t, err)
+			snapshot, err := testCase.adapter.FetchSnapshot(context.Background(), session)
+			require.NoError(t, err)
+			require.NotEmpty(t, snapshot.Keys)
+
+			hasModels := false
+			for _, key := range snapshot.Keys {
+				if key.ModelsSynced && len(key.Models) > 0 && key.Secret != "" {
+					hasModels = true
+					break
+				}
+			}
+			assert.Equal(t, testCase.wantModels, hasModels)
+		})
+	}
+}
 
 type platformSiteRoundTripFunc func(*http.Request) (*http.Response, error)
 
@@ -328,6 +395,56 @@ func TestPlatformSitePasswordAuthenticationDoesNotDriftToTokenRefresh(t *testing
 	}
 }
 
+func TestSub2APIAdapterParsesRealLoginEnvelopeWithoutCredentialDrift(t *testing.T) {
+	loginRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v1/auth/login":
+			loginRequests++
+			body, readErr := io.ReadAll(request.Body)
+			require.NoError(t, readErr)
+			assert.Contains(t, string(body), `"email":"operator@example.com"`)
+			assert.Contains(t, string(body), `"password":"synthetic-password"`)
+			_, _ = writer.Write([]byte(`{
+				"code": 0,
+				"message": "success",
+				"data": {
+					"access_token": "synthetic-access-token",
+					"refresh_token": "synthetic-refresh-token",
+					"expires_in": 3600,
+					"token_type": "bearer",
+					"user": {}
+				}
+			}`))
+		case "/api/v1/auth/me":
+			assert.Equal(t, "Bearer synthetic-access-token", request.Header.Get("Authorization"))
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"balance":1}}`))
+		case "/api/v1/keys":
+			t.Fatalf("Authenticate 不应获取密钥列表")
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	credential := model.PlatformSiteCredential{
+		AuthType:     model.UpstreamAuthPassword,
+		Username:     "operator@example.com",
+		Password:     "synthetic-password",
+		AccessToken:  "stale-access-token",
+		RefreshToken: "stale-refresh-token",
+	}
+	session, err := NewSub2APIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		credential,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, 1, loginRequests)
+	assert.Nil(t, session.CredentialUpdate)
+}
+
 func TestPlatformSiteAccessTokenAuthenticationDoesNotFallbackToPassword(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -606,6 +723,76 @@ func TestSub2APIAdapterDiscoversRelayModelsAndTreatsZeroQuotaAsUnlimited(t *test
 	assert.Equal(t, []string{"gpt-5.5"}, snapshot.Keys[0].Models)
 	assert.True(t, snapshot.Keys[0].ModelsSynced)
 	assert.Equal(t, 1, modelRequests)
+}
+
+func TestSub2APIAdapterResolvesRelativeRelayURLFromPageConfig(t *testing.T) {
+	client := &http.Client{
+		Transport: platformSiteRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+			switch {
+			case request.Method == http.MethodGet && (request.URL.Path == "" || request.URL.Path == "/"):
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"text/html"}},
+					Body:       io.NopCloser(strings.NewReader(`<script>window.__APP_CONFIG__={"api_base_url":"/v1"}</script>`)),
+				}, nil
+			case request.Method == http.MethodPost && request.URL.Path == "/api/v1/auth/login":
+				return platformSiteJSONResponse(http.StatusOK, `{"code":0,"message":"success","data":{"access_token":"sub2api-session"}}`), nil
+			case request.Method == http.MethodGet && request.URL.Path == "/api/v1/auth/me":
+				return platformSiteJSONResponse(http.StatusOK, `{"code":0,"message":"success","data":{"balance":3}}`), nil
+			default:
+				return platformSiteJSONResponse(http.StatusNotFound, `{"code":404,"message":"not found"}`), nil
+			}
+		}),
+	}
+
+	session, err := NewSub2APIAdapter(client).Authenticate(
+		context.Background(),
+		"https://example.com/",
+		model.PlatformSiteCredential{
+			AuthType: model.UpstreamAuthPassword,
+			Username: "operator@example.com",
+			Password: "synthetic-password",
+		},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "https://example.com/v1", session.ModelBaseURL)
+}
+
+func TestSub2APIAdapterResolvesMaskedKeyFromKeyDetail(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v1/auth/me":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"balance":1}}`))
+		case "/api/v1/keys":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"items":[{"id":"key-1","name":"masked","key":"sk-****"}]}}`))
+		case "/api/v1/keys/key-1":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"id":"key-1","key":"sk-detail","models":["gpt-5.5"]}}`))
+		case "/v1/models":
+			assert.Equal(t, "Bearer sk-detail", request.Header.Get("Authorization"))
+			_, _ = writer.Write([]byte(`{"data":[{"id":"gpt-5.5"}]}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	session, err := NewSub2APIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType:    model.UpstreamAuthAccessToken,
+			AccessToken: "session-token",
+		},
+	)
+	require.NoError(t, err)
+
+	snapshot, err := NewSub2APIAdapter(server.Client()).FetchSnapshot(context.Background(), session)
+	require.NoError(t, err)
+	require.Len(t, snapshot.Keys, 1)
+	assert.Equal(t, "sk-detail", snapshot.Keys[0].Secret)
+	assert.True(t, snapshot.Keys[0].ModelsSynced)
+	assert.Equal(t, []string{"gpt-5.5"}, snapshot.Keys[0].Models)
 }
 
 func TestNewAPIAdapterReturnsUnavailableKeyWhenKeyRevealFails(t *testing.T) {

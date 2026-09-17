@@ -91,6 +91,15 @@ func selectChannelByUpstreamKey(channels []*Channel, group, modelName string) *C
 	return &channelCopy
 }
 
+// SelectRoutableUpstreamKey 为平台站点选择一个真实可路由的子密钥。返回值是
+// 填充了 SelectedUpstreamKey 的渠道副本，调用方可以继续走普通转发初始化路径。
+func SelectRoutableUpstreamKey(channel *Channel, group, modelName string) *Channel {
+	if channel == nil || channel.UpstreamKind != UpstreamKindPlatformSite {
+		return nil
+	}
+	return selectChannelByUpstreamKey([]*Channel{channel}, group, modelName)
+}
+
 func loadRoutableUpstreamKeys(channel *Channel, group, modelName string) []*UpstreamKey {
 	if channel == nil || channel.Status != common.ChannelStatusEnabled ||
 		channel.UpstreamKind != UpstreamKindPlatformSite {

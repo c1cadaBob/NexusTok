@@ -768,7 +768,7 @@ func AddChannel(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
-		_, _, _ = service.EnqueueSystemTask(model.SystemTaskTypeUpstreamSync, map[string]any{"channel_id": channel.Id})
+		_, _, _ = service.EnqueueUpstreamSiteSync(channel.Id)
 		recordManageAudit(c, "channel.upstream_site_create", map[string]any{
 			"id":       channel.Id,
 			"platform": addChannelRequest.PlatformSite.Platform,
@@ -1108,6 +1108,12 @@ func UpdateChannel(c *gin.Context) {
 			}
 			baseURL = strings.TrimRight(baseURL, "/")
 			channel.BaseURL = &baseURL
+			var account model.PlatformSiteAccount
+			if err := model.DB.Where("channel_id = ?", channel.Id).First(&account).Error; err == nil &&
+				strings.TrimSpace(account.RelayBaseURL) != "" {
+				relayBaseURL := model.NormalizeSub2APIRelayBaseURL(account.RelayBaseURL)
+				channel.BaseURL = &relayBaseURL
+			}
 			channel.Key = ""
 		}
 	}
@@ -1232,7 +1238,7 @@ func UpdateChannel(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
-		_, _, _ = service.EnqueueSystemTask(model.SystemTaskTypeUpstreamSync, map[string]any{"channel_id": channel.Id})
+		_, _, _ = service.EnqueueUpstreamSiteSync(channel.Id)
 		recordManageAudit(c, "channel.upstream_site_update", map[string]any{
 			"id":       channel.Id,
 			"platform": channel.PlatformSite.Platform,

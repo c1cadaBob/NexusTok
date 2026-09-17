@@ -180,6 +180,17 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		channelCopy := *channel
 		channelCopy.SelectedUpstreamKey = key
 		channel = &channelCopy
+	} else if channel.UpstreamKind == model.UpstreamKindPlatformSite {
+		selectedChannel := model.SelectRoutableUpstreamKey(channel, group, testModel)
+		if selectedChannel == nil || selectedChannel.SelectedUpstreamKey == nil {
+			err := errors.New("当前模型没有可用的上游子密钥")
+			return testResult{
+				context:     c,
+				localErr:    err,
+				newAPIError: types.NewError(err, types.ErrorCodeChannelNoAvailableKey),
+			}
+		}
+		channel = selectedChannel
 	}
 
 	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, testModel)

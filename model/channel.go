@@ -562,6 +562,10 @@ func (channel *Channel) GetBaseURL() string {
 	if url == "" {
 		url = constant.GetChannelBaseURL(channel.Type)
 	}
+	if channel.UpstreamKind == UpstreamKindPlatformSite &&
+		channel.Type == constant.ChannelTypeSub2API {
+		url = NormalizeSub2APIRelayBaseURL(url)
+	}
 	return url
 }
 

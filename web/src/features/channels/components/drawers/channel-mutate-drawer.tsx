@@ -620,6 +620,7 @@ export function ChannelMutateDrawer({
   const initialModelsRef = useRef<string[]>([])
   const initialModelMappingRef = useRef<string>('')
   const initialStatusCodeMappingRef = useRef<string>('')
+  const hydratedChannelKeyRef = useRef<number | 'new' | null>(null)
   const [statusCodeRiskOpen, setStatusCodeRiskOpen] = useState(false)
   const [statusCodeRiskDetailItems, setStatusCodeRiskDetailItems] = useState<
     string[]
@@ -702,6 +703,7 @@ export function ChannelMutateDrawer({
     ) as unknown as Resolver<ChannelFormValues>,
     defaultValues: CHANNEL_FORM_DEFAULT_VALUES,
   })
+  const isFormDirty = form.formState.isDirty
 
   // Watch form values for conditional rendering
   const multiKeyMode = form.watch('multi_key_mode')
@@ -1277,6 +1279,13 @@ export function ChannelMutateDrawer({
       if (isPlatformSite && !isUpstreamSiteStatusFetched) {
         return
       }
+      const hydrationKey = channelId ?? 'new'
+      if (hydratedChannelKeyRef.current === hydrationKey) {
+        return
+      }
+      if (isFormDirty) {
+        return
+      }
       const defaults = transformChannelToFormDefaults(channelData.data)
       const site = upstreamSiteData?.data
       let platformSitePlatform: 'newapi' | 'sub2api' = 'newapi'
@@ -1287,6 +1296,7 @@ export function ChannelMutateDrawer({
       }
       form.reset({
         ...defaults,
+        base_url: site?.base_url ?? defaults.base_url,
         platform_site_platform: platformSitePlatform,
         platform_site_auth_type: site?.auth_type ?? 'password',
         platform_site_recharge_amount: site?.recharge_amount ?? 0,
@@ -1309,8 +1319,13 @@ export function ChannelMutateDrawer({
       initialModelMappingRef.current = channelData.data.model_mapping || ''
       initialStatusCodeMappingRef.current =
         channelData.data.status_code_mapping || ''
+      hydratedChannelKeyRef.current = hydrationKey
     } else if (!isEditing) {
+      if (hydratedChannelKeyRef.current === 'new') {
+        return
+      }
       form.reset(CHANNEL_FORM_DEFAULT_VALUES)
+      hydratedChannelKeyRef.current = 'new'
       setAdvancedSettingsOpen(false)
       initialModelsRef.current = []
       initialModelMappingRef.current = ''
@@ -1319,7 +1334,9 @@ export function ChannelMutateDrawer({
   }, [
     isEditing,
     channelData,
+    channelId,
     form,
+    isFormDirty,
     isUpstreamSiteStatusFetched,
     upstreamSiteData,
   ])
@@ -1868,6 +1885,7 @@ export function ChannelMutateDrawer({
       onOpenChange(v)
       if (!v) {
         form.reset(CHANNEL_FORM_DEFAULT_VALUES)
+        hydratedChannelKeyRef.current = null
         advancedNavScrollPendingRef.current = false
         setActiveEditorSectionId(CHANNEL_EDITOR_SECTION_IDS.identity)
         setExpandedEditorNavItemId(undefined)

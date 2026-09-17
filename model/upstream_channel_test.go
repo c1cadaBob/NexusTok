@@ -68,6 +68,24 @@ func TestCalculateUpstreamKeyWeight(t *testing.T) {
 	}
 }
 
+func TestNormalizeSub2APIRelayBaseURLRemovesVersionSuffix(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "root version", raw: "https://relay.example/v1", want: "https://relay.example"},
+		{name: "nested version", raw: "https://relay.example/openai/v1/", want: "https://relay.example/openai"},
+		{name: "root remains unchanged", raw: "https://relay.example/", want: "https://relay.example"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, NormalizeSub2APIRelayBaseURL(test.raw))
+		})
+	}
+}
+
 func TestCalculatePlatformKeyConversionRatio(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -886,6 +904,124 @@ func TestPlatformSiteRoutingUsesModelMappingWithChildAbilities(t *testing.T) {
 	assert.Equal(t, key.ID, cached.SelectedUpstreamKey.ID)
 
 	assert.Contains(t, GetGroupEnabledModels("default"), "alias-model")
+}
+
+func TestSelectRoutableUpstreamKeyForPlatformSiteLoadsRealChildKey(t *testing.T) {
+	previousDB := DB
+	previousSecret := common.CryptoSecret
+	common.CryptoSecret = "upstream-routing-test-selection-secret"
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&Channel{},
+		&PlatformSiteAccount{},
+		&UpstreamKey{},
+		&UpstreamKeyAbility{},
+	))
+	DB = db
+	t.Cleanup(func() {
+		DB = previousDB
+		common.CryptoSecret = previousSecret
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	channel := &Channel{
+		Id:           455,
+		Name:         "test-platform",
+		Status:       common.ChannelStatusEnabled,
+		UpstreamKind: UpstreamKindPlatformSite,
+		Group:        "default",
+	}
+	require.NoError(t, db.Create(channel).Error)
+	require.NoError(t, db.Create(&PlatformSiteAccount{
+		ChannelID:  channel.Id,
+		Platform:   PlatformNewAPI,
+		SyncStatus: UpstreamSiteSyncFailed,
+		LastSyncAt: 123,
+	}).Error)
+
+	secret, err := EncryptPlatformSiteCredential(PlatformSiteCredential{AccessToken: "sk-real-child"})
+	require.NoError(t, err)
+	remaining := int64(100)
+	key := &UpstreamKey{
+		ChannelID:        channel.Id,
+		ExternalID:       "child-1",
+		SecretCiphertext: secret,
+		Models:           "gpt-5.5",
+		ModelsSynced:     true,
+		KeyPriority:      2,
+		ConversionRatio:  0.1,
+		Weight:           1900,
+		RemainQuota:      &remaining,
+		Status:           UpstreamKeyStatusEnabled,
+	}
+	require.NoError(t, db.Create(key).Error)
+	require.NoError(t, db.Create(&UpstreamKeyAbility{
+		UpstreamKeyID: key.ID,
+		Model:         "gpt-5.5",
+		Enabled:       true,
+	}).Error)
+
+	selected := SelectRoutableUpstreamKey(channel, "default", "gpt-5.5")
+	require.NotNil(t, selected)
+	require.NotNil(t, selected.SelectedUpstreamKey)
+	assert.Equal(t, key.ID, selected.SelectedUpstreamKey.ID)
+	assert.Equal(t, "sk-real-child", selected.SelectedUpstreamKey.Secret)
+}
+
+func TestSelectRoutableUpstreamKeyReturnsNilWhenModelDoesNotMatch(t *testing.T) {
+	previousDB := DB
+	previousSecret := common.CryptoSecret
+	common.CryptoSecret = "upstream-routing-model-filter-secret"
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&Channel{},
+		&PlatformSiteAccount{},
+		&UpstreamKey{},
+		&UpstreamKeyAbility{},
+	))
+	DB = db
+	t.Cleanup(func() {
+		DB = previousDB
+		common.CryptoSecret = previousSecret
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	channel := &Channel{
+		Id:           456,
+		Name:         "model-filter-platform",
+		Status:       common.ChannelStatusEnabled,
+		UpstreamKind: UpstreamKindPlatformSite,
+		Group:        "default",
+	}
+	require.NoError(t, db.Create(channel).Error)
+	require.NoError(t, db.Create(&PlatformSiteAccount{
+		ChannelID:  channel.Id,
+		Platform:   PlatformNewAPI,
+		SyncStatus: UpstreamSiteSyncSuccess,
+	}).Error)
+
+	secret, err := EncryptPlatformSiteCredential(PlatformSiteCredential{AccessToken: "sk-model-child"})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&UpstreamKey{
+		ChannelID:        channel.Id,
+		ExternalID:       "child-2",
+		SecretCiphertext: secret,
+		Models:           "gpt-4o",
+		ModelsSynced:     true,
+		Status:           UpstreamKeyStatusEnabled,
+	}).Error)
+
+	assert.Nil(t, SelectRoutableUpstreamKey(channel, "default", "gpt-5.5"))
 }
 
 func TestSelectChannelByUpstreamKeyMergesOfficialKeyChannelWithPlatformKey(t *testing.T) {

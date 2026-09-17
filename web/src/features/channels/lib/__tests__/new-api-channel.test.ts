@@ -30,6 +30,7 @@ import {
   channelFormSchema,
   transformChannelToFormDefaults,
   transformFormDataToCreatePayload,
+  transformFormDataToUpdatePayload,
 } from '../channel-form'
 import { getChannelTypeConfig } from '../channel-type-config'
 import { getChannelTypeIcon, getKeyPromptForType } from '../channel-utils'
@@ -148,6 +149,33 @@ describe('New API channel', () => {
     expect(payload.platform_site?.conversion_ratio).toBe(1)
   })
 
+  test('keeps the complete password credential in an update payload', () => {
+    const result = channelFormSchema.safeParse({
+      ...CHANNEL_FORM_DEFAULT_VALUES,
+      name: 'Updated Sub2API site',
+      type: CHANNEL_TYPE_SUB2_API,
+      upstream_kind: 'platform_site',
+      platform_site_platform: 'sub2api',
+      platform_site_auth_type: 'password',
+      platform_site_username: 'operator@example.com',
+      platform_site_password: 'synthetic-password',
+      base_url: 'https://upstream.example',
+      platform_site_recharge_amount: 1,
+      platform_site_credited_amount: 1,
+    })
+
+    expect(result.success).toBe(true)
+    if (!result.success) return
+
+    const payload = transformFormDataToUpdatePayload(result.data, 42)
+    expect(payload.platform_site).toMatchObject({
+      platform: 'sub2api',
+      auth_type: 'password',
+      username: 'operator@example.com',
+      password: 'synthetic-password',
+    })
+  })
+
   test('restricts platform sites to NewAPI and Sub2API channel types', () => {
     const result = channelFormSchema.safeParse({
       ...CHANNEL_FORM_DEFAULT_VALUES,
@@ -186,6 +214,52 @@ describe('New API channel', () => {
     })
 
     expect(result.success).toBe(true)
+  })
+
+  test('rejects mismatched platform site channel type and platform', () => {
+    const result = channelFormSchema.safeParse({
+      ...CHANNEL_FORM_DEFAULT_VALUES,
+      name: 'Mismatched platform site',
+      type: CHANNEL_TYPE_NEW_API,
+      upstream_kind: 'platform_site',
+      platform_site_platform: 'sub2api',
+      platform_site_auth_type: 'password',
+      platform_site_username: 'operator@example.com',
+      platform_site_password: 'synthetic-password',
+      base_url: 'https://upstream.example',
+      platform_site_recharge_amount: 1,
+      platform_site_credited_amount: 1,
+    })
+
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(
+        result.error.issues.some(
+          (issue) =>
+            issue.path[0] === 'type' &&
+            issue.message === '平台站点仅支持 NewAPI 或 Sub2API'
+        )
+      ).toBe(true)
+    }
+  })
+
+  test('normalizes platform site payload type from selected platform', () => {
+    const payload = transformFormDataToCreatePayload({
+      ...CHANNEL_FORM_DEFAULT_VALUES,
+      name: 'Sub2API site normalized at submit',
+      type: CHANNEL_TYPE_NEW_API,
+      upstream_kind: 'platform_site',
+      platform_site_platform: 'sub2api',
+      platform_site_auth_type: 'password',
+      platform_site_username: 'operator@example.com',
+      platform_site_password: 'synthetic-password',
+      base_url: 'https://upstream.example',
+      platform_site_recharge_amount: 1,
+      platform_site_credited_amount: 1,
+    })
+
+    expect(payload.channel.type).toBe(CHANNEL_TYPE_SUB2_API)
+    expect(payload.platform_site?.platform).toBe('sub2api')
   })
 
   test('preserves an explicit zero conversion ratio for free official keys', () => {

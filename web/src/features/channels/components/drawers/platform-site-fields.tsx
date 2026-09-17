@@ -20,6 +20,10 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 
+import {
+  CHANNEL_TYPE_NEW_API,
+  CHANNEL_TYPE_SUB2_API,
+} from '../../constants'
 import type { ChannelFormValues } from '../../lib'
 import type { UpstreamSiteStatus } from '../../types'
 
@@ -53,6 +57,14 @@ function formatPlatformRatioInput(value: number): string {
 export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
   const { t } = useTranslation()
   const form = useFormContext<ChannelFormValues>()
+  const channelType = useWatch({
+    control: form.control,
+    name: 'type',
+  })
+  const platform = useWatch({
+    control: form.control,
+    name: 'platform_site_platform',
+  })
   const authType = useWatch({
     control: form.control,
     name: 'platform_site_auth_type',
@@ -95,6 +107,22 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
     })
   }, [conversionRatio, form, previewRatio, ratioIsOverridden])
 
+  useEffect(() => {
+    if (channelType === CHANNEL_TYPE_NEW_API && platform !== 'newapi') {
+      form.setValue('platform_site_platform', 'newapi', {
+        shouldDirty: true,
+        shouldValidate: true,
+      })
+      return
+    }
+    if (channelType === CHANNEL_TYPE_SUB2_API && platform !== 'sub2api') {
+      form.setValue('platform_site_platform', 'sub2api', {
+        shouldDirty: true,
+        shouldValidate: true,
+      })
+    }
+  }, [channelType, form, platform])
+
   return (
     <fieldset
       disabled={props.disabled}
@@ -128,7 +156,19 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
               <FormLabel>{t('Platform site')}</FormLabel>
               <Select
                 value={field.value}
-                onValueChange={field.onChange}
+                onValueChange={(value) => {
+                  field.onChange(value)
+                  form.setValue(
+                    'type',
+                    value === 'sub2api'
+                      ? CHANNEL_TYPE_SUB2_API
+                      : CHANNEL_TYPE_NEW_API,
+                    {
+                      shouldDirty: true,
+                      shouldValidate: true,
+                    }
+                  )
+                }}
                 items={[
                   { value: 'newapi', label: 'NewAPI' },
                   { value: 'sub2api', label: 'Sub2API' },
@@ -157,7 +197,22 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
               <FormLabel>{t('Authentication method')}</FormLabel>
               <Select
                 value={field.value}
-                onValueChange={field.onChange}
+                onValueChange={(value) => {
+                  field.onChange(value)
+                  if (value !== 'password') {
+                    form.setValue('platform_site_username', '')
+                    form.setValue('platform_site_password', '')
+                  }
+                  if (value !== 'access_token') {
+                    form.setValue('platform_site_access_token', '')
+                  }
+                  if (value !== 'admin_key') {
+                    form.setValue('platform_site_admin_key', '')
+                  }
+                  if (value !== 'cookie') {
+                    form.setValue('platform_site_cookie', '')
+                  }
+                }}
                 items={[
                   { value: 'password', label: t('Username and password') },
                   { value: 'access_token', label: t('Access token') },
