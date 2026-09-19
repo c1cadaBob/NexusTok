@@ -31,7 +31,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
-import { BadgeListCell, StaticDataTable } from '@/components/data-table'
+import {
+  BadgeListCell,
+  StaticDataTable,
+  type StaticDataTableColumn,
+} from '@/components/data-table'
 import { Dialog } from '@/components/dialog'
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
 import { TruncatedText } from '@/components/truncated-text'
@@ -1005,7 +1009,7 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
   const batchDisabled =
     selection.isBatchUpdating || selection.selectedIdList.length === 0
 
-  const columns = useMemo(
+  const columns = useMemo<StaticDataTableColumn<UpstreamKey>[]>(
     () => [
       {
         id: 'select',
@@ -1115,8 +1119,9 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
       {
         id: 'actions',
         header: t('Actions'),
-        className: 'w-48 text-center',
-        cellClassName: 'text-center',
+        pinned: 'right',
+        className: 'w-48 min-w-48 text-center',
+        cellClassName: 'w-48 min-w-48 text-center',
         cell: (upstreamKey: UpstreamKey) => (
           <UpstreamKeyActions
             channel={props.channel}
@@ -1146,6 +1151,8 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
       <StaticDataTable
         className='bg-background rounded-md'
         tableClassName='min-w-[1320px]'
+        containerProps={{ style: { overflow: 'auto' } }}
+        tableProps={{ withContainer: false }}
         data={keys}
         columns={columns}
         getRowKey={(upstreamKey) => upstreamKey.id}

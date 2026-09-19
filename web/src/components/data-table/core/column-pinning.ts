@@ -54,7 +54,7 @@ export function getPinnedColumnMap(pinnedColumns?: DataTablePinnedColumn[]) {
   return new Map(pinnedColumns.map((column) => [column.columnId, column]))
 }
 
-function getPinnedColumnClassName(
+export function getPinnedColumnClassName(
   pinnedColumn: DataTablePinnedColumn,
   kind: 'header' | 'cell'
 ) {

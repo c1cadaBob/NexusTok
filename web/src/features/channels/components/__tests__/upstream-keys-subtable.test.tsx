@@ -154,6 +154,20 @@ test('平台站点展开区按密钥级字段展示且不暴露明文密钥', ()
   expect(screen.queryByText('sk-secret-real')).not.toBeInTheDocument()
 })
 
+test('平台站点子密钥操作列固定在表格右侧', () => {
+  renderWithProviders(<UpstreamKeysSubTable channel={platformChannel()} />)
+
+  const actionHeader = screen.getByRole('columnheader', { name: 'Actions' })
+  expect(actionHeader.className).toContain('sticky')
+  expect(actionHeader.className).toContain('right-0')
+
+  const editButton = screen.getByRole('button', { name: 'Edit' })
+  const actionCell = editButton.closest('td')
+  expect(actionCell).not.toBeNull()
+  expect(actionCell?.className).toContain('sticky')
+  expect(actionCell?.className).toContain('right-0')
+})
+
 test('平台站点卡片展开区在窄布局中保留密钥字段和操作入口', () => {
   const key = upstreamKey()
 
