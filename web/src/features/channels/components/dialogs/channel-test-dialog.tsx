@@ -22,6 +22,7 @@ import type {
   RowSelectionState,
   Table as TanStackTable,
 } from '@tanstack/react-table'
+import type { TFunction } from 'i18next'
 import {
   Check,
   CheckCircle2,
@@ -247,11 +248,43 @@ function isPlatformSiteSnapshotUsable(channel: Channel): boolean {
   )
 }
 
-function getRoutableUpstreamKeyId(upstreamKey: UpstreamKey | null | undefined) {
-  if (!upstreamKey) return null
-  if (!isRoutableUpstreamKey(upstreamKey)) return null
+function getEntryUpstreamKeyId(upstreamKey: UpstreamKey | null | undefined) {
+  return upstreamKey?.id ?? null
+}
 
-  return upstreamKey.id
+function getUpstreamKeyUnavailableReason(
+  upstreamKey: UpstreamKey | null | undefined,
+  t: TFunction
+): string | undefined {
+  if (!upstreamKey) return undefined
+  if (upstreamKey.disabled_reason) return upstreamKey.disabled_reason
+
+  switch (upstreamKey.availability_reason) {
+    case 'credential_unavailable':
+      return t('Credential unavailable')
+    case 'models_unavailable':
+      return t('Model capability unavailable')
+    case 'snapshot_only':
+      return t('Historical snapshot')
+    case 'missing':
+      return t('Missing')
+    case 'expired':
+      return t('Expired')
+    case 'quota_exhausted':
+      return t('Quota exhausted')
+    case 'upstream_disabled':
+      return t('Upstream disabled')
+    case 'manual_disabled':
+      return t('Manually disabled')
+  }
+
+  if (upstreamKey.routable === false) {
+    return upstreamKey.models_synced
+      ? t('Disabled')
+      : t('Selected upstream key has no synced models.')
+  }
+
+  return undefined
 }
 
 function uniqueModelNames(models: string[]) {
@@ -391,9 +424,12 @@ function ChannelTestDialogContent({
   })
   const [selectedUpstreamKeyId, setSelectedUpstreamKeyId] = useState<
     number | null
-  >(() => getRoutableUpstreamKeyId(currentUpstreamKey))
-  const entryUpstreamKeyId = currentUpstreamKey?.id ?? null
+  >(() => getEntryUpstreamKeyId(currentUpstreamKey))
+  const [entrySelectionUnavailableReason, setEntrySelectionUnavailableReason] =
+    useState<string | null>(null)
+  const entryUpstreamKeyId = getEntryUpstreamKeyId(currentUpstreamKey)
   const hasInitializedEntrySelectionRef = useRef(false)
+  const hasUserSelectedUpstreamKeyRef = useRef(false)
   const isPlatformSite = currentRow.upstream_kind === 'platform_site'
   const endpointSelectItems = useMemo(
     () =>
@@ -440,6 +476,7 @@ function ChannelTestDialogContent({
   const resetState = useCallback(() => {
     batchStopRequestedRef.current = true
     hasInitializedEntrySelectionRef.current = false
+    hasUserSelectedUpstreamKeyRef.current = false
     setEndpointType('auto')
     setIsStreamTest(false)
     setSearchTerm('')
@@ -454,7 +491,8 @@ function ChannelTestDialogContent({
     setIsDeletingFailed(false)
     setFailureDetails(null)
     setPagination({ pageIndex: 0, pageSize: 30 })
-    setSelectedUpstreamKeyId(getRoutableUpstreamKeyId(currentUpstreamKey))
+    setEntrySelectionUnavailableReason(null)
+    setSelectedUpstreamKeyId(getEntryUpstreamKeyId(currentUpstreamKey))
   }, [currentUpstreamKey])
 
   const upstreamKeysQuery = useQuery({
@@ -465,26 +503,23 @@ function ChannelTestDialogContent({
     staleTime: 30_000,
   })
 
-  const upstreamKeys = useMemo(
-    () => {
-      const mergedKeys = new Map(
-        [
-          ...(currentRow.upstream_keys ?? []),
-          ...(currentUpstreamKey ? [currentUpstreamKey] : []),
-        ].map((key) => [key.id, key])
-      )
+  const upstreamKeys = useMemo(() => {
+    const mergedKeys = new Map(
+      [
+        ...(currentRow.upstream_keys ?? []),
+        ...(currentUpstreamKey ? [currentUpstreamKey] : []),
+      ].map((key) => [key.id, key])
+    )
 
-      for (const key of upstreamKeysQuery.data?.data?.items ?? []) {
-        mergedKeys.set(key.id, {
-          ...mergedKeys.get(key.id),
-          ...key,
-        })
-      }
+    for (const key of upstreamKeysQuery.data?.data?.items ?? []) {
+      mergedKeys.set(key.id, {
+        ...mergedKeys.get(key.id),
+        ...key,
+      })
+    }
 
-      return [...mergedKeys.values()]
-    },
-    [currentRow.upstream_keys, currentUpstreamKey, upstreamKeysQuery.data]
-  )
+    return [...mergedKeys.values()]
+  }, [currentRow.upstream_keys, currentUpstreamKey, upstreamKeysQuery.data])
 
   const routableUpstreamKeys = useMemo(
     () =>
@@ -510,12 +545,10 @@ function ChannelTestDialogContent({
   const selectedUpstreamKey = useMemo(() => {
     if (selectedUpstreamKeyId === null) return null
 
-    const key = upstreamKeys.find((item) => item.id === selectedUpstreamKeyId)
-    return isPlatformSiteSnapshotUsable(currentRow) &&
-      isRoutableUpstreamKey(key)
-      ? key
-      : null
-  }, [currentRow, selectedUpstreamKeyId, upstreamKeys])
+    return (
+      upstreamKeys.find((item) => item.id === selectedUpstreamKeyId) ?? null
+    )
+  }, [selectedUpstreamKeyId, upstreamKeys])
 
   const upstreamKeySelectItems = useMemo(
     () => [
@@ -529,18 +562,11 @@ function ChannelTestDialogContent({
         label: key.name || key.external_id || `#${key.id}`,
         description: [
           key.key_preview || t('No key preview'),
-          isRoutableUpstreamKey(key)
-            ? undefined
-            : key.disabled_reason ||
-              (key.models_synced
-                ? t('Disabled')
-                : t('Selected upstream key has no synced models.')),
+          getUpstreamKeyUnavailableReason(key, t),
         ]
           .filter(Boolean)
           .join(' · '),
-        disabled:
-          !isPlatformSiteSnapshotUsable(currentRow) ||
-          !isRoutableUpstreamKey(key),
+        disabled: !isPlatformSiteSnapshotUsable(currentRow),
       })),
     ],
     [currentRow, t, upstreamKeys]
@@ -559,15 +585,14 @@ function ChannelTestDialogContent({
     (value: string | null) => {
       if (!value) return
 
+      hasUserSelectedUpstreamKeyRef.current = true
+      setEntrySelectionUnavailableReason(null)
       if (value === 'auto') {
         setSelectedUpstreamKeyId(null)
       } else {
         const nextKeyId = Number(value)
         const nextKey = upstreamKeys.find((key) => key.id === nextKeyId)
-        if (
-          !isPlatformSiteSnapshotUsable(currentRow) ||
-          !isRoutableUpstreamKey(nextKey)
-        ) {
+        if (!isPlatformSiteSnapshotUsable(currentRow) || !nextKey) {
           return
         }
 
@@ -586,36 +611,52 @@ function ChannelTestDialogContent({
       return
     }
     hasInitializedEntrySelectionRef.current = true
-    setSelectedUpstreamKeyId(getRoutableUpstreamKeyId(currentUpstreamKey))
+    hasUserSelectedUpstreamKeyRef.current = false
+    setEntrySelectionUnavailableReason(null)
+    setSelectedUpstreamKeyId(getEntryUpstreamKeyId(currentUpstreamKey))
   }, [currentUpstreamKey, open])
 
   useEffect(() => {
     if (selectedUpstreamKeyId === null) {
       return
     }
-    if (
-      entryUpstreamKeyId !== null &&
-      selectedUpstreamKeyId === entryUpstreamKeyId &&
-      upstreamKeys.length === 0
-    ) {
+    if (hasUserSelectedUpstreamKeyRef.current) {
       return
     }
     if (
-      !isPlatformSiteSnapshotUsable(currentRow) ||
-      !upstreamKeys.some(
-        (key) => key.id === selectedUpstreamKeyId && isRoutableUpstreamKey(key)
-      )
+      entryUpstreamKeyId === null ||
+      selectedUpstreamKeyId !== entryUpstreamKeyId
     ) {
-      setSelectedUpstreamKeyId(null)
-      resetModelTestState()
+      return
     }
+
+    const syncedKeys = upstreamKeysQuery.data?.data?.items
+    if (!syncedKeys || syncedKeys.length === 0) {
+      return
+    }
+    if (syncedKeys.some((key) => key.id === selectedUpstreamKeyId)) {
+      return
+    }
+
+    setEntrySelectionUnavailableReason(
+      getUpstreamKeyUnavailableReason(currentUpstreamKey, t) ?? t('Missing')
+    )
+    setSelectedUpstreamKeyId(null)
+    resetModelTestState()
   }, [
-    currentRow,
+    currentUpstreamKey,
     entryUpstreamKeyId,
     resetModelTestState,
     selectedUpstreamKeyId,
-    upstreamKeys,
+    t,
+    upstreamKeysQuery.data,
   ])
+
+  useEffect(() => {
+    if (selectedUpstreamKeyId !== null && entrySelectionUnavailableReason) {
+      setEntrySelectionUnavailableReason(null)
+    }
+  }, [entrySelectionUnavailableReason, selectedUpstreamKeyId])
 
   const streamDisabled = STREAM_INCOMPATIBLE_ENDPOINTS.has(endpointType)
   const effectiveStreamTest = !streamDisabled && isStreamTest
@@ -643,8 +684,10 @@ function ChannelTestDialogContent({
   const defaultTestModel = currentRow.test_model?.trim()
 
   const baseModels = useMemo(() => {
-    if (selectedUpstreamKey) {
-      return uniqueModelNames(selectedUpstreamKey.models)
+    if (selectedUpstreamKeyId !== null) {
+      return selectedUpstreamKey
+        ? uniqueModelNames(selectedUpstreamKey.models)
+        : []
     }
     if (isPlatformSite) {
       const modelsFromKeys = uniqueModelNames(
@@ -660,6 +703,7 @@ function ChannelTestDialogContent({
     isPlatformSite,
     modelsValue,
     routableUpstreamKeys,
+    selectedUpstreamKeyId,
     selectedUpstreamKey,
     upstreamKeys.length,
   ])
@@ -778,7 +822,7 @@ function ChannelTestDialogContent({
             testModel: model,
             endpointType: endpointType === 'auto' ? undefined : endpointType,
             stream: effectiveStreamTest || undefined,
-            upstreamKeyId: selectedUpstreamKey?.id,
+            upstreamKeyId: selectedUpstreamKeyId ?? undefined,
             silent,
           },
           (success, responseTime, error, errorCode) => {
@@ -819,7 +863,7 @@ function ChannelTestDialogContent({
       effectiveStreamTest,
       markModelTesting,
       refreshChannelLists,
-      selectedUpstreamKey?.id,
+      selectedUpstreamKeyId,
       t,
       updateTestResult,
     ]
@@ -1070,11 +1114,17 @@ function ChannelTestDialogContent({
   const testAllButtonLabel = isFilteringModels
     ? t('Test {{count}} matching models', { count: filteredModels.length })
     : t('Test all {{count}} models', { count: filteredModels.length })
+  const selectedUpstreamKeyUnavailableReason = getUpstreamKeyUnavailableReason(
+    selectedUpstreamKey,
+    t
+  )
   let upstreamKeyHelperText = isPlatformSite
     ? t('Auto route uses routable upstream keys.')
     : t('Auto route uses the channel model list.')
   if (upstreamKeysQuery.isFetching) {
     upstreamKeyHelperText = t('Loading upstream keys...')
+  } else if (entrySelectionUnavailableReason) {
+    upstreamKeyHelperText = entrySelectionUnavailableReason
   } else if (platformSiteSyncFailed) {
     upstreamKeyHelperText = t(
       'Please sync this platform site successfully before testing.'
@@ -1085,9 +1135,9 @@ function ChannelTestDialogContent({
         ? t('Sync is running; using the last successful snapshot.')
         : t('Current refresh failed; using the last successful snapshot.')
   } else if (selectedUpstreamKey) {
-    upstreamKeyHelperText = t(
-      'Models are filtered by the selected upstream key.'
-    )
+    upstreamKeyHelperText =
+      selectedUpstreamKeyUnavailableReason ??
+      t('Models are filtered by the selected upstream key.')
   } else if (isPlatformSite && routableUpstreamKeys.length === 0) {
     upstreamKeyHelperText = t('No routable upstream keys')
   }

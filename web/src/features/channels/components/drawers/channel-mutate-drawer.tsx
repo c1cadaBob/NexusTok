@@ -2016,10 +2016,10 @@ export function ChannelMutateDrawer({
                       className='scroll-mt-4'
                     >
                       <ChannelBasicSection>
-                        <div className='grid gap-4 lg:grid-cols-3'>
+                        <div className='grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] lg:items-start'>
                           <fieldset
                             disabled={sensitiveLocked}
-                            className='grid min-w-0 gap-4 disabled:opacity-60 lg:col-span-2 lg:grid-cols-2'
+                            className='grid min-w-0 items-start gap-4 disabled:opacity-60 lg:col-span-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]'
                           >
                             <FormField
                               control={form.control}
@@ -2064,7 +2064,7 @@ export function ChannelMutateDrawer({
                                     ]}
                                   >
                                     <FormControl>
-                                      <SelectTrigger>
+                                      <SelectTrigger className='w-full'>
                                         <SelectValue />
                                       </SelectTrigger>
                                     </FormControl>

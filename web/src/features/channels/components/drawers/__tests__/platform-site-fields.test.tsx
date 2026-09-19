@@ -16,25 +16,70 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cadabob.dev
 */
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useForm } from 'react-hook-form'
-import { expect, test, vi } from 'vitest'
+import { beforeEach, expect, test, vi } from 'vitest'
 
 import { Form } from '@/components/ui/form'
+import * as channelsApi from '@/features/channels/api'
+import { ChannelsProvider } from '@/features/channels/components/channels-provider'
 import { CHANNEL_TYPE_NEW_API } from '@/features/channels/constants'
 import {
   CHANNEL_FORM_DEFAULT_VALUES,
   transformFormDataToCreatePayload,
   type ChannelFormValues,
 } from '@/features/channels/lib'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
+import { ChannelMutateDrawer } from '../channel-mutate-drawer'
 import { PlatformSiteFields } from '../platform-site-fields'
+
+vi.mock('@/features/channels/api', async () => {
+  const actual = await vi.importActual<
+    typeof import('@/features/channels/api')
+  >('@/features/channels/api')
+  return {
+    ...actual,
+    getAllModels: vi.fn(),
+    getGroups: vi.fn(),
+    getPrefillGroups: vi.fn(),
+    getTaskPluginOptions: vi.fn(),
+  }
+})
 
 type PlatformSiteFormProps = {
   isEditing?: boolean
   onSubmit?: (values: ChannelFormValues) => void
 }
+
+let queryClient: QueryClient
+
+beforeEach(() => {
+  queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  })
+  useAuthStore.getState().auth.setUser({
+    id: 1,
+    username: 'root',
+    role: ROLE.SUPER_ADMIN,
+  })
+  vi.mocked(channelsApi.getAllModels).mockResolvedValue({
+    success: true,
+    data: [],
+  })
+  vi.mocked(channelsApi.getGroups).mockResolvedValue({
+    success: true,
+    data: ['default'],
+  })
+  vi.mocked(channelsApi.getPrefillGroups).mockResolvedValue({
+    success: true,
+    data: [],
+  })
+  vi.mocked(channelsApi.getTaskPluginOptions).mockResolvedValue([])
+})
 
 function PlatformSiteForm(props: PlatformSiteFormProps) {
   const form = useForm<ChannelFormValues>({
@@ -62,6 +107,20 @@ function PlatformSiteForm(props: PlatformSiteFormProps) {
   )
 }
 
+function renderChannelMutateDrawer() {
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <ChannelsProvider>
+        <ChannelMutateDrawer
+          open
+          onOpenChange={() => undefined}
+          currentRow={null}
+        />
+      </ChannelsProvider>
+    </QueryClientProvider>
+  )
+}
+
 async function enterNumber(
   user: ReturnType<typeof userEvent.setup>,
   input: HTMLElement,
@@ -70,6 +129,30 @@ async function enterNumber(
   await user.clear(input)
   await user.type(input, value)
 }
+
+test('基础信息三项字段在桌面端使用三列等宽且顶部对齐', async () => {
+  renderChannelMutateDrawer()
+
+  const upstreamKindLabel = await screen.findByText('Upstream channel type')
+  const fieldset = upstreamKindLabel.closest('fieldset')
+  const basicGrid = fieldset?.parentElement
+  expect(basicGrid).not.toBeNull()
+  expect(fieldset).not.toBeNull()
+
+  expect(basicGrid?.className).toContain(
+    'lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)]'
+  )
+  expect(basicGrid?.className).toContain('lg:items-start')
+  expect(fieldset?.className).toContain('items-start')
+  expect(fieldset?.className).toContain(
+    'lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]'
+  )
+
+  const upstreamKindTrigger = screen.getByRole('combobox', {
+    name: 'Upstream channel type',
+  })
+  expect(upstreamKindTrigger.className).toContain('w-full')
+})
 
 test('平台站点输入充值和到账金额后稳定预览自动倍率', async () => {
   const user = userEvent.setup()

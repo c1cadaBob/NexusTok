@@ -88,6 +88,11 @@ type UpstreamKeyEditDialogProps = {
   onOpenChange: (open: boolean) => void
 }
 
+type UpstreamKeyChannelDialog =
+  | 'test-channel'
+  | 'balance-query'
+  | 'fetch-models'
+
 function getUpstreamKeyStatusConfig(status: number): {
   label: string
   variant: StatusBadgeProps['variant']
@@ -308,11 +313,11 @@ function UpstreamKeyStatusBadge({ upstreamKey }: { upstreamKey: UpstreamKey }) {
     <div className='flex flex-wrap items-center justify-center gap-1'>
       <StatusBadge
         label={
-          upstreamKey.routable === true
-            ? t('Routable')
-            : availabilityLabel
+          upstreamKey.routable === true ? t('Routable') : availabilityLabel
         }
-        variant={upstreamKey.routable === true ? 'success' : availabilityVariant}
+        variant={
+          upstreamKey.routable === true ? 'success' : availabilityVariant
+        }
         size='sm'
         copyable={false}
       />
@@ -494,15 +499,16 @@ function UpstreamKeyActions({
     statusIcon = <PowerOff />
   }
 
-  const openChannelDialog = (
-    dialog: 'test-channel' | 'balance-query' | 'fetch-models'
-  ) => {
-    setCurrentRow(channel)
-    setCurrentUpstreamKey(upstreamKey)
-    setOpen(dialog)
-  }
+  const openChannelDialog = useCallback(
+    (dialog: UpstreamKeyChannelDialog) => {
+      setCurrentRow(channel)
+      setCurrentUpstreamKey(upstreamKey)
+      setOpen(dialog)
+    },
+    [channel, setCurrentRow, setCurrentUpstreamKey, setOpen, upstreamKey]
+  )
 
-  const handleToggleStatus = async () => {
+  const handleToggleStatus = useCallback(async () => {
     setIsToggling(true)
     try {
       const response = await batchUpdateUpstreamKeyStatus(
@@ -525,17 +531,61 @@ function UpstreamKeyActions({
     } finally {
       setIsToggling(false)
     }
-  }
+  }, [channel.id, isEnabled, queryClient, t, upstreamKey.id])
+
+  const handleOpenTestDialog = useCallback(
+    (event?: React.MouseEvent<HTMLElement>) => {
+      event?.stopPropagation()
+      openChannelDialog('test-channel')
+    },
+    [openChannelDialog]
+  )
+
+  const handleOpenBalanceDialog = useCallback(
+    (event?: React.MouseEvent<HTMLElement>) => {
+      event?.stopPropagation()
+      openChannelDialog('balance-query')
+    },
+    [openChannelDialog]
+  )
+
+  const handleOpenFetchModelsDialog = useCallback(
+    (event?: React.MouseEvent<HTMLElement>) => {
+      event?.stopPropagation()
+      openChannelDialog('fetch-models')
+    },
+    [openChannelDialog]
+  )
+
+  const handleActionAreaEvent = useCallback((event: React.SyntheticEvent) => {
+    event.stopPropagation()
+  }, [])
+
+  const handleEdit = useCallback(() => {
+    onEdit(upstreamKey)
+  }, [onEdit, upstreamKey])
+
+  const handleToggleStatusClick = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.stopPropagation()
+      void handleToggleStatus()
+    },
+    [handleToggleStatus]
+  )
 
   return (
-    <div className='flex items-center justify-center gap-1'>
+    <div
+      className='flex items-center justify-center gap-1'
+      onClick={handleActionAreaEvent}
+      onPointerDown={handleActionAreaEvent}
+    >
       <Tooltip>
         <TooltipTrigger
           render={
             <Button
               variant='ghost'
               size='icon-sm'
-              onClick={() => openChannelDialog('test-channel')}
+              onClick={handleOpenTestDialog}
               aria-label={t('Test Connection')}
             />
           }
@@ -551,7 +601,7 @@ function UpstreamKeyActions({
             <Button
               variant='ghost'
               size='icon-sm'
-              onClick={handleToggleStatus}
+              onClick={handleToggleStatusClick}
               disabled={isToggling}
               aria-label={isEnabled ? t('Disable') : t('Enable')}
               className={cn(
@@ -575,7 +625,7 @@ function UpstreamKeyActions({
             <Button
               variant='ghost'
               size='icon-sm'
-              onClick={() => onEdit(upstreamKey)}
+              onClick={handleEdit}
               aria-label={t('Edit')}
             />
           }
@@ -599,21 +649,19 @@ function UpstreamKeyActions({
         </DropdownMenuTrigger>
         <DropdownMenuContent align='end' className='w-48'>
           <DropdownMenuGroup>
-            <DropdownMenuItem onClick={() => openChannelDialog('test-channel')}>
+            <DropdownMenuItem onClick={handleOpenTestDialog}>
               {t('Test Connection')}
               <DropdownMenuShortcut>
                 <Gauge size={16} />
               </DropdownMenuShortcut>
             </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={() => openChannelDialog('balance-query')}
-            >
+            <DropdownMenuItem onClick={handleOpenBalanceDialog}>
               {t('Query Balance')}
               <DropdownMenuShortcut>
                 <DollarSign size={16} />
               </DropdownMenuShortcut>
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => openChannelDialog('fetch-models')}>
+            <DropdownMenuItem onClick={handleOpenFetchModelsDialog}>
               {t('Fetch Models')}
               <DropdownMenuShortcut>
                 <Download size={16} />
@@ -1135,7 +1183,7 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
   )
 
   return (
-    <div className='border-border bg-muted/20 w-full min-w-0 max-w-full overflow-visible border-y px-3 py-3'>
+    <div className='border-border bg-muted/20 w-full max-w-full min-w-0 overflow-visible border-y px-3 py-3'>
       {keys.length > 0 && (
         <UpstreamKeyBatchToolbar
           allSelected={selection.allSelected}
@@ -1149,7 +1197,7 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
         />
       )}
       <StaticDataTable
-        className='bg-background relative min-w-0 max-w-full overflow-visible rounded-md'
+        className='bg-background relative max-w-full min-w-0 overflow-visible rounded-md'
         tableClassName='w-max min-w-full'
         tableProps={{ withContainer: false }}
         data={keys}
