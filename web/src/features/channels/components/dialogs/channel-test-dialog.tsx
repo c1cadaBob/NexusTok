@@ -392,6 +392,8 @@ function ChannelTestDialogContent({
   const [selectedUpstreamKeyId, setSelectedUpstreamKeyId] = useState<
     number | null
   >(() => getRoutableUpstreamKeyId(currentUpstreamKey))
+  const entryUpstreamKeyId = currentUpstreamKey?.id ?? null
+  const hasInitializedEntrySelectionRef = useRef(false)
   const isPlatformSite = currentRow.upstream_kind === 'platform_site'
   const endpointSelectItems = useMemo(
     () =>
@@ -437,6 +439,7 @@ function ChannelTestDialogContent({
 
   const resetState = useCallback(() => {
     batchStopRequestedRef.current = true
+    hasInitializedEntrySelectionRef.current = false
     setEndpointType('auto')
     setIsStreamTest(false)
     setSearchTerm('')
@@ -463,8 +466,24 @@ function ChannelTestDialogContent({
   })
 
   const upstreamKeys = useMemo(
-    () => upstreamKeysQuery.data?.data?.items ?? currentRow.upstream_keys ?? [],
-    [currentRow.upstream_keys, upstreamKeysQuery.data]
+    () => {
+      const mergedKeys = new Map(
+        [
+          ...(currentRow.upstream_keys ?? []),
+          ...(currentUpstreamKey ? [currentUpstreamKey] : []),
+        ].map((key) => [key.id, key])
+      )
+
+      for (const key of upstreamKeysQuery.data?.data?.items ?? []) {
+        mergedKeys.set(key.id, {
+          ...mergedKeys.get(key.id),
+          ...key,
+        })
+      }
+
+      return [...mergedKeys.values()]
+    },
+    [currentRow.upstream_keys, currentUpstreamKey, upstreamKeysQuery.data]
   )
 
   const routableUpstreamKeys = useMemo(
@@ -563,11 +582,22 @@ function ChannelTestDialogContent({
     if (!open) {
       return
     }
+    if (hasInitializedEntrySelectionRef.current) {
+      return
+    }
+    hasInitializedEntrySelectionRef.current = true
     setSelectedUpstreamKeyId(getRoutableUpstreamKeyId(currentUpstreamKey))
   }, [currentUpstreamKey, open])
 
   useEffect(() => {
     if (selectedUpstreamKeyId === null) {
+      return
+    }
+    if (
+      entryUpstreamKeyId !== null &&
+      selectedUpstreamKeyId === entryUpstreamKeyId &&
+      upstreamKeys.length === 0
+    ) {
       return
     }
     if (
@@ -579,7 +609,13 @@ function ChannelTestDialogContent({
       setSelectedUpstreamKeyId(null)
       resetModelTestState()
     }
-  }, [currentRow, resetModelTestState, selectedUpstreamKeyId, upstreamKeys])
+  }, [
+    currentRow,
+    entryUpstreamKeyId,
+    resetModelTestState,
+    selectedUpstreamKeyId,
+    upstreamKeys,
+  ])
 
   const streamDisabled = STREAM_INCOMPATIBLE_ENDPOINTS.has(endpointType)
   const effectiveStreamTest = !streamDisabled && isStreamTest
@@ -1222,7 +1258,7 @@ function ChannelTestDialogContent({
           </Button>
         }
       >
-        <div className='max-h-[78vh] space-y-4 overflow-y-auto py-4 pr-1'>
+        <div className='space-y-4 py-4 pr-1'>
           {isPlatformSite && (
             <div className='grid gap-2'>
               <Label htmlFor='upstream-test-key'>{t('Test key')}</Label>
@@ -1360,7 +1396,7 @@ function ChannelTestDialogContent({
                   role: 'region',
                   'aria-label': t('Testable models'),
                 }}
-                tableContainerClassName='max-h-90 overflow-auto **:data-[slot=table-container]:overflow-visible'
+                tableContainerClassName='max-h-90 overflow-y-auto overscroll-contain **:data-[slot=table-container]:overflow-x-auto **:data-[slot=table-container]:overflow-y-hidden'
                 tableClassName='w-max min-w-full table-auto'
                 pinnedColumns={[
                   {

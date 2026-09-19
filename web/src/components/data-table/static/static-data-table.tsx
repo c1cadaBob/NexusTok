@@ -83,7 +83,7 @@ export function StaticDataTable<TData = unknown>(
 
   return (
     <div
-      className={cn(staticDataTableClassNames.container, className)}
+      className={cn('relative', staticDataTableClassNames.container, className)}
       {...containerProps}
     >
       <Table className={tableClassName} {...tableProps}>
@@ -127,6 +127,7 @@ function StaticDataTableWithColumns<TData>({
           {columns.map((column) => (
             <TableHead
               key={column.id}
+              data-column-id={column.id}
               className={cn(
                 column.className,
                 getStaticPinnedColumnClassName(column, 'header')
@@ -177,6 +178,7 @@ function StaticDataTableRow<TData>({
       {columns.map((column) => (
         <TableCell
           key={column.id}
+          data-column-id={column.id}
           className={cn(
             'max-w-full min-w-0 overflow-hidden',
             getStaticCellClassName(column, row, index),

@@ -1135,7 +1135,7 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
   )
 
   return (
-    <div className='border-border bg-muted/20 border-y px-3 py-3'>
+    <div className='border-border bg-muted/20 w-full min-w-0 max-w-full overflow-visible border-y px-3 py-3'>
       {keys.length > 0 && (
         <UpstreamKeyBatchToolbar
           allSelected={selection.allSelected}
@@ -1149,9 +1149,8 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
         />
       )}
       <StaticDataTable
-        className='bg-background rounded-md'
-        tableClassName='min-w-[1320px]'
-        containerProps={{ style: { overflow: 'auto' } }}
+        className='bg-background relative min-w-0 max-w-full overflow-visible rounded-md'
+        tableClassName='w-max min-w-full'
         tableProps={{ withContainer: false }}
         data={keys}
         columns={columns}

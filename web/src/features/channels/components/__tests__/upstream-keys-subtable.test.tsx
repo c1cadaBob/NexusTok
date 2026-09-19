@@ -380,6 +380,56 @@ test('平台站点测试弹窗按所选密钥过滤模型并透传 upstream_key_
   })
 })
 
+test('平台站点从渠道行进入测试时默认使用自动路由', async () => {
+  const user = userEvent.setup()
+  const key = upstreamKey()
+  vi.mocked(channelsApi.getUpstreamKeys).mockResolvedValue({
+    success: true,
+    data: { items: [key], total: 1 },
+  })
+
+  renderWithProviders(<ChannelTestHarness channel={platformChannel(key)} />)
+
+  expect(await screen.findByDisplayValue('Auto route')).toBeInTheDocument()
+
+  await user.keyboard('{Escape}')
+  const testButton = screen
+    .getAllByRole('button', { name: 'Test Connection' })
+    .at(-1)
+  if (!testButton) {
+    throw new Error('未找到模型测试按钮')
+  }
+  await user.click(testButton)
+
+  await waitFor(() => {
+    expect(channelsLib.handleTestChannel).toHaveBeenCalledWith(
+      101,
+      expect.objectContaining({
+        testModel: 'gpt-key-only',
+        upstreamKeyId: undefined,
+      }),
+      expect.any(Function)
+    )
+  })
+})
+
+test('平台站点密钥行入口在异步结果缺少该密钥时仍保留预选', async () => {
+  const key = upstreamKey()
+  const channel = platformChannel(key)
+  channel.upstream_keys = []
+  vi.mocked(channelsApi.getUpstreamKeys).mockResolvedValue({
+    success: true,
+    data: { items: [], total: 0 },
+  })
+
+  renderWithProviders(
+    <ChannelTestHarness channel={channel} upstreamKey={key} />
+  )
+
+  expect(await screen.findByDisplayValue('Production key')).toBeInTheDocument()
+  expect(await screen.findByText('gpt-key-only')).toBeInTheDocument()
+})
+
 test('平台站点首次同步失败时不展示旧子密钥模型', async () => {
   const key = upstreamKey()
   const channel = platformChannel(key, {
