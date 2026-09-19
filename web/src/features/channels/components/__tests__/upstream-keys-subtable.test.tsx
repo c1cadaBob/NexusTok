@@ -354,8 +354,12 @@ test('平台站点测试弹窗按所选密钥过滤模型并透传 upstream_key_
   )
 
   expect(await screen.findByText('Test key')).toBeInTheDocument()
+  expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
   expect(await screen.findByText('gpt-key-only')).toBeInTheDocument()
   expect(screen.queryByText('gpt-parent')).not.toBeInTheDocument()
+
+  await user.click(screen.getByRole('combobox', { name: 'Test key' }))
+  expect(await screen.findByRole('listbox')).toBeInTheDocument()
 
   await user.keyboard('{Escape}')
 

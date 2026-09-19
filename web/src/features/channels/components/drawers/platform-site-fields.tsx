@@ -20,10 +20,7 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 
-import {
-  CHANNEL_TYPE_NEW_API,
-  CHANNEL_TYPE_SUB2_API,
-} from '../../constants'
+import { CHANNEL_TYPE_NEW_API, CHANNEL_TYPE_SUB2_API } from '../../constants'
 import type { ChannelFormValues } from '../../lib'
 import type { UpstreamSiteStatus } from '../../types'
 
@@ -289,9 +286,6 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
                     {...field}
                   />
                 </FormControl>
-                <FormDescription>
-                  {t('Leave blank when editing to keep the saved credential.')}
-                </FormDescription>
                 <FormMessage />
               </FormItem>
             )}
@@ -347,7 +341,7 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
         />
       )}
 
-      <div className='grid gap-4 sm:grid-cols-3'>
+      <div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-4'>
         <FormField
           control={form.control}
           name='platform_site_recharge_amount'
@@ -394,86 +388,63 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
             </FormItem>
           )}
         />
-        <div className='space-y-2'>
-          <FormField
-            control={form.control}
-            name='platform_site_conversion_ratio'
-            render={({ field }) => {
-              let ratioDescription = t(
-                'Enter recharge and credited amounts to calculate the ratio.'
-              )
-              if (previewRatio !== undefined) {
-                if (ratioIsOverridden) {
-                  ratioDescription = t('Manual ratio override: {{ratio}}.', {
-                    ratio: conversionRatio.toFixed(3),
-                  })
-                } else {
-                  ratioDescription = t(
-                    'Automatic ratio: {{ratio}}. Edit this field to override.',
-                    { ratio: previewRatio.toFixed(3) }
-                  )
-                }
-              }
-
-              return (
-                <FormItem>
-                  <FormLabel>{t('Conversion ratio')}</FormLabel>
-                  <FormControl>
-                    <Input
-                      type='number'
-                      min='0'
-                      step='0.001'
-                      {...field}
-                      value={formatPlatformRatioInput(field.value)}
-                      onChange={(event) => {
-                        field.onChange(
-                          normalizePlatformRatio(
-                            normalizePlatformNumber(
-                              event.target.valueAsNumber
-                            )
-                          )
-                        )
-                        form.setValue(
-                          'platform_site_conversion_ratio_override',
-                          true,
-                          { shouldDirty: true }
-                        )
-                      }}
-                    />
-                  </FormControl>
-                  <FormDescription>{ratioDescription}</FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )
-            }}
-          />
-          <FormField
-            control={form.control}
-            name='platform_site_conversion_ratio_override'
-            render={({ field }) => (
-              <FormItem className='flex items-center justify-between gap-3 rounded-md border p-2'>
-                <FormLabel className='cursor-pointer text-xs'>
-                  {t('Override conversion ratio')}
-                </FormLabel>
-                <FormControl>
-                  <Switch
-                    checked={field.value}
-                    onCheckedChange={(checked) => {
-                      field.onChange(checked)
-                      if (!checked) {
-                        form.setValue(
-                          'platform_site_conversion_ratio',
-                          previewRatio ?? 1,
-                          { shouldDirty: true, shouldValidate: false }
-                        )
-                      }
-                    }}
-                  />
-                </FormControl>
-              </FormItem>
-            )}
-          />
-        </div>
+        <FormField
+          control={form.control}
+          name='platform_site_conversion_ratio'
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>{t('Conversion ratio')}</FormLabel>
+              <FormControl>
+                <Input
+                  type='number'
+                  min='0'
+                  step='0.001'
+                  {...field}
+                  value={formatPlatformRatioInput(field.value)}
+                  onChange={(event) => {
+                    field.onChange(
+                      normalizePlatformRatio(
+                        normalizePlatformNumber(event.target.valueAsNumber)
+                      )
+                    )
+                    form.setValue(
+                      'platform_site_conversion_ratio_override',
+                      true,
+                      { shouldDirty: true }
+                    )
+                  }}
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={form.control}
+          name='platform_site_conversion_ratio_override'
+          render={({ field }) => (
+            <FormItem className='flex min-h-9 items-center justify-between gap-3 self-end rounded-md border p-2'>
+              <FormLabel className='cursor-pointer text-xs'>
+                {t('Override conversion ratio')}
+              </FormLabel>
+              <FormControl>
+                <Switch
+                  checked={field.value}
+                  onCheckedChange={(checked) => {
+                    field.onChange(checked)
+                    if (!checked) {
+                      form.setValue(
+                        'platform_site_conversion_ratio',
+                        previewRatio ?? 1,
+                        { shouldDirty: true, shouldValidate: false }
+                      )
+                    }
+                  }}
+                />
+              </FormControl>
+            </FormItem>
+          )}
+        />
       </div>
     </fieldset>
   )

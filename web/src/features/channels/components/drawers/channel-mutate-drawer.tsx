@@ -2016,16 +2016,16 @@ export function ChannelMutateDrawer({
                       className='scroll-mt-4'
                     >
                       <ChannelBasicSection>
-                        <div className='grid gap-4 sm:grid-cols-2'>
+                        <div className='grid gap-4 lg:grid-cols-3'>
                           <fieldset
                             disabled={sensitiveLocked}
-                            className='min-w-0 disabled:opacity-60'
+                            className='grid min-w-0 gap-4 disabled:opacity-60 lg:col-span-2 lg:grid-cols-2'
                           >
                             <FormField
                               control={form.control}
                               name='upstream_kind'
                               render={({ field }) => (
-                                <FormItem className='sm:col-span-2'>
+                                <FormItem>
                                   <FormLabel>
                                     {t('Upstream channel type')}
                                   </FormLabel>
@@ -2136,12 +2136,29 @@ export function ChannelMutateDrawer({
                             />
                           </fieldset>
 
+                          <FormField
+                            control={form.control}
+                            name='name'
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>{t('Name *')}</FormLabel>
+                                <FormControl>
+                                  <Input
+                                    placeholder={t(FIELD_PLACEHOLDERS.NAME)}
+                                    {...field}
+                                  />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+
                           {currentType === CHANNEL_TYPE_TASK_PLUGIN && (
                             <FormField
                               control={form.control}
                               name='task_plugin_key'
                               render={({ field }) => (
-                                <FormItem>
+                                <FormItem className='lg:col-span-3'>
                                   <FormLabel>{t('Task plugin *')}</FormLabel>
                                   {canBindTaskPlugin ? (
                                     <FormControl>
@@ -2222,23 +2239,6 @@ export function ChannelMutateDrawer({
                               )}
                             />
                           )}
-
-                          <FormField
-                            control={form.control}
-                            name='name'
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>{t('Name *')}</FormLabel>
-                                <FormControl>
-                                  <Input
-                                    placeholder={t(FIELD_PLACEHOLDERS.NAME)}
-                                    {...field}
-                                  />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
                         </div>
 
                         {!isEditing && (

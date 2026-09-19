@@ -1243,6 +1243,7 @@ function ChannelTestDialogContent({
       <Dialog
         open={open}
         onOpenChange={handleDialogOpenChange}
+        initialFocus={false}
         title={
           <span className='inline-flex max-w-full min-w-0 items-center gap-1.5'>
             <span className='shrink-0'>{t('Test Channel Connection')}:</span>

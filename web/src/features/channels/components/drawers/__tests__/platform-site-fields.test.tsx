@@ -95,8 +95,11 @@ test('平台站点输入充值和到账金额后稳定预览自动倍率', async
     screen.getByRole('switch', { name: 'Override conversion ratio' })
   ).not.toBeChecked()
   expect(
-    screen.getByText('Automatic ratio: 0.100. Edit this field to override.')
-  ).toBeInTheDocument()
+    screen.queryByText('Automatic ratio: 0.100. Edit this field to override.')
+  ).not.toBeInTheDocument()
+  expect(
+    screen.queryByText('Leave blank when editing to keep the saved credential.')
+  ).not.toBeInTheDocument()
 })
 
 test('连续输入到账金额字符不会产生递归渲染并保持有限倍率', async () => {
@@ -160,10 +163,10 @@ test('到账金额清空或为零时不写入 NaN', async () => {
   expect(ratioInput).toHaveValue(1)
   expect(ratioInput).not.toHaveValue(Number.NaN)
   expect(
-    screen.getByText(
+    screen.queryByText(
       'Enter recharge and credited amounts to calculate the ratio.'
     )
-  ).toBeInTheDocument()
+  ).not.toBeInTheDocument()
 })
 
 test('手动编辑转换倍率后金额变化不会覆盖手动倍率', async () => {
@@ -193,7 +196,9 @@ test('手动编辑转换倍率后金额变化不会覆盖手动倍率', async ()
   )
 
   expect(ratioInput).toHaveValue(0.25)
-  expect(screen.getByText('Manual ratio override: 0.250.')).toBeInTheDocument()
+  expect(
+    screen.queryByText('Manual ratio override: 0.250.')
+  ).not.toBeInTheDocument()
 })
 
 test('关闭转换倍率覆盖后恢复自动倍率', async () => {
