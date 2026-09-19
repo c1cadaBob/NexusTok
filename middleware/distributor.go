@@ -667,16 +667,46 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	common.SetContextKey(c, constant.ContextKeyChannelModelMapping, channel.GetModelMapping())
 	common.SetContextKey(c, constant.ContextKeyChannelStatusCodeMapping, channel.GetStatusCodeMapping())
 
+	if channel.SelectedRoutingKey == nil {
+		group := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+		if group == "" {
+			group = c.GetString("group")
+		}
+		selected := model.SelectRoutableKey(channel, group, modelName)
+		if selected == nil || selected.SelectedRoutingKey == nil {
+			if channel.UpstreamKind == model.UpstreamKindPlatformSite && expectedPlugin == "" {
+				return types.NewError(errors.New("no routable key available"), types.ErrorCodeChannelNoAvailableKey)
+			}
+		} else {
+			channel = selected
+		}
+	}
 	key, index, newAPIError := channel.GetNextEnabledKey()
 	if newAPIError != nil {
 		return newAPIError
 	}
-	if channel.ChannelInfo.IsMultiKey {
+	if channel.SelectedRoutingKey != nil && channel.SelectedRoutingKey.Source == model.RoutingKeySourceKeyChannel {
+		common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, channel.ChannelInfo.IsMultiKey)
+		common.SetContextKey(c, constant.ContextKeyChannelMultiKeyIndex, channel.SelectedRoutingKey.MultiKeyIndex)
+	} else if channel.ChannelInfo.IsMultiKey {
 		common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, true)
 		common.SetContextKey(c, constant.ContextKeyChannelMultiKeyIndex, index)
 	} else {
 		// 必须设置为 false，否则在重试到单个 key 的时候会导致日志显示错误
 		common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, false)
+	}
+	if channel.SelectedRoutingKey != nil {
+		common.SetContextKey(c, constant.ContextKeyRoutingKeyId, int(channel.SelectedRoutingKey.KeyID))
+		common.SetContextKey(c, constant.ContextKeyRoutingKeySource, channel.SelectedRoutingKey.Source)
+		common.SetContextKey(c, constant.ContextKeyRoutingKeyPriority, int(channel.SelectedRoutingKey.KeyPriority))
+		common.SetContextKey(c, constant.ContextKeyRoutingKeyWeight, channel.SelectedRoutingKey.Weight)
+		common.SetContextKey(c, constant.ContextKeyRoutingEffectivePriority, int(channel.SelectedRoutingKey.EffectivePriority))
+		if channel.SelectedRoutingKey.Source == model.RoutingKeySourcePlatformSite && channel.SelectedRoutingKey.UpstreamKeyID > 0 {
+			common.SetContextKey(c, constant.ContextKeyUpstreamKeyId, int(channel.SelectedRoutingKey.UpstreamKeyID))
+			common.SetContextKey(c, constant.ContextKeyUpstreamKeyName, channel.SelectedRoutingKey.Name)
+			common.SetContextKey(c, constant.ContextKeyUpstreamKeyRatio, channel.SelectedRoutingKey.ConversionRatio)
+			common.SetContextKey(c, constant.ContextKeyUpstreamKeyWeight, channel.SelectedRoutingKey.Weight)
+		}
 	}
 	if channel.SelectedUpstreamKey != nil {
 		common.SetContextKey(c, constant.ContextKeyUpstreamKeyId, int(channel.SelectedUpstreamKey.ID))

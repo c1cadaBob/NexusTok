@@ -51,7 +51,11 @@ func RefreshCodexChannelCredential(ctx context.Context, channelID int, opts Code
 		return nil, nil, fmt.Errorf("channel type is not Codex")
 	}
 
-	oauthKey, err := parseCodexOAuthKey(strings.TrimSpace(ch.Key))
+	selected := model.SelectRoutableKey(ch, "", "")
+	if selected == nil || selected.SelectedRoutingKey == nil || selected.SelectedRoutingKey.ChannelKeyID == 0 {
+		return nil, nil, fmt.Errorf("codex channel: no available channel key")
+	}
+	oauthKey, err := parseCodexOAuthKey(strings.TrimSpace(selected.SelectedRoutingKey.Secret))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -91,7 +95,7 @@ func RefreshCodexChannelCredential(ctx context.Context, channelID int, opts Code
 		return nil, nil, err
 	}
 
-	if err := model.DB.Model(&model.Channel{}).Where("id = ?", ch.Id).Update("key", string(encoded)).Error; err != nil {
+	if err := model.UpdateChannelKeySecret(nil, selected.SelectedRoutingKey.ChannelKeyID, string(encoded)); err != nil {
 		return nil, nil, err
 	}
 

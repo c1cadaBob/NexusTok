@@ -289,6 +289,7 @@ export async function handleTestChannel(
     channelName?: string
     testModel?: string
     endpointType?: string
+    keyId?: number
     upstreamKeyId?: number
     stream?: boolean
     silent?: boolean
@@ -305,6 +306,7 @@ export async function handleTestChannel(
     (options.testModel ||
       options.endpointType ||
       options.stream ||
+      options.keyId ||
       options.upstreamKeyId)
       ? {
           ...(options.testModel ? { model: options.testModel } : {}),
@@ -312,6 +314,7 @@ export async function handleTestChannel(
             ? { endpoint_type: options.endpointType }
             : {}),
           ...(options.stream ? { stream: true } : {}),
+          ...(options.keyId ? { key_id: options.keyId } : {}),
           ...(options.upstreamKeyId
             ? { upstream_key_id: options.upstreamKeyId }
             : {}),

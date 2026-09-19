@@ -43,6 +43,11 @@ const (
 	ContextKeyUpstreamKeyName          ContextKey = "upstream_key_name"
 	ContextKeyUpstreamKeyRatio         ContextKey = "upstream_key_ratio"
 	ContextKeyUpstreamKeyWeight        ContextKey = "upstream_key_weight"
+	ContextKeyRoutingKeyId             ContextKey = "routing_key_id"
+	ContextKeyRoutingKeySource         ContextKey = "routing_key_source"
+	ContextKeyRoutingKeyPriority       ContextKey = "routing_key_priority"
+	ContextKeyRoutingKeyWeight         ContextKey = "routing_key_weight"
+	ContextKeyRoutingEffectivePriority ContextKey = "routing_effective_priority"
 
 	ContextKeyAutoGroup           ContextKey = "auto_group"
 	ContextKeyAutoGroupIndex      ContextKey = "auto_group_index"

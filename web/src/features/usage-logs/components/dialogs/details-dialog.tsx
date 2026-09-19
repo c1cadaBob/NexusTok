@@ -650,6 +650,44 @@ export function DetailsDialog(props: DetailsDialogProps) {
             <DetailRow label={t('Retry Chain')} value={channelChain} mono />
           )}
 
+          {props.isAdmin && adminInfo?.key_id ? (
+            <>
+              <DetailRow
+                label={t('Key ID')}
+                value={`#${adminInfo.key_id}`}
+                mono
+              />
+              {adminInfo.key_source ? (
+                <DetailRow
+                  label={t('Key Source')}
+                  value={adminInfo.key_source}
+                  mono
+                />
+              ) : null}
+              {typeof adminInfo.effective_priority === 'number' ? (
+                <DetailRow
+                  label={t('Effective Priority')}
+                  value={String(adminInfo.effective_priority)}
+                  mono
+                />
+              ) : null}
+              {typeof adminInfo.key_priority === 'number' ? (
+                <DetailRow
+                  label={t('Key Priority')}
+                  value={String(adminInfo.key_priority)}
+                  mono
+                />
+              ) : null}
+              {typeof adminInfo.key_weight === 'number' ? (
+                <DetailRow
+                  label={t('Key Weight')}
+                  value={String(adminInfo.key_weight)}
+                  mono
+                />
+              ) : null}
+            </>
+          ) : null}
+
           {props.log.token_name && (
             <DetailRow label={t('Token')} value={props.log.token_name} mono />
           )}

@@ -375,7 +375,11 @@ func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
 	}
 
 	if channel.Type == constant.ChannelTypeOllama {
-		key := strings.TrimSpace(strings.Split(channel.Key, "\n")[0])
+		key, err := model.GetChannelCredential(channel)
+		if err != nil {
+			return nil, fmt.Errorf("获取渠道密钥失败: %w", err)
+		}
+		key = strings.TrimSpace(key)
 		models, err := ollama.FetchOllamaModels(baseURL, key)
 		if err != nil {
 			return nil, err

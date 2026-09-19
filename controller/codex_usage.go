@@ -77,12 +77,13 @@ func fetchCodexChannelWhamData(
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": "channel type is not Codex"})
 		return
 	}
-	if ch.ChannelInfo.IsMultiKey {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "multi-key channel is not supported"})
+	key, err := model.GetChannelCredential(ch)
+	if err != nil {
+		common.SysError("failed to load codex channel key: " + err.Error())
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "读取渠道凭据失败"})
 		return
 	}
-
-	oauthKey, err := codex.ParseOAuthKey(strings.TrimSpace(ch.Key))
+	oauthKey, err := codex.ParseOAuthKey(strings.TrimSpace(key))
 	if err != nil {
 		common.SysError("failed to parse oauth key: " + err.Error())
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": "解析凭证失败，请检查渠道配置"})

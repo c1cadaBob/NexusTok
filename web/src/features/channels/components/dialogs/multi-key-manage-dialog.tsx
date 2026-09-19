@@ -27,6 +27,8 @@ import { StaticDataTable } from '@/components/data-table'
 import { Dialog } from '@/components/dialog'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
@@ -52,6 +54,7 @@ import {
   enableAllMultiKeys,
   disableAllMultiKeys,
   deleteDisabledMultiKeys,
+  updateMultiKeySettings,
 } from '../../api'
 import { MULTI_KEY_FILTER_OPTIONS } from '../../constants'
 import {
@@ -69,6 +72,149 @@ import { MultiKeyTableRowActions } from './multi-key-table-row-actions'
 type MultiKeyManageDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
+}
+
+type MultiKeySettingsDialogProps = {
+  channelId: number
+  keyStatus: KeyStatus | null
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onSaved: () => void
+}
+
+function MultiKeySettingsDialog(props: MultiKeySettingsDialogProps) {
+  const { t } = useTranslation()
+  const [keyPriority, setKeyPriority] = useState(0)
+  const [weightOverride, setWeightOverride] = useState('')
+  const [isSaving, setIsSaving] = useState(false)
+
+  useEffect(() => {
+    if (!props.open || !props.keyStatus) {
+      return
+    }
+    setKeyPriority(props.keyStatus.key_priority ?? 0)
+    setWeightOverride(
+      props.keyStatus.weight !== props.keyStatus.auto_weight
+        ? String(props.keyStatus.weight)
+        : ''
+    )
+  }, [props.keyStatus, props.open])
+
+  const handleSave = async () => {
+    const keyStatus = props.keyStatus
+    if (!keyStatus) {
+      return
+    }
+    if (
+      !Number.isInteger(keyPriority) ||
+      keyPriority < 0 ||
+      keyPriority > 99
+    ) {
+      toast.error(t('Key priority must be between 0 and 99'))
+      return
+    }
+
+    const trimmedWeight = weightOverride.trim()
+    const payload: Parameters<typeof updateMultiKeySettings>[3] = {
+      key_priority: keyPriority,
+    }
+    if (trimmedWeight === '') {
+      payload.clear_weight = true
+    } else {
+      const nextWeight = Number(trimmedWeight)
+      if (
+        !Number.isInteger(nextWeight) ||
+        nextWeight < 0 ||
+        nextWeight > 2000
+      ) {
+        toast.error(t('Weight override must be an integer between 0 and 2000'))
+        return
+      }
+      payload.weight_override = nextWeight
+    }
+
+    setIsSaving(true)
+    try {
+      const response = await updateMultiKeySettings(
+        props.channelId,
+        keyStatus.index,
+        keyStatus.key_id,
+        payload
+      )
+      if (response.success) {
+        toast.success(response.message || t('Operation successful'))
+        props.onSaved()
+        props.onOpenChange(false)
+      } else {
+        handleServerError(response, t('Operation failed'))
+      }
+    } catch (error: unknown) {
+      handleServerError(error, t('Operation failed'))
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const title = props.keyStatus
+    ? `${t('Edit')} #${props.keyStatus.key_id || props.keyStatus.index + 1}`
+    : t('Edit')
+
+  return (
+    <Dialog
+      open={props.open}
+      onOpenChange={props.onOpenChange}
+      title={title}
+      contentHeight='auto'
+      bodyClassName='space-y-4'
+      footer={
+        <div className='flex justify-end gap-2'>
+          <Button
+            variant='outline'
+            onClick={() => props.onOpenChange(false)}
+            disabled={isSaving}
+          >
+            {t('Cancel')}
+          </Button>
+          <Button onClick={handleSave} disabled={isSaving}>
+            {isSaving && (
+              <Loader2 data-icon='inline-start' className='animate-spin' />
+            )}
+            {t('Save')}
+          </Button>
+        </div>
+      }
+    >
+      <div className='grid gap-4'>
+        <div className='grid gap-2'>
+          <Label htmlFor='multi-key-priority'>{t('Key priority')}</Label>
+          <Input
+            id='multi-key-priority'
+            type='number'
+            min={0}
+            max={99}
+            step={1}
+            value={keyPriority}
+            onChange={(event) => setKeyPriority(Number(event.target.value))}
+          />
+        </div>
+        <div className='grid gap-2'>
+          <Label htmlFor='multi-key-weight-override'>
+            {t('Weight override')}
+          </Label>
+          <Input
+            id='multi-key-weight-override'
+            inputMode='numeric'
+            placeholder={t('Use automatic weight')}
+            value={weightOverride}
+            onChange={(event) => setWeightOverride(event.target.value)}
+          />
+          <p className='text-muted-foreground text-xs'>
+            {t('Leave empty to use automatic weight.')}
+          </p>
+        </div>
+      </div>
+    </Dialog>
+  )
 }
 
 export function MultiKeyManageDialog({
@@ -100,6 +246,7 @@ export function MultiKeyManageDialog({
   const [statusFilter, setStatusFilter] = useState<number | null>(null)
   const [confirmAction, setConfirmAction] =
     useState<MultiKeyConfirmAction | null>(null)
+  const [editingKey, setEditingKey] = useState<KeyStatus | null>(null)
   const [isPerformingAction, setIsPerformingAction] = useState(false)
 
   // Reset and load data when dialog opens
@@ -172,16 +319,16 @@ export function MultiKeyManageDialog({
 
     setIsPerformingAction(true)
     try {
-      const { type, keyIndex } = confirmAction
+      const { type, keyIndex, keyId } = confirmAction
       let response
 
       // Execute the appropriate action
       if (type === 'enable' && keyIndex !== undefined) {
-        response = await enableMultiKey(currentRow.id, keyIndex)
+        response = await enableMultiKey(currentRow.id, keyIndex, keyId)
       } else if (type === 'disable' && keyIndex !== undefined) {
-        response = await disableMultiKey(currentRow.id, keyIndex)
+        response = await disableMultiKey(currentRow.id, keyIndex, keyId)
       } else if (type === 'delete' && keyIndex !== undefined) {
-        response = await deleteMultiKey(currentRow.id, keyIndex)
+        response = await deleteMultiKey(currentRow.id, keyIndex, keyId)
       } else if (type === 'enable-all') {
         response = await enableAllMultiKeys(currentRow.id)
       } else if (type === 'disable-all') {
@@ -388,7 +535,7 @@ export function MultiKeyManageDialog({
                 className='rounded-none border-0'
                 tableClassName='min-w-[800px]'
                 data={keys}
-                getRowKey={(key) => key.index}
+                getRowKey={(key) => key.key_id ?? key.index}
                 columns={[
                   {
                     id: 'index',
@@ -398,10 +545,31 @@ export function MultiKeyManageDialog({
                     cell: (key) => `#${key.index + 1}`,
                   },
                   {
+                    id: 'key-id',
+                    header: t('Key ID'),
+                    className: 'w-24',
+                    cellClassName: 'font-mono text-sm',
+                    cell: (key) => (key.key_id ? `#${key.key_id}` : '-'),
+                  },
+                  {
                     id: 'status',
                     header: t('Status'),
                     className: 'w-32',
                     cell: (key) => renderStatusBadge(key.status),
+                  },
+                  {
+                    id: 'key-priority',
+                    header: t('Key priority'),
+                    className: 'w-32',
+                    cellClassName: 'font-mono text-sm',
+                    cell: (key) => key.key_priority ?? 0,
+                  },
+                  {
+                    id: 'key-weight',
+                    header: t('Key weight'),
+                    className: 'w-32',
+                    cellClassName: 'font-mono text-sm',
+                    cell: (key) => `${key.weight ?? 0} (${key.auto_weight ?? 0})`,
                   },
                   {
                     id: 'reason',
@@ -424,9 +592,11 @@ export function MultiKeyManageDialog({
                     cell: (key) => (
                       <MultiKeyTableRowActions
                         keyIndex={key.index}
+                        keyId={key.key_id}
                         status={key.status}
                         canDelete={canEditSensitive}
                         onAction={setConfirmAction}
+                        onEdit={() => setEditingKey(key)}
                       />
                     ),
                   },
@@ -476,6 +646,20 @@ export function MultiKeyManageDialog({
         destructive={isDestructiveAction(confirmAction)}
         isLoading={isPerformingAction}
         handleConfirm={performAction}
+      />
+      <MultiKeySettingsDialog
+        channelId={currentRow.id}
+        keyStatus={editingKey}
+        open={editingKey !== null}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) {
+            setEditingKey(null)
+          }
+        }}
+        onSaved={() => {
+          loadKeyStatus(currentPage, pageSize)
+          queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
+        }}
       />
     </>
   )

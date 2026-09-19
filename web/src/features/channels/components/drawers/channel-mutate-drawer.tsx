@@ -4028,7 +4028,8 @@ export function ChannelMutateDrawer({
                                         <FormControl>
                                           <Input
                                             type='number'
-                                            min={-999}
+                                            min={0}
+                                            max={99}
                                             step='1'
                                             {...field}
                                             onChange={(event) =>

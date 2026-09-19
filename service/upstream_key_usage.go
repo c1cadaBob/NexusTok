@@ -28,6 +28,13 @@ import (
 )
 
 func TouchSelectedUpstreamKeyLastUsed(ctx *gin.Context) {
+	routingKeyID := common.GetContextKeyInt(ctx, constant.ContextKeyRoutingKeyId)
+	if routingKeyID > 0 {
+		if err := model.TouchRoutingKeyLastUsed(uint(routingKeyID), common.GetTimestamp()); err != nil {
+			logger.LogWarn(ctx, "更新路由密钥最后使用时间失败: "+err.Error())
+		}
+		return
+	}
 	keyID := common.GetContextKeyInt(ctx, constant.ContextKeyUpstreamKeyId)
 	if keyID <= 0 {
 		return

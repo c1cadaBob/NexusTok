@@ -60,6 +60,7 @@ type UpstreamSiteStatusResponse struct {
 
 type UpstreamKeyResponse struct {
 	ID                      uint     `json:"id"`
+	KeyID                   uint     `json:"key_id"`
 	ChannelID               int      `json:"channel_id"`
 	ExternalID              string   `json:"external_id"`
 	Name                    string   `json:"name"`
@@ -382,6 +383,7 @@ func toUpstreamKeyResponse(key *model.UpstreamKey) UpstreamKeyResponse {
 	}
 	return UpstreamKeyResponse{
 		ID:                      key.ID,
+		KeyID:                   key.RoutingKeyID,
 		ChannelID:               key.ChannelID,
 		ExternalID:              key.ExternalID,
 		Name:                    key.Name,
@@ -510,8 +512,14 @@ func GetUpstreamKeys(c *gin.Context) {
 		return
 	}
 	result := make([]UpstreamKeyResponse, 0, len(keys))
-	for _, key := range keys {
-		result = append(result, toPlatformSiteKeyResponse(&key, &account, channel))
+	for index := range keys {
+		if keys[index].RoutingKeyID == 0 {
+			if err := model.EnsureRoutingKeyForUpstreamKey(nil, &keys[index]); err != nil {
+				common.ApiError(c, err)
+				return
+			}
+		}
+		result = append(result, toPlatformSiteKeyResponse(&keys[index], &account, channel))
 	}
 	common.ApiSuccess(c, gin.H{"items": result, "total": len(result)})
 }
@@ -547,6 +555,10 @@ func PatchUpstreamKey(c *gin.Context) {
 	}
 	updates := map[string]any{}
 	if request.KeyPriority != nil {
+		if err := model.ValidateRoutingKeyPriority(*request.KeyPriority); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 		updates["key_priority"] = *request.KeyPriority
 	}
 	effectiveRatio := key.ConversionRatio
@@ -616,6 +628,10 @@ func PatchUpstreamKey(c *gin.Context) {
 		"fields":     keysOfMap(updates),
 	})
 	_ = model.DB.First(&key, "id = ?", key.ID).Error
+	if err := model.EnsureRoutingKeyForUpstreamKey(nil, &key); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	common.ApiSuccess(c, toUpstreamKeyResponse(&key))
 }
 

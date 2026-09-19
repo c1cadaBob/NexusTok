@@ -1,7 +1,6 @@
 package model
 
 import (
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -168,61 +167,23 @@ func GetRandomSatisfiedChannel(
 	if len(channels) == 0 {
 		return nil, nil
 	}
-	routableChannels := make([]int, 0, len(channels))
+	targetChannels := make([]*Channel, 0, len(channels))
 	for _, channelID := range channels {
 		channel, ok := channelsIDM[channelID]
 		if !ok {
-			continue
+			return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelID)
 		}
-		if channel.UpstreamKind == UpstreamKindPlatformSite &&
-			len(loadRoutableUpstreamKeys(channel, group, model)) == 0 {
-			continue
-		}
-		routableChannels = append(routableChannels, channelID)
-	}
-	channels = routableChannels
-	if len(channels) == 0 {
-		return nil, nil
-	}
-
-	uniquePriorities := make(map[int]bool)
-	for _, channelId := range channels {
-		if channel, ok := channelsIDM[channelId]; ok {
-			uniquePriorities[int(channel.GetPriority())] = true
-		} else {
-			return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelId)
-		}
-	}
-	var sortedUniquePriorities []int
-	for priority := range uniquePriorities {
-		sortedUniquePriorities = append(sortedUniquePriorities, priority)
-	}
-	sort.Sort(sort.Reverse(sort.IntSlice(sortedUniquePriorities)))
-
-	if retry >= len(uniquePriorities) {
-		retry = len(uniquePriorities) - 1
-	}
-	targetPriority := int64(sortedUniquePriorities[retry])
-
-	var targetChannels []*Channel
-	for _, channelId := range channels {
-		if channel, ok := channelsIDM[channelId]; ok {
-			if channel.GetPriority() == targetPriority {
-				targetChannels = append(targetChannels, channel)
-			}
-		} else {
-			return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelId)
-		}
+		targetChannels = append(targetChannels, channel)
 	}
 
 	if len(targetChannels) == 0 {
-		return nil, errors.New(fmt.Sprintf("no channel found, group: %s, model: %s, priority: %d", group, model, targetPriority))
+		return nil, nil
 	}
 
-	if selected := selectChannelByUpstreamKey(targetChannels, group, model); selected != nil {
+	if selected := selectChannelByRoutingKey(targetChannels, group, model, retry); selected != nil {
 		return selected, nil
 	}
-	return nil, errors.New("当前优先级没有可用的上游密钥")
+	return nil, nil
 }
 
 func CacheGetChannel(id int) (*Channel, error) {

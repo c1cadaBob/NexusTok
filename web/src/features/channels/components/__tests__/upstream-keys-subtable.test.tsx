@@ -84,8 +84,10 @@ function renderWithProviders(ui: React.ReactNode) {
 }
 
 function upstreamKey(overrides: Partial<UpstreamKey> = {}): UpstreamKey {
+  const id = overrides.id ?? 7
   const key: UpstreamKey = {
-    id: 7,
+    id,
+    key_id: overrides.key_id ?? id + 1000,
     channel_id: 101,
     external_id: 'prod-key',
     name: 'Production key',
@@ -397,7 +399,7 @@ test('从子密钥更多菜单进入时测试弹窗默认选择该子密钥', as
   expect(await screen.findAllByText('gpt-key-only')).not.toHaveLength(0)
 })
 
-test('平台站点测试弹窗按所选密钥过滤模型并透传 upstream_key_id', async () => {
+test('平台站点测试弹窗按所选密钥过滤模型并透传全局 key_id', async () => {
   const user = userEvent.setup()
   const key = upstreamKey()
   const channel = platformChannel(key)
@@ -434,7 +436,7 @@ test('平台站点测试弹窗按所选密钥过滤模型并透传 upstream_key_
       101,
       expect.objectContaining({
         testModel: 'gpt-key-only',
-        upstreamKeyId: 7,
+        keyId: key.key_id,
       }),
       expect.any(Function)
     )
@@ -467,7 +469,7 @@ test('平台站点从渠道行进入测试时默认使用自动路由', async ()
       101,
       expect.objectContaining({
         testModel: 'gpt-key-only',
-        upstreamKeyId: undefined,
+        keyId: undefined,
       }),
       expect.any(Function)
     )
@@ -553,7 +555,7 @@ test('平台站点密钥行入口在子密钥暂缺路由字段时不回退自�
       101,
       expect.objectContaining({
         testModel: 'gpt-key-only',
-        upstreamKeyId: 7,
+        keyId: key.key_id,
       }),
       expect.any(Function)
     )
@@ -704,7 +706,7 @@ test('平台站点首次同步失败时不展示旧子密钥模型', async () =>
   expect(screen.queryByText('gpt-key-only')).not.toBeInTheDocument()
 })
 
-test('平台站点测试弹窗遇到禁用当前密钥时保留入口选择并透传 upstream_key_id', async () => {
+test('平台站点测试弹窗遇到禁用当前密钥时保留入口选择并透传全局 key_id', async () => {
   const user = userEvent.setup()
   const disabledKey = upstreamKey({
     id: 7,
@@ -759,7 +761,7 @@ test('平台站点测试弹窗遇到禁用当前密钥时保留入口选择并�
       101,
       expect.objectContaining({
         testModel: 'gpt-disabled',
-        upstreamKeyId: 7,
+        keyId: disabledKey.key_id,
       }),
       expect.any(Function)
     )

@@ -118,7 +118,13 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 			continue
 		}
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("mj-api-secret", midjourneyChannel.Key)
+		key, keyErr := model.GetChannelCredential(midjourneyChannel)
+		if keyErr != nil {
+			cancel()
+			logger.LogError(ctx, fmt.Sprintf("Get Task channel key error: %v", keyErr))
+			continue
+		}
+		req.Header.Set("mj-api-secret", key)
 		resp, err := service.GetHttpClient().Do(req)
 		if err != nil {
 			logger.LogError(ctx, fmt.Sprintf("Get Task Do req error: %v", err))

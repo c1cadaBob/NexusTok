@@ -60,8 +60,9 @@ type Channel struct {
 	OtherSettings string `json:"settings" gorm:"column:settings"` // 其他设置，存储azure版本等不需要检索的信息，详见dto.ChannelOtherSettings
 
 	// cache info
-	Keys                []string     `json:"-" gorm:"-"`
-	SelectedUpstreamKey *UpstreamKey `json:"-" gorm:"-"`
+	Keys                []string             `json:"-" gorm:"-"`
+	SelectedUpstreamKey *UpstreamKey         `json:"-" gorm:"-"`
+	SelectedRoutingKey  *RoutingKeySelection `json:"-" gorm:"-"`
 }
 
 type ChannelInfo struct {
@@ -207,11 +208,26 @@ func (channel *Channel) GetKeys() []string {
 }
 
 func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
+	if channel.SelectedRoutingKey != nil {
+		if channel.SelectedRoutingKey.Secret == "" {
+			return "", 0, types.NewError(errors.New("routing key secret unavailable"), types.ErrorCodeChannelNoAvailableKey)
+		}
+		return channel.SelectedRoutingKey.Secret, channel.SelectedRoutingKey.MultiKeyIndex, nil
+	}
 	if channel.SelectedUpstreamKey != nil {
 		if channel.SelectedUpstreamKey.Secret == "" {
 			return "", 0, types.NewError(errors.New("upstream key secret unavailable"), types.ErrorCodeChannelNoAvailableKey)
 		}
 		return channel.SelectedUpstreamKey.Secret, 0, nil
+	}
+	if selected := SelectRoutableKey(channel, "", ""); selected != nil && selected.SelectedRoutingKey != nil {
+		channel.SelectedRoutingKey = selected.SelectedRoutingKey
+		return selected.SelectedRoutingKey.Secret, selected.SelectedRoutingKey.MultiKeyIndex, nil
+	}
+	if strings.TrimSpace(channel.Key) == "" {
+		if count, err := CountChannelKeys(channel.Id); err == nil && count > 0 {
+			return "", 0, types.NewError(errors.New("no keys available"), types.ErrorCodeChannelNoAvailableKey)
+		}
 	}
 	// If not in multi-key mode, return the original key string directly.
 	if !channel.ChannelInfo.IsMultiKey {
@@ -332,7 +348,7 @@ func (channel *Channel) GetOtherInfo() map[string]any {
 }
 
 func (channel *Channel) SetOtherInfo(otherInfo map[string]any) {
-	otherInfoBytes, err := json.Marshal(otherInfo)
+	otherInfoBytes, err := common.Marshal(otherInfo)
 	if err != nil {
 		common.SysLog(fmt.Sprintf("failed to marshal other info: channel_id=%d, tag=%s, name=%s, error=%v", channel.Id, channel.GetTag(), channel.Name, err))
 		return
@@ -503,6 +519,10 @@ func BatchInsertChannels(channels []Channel) error {
 				tx.Rollback()
 				return err
 			}
+			if err := SyncChannelKeysFromLegacyField(tx, &channel_); err != nil {
+				tx.Rollback()
+				return err
+			}
 		}
 	}
 	return tx.Commit().Error
@@ -584,13 +604,15 @@ func (channel *Channel) GetStatusCodeMapping() string {
 }
 
 func (channel *Channel) Insert() error {
-	var err error
-	err = DB.Create(channel).Error
-	if err != nil {
-		return err
-	}
-	err = channel.AddAbilities(nil)
-	return err
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(channel).Error; err != nil {
+			return err
+		}
+		if err := channel.AddAbilities(tx); err != nil {
+			return err
+		}
+		return SyncChannelKeysFromLegacyField(tx, channel)
+	})
 }
 
 func (channel *Channel) Update() error {
@@ -600,6 +622,10 @@ func (channel *Channel) Update() error {
 		if channel.Key != "" {
 			keyStr = channel.Key
 		} else {
+			if count, err := CountChannelKeys(channel.Id); err == nil && count > 0 {
+				channel.ChannelInfo.MultiKeySize = count
+				goto updateChannel
+			}
 			// If key is not provided, read the existing key from the database
 			if existing, err := GetChannelById(channel.Id, true); err == nil {
 				keyStr = existing.Key
@@ -632,6 +658,7 @@ func (channel *Channel) Update() error {
 			}
 		}
 	}
+updateChannel:
 	var err error
 	err = DB.Model(channel).Updates(channel).Error
 	if err != nil {

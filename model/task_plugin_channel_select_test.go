@@ -18,11 +18,11 @@ func TestTaskPluginChannelSelectionFiltersBothCachePaths(t *testing.T) {
 	alphaSetting := `{"task_plugin_key":"alpha"}`
 	betaSetting := `{"task_plugin_key":"beta"}`
 	channels := []Channel{
-		{Id: 900001, Type: constant.ChannelTypeTaskPlugin, Status: common.ChannelStatusEnabled, Name: "alpha", Models: "shared", Group: "default", Priority: &priority, Weight: &weight, BaseURL: &baseURL, Setting: &alphaSetting},
-		{Id: 900002, Type: constant.ChannelTypeTaskPlugin, Status: common.ChannelStatusEnabled, Name: "beta", Models: "shared", Group: "default", Priority: &priority, Weight: &weight, BaseURL: &baseURL, Setting: &betaSetting},
-		{Id: 900003, Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled, Name: "ordinary", Models: "ordinary", Group: "default", Priority: &priority, Weight: &weight},
-		{Id: 900004, Type: constant.ChannelTypeKling, Status: common.ChannelStatusEnabled, Name: "legacy-alpha", Models: "legacy", Group: "default", Priority: &priority, Weight: &weight},
-		{Id: 900005, Type: constant.ChannelTypeJimeng, Status: common.ChannelStatusEnabled, Name: "legacy-beta", Models: "legacy", Group: "default", Priority: &priority, Weight: &weight},
+		{Id: 900001, Type: constant.ChannelTypeTaskPlugin, Key: "sk-alpha", Status: common.ChannelStatusEnabled, Name: "alpha", Models: "shared", Group: "default", Priority: &priority, Weight: &weight, BaseURL: &baseURL, Setting: &alphaSetting},
+		{Id: 900002, Type: constant.ChannelTypeTaskPlugin, Key: "sk-beta", Status: common.ChannelStatusEnabled, Name: "beta", Models: "shared", Group: "default", Priority: &priority, Weight: &weight, BaseURL: &baseURL, Setting: &betaSetting},
+		{Id: 900003, Type: constant.ChannelTypeOpenAI, Key: "sk-ordinary", Status: common.ChannelStatusEnabled, Name: "ordinary", Models: "ordinary", Group: "default", Priority: &priority, Weight: &weight},
+		{Id: 900004, Type: constant.ChannelTypeKling, Key: "sk-legacy-alpha", Status: common.ChannelStatusEnabled, Name: "legacy-alpha", Models: "legacy", Group: "default", Priority: &priority, Weight: &weight},
+		{Id: 900005, Type: constant.ChannelTypeJimeng, Key: "sk-legacy-beta", Status: common.ChannelStatusEnabled, Name: "legacy-beta", Models: "legacy", Group: "default", Priority: &priority, Weight: &weight},
 	}
 	for i := range channels {
 		require.NoError(t, channels[i].Insert())

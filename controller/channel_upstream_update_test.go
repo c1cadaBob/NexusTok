@@ -477,8 +477,9 @@ func TestPatchUpstreamKeyClearsWeightWhenRestoredRatioIsFree(t *testing.T) {
 		"success": true,
 		"message": "",
 		"data": {
-			"id": 1,
-			"channel_id": 1,
+				"id": 1,
+				"key_id": 1,
+				"channel_id": 1,
 			"external_id": "free-key",
 			"name": "",
 			"key_preview": "",

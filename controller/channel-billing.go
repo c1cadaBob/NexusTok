@@ -469,6 +469,13 @@ func updateChannelBalance(channel *model.Channel) (channelBalanceResult, error) 
 		}
 		return channelBalanceResult{Balance: account.Balance}, nil
 	}
+	key, err := model.GetChannelCredential(channel)
+	if err != nil {
+		return channelBalanceResult{}, err
+	}
+	channelCopy := *channel
+	channelCopy.Key = key
+	channel = &channelCopy
 	if channel.Type == constant.ChannelTypeAdvancedCustom {
 		return fetchAdvancedCustomBalance(channel)
 	}

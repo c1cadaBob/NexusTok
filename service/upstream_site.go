@@ -685,6 +685,9 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 					if err := tx.Create(&existing).Error; err != nil {
 						return err
 					}
+					if err := model.EnsureRoutingKeyForUpstreamKey(tx, &existing); err != nil {
+						return err
+					}
 					continue
 				}
 				if findErr != nil {
@@ -711,6 +714,9 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 					updates["disabled_reason"] = upstreamKeySyncErrorReason(item.SyncError)
 				}
 				if err := tx.Model(&existing).Updates(updates).Error; err != nil {
+					return err
+				}
+				if err := model.EnsureRoutingKeyForUpstreamKey(tx, &existing); err != nil {
 					return err
 				}
 				if err := tx.Where("upstream_key_id = ?", existing.ID).Delete(&model.UpstreamKeyAbility{}).Error; err != nil {
@@ -813,6 +819,9 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 			existing.LastSyncAt = now
 			existing.MissingSince = 0
 			if err := tx.Save(&existing).Error; err != nil {
+				return err
+			}
+			if err := model.EnsureRoutingKeyForUpstreamKey(tx, &existing); err != nil {
 				return err
 			}
 			if modelsSynced {

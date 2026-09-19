@@ -404,6 +404,7 @@ export function useCommonLogsColumns(
             other?.admin_info?.is_multi_key === true &&
             typeof multiKeyIndex === 'number' &&
             Number.isFinite(multiKeyIndex)
+          const keyId = other?.admin_info?.key_id
 
           return (
             <TooltipProvider>
@@ -431,6 +432,16 @@ export function useCommonLogsColumns(
                         variant='neutral'
                         className='h-5 min-w-5 justify-center rounded-full px-1 font-mono text-xs'
                         aria-label={`${t('Key')} ${multiKeyIndex}`}
+                      />
+                    )}
+                    {typeof keyId === 'number' && Number.isFinite(keyId) && (
+                      <StatusBadge
+                        label={`K#${keyId}`}
+                        copyText={String(keyId)}
+                        size='sm'
+                        showDot={false}
+                        variant='neutral'
+                        className='h-5 font-mono text-xs'
                       />
                     )}
                     {hasRetryChain && (
@@ -505,6 +516,11 @@ export function useCommonLogsColumns(
                     {showMultiKeyIndex && (
                       <p className='text-muted-foreground text-xs'>
                         {t('Key')}: {multiKeyIndex}
+                      </p>
+                    )}
+                    {typeof keyId === 'number' && Number.isFinite(keyId) && (
+                      <p className='text-muted-foreground text-xs'>
+                        {t('Key ID')}: {keyId}
                       </p>
                     )}
                     {affinity && (

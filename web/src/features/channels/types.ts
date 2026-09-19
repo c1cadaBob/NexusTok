@@ -242,10 +242,14 @@ export interface CopyChannelResponse {
 
 export interface KeyStatus {
   index: number
+  key_id?: number
   status: number // 1: enabled, 2: manual disabled, 3: auto disabled
   disabled_time?: number
   reason?: string
   key_preview?: string
+  key_priority?: number
+  weight?: number
+  auto_weight?: number
 }
 
 export type MultiKeyConfirmAction = {
@@ -257,6 +261,7 @@ export type MultiKeyConfirmAction = {
     | 'disable-all'
     | 'delete-disabled'
   keyIndex?: number
+  keyId?: number
 }
 
 export interface MultiKeyStatusResponse {
@@ -316,6 +321,7 @@ export interface SearchChannelsParams {
 
 export interface ChannelTestParams {
   test_model?: string
+  key_id?: number
   upstream_key_id?: number
 }
 
@@ -334,7 +340,12 @@ export interface MultiKeyManageParams {
     | 'disable_all_keys'
     | 'delete_key'
     | 'delete_disabled_keys'
+    | 'update_key'
+  key_id?: number
   key_index?: number
+  key_priority?: number
+  weight_override?: number
+  clear_weight?: boolean
   page?: number
   page_size?: number
   status?: number // 1=enabled, 2=manual_disabled, 3=auto_disabled
@@ -451,6 +462,7 @@ export interface UpstreamSiteStatus {
 
 export interface UpstreamKey {
   id: number
+  key_id: number
   channel_id: number
   external_id: string
   name: string

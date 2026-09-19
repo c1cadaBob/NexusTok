@@ -340,6 +340,8 @@ func migrateDB() error {
 
 	err := DB.AutoMigrate(
 		&Channel{},
+		&RoutingKey{},
+		&ChannelKey{},
 		&PlatformSiteAccount{},
 		&UpstreamKey{},
 		&UpstreamKeyAbility{},
@@ -391,6 +393,9 @@ func migrateDB() error {
 		return err
 	}
 	if err := migrateUpstreamKeyModelSyncDefaults(); err != nil {
+		return err
+	}
+	if err := migrateRoutingKeys(); err != nil {
 		return err
 	}
 	if err := InitializeUserAuthVersions(); err != nil {
@@ -553,6 +558,41 @@ func migrateUpstreamKeyModelSyncDefaults() error {
 		if err := tx.Model(&UpstreamKey{}).
 			Where("channel_id IN (?)", platformChannelIDs).
 			Update("models_synced", false).Error; err != nil {
+			return err
+		}
+		return tx.Create(&Option{Key: migrationKey, Value: "1"}).Error
+	})
+}
+
+func migrateRoutingKeys() error {
+	const migrationKey = "migration.routing_keys.v1"
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var platformKeys []UpstreamKey
+		if err := tx.Where("routing_key_id = ? OR routing_key_id IS NULL", 0).Find(&platformKeys).Error; err != nil {
+			return err
+		}
+		for index := range platformKeys {
+			if err := EnsureRoutingKeyForUpstreamKey(tx, &platformKeys[index]); err != nil {
+				return err
+			}
+		}
+
+		var channels []Channel
+		if err := tx.Where("upstream_kind = ? AND "+commonKeyCol+" <> ?", UpstreamKindKeyChannel, "").Find(&channels).Error; err != nil {
+			return err
+		}
+		for index := range channels {
+			if err := SyncChannelKeysFromLegacyField(tx, &channels[index]); err != nil {
+				return err
+			}
+		}
+
+		var marker Option
+		err := tx.Where(commonKeyCol+" = ?", migrationKey).First(&marker).Error
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
 		return tx.Create(&Option{Key: migrationKey, Value: "1"}).Error

@@ -364,6 +364,8 @@ func TestUpstreamChannelDatabaseCompatibility(t *testing.T) {
 					&UpstreamKeyAbility{},
 					&UpstreamKey{},
 					&PlatformSiteAccount{},
+					&ChannelKey{},
+					&RoutingKey{},
 					&Ability{},
 					&Channel{},
 					&Option{},
@@ -402,6 +404,8 @@ func TestUpstreamChannelDatabaseCompatibility(t *testing.T) {
 				require.NoError(t, archiveIncompatibleUpstreamKeysTable())
 				require.NoError(t, db.AutoMigrate(
 					&Channel{},
+					&RoutingKey{},
+					&ChannelKey{},
 					&PlatformSiteAccount{},
 					&UpstreamKey{},
 					&UpstreamKeyAbility{},
@@ -416,6 +420,15 @@ func TestUpstreamChannelDatabaseCompatibility(t *testing.T) {
 			require.NoError(t, db.First(&migratedLegacy, "id = ?", 41).Error)
 			assert.Equal(t, UpstreamKindKeyChannel, migratedLegacy.UpstreamKind)
 			assert.Equal(t, 1.0, migratedLegacy.ConversionRatio)
+			require.NoError(t, migrateRoutingKeys())
+			require.NoError(t, migrateRoutingKeys())
+			require.NoError(t, db.First(&migratedLegacy, "id = ?", 41).Error)
+			assert.Empty(t, migratedLegacy.Key)
+			legacyChannelKeys, err := LoadChannelKeys(db, 41, true)
+			require.NoError(t, err)
+			require.Len(t, legacyChannelKeys, 1)
+			assert.Equal(t, "legacy-key", legacyChannelKeys[0].Secret)
+			assert.NotZero(t, legacyChannelKeys[0].RoutingKeyID)
 
 			tables, err := db.Migrator().GetTables()
 			require.NoError(t, err)
@@ -469,6 +482,14 @@ func TestUpstreamChannelDatabaseCompatibility(t *testing.T) {
 				Status:           UpstreamKeyStatusEnabled,
 			}
 			require.NoError(t, db.Create(key).Error)
+			require.NoError(t, migrateRoutingKeys())
+			var routedPlatformKey UpstreamKey
+			require.NoError(t, db.First(&routedPlatformKey, key.ID).Error)
+			require.NotZero(t, routedPlatformKey.RoutingKeyID)
+			platformRoutingKeyID := routedPlatformKey.RoutingKeyID
+			require.NoError(t, migrateRoutingKeys())
+			require.NoError(t, db.First(&routedPlatformKey, key.ID).Error)
+			assert.Equal(t, platformRoutingKeyID, routedPlatformKey.RoutingKeyID)
 			require.NoError(t, UpdateUpstreamKeyLastUsed(key.ID, 1_800_000_000))
 			var keyWithLastUsed UpstreamKey
 			require.NoError(t, db.First(&keyWithLastUsed, key.ID).Error)
@@ -509,6 +530,13 @@ func TestUpstreamChannelDatabaseCompatibility(t *testing.T) {
 			var abilityCount int64
 			require.NoError(t, db.Model(&UpstreamKeyAbility{}).Where("upstream_key_id = ?", key.ID).Count(&abilityCount).Error)
 			assert.Zero(t, abilityCount)
+			require.NoError(t, (&Channel{Id: 41}).Delete())
+			var legacyRoutingCount int64
+			require.NoError(t, db.Model(&RoutingKey{}).Where("channel_id = ?", 41).Count(&legacyRoutingCount).Error)
+			assert.Zero(t, legacyRoutingCount)
+			var legacyChannelKeyCount int64
+			require.NoError(t, db.Model(&ChannelKey{}).Where("channel_id = ?", 41).Count(&legacyChannelKeyCount).Error)
+			assert.Zero(t, legacyChannelKeyCount)
 		})
 	}
 }
@@ -546,6 +574,7 @@ func TestGetRoutableUpstreamKeyByIDLoadsSecretAndFiltersModels(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&Channel{},
+		&RoutingKey{},
 		&PlatformSiteAccount{},
 		&UpstreamKey{},
 		&UpstreamKeyAbility{},
@@ -707,6 +736,7 @@ func TestSelectChannelByUpstreamKeyMergesParentsAndFiltersChildren(t *testing.T)
 	require.NoError(t, db.AutoMigrate(
 		&Channel{},
 		&Ability{},
+		&RoutingKey{},
 		&PlatformSiteAccount{},
 		&UpstreamKey{},
 		&UpstreamKeyAbility{},
@@ -820,6 +850,7 @@ func TestPlatformSiteRoutingUsesModelMappingWithChildAbilities(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(
 		&Channel{},
 		&Ability{},
+		&RoutingKey{},
 		&PlatformSiteAccount{},
 		&UpstreamKey{},
 		&UpstreamKeyAbility{},
@@ -915,6 +946,7 @@ func TestSelectRoutableUpstreamKeyForPlatformSiteLoadsRealChildKey(t *testing.T)
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&Channel{},
+		&RoutingKey{},
 		&PlatformSiteAccount{},
 		&UpstreamKey{},
 		&UpstreamKeyAbility{},
@@ -982,6 +1014,7 @@ func TestSelectRoutableUpstreamKeyReturnsNilWhenModelDoesNotMatch(t *testing.T) 
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&Channel{},
+		&RoutingKey{},
 		&PlatformSiteAccount{},
 		&UpstreamKey{},
 		&UpstreamKeyAbility{},
@@ -1034,6 +1067,8 @@ func TestSelectChannelByUpstreamKeyMergesOfficialKeyChannelWithPlatformKey(t *te
 	require.NoError(t, db.AutoMigrate(
 		&Channel{},
 		&Ability{},
+		&RoutingKey{},
+		&ChannelKey{},
 		&PlatformSiteAccount{},
 		&UpstreamKey{},
 		&UpstreamKeyAbility{},
@@ -1117,6 +1152,8 @@ func TestSelectChannelByUpstreamKeyFallsBackWhenAllWeightsAreZero(t *testing.T) 
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&Channel{},
+		&RoutingKey{},
+		&ChannelKey{},
 		&PlatformSiteAccount{},
 		&UpstreamKey{},
 	))

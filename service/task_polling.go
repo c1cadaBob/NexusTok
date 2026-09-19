@@ -277,9 +277,13 @@ func updateBatchTasks(ctx context.Context, adaptor BatchTaskPollingAdaptor, chan
 	}
 	info := &relaycommon.RelayInfo{}
 	info.ChannelMeta = &relaycommon.ChannelMeta{ChannelBaseUrl: baseURL}
-	info.ApiKey = ch.Key
+	key, err := model.GetChannelCredential(ch)
+	if err != nil {
+		return recordPollFailureForTasks(ctx, adaptor, tasks, pollClassTransport, 0, err.Error())
+	}
+	info.ApiKey = key
 	adaptor.Init(info)
-	resp, err := adaptor.FetchBatchTasks(baseURL, ch.Key, tasks, proxy)
+	resp, err := adaptor.FetchBatchTasks(baseURL, key, tasks, proxy)
 	if err != nil {
 		common.SysLog(fmt.Sprintf("Get Task Do req error: %v", err))
 		return recordPollFailureForTasks(ctx, adaptor, tasks, pollClassTransport, 0, err.Error())
@@ -448,7 +452,11 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 	info.ChannelMeta = &relaycommon.ChannelMeta{
 		ChannelBaseUrl: cacheGetChannel.GetBaseURL(),
 	}
-	info.ApiKey = cacheGetChannel.Key
+	key, err := model.GetChannelCredential(cacheGetChannel)
+	if err != nil {
+		return err
+	}
+	info.ApiKey = key
 	adaptor.Init(info)
 	disablePollingSleep := cacheGetChannel.GetOtherSettings().DisableTaskPollingSleep
 	for i, taskId := range taskIds {
@@ -487,7 +495,10 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		logger.LogError(ctx, fmt.Sprintf("Task %s not found in taskM", taskId))
 		return fmt.Errorf("task %s not found", taskId)
 	}
-	key := ch.Key
+	key, err := model.GetChannelCredential(ch)
+	if err != nil {
+		return err
+	}
 
 	privateData := task.PrivateData
 	if privateData.Key != "" {

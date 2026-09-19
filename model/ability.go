@@ -3,7 +3,6 @@ package model
 import (
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 
@@ -224,28 +223,7 @@ func GetChannel(
 	if len(channels) == 0 {
 		return nil, nil
 	}
-	priorities := make([]int64, 0, len(channels))
-	seenPriorities := make(map[int64]struct{}, len(channels))
-	for _, channel := range channels {
-		priority := channel.GetPriority()
-		if _, exists := seenPriorities[priority]; exists {
-			continue
-		}
-		seenPriorities[priority] = struct{}{}
-		priorities = append(priorities, priority)
-	}
-	sort.Slice(priorities, func(i, j int) bool { return priorities[i] > priorities[j] })
-	if retry >= len(priorities) {
-		retry = len(priorities) - 1
-	}
-	targetPriority := priorities[retry]
-	targetChannels := make([]*Channel, 0, len(channels))
-	for _, channel := range channels {
-		if channel.GetPriority() == targetPriority {
-			targetChannels = append(targetChannels, channel)
-		}
-	}
-	return selectChannelByUpstreamKey(targetChannels, group, model), nil
+	return selectChannelByRoutingKey(channels, group, model, retry), nil
 }
 
 // filterAbilitiesByConstraints applies the same ChannelSatisfiesFilters

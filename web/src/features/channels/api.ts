@@ -297,6 +297,7 @@ export async function testChannel(
     model?: string
     endpoint_type?: string
     stream?: boolean
+    key_id?: ChannelTestParams['key_id']
     upstream_key_id?: ChannelTestParams['upstream_key_id']
   }
 ): Promise<ChannelTestResponse> {
@@ -482,11 +483,13 @@ export async function getMultiKeyStatus(
  */
 export async function enableMultiKey(
   channelId: number,
-  keyIndex: number
+  keyIndex: number,
+  keyId?: number
 ): Promise<{ success: boolean; message?: string }> {
   return manageMultiKeys({
     channel_id: channelId,
     action: 'enable_key',
+    ...(keyId ? { key_id: keyId } : {}),
     key_index: keyIndex,
   }) as Promise<{ success: boolean; message?: string }>
 }
@@ -496,11 +499,13 @@ export async function enableMultiKey(
  */
 export async function disableMultiKey(
   channelId: number,
-  keyIndex: number
+  keyIndex: number,
+  keyId?: number
 ): Promise<{ success: boolean; message?: string }> {
   return manageMultiKeys({
     channel_id: channelId,
     action: 'disable_key',
+    ...(keyId ? { key_id: keyId } : {}),
     key_index: keyIndex,
   }) as Promise<{ success: boolean; message?: string }>
 }
@@ -510,12 +515,33 @@ export async function disableMultiKey(
  */
 export async function deleteMultiKey(
   channelId: number,
-  keyIndex: number
+  keyIndex: number,
+  keyId?: number
 ): Promise<{ success: boolean; message?: string }> {
   return manageMultiKeys({
     channel_id: channelId,
     action: 'delete_key',
+    ...(keyId ? { key_id: keyId } : {}),
     key_index: keyIndex,
+  }) as Promise<{ success: boolean; message?: string }>
+}
+
+/**
+ * Update a specific key's routing settings in multi-key channel
+ */
+export async function updateMultiKeySettings(
+  channelId: number,
+  keyIndex: number,
+  keyId: number | undefined,
+  data: Pick<MultiKeyManageParams, 'key_priority'> &
+    Pick<MultiKeyManageParams, 'weight_override' | 'clear_weight'>
+): Promise<{ success: boolean; message?: string }> {
+  return manageMultiKeys({
+    channel_id: channelId,
+    action: 'update_key',
+    ...(keyId ? { key_id: keyId } : {}),
+    key_index: keyIndex,
+    ...data,
   }) as Promise<{ success: boolean; message?: string }>
 }
 

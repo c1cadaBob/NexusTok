@@ -32,7 +32,7 @@ func setupChannelSelectAutoGroupsTest(t *testing.T) *gorm.DB {
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}))
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.RoutingKey{}, &model.ChannelKey{}, &model.Ability{}))
 	model.DB = db
 	common.MemoryCacheEnabled = true
 	common.RetryTimes = 0
@@ -68,7 +68,7 @@ func createChannelSelectAutoGroupsChannel(t *testing.T, db *gorm.DB, id int, gro
 	t.Helper()
 	priority := int64(0)
 	weight := uint(100)
-	require.NoError(t, db.Create(&model.Channel{
+	channel := &model.Channel{
 		Id:       id,
 		Type:     constant.ChannelTypeOpenAI,
 		Key:      fmt.Sprintf("key-%d", id),
@@ -78,7 +78,9 @@ func createChannelSelectAutoGroupsChannel(t *testing.T, db *gorm.DB, id int, gro
 		Models:   modelName,
 		Group:    group,
 		Priority: &priority,
-	}).Error)
+	}
+	require.NoError(t, db.Create(channel).Error)
+	require.NoError(t, model.SyncChannelKeysFromLegacyField(db, channel))
 	require.NoError(t, db.Create(&model.Ability{
 		Group:     group,
 		Model:     modelName,

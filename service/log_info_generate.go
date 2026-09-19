@@ -87,6 +87,15 @@ func AppendRelayLogAdminInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 		other.SetAdmin("is_multi_key", true)
 		other.SetAdmin("multi_key_index", common.GetContextKeyInt(ctx, constant.ContextKeyChannelMultiKeyIndex))
 	}
+	if keyID := common.GetContextKeyInt(ctx, constant.ContextKeyRoutingKeyId); keyID > 0 {
+		other.SetAdmin("key_id", keyID)
+		if source := common.GetContextKeyString(ctx, constant.ContextKeyRoutingKeySource); source != "" {
+			other.SetAdmin("key_source", source)
+		}
+		other.SetAdmin("key_priority", common.GetContextKeyInt(ctx, constant.ContextKeyRoutingKeyPriority))
+		other.SetAdmin("key_weight", common.GetContextKeyInt(ctx, constant.ContextKeyRoutingKeyWeight))
+		other.SetAdmin("effective_priority", common.GetContextKeyInt(ctx, constant.ContextKeyRoutingEffectivePriority))
+	}
 	if upstreamKeyID := common.GetContextKeyInt(ctx, constant.ContextKeyUpstreamKeyId); upstreamKeyID > 0 {
 		other.SetAdmin("upstream_key_id", upstreamKeyID)
 		if name := common.GetContextKeyString(ctx, constant.ContextKeyUpstreamKeyName); name != "" {

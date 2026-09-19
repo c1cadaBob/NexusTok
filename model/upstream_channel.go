@@ -92,6 +92,7 @@ type PlatformSiteAccount struct {
 
 type UpstreamKey struct {
 	ID                      uint       `json:"id" gorm:"primaryKey"`
+	RoutingKeyID            uint       `json:"routing_key_id" gorm:"index"`
 	ChannelID               int        `json:"channel_id" gorm:"not null;index;uniqueIndex:,composite:channel_external,priority:1"`
 	ExternalID              string     `json:"external_id" gorm:"type:varchar(255);not null;uniqueIndex:,composite:channel_external,priority:2"`
 	Name                    string     `json:"name" gorm:"type:varchar(255)"`
@@ -400,6 +401,11 @@ func GetRoutableUpstreamKeyByID(channelID int, keyID uint, group, modelName stri
 	if err := DB.Where("id = ? AND channel_id = ?", keyID, channelID).First(&key).Error; err != nil {
 		return nil, err
 	}
+	if key.RoutingKeyID == 0 {
+		if err := EnsureRoutingKeyForUpstreamKey(nil, &key); err != nil {
+			return nil, err
+		}
+	}
 	if !key.IsRoutable(now) {
 		return nil, errors.New("upstream key is not routable")
 	}
@@ -426,6 +432,11 @@ func DeleteUpstreamData(tx *gorm.DB, channelIDs []int) error {
 	if tx == nil || len(channelIDs) == 0 {
 		return nil
 	}
+	if tx.Migrator().HasTable(&ChannelKey{}) {
+		if err := tx.Where("channel_id IN ?", channelIDs).Delete(&ChannelKey{}).Error; err != nil {
+			return err
+		}
+	}
 	if tx.Migrator().HasTable(&UpstreamKey{}) {
 		var keys []UpstreamKey
 		if err := tx.Where("channel_id IN ?", channelIDs).Find(&keys).Error; err != nil {
@@ -441,6 +452,11 @@ func DeleteUpstreamData(tx *gorm.DB, channelIDs []int) error {
 			}
 		}
 		if err := tx.Where("channel_id IN ?", channelIDs).Delete(&UpstreamKey{}).Error; err != nil {
+			return err
+		}
+	}
+	if tx.Migrator().HasTable(&RoutingKey{}) {
+		if err := tx.Where("channel_id IN ?", channelIDs).Delete(&RoutingKey{}).Error; err != nil {
 			return err
 		}
 	}

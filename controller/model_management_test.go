@@ -59,7 +59,17 @@ func modelManagementDB(t *testing.T, kind, dsn string) *gorm.DB {
 	require.NoError(t, model.InitDB())
 	database = model.DB
 	model.LOG_DB = database
-	require.NoError(t, database.AutoMigrate(&model.Model{}, &model.Vendor{}, &model.Channel{}, &model.Ability{}, &model.Option{}, &model.User{}, &model.AuditLog{}))
+	require.NoError(t, database.AutoMigrate(
+		&model.Model{},
+		&model.Vendor{},
+		&model.Channel{},
+		&model.RoutingKey{},
+		&model.ChannelKey{},
+		&model.Ability{},
+		&model.Option{},
+		&model.User{},
+		&model.AuditLog{},
+	))
 	for _, value := range restoreRatios {
 		require.NoError(t, value.restore("{}"))
 	}
@@ -966,6 +976,8 @@ func TestModelDeletionDatabaseMatrix(t *testing.T) {
 					for i := range channels {
 						require.NoError(t, db.Create(&channels[i]).Error)
 						require.NoError(t, channels[i].UpdateAbilities(db))
+						require.NoError(t, model.SyncChannelKeysFromLegacyField(db, &channels[i]))
+						require.NoError(t, db.First(&channels[i], channels[i].Id).Error)
 					}
 					common.MemoryCacheEnabled = true
 					model.InitChannelCache()

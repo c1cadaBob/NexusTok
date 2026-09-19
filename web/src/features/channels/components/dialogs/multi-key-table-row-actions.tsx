@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cadabob.dev
 */
 import { useTranslation } from 'react-i18next'
+import { Pencil } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 
@@ -24,27 +25,35 @@ import type { MultiKeyConfirmAction } from '../../types'
 
 type MultiKeyTableRowActionsProps = {
   keyIndex: number
+  keyId?: number
   status: number
   canDelete: boolean
   onAction: (action: MultiKeyConfirmAction) => void
+  onEdit: () => void
 }
 
 export function MultiKeyTableRowActions({
   keyIndex,
+  keyId,
   status,
   canDelete,
   onAction,
+  onEdit,
 }: MultiKeyTableRowActionsProps) {
   const { t } = useTranslation()
   const isEnabled = status === 1
 
   return (
     <div className='flex justify-end gap-2'>
+      <Button variant='outline' size='sm' onClick={onEdit}>
+        <Pencil data-icon='inline-start' />
+        {t('Edit')}
+      </Button>
       {isEnabled ? (
         <Button
           variant='outline'
           size='sm'
-          onClick={() => onAction({ type: 'disable', keyIndex })}
+          onClick={() => onAction({ type: 'disable', keyIndex, keyId })}
         >
           {t('Disable')}
         </Button>
@@ -52,7 +61,7 @@ export function MultiKeyTableRowActions({
         <Button
           variant='outline'
           size='sm'
-          onClick={() => onAction({ type: 'enable', keyIndex })}
+          onClick={() => onAction({ type: 'enable', keyIndex, keyId })}
         >
           {t('Enable')}
         </Button>
@@ -62,7 +71,7 @@ export function MultiKeyTableRowActions({
         size='sm'
         onClick={() => {
           if (!canDelete) return
-          onAction({ type: 'delete', keyIndex })
+          onAction({ type: 'delete', keyIndex, keyId })
         }}
         disabled={!canDelete}
         title={

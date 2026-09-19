@@ -92,16 +92,12 @@ func runCodexCredentialAutoRefreshOnce() {
 				continue
 			}
 			scanned++
-			if ch.ChannelInfo.IsMultiKey {
+			selected := model.SelectRoutableKey(ch, "", "")
+			if selected == nil || selected.SelectedRoutingKey == nil {
 				continue
 			}
 
-			rawKey := strings.TrimSpace(ch.Key)
-			if rawKey == "" {
-				continue
-			}
-
-			oauthKey, err := parseCodexOAuthKey(rawKey)
+			oauthKey, err := parseCodexOAuthKey(strings.TrimSpace(selected.SelectedRoutingKey.Secret))
 			if err != nil {
 				continue
 			}

@@ -748,6 +748,15 @@ export function UpstreamKeysMobileList(props: UpstreamKeysSubTableProps) {
                 </div>
 
                 <div className='grid min-w-0 grid-cols-2 gap-x-3 gap-y-3'>
+                  <UpstreamKeyMobileField label={t('Key ID')}>
+                    <StatusBadge
+                      label={`#${upstreamKey.key_id || upstreamKey.id}`}
+                      copyText={String(upstreamKey.key_id || upstreamKey.id)}
+                      size='sm'
+                      showDot={false}
+                      className='font-mono'
+                    />
+                  </UpstreamKeyMobileField>
                   <UpstreamKeyMobileField label={t('Key')}>
                     <span
                       className='block max-w-full truncate font-mono text-xs'
@@ -982,7 +991,8 @@ function UpstreamKeyEditDialog(props: UpstreamKeyEditDialogProps) {
           <Label>{t('Key priority')}</Label>
           <NumericSpinnerInput
             value={keyPriority}
-            min={-999}
+            min={0}
+            max={99}
             onChange={setKeyPriority}
           />
         </div>
@@ -1078,6 +1088,21 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
               selection.toggleSelected(upstreamKey.id, !!value)
             }
             aria-label={t('Select upstream key')}
+          />
+        ),
+      },
+      {
+        id: 'key-id',
+        header: t('Key ID'),
+        className: 'w-28 text-left',
+        cellClassName: 'text-left',
+        cell: (upstreamKey: UpstreamKey) => (
+          <StatusBadge
+            label={`#${upstreamKey.key_id || upstreamKey.id}`}
+            copyText={String(upstreamKey.key_id || upstreamKey.id)}
+            size='sm'
+            showDot={false}
+            className='font-mono'
           />
         ),
       },

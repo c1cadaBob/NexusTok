@@ -215,7 +215,7 @@ export const channelFormSchema = z
     upstream_kind: z
       .enum(['key_channel', 'platform_site'])
       .default('key_channel'),
-    key_priority: z.number().int().min(-999).default(0),
+    key_priority: z.number().int().min(0).max(99).default(0),
     conversion_ratio: z.number().min(0).default(1),
     key_weight_override: z.number().int().min(0).max(2000).optional(),
     platform_site_platform: z.enum(['newapi', 'sub2api']).default('newapi'),

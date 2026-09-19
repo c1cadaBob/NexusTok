@@ -117,6 +117,15 @@ export interface LogOtherData {
   admin_info?: {
     is_multi_key?: boolean
     multi_key_index?: number
+    key_id?: number
+    key_source?: string
+    key_priority?: number
+    key_weight?: number
+    effective_priority?: number
+    upstream_key_id?: number
+    upstream_key_name?: string
+    upstream_key_ratio?: number
+    upstream_key_weight?: number
     use_channel?: number[]
     local_count_tokens?: boolean
     usage_billing_path?: UsageBillingPath | string

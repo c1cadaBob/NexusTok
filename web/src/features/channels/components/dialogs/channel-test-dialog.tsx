@@ -248,8 +248,8 @@ function isPlatformSiteSnapshotUsable(channel: Channel): boolean {
   )
 }
 
-function getEntryUpstreamKeyId(upstreamKey: UpstreamKey | null | undefined) {
-  return upstreamKey?.id ?? null
+function getUpstreamKeyRoutingId(upstreamKey: UpstreamKey | null | undefined) {
+  return upstreamKey?.key_id ?? upstreamKey?.id ?? null
 }
 
 function getUpstreamKeyUnavailableReason(
@@ -377,7 +377,7 @@ export function ChannelTestDialog({
 
   return (
     <ChannelTestDialogContent
-      key={`${currentRow.id}:${currentUpstreamKey?.id ?? 'auto'}`}
+      key={`${currentRow.id}:${getUpstreamKeyRoutingId(currentUpstreamKey) ?? 'auto'}`}
       open={open}
       onOpenChange={onOpenChange}
       currentRow={currentRow}
@@ -422,12 +422,12 @@ function ChannelTestDialogContent({
     pageIndex: 0,
     pageSize: 30,
   })
-  const [selectedUpstreamKeyId, setSelectedUpstreamKeyId] = useState<
+  const [selectedRoutingKeyId, setSelectedRoutingKeyId] = useState<
     number | null
-  >(() => getEntryUpstreamKeyId(currentUpstreamKey))
+  >(() => getUpstreamKeyRoutingId(currentUpstreamKey))
   const [entrySelectionUnavailableReason, setEntrySelectionUnavailableReason] =
     useState<string | null>(null)
-  const entryUpstreamKeyId = getEntryUpstreamKeyId(currentUpstreamKey)
+  const entryRoutingKeyId = getUpstreamKeyRoutingId(currentUpstreamKey)
   const hasInitializedEntrySelectionRef = useRef(false)
   const hasUserSelectedUpstreamKeyRef = useRef(false)
   const isPlatformSite = currentRow.upstream_kind === 'platform_site'
@@ -492,7 +492,7 @@ function ChannelTestDialogContent({
     setFailureDetails(null)
     setPagination({ pageIndex: 0, pageSize: 30 })
     setEntrySelectionUnavailableReason(null)
-    setSelectedUpstreamKeyId(getEntryUpstreamKeyId(currentUpstreamKey))
+    setSelectedRoutingKeyId(getUpstreamKeyRoutingId(currentUpstreamKey))
   }, [currentUpstreamKey])
 
   const upstreamKeysQuery = useQuery({
@@ -504,16 +504,24 @@ function ChannelTestDialogContent({
   })
 
   const upstreamKeys = useMemo(() => {
-    const mergedKeys = new Map(
-      [
-        ...(currentRow.upstream_keys ?? []),
-        ...(currentUpstreamKey ? [currentUpstreamKey] : []),
-      ].map((key) => [key.id, key])
-    )
+    const mergedKeys = new Map<number, UpstreamKey>()
+    for (const key of [
+      ...(currentRow.upstream_keys ?? []),
+      ...(currentUpstreamKey ? [currentUpstreamKey] : []),
+    ]) {
+      const routingKeyId = getUpstreamKeyRoutingId(key)
+      if (routingKeyId !== null) {
+        mergedKeys.set(routingKeyId, key)
+      }
+    }
 
     for (const key of upstreamKeysQuery.data?.data?.items ?? []) {
-      mergedKeys.set(key.id, {
-        ...mergedKeys.get(key.id),
+      const routingKeyId = getUpstreamKeyRoutingId(key)
+      if (routingKeyId === null) {
+        continue
+      }
+      mergedKeys.set(routingKeyId, {
+        ...mergedKeys.get(routingKeyId),
         ...key,
       })
     }
@@ -543,12 +551,14 @@ function ChannelTestDialogContent({
     hasPlatformSiteSnapshot
 
   const selectedUpstreamKey = useMemo(() => {
-    if (selectedUpstreamKeyId === null) return null
+    if (selectedRoutingKeyId === null) return null
 
     return (
-      upstreamKeys.find((item) => item.id === selectedUpstreamKeyId) ?? null
+      upstreamKeys.find(
+        (item) => getUpstreamKeyRoutingId(item) === selectedRoutingKeyId
+      ) ?? null
     )
-  }, [selectedUpstreamKeyId, upstreamKeys])
+  }, [selectedRoutingKeyId, upstreamKeys])
 
   const upstreamKeySelectItems = useMemo(
     () => [
@@ -558,7 +568,7 @@ function ChannelTestDialogContent({
         description: t('Use channel routing rules'),
       },
       ...upstreamKeys.map((key) => ({
-        value: String(key.id),
+        value: String(getUpstreamKeyRoutingId(key)),
         label: key.name || key.external_id || `#${key.id}`,
         description: [
           key.key_preview || t('No key preview'),
@@ -588,15 +598,17 @@ function ChannelTestDialogContent({
       hasUserSelectedUpstreamKeyRef.current = true
       setEntrySelectionUnavailableReason(null)
       if (value === 'auto') {
-        setSelectedUpstreamKeyId(null)
+        setSelectedRoutingKeyId(null)
       } else {
-        const nextKeyId = Number(value)
-        const nextKey = upstreamKeys.find((key) => key.id === nextKeyId)
+        const nextRoutingKeyId = Number(value)
+        const nextKey = upstreamKeys.find(
+          (key) => getUpstreamKeyRoutingId(key) === nextRoutingKeyId
+        )
         if (!isPlatformSiteSnapshotUsable(currentRow) || !nextKey) {
           return
         }
 
-        setSelectedUpstreamKeyId(nextKeyId)
+        setSelectedRoutingKeyId(nextRoutingKeyId)
       }
       resetModelTestState()
     },
@@ -613,19 +625,19 @@ function ChannelTestDialogContent({
     hasInitializedEntrySelectionRef.current = true
     hasUserSelectedUpstreamKeyRef.current = false
     setEntrySelectionUnavailableReason(null)
-    setSelectedUpstreamKeyId(getEntryUpstreamKeyId(currentUpstreamKey))
+    setSelectedRoutingKeyId(getUpstreamKeyRoutingId(currentUpstreamKey))
   }, [currentUpstreamKey, open])
 
   useEffect(() => {
-    if (selectedUpstreamKeyId === null) {
+    if (selectedRoutingKeyId === null) {
       return
     }
     if (hasUserSelectedUpstreamKeyRef.current) {
       return
     }
     if (
-      entryUpstreamKeyId === null ||
-      selectedUpstreamKeyId !== entryUpstreamKeyId
+      entryRoutingKeyId === null ||
+      selectedRoutingKeyId !== entryRoutingKeyId
     ) {
       return
     }
@@ -634,29 +646,33 @@ function ChannelTestDialogContent({
     if (!syncedKeys || syncedKeys.length === 0) {
       return
     }
-    if (syncedKeys.some((key) => key.id === selectedUpstreamKeyId)) {
+    if (
+      syncedKeys.some(
+        (key) => getUpstreamKeyRoutingId(key) === selectedRoutingKeyId
+      )
+    ) {
       return
     }
 
     setEntrySelectionUnavailableReason(
       getUpstreamKeyUnavailableReason(currentUpstreamKey, t) ?? t('Missing')
     )
-    setSelectedUpstreamKeyId(null)
+    setSelectedRoutingKeyId(null)
     resetModelTestState()
   }, [
     currentUpstreamKey,
-    entryUpstreamKeyId,
+    entryRoutingKeyId,
     resetModelTestState,
-    selectedUpstreamKeyId,
+    selectedRoutingKeyId,
     t,
     upstreamKeysQuery.data,
   ])
 
   useEffect(() => {
-    if (selectedUpstreamKeyId !== null && entrySelectionUnavailableReason) {
+    if (selectedRoutingKeyId !== null && entrySelectionUnavailableReason) {
       setEntrySelectionUnavailableReason(null)
     }
-  }, [entrySelectionUnavailableReason, selectedUpstreamKeyId])
+  }, [entrySelectionUnavailableReason, selectedRoutingKeyId])
 
   const streamDisabled = STREAM_INCOMPATIBLE_ENDPOINTS.has(endpointType)
   const effectiveStreamTest = !streamDisabled && isStreamTest
@@ -684,7 +700,7 @@ function ChannelTestDialogContent({
   const defaultTestModel = currentRow.test_model?.trim()
 
   const baseModels = useMemo(() => {
-    if (selectedUpstreamKeyId !== null) {
+    if (selectedRoutingKeyId !== null) {
       return selectedUpstreamKey
         ? uniqueModelNames(selectedUpstreamKey.models)
         : []
@@ -703,7 +719,7 @@ function ChannelTestDialogContent({
     isPlatformSite,
     modelsValue,
     routableUpstreamKeys,
-    selectedUpstreamKeyId,
+    selectedRoutingKeyId,
     selectedUpstreamKey,
     upstreamKeys.length,
   ])
@@ -822,7 +838,7 @@ function ChannelTestDialogContent({
             testModel: model,
             endpointType: endpointType === 'auto' ? undefined : endpointType,
             stream: effectiveStreamTest || undefined,
-            upstreamKeyId: selectedUpstreamKeyId ?? undefined,
+            keyId: selectedRoutingKeyId ?? undefined,
             silent,
           },
           (success, responseTime, error, errorCode) => {
@@ -863,7 +879,7 @@ function ChannelTestDialogContent({
       effectiveStreamTest,
       markModelTesting,
       refreshChannelLists,
-      selectedUpstreamKeyId,
+      selectedRoutingKeyId,
       t,
       updateTestResult,
     ]
@@ -1032,7 +1048,7 @@ function ChannelTestDialogContent({
       return
     }
 
-    if (selectedUpstreamKeyId !== null) {
+    if (selectedRoutingKeyId !== null) {
       toast.error(
         t('Delete failed models is only available in auto route mode')
       )
@@ -1090,7 +1106,7 @@ function ChannelTestDialogContent({
     isPlatformSite,
     models,
     refreshChannelLists,
-    selectedUpstreamKeyId,
+    selectedRoutingKeyId,
     t,
     testResults,
   ])
@@ -1316,9 +1332,9 @@ function ChannelTestDialogContent({
               <Combobox
                 options={upstreamKeySelectItems}
                 value={
-                  selectedUpstreamKeyId === null
+                  selectedRoutingKeyId === null
                     ? 'auto'
-                    : String(selectedUpstreamKeyId)
+                    : String(selectedRoutingKeyId)
                 }
                 onValueChange={handleUpstreamKeyChange}
                 id='upstream-test-key'
@@ -1413,7 +1429,7 @@ function ChannelTestDialogContent({
                       )}
                       {failedModels.length > 0 &&
                         !isPlatformSite &&
-                        selectedUpstreamKeyId === null && (
+                        selectedRoutingKeyId === null && (
                           <Button
                             variant='outline'
                             size='sm'
