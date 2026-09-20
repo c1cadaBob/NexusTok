@@ -565,7 +565,7 @@ export function ChannelsTable() {
             <TableRow className='w-full bg-muted/20 hover:bg-muted/20'>
               <TableCell
                 colSpan={row.getVisibleCells().length}
-                className='w-0 max-w-0 min-w-0 p-0 whitespace-normal'
+                className='relative w-0 max-w-0 min-w-0 overflow-visible p-0 whitespace-normal'
               >
                 <UpstreamKeysSubTable channel={channel} />
               </TableCell>

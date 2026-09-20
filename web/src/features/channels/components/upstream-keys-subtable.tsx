@@ -169,6 +169,57 @@ function useParentTableViewportWidth(
   return viewportWidth
 }
 
+function useParentTableHorizontalScrollSync(
+  rootRef: React.RefObject<HTMLDivElement | null>,
+  targetRef: React.RefObject<HTMLDivElement | null>
+) {
+  useLayoutEffect(() => {
+    const root = rootRef.current
+    const target = targetRef.current
+    const tableContainer = root?.closest<HTMLElement>(
+      '[data-slot="table-container"]'
+    )
+    if (!root || !tableContainer || !target) {
+      return
+    }
+
+    const updateTransform = () => {
+      // 先清除上一次补偿，再根据当前布局重新计算，避免滚动和尺寸变化时累积偏移。
+      target.style.transform = ''
+
+      const rootStyles = getComputedStyle(root)
+      const rootLeftInset =
+        Number.parseFloat(rootStyles.paddingLeft) +
+        Number.parseFloat(rootStyles.borderLeftWidth)
+      const targetLeft =
+        tableContainer.getBoundingClientRect().left + rootLeftInset
+      const currentLeft = target.getBoundingClientRect().left
+      const translateX = targetLeft - currentLeft
+
+      if (Math.abs(translateX) > 0.5) {
+        target.style.transform = `translateX(${translateX}px)`
+      }
+    }
+
+    updateTransform()
+    tableContainer.addEventListener('scroll', updateTransform, {
+      passive: true,
+    })
+
+    const resizeObserver =
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(updateTransform)
+    resizeObserver?.observe(tableContainer)
+
+    return () => {
+      tableContainer.removeEventListener('scroll', updateTransform)
+      resizeObserver?.disconnect()
+      target.style.transform = ''
+    }
+  }, [rootRef, targetRef])
+}
+
 function getEffectiveWeight(upstreamKey: UpstreamKey): number {
   if (upstreamKey.conversion_ratio === 0) {
     return 2000
@@ -1220,8 +1271,13 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
   const [editingKey, setEditingKey] = useState<UpstreamKey | null>(null)
   const keys = props.channel.upstream_keys || []
   const subTableRootRef = useRef<HTMLDivElement>(null)
+  const batchToolbarViewportRef = useRef<HTMLDivElement>(null)
   const parentTableViewportWidth =
     useParentTableViewportWidth(subTableRootRef)
+  useParentTableHorizontalScrollSync(
+    subTableRootRef,
+    batchToolbarViewportRef
+  )
   const selection = useUpstreamKeySelection(props.channel, keys)
   const batchDisabled =
     selection.isBatchUpdating || selection.selectedIdList.length === 0
@@ -1381,10 +1437,13 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
           : { width: parentTableViewportWidth }
       }
     >
-      <div className='relative max-h-[70vh] max-w-full overflow-auto overscroll-contain rounded-md'>
-        {keys.length > 0 && (
+      {keys.length > 0 && (
+        <div
+          ref={batchToolbarViewportRef}
+          className='sticky top-0 left-0 z-20 w-full min-w-0'
+        >
           <UpstreamKeyBatchToolbar
-            className='bg-muted/95 sticky top-0 left-0 z-20 w-full min-w-full px-3 py-2 backdrop-blur'
+            className='bg-muted/95 sticky top-0 left-0 z-20 w-full min-w-full px-3 py-2 shadow-sm backdrop-blur'
             allSelected={selection.allSelected}
             disabled={batchDisabled}
             onClear={selection.clearSelection}
@@ -1394,21 +1453,21 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
             partiallySelected={selection.partiallySelected}
             selectedCount={selection.selectedIdList.length}
           />
-        )}
-        <StaticDataTable
-          className='bg-background relative min-w-0 !overflow-visible rounded-md'
-          tableClassName='w-max min-w-full'
-          tableProps={{ withContainer: false }}
-          data={keys}
-          columns={columns}
-          getRowKey={(upstreamKey) => upstreamKey.id}
-          emptyContent={
-            <span className='text-muted-foreground text-sm'>
-              {t('No upstream keys')}
-            </span>
-          }
-        />
-      </div>
+        </div>
+      )}
+      <StaticDataTable
+        className='bg-background relative min-w-0 !overflow-visible rounded-md'
+        tableClassName='w-max min-w-full'
+        tableProps={{ withContainer: false }}
+        data={keys}
+        columns={columns}
+        getRowKey={(upstreamKey) => upstreamKey.id}
+        emptyContent={
+          <span className='text-muted-foreground text-sm'>
+            {t('No upstream keys')}
+          </span>
+        }
+      />
       <UpstreamKeyEditDialog
         channel={props.channel}
         upstreamKey={editingKey}

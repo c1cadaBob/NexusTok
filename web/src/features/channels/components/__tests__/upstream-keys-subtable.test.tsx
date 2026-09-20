@@ -196,7 +196,10 @@ test('平台站点子表根区域锚定到渠道表可视宽度', () => {
 
   expect(subTableRoot).not.toBeNull()
   expect(subTableRoot).toHaveClass('sticky', 'left-0', 'max-w-none', 'min-w-0')
-  expect(subTableRoot).toHaveStyle({ width: '640px' })
+  expect(subTableRoot).toHaveAttribute(
+    'style',
+    expect.stringContaining('width: 640px')
+  )
 })
 
 test('平台站点展开子表时批量操作栏固定在内部滚动区域顶部', () => {
@@ -217,6 +220,22 @@ test('平台站点展开子表时批量操作栏固定在内部滚动区域顶�
     'z-20'
   )
   expect(toolbar).not.toHaveClass('min-w-max')
+})
+
+test('平台站点桌面子表复用渠道滚动容器而不创建独立横向滚动层', () => {
+  renderWithProviders(<UpstreamKeysSubTable channel={platformChannel()} />)
+
+  const actionHeader = screen.getByRole('columnheader', { name: 'Actions' })
+  const subTableRoot = actionHeader.closest('div.sticky')
+
+  expect(subTableRoot).not.toBeNull()
+  expect(subTableRoot).toHaveClass('overflow-visible')
+  expect(subTableRoot).not.toHaveClass('overflow-auto')
+
+  const internalContainer = actionHeader.closest('table')?.parentElement
+  expect(internalContainer).not.toBeNull()
+  expect(internalContainer).toHaveClass('!overflow-visible')
+  expect(internalContainer).not.toHaveClass('overflow-auto')
 })
 
 test('平台站点空子密钥列表不显示批量操作栏', () => {
