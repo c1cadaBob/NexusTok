@@ -37,6 +37,7 @@ import {
   type StaticDataTableColumn,
 } from '@/components/data-table'
 import { Dialog } from '@/components/dialog'
+import { MultiSelect } from '@/components/multi-select'
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
 import { TruncatedText } from '@/components/truncated-text'
 import { Button } from '@/components/ui/button'
@@ -74,7 +75,6 @@ import {
 } from '../lib'
 import type { Channel, UpstreamKey } from '../types'
 import { useChannels } from './channels-provider'
-import { MultiSelect } from '@/components/multi-select'
 import { NumericSpinnerInput } from './numeric-spinner-input'
 
 const SENSITIVE_MASK = '••••'
@@ -916,7 +916,9 @@ function UpstreamKeyEditDialog(props: UpstreamKeyEditDialogProps) {
         ? ''
         : String(props.upstreamKey.weight_override)
     )
-    setAllowedModels(props.upstreamKey.allowed_models ?? props.upstreamKey.models)
+    setAllowedModels(
+      props.upstreamKey.allowed_models ?? props.upstreamKey.models
+    )
     setAllowedModelsLimited(props.upstreamKey.allowed_models != null)
   }, [props.open, props.upstreamKey])
 
@@ -1135,10 +1137,7 @@ function UpstreamKeyEditDialog(props: UpstreamKeyEditDialogProps) {
         </div>
         <div className='grid gap-3 rounded-md border p-3'>
           <div className='flex items-center justify-between gap-3'>
-            <Label
-              htmlFor='upstream-key-allowed-models'
-              className='text-sm'
-            >
+            <Label htmlFor='upstream-key-allowed-models' className='text-sm'>
               {t('Limit which models can be used with this key')}
             </Label>
             <Switch
