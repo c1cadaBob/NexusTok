@@ -171,9 +171,14 @@ function useParentTableViewportWidth(
 
 function useParentTableHorizontalScrollSync(
   rootRef: React.RefObject<HTMLDivElement | null>,
-  targetRef: React.RefObject<HTMLDivElement | null>
+  targetRef: React.RefObject<HTMLDivElement | null>,
+  enabled: boolean
 ) {
   useLayoutEffect(() => {
+    if (!enabled) {
+      return
+    }
+
     const root = rootRef.current
     const target = targetRef.current
     const tableContainer = root?.closest<HTMLElement>(
@@ -217,7 +222,60 @@ function useParentTableHorizontalScrollSync(
       resizeObserver?.disconnect()
       target.style.transform = ''
     }
-  }, [rootRef, targetRef])
+  }, [enabled, rootRef, targetRef])
+}
+
+function useParentTablePinnedActionsSync(
+  rootRef: React.RefObject<HTMLDivElement | null>,
+  enabled: boolean
+) {
+  useLayoutEffect(() => {
+    if (!enabled) {
+      return
+    }
+
+    const root = rootRef.current
+    const tableContainer = root?.closest<HTMLElement>(
+      '[data-slot="table-container"]'
+    )
+    if (!root || !tableContainer) {
+      return
+    }
+
+    const updateTransforms = () => {
+      const containerRight = tableContainer.getBoundingClientRect().right
+      const actionCells = root.querySelectorAll<HTMLElement>(
+        '[data-column-id="actions"]'
+      )
+
+      for (const actionCell of actionCells) {
+        actionCell.style.transform = `translateX(${
+          containerRight - actionCell.getBoundingClientRect().right
+        }px)`
+      }
+    }
+
+    updateTransforms()
+    tableContainer.addEventListener('scroll', updateTransforms, {
+      passive: true,
+    })
+
+    const resizeObserver =
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(updateTransforms)
+    resizeObserver?.observe(tableContainer)
+
+    return () => {
+      tableContainer.removeEventListener('scroll', updateTransforms)
+      resizeObserver?.disconnect()
+      for (const actionCell of root.querySelectorAll<HTMLElement>(
+        '[data-column-id="actions"]'
+      )) {
+        actionCell.style.transform = ''
+      }
+    }
+  }, [enabled, rootRef])
 }
 
 function getEffectiveWeight(upstreamKey: UpstreamKey): number {
@@ -1276,8 +1334,10 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
     useParentTableViewportWidth(subTableRootRef)
   useParentTableHorizontalScrollSync(
     subTableRootRef,
-    batchToolbarViewportRef
+    batchToolbarViewportRef,
+    keys.length > 0
   )
+  useParentTablePinnedActionsSync(subTableRootRef, keys.length > 0)
   const selection = useUpstreamKeySelection(props.channel, keys)
   const batchDisabled =
     selection.isBatchUpdating || selection.selectedIdList.length === 0
