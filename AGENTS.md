@@ -151,6 +151,9 @@ Inside `relaykit/`, use `kitutil.*` from `relaykit/relayconvert/kitutil/json.go`
 
 **Documentation files:** Do NOT add new files under `docs/` or any of its subdirectories unless the user explicitly requests it.
 
+- 每当优化或调整密钥调用方式、渠道调度规则、测试入口、模型获取行为、密钥可用模型限制或日志可观测规则时，必须同步更新并校准 [`docs/key-routing-strategy.md`](docs/key-routing-strategy.md)。
+- 文档更新必须与代码变更在同一个功能提交中完成；提交前核对接口参数、候选过滤条件、优先级/权重公式、失败回退行为和管理员可见字段，确保文档描述与当前实现一致。
+
 ### Frontend Rules
 
 - **Reuse existing UI components first (mandatory):** Before implementing or changing frontend UI, read `web/AGENTS.md` and the project `shadcn-ui` skill, search `web/src/components/` and the relevant feature for existing components, and read matching implementations and call sites. Do not start from custom markup or registry installation without checking the repository first.
