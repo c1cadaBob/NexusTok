@@ -174,12 +174,53 @@ test('平台站点子密钥操作列固定在表格右侧', () => {
   expect(actionCell?.className).toContain('right-0')
 })
 
+test('平台站点展开子表时批量操作栏固定在内部滚动区域顶部', () => {
+  renderWithProviders(<UpstreamKeysSubTable channel={platformChannel()} />)
+
+  const enableButton = screen.getByRole('button', {
+    name: 'Enable selected keys',
+  })
+  const toolbar = enableButton.closest('div.sticky')
+
+  expect(toolbar).not.toBeNull()
+  expect(toolbar).toHaveClass(
+    'sticky',
+    'top-0',
+    'left-0',
+    'w-full',
+    'min-w-full',
+    'z-20'
+  )
+  expect(toolbar).not.toHaveClass('min-w-max')
+})
+
+test('平台站点空子密钥列表不显示批量操作栏', () => {
+  renderWithProviders(
+    <UpstreamKeysSubTable
+      channel={{ ...platformChannel(), upstream_keys: [] }}
+    />
+  )
+
+  expect(
+    screen.queryByRole('button', { name: 'Enable selected keys' })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: 'Disable selected keys' })
+  ).not.toBeInTheDocument()
+})
+
 test('平台站点卡片展开区在窄布局中保留密钥字段和操作入口', () => {
   const key = upstreamKey()
 
   renderWithProviders(<UpstreamKeysMobileList channel={platformChannel(key)} />)
 
   expect(screen.getByText('Upstream keys (1)')).toBeInTheDocument()
+  const enableButton = screen.getByRole('button', {
+    name: 'Enable selected keys',
+  })
+  const toolbar = enableButton.closest('div.sticky')
+  expect(toolbar).not.toBeNull()
+  expect(toolbar).toHaveClass('sticky', 'top-0', 'left-0', 'w-full')
   expect(screen.getByText('sk-live...mask')).toBeInTheDocument()
   expect(screen.getByText('gpt-key-only')).toBeInTheDocument()
   expect(

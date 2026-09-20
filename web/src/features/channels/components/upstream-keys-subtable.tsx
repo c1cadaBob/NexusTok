@@ -509,7 +509,7 @@ function UpstreamKeyBatchToolbar(props: {
           {props.selectedCount} {t('selected')}
         </span>
       </label>
-      <div className='flex flex-wrap items-center gap-2'>
+      <div className='flex w-full min-w-0 flex-wrap items-center gap-2 sm:w-auto sm:justify-end'>
         <Button
           type='button'
           variant='outline'
@@ -778,9 +778,9 @@ export function UpstreamKeysMobileList(props: UpstreamKeysSubTableProps) {
           {t('No upstream keys')}
         </div>
       ) : (
-        <div className='max-h-[70vh] overflow-auto'>
+        <div className='relative max-h-[70vh] w-full overflow-auto overscroll-contain'>
           <UpstreamKeyBatchToolbar
-            className='bg-background/95 sticky top-0 z-20 -mx-1 px-1 py-2 backdrop-blur'
+            className='bg-background/95 sticky top-0 left-0 z-20 w-full min-w-full px-1 py-2 backdrop-blur'
             allSelected={selection.allSelected}
             disabled={batchDisabled}
             onClear={selection.clearSelection}
@@ -1325,11 +1325,11 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
   )
 
   return (
-    <div className='border-border bg-muted/20 w-full max-w-full min-w-0 overflow-hidden border-y px-3 py-3'>
-      <div className='max-h-[70vh] max-w-full overflow-auto rounded-md'>
+    <div className='border-border bg-muted/20 w-full max-w-full min-w-0 overflow-visible border-y px-3 py-3'>
+      <div className='relative max-h-[70vh] max-w-full overflow-auto overscroll-contain rounded-md'>
         {keys.length > 0 && (
           <UpstreamKeyBatchToolbar
-            className='bg-muted/95 sticky top-0 z-20 min-w-max px-3 py-2 backdrop-blur'
+            className='bg-muted/95 sticky top-0 left-0 z-20 w-full min-w-full px-3 py-2 backdrop-blur'
             allSelected={selection.allSelected}
             disabled={batchDisabled}
             onClear={selection.clearSelection}
@@ -1341,7 +1341,7 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
           />
         )}
         <StaticDataTable
-          className='bg-background relative min-w-0 overflow-visible rounded-md'
+          className='bg-background relative min-w-0 !overflow-visible rounded-md'
           tableClassName='w-max min-w-full'
           tableProps={{ withContainer: false }}
           data={keys}
