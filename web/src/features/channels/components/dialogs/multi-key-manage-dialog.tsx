@@ -18,7 +18,7 @@ For commercial licensing, please contact support@c1cadabob.dev
 */
 import { useQueryClient } from '@tanstack/react-query'
 import { Loader2, RefreshCw, Trash2, Power, PowerOff } from 'lucide-react'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -44,6 +44,7 @@ import {
   hasPermission,
 } from '@/lib/admin-permissions'
 import { handleServerError } from '@/lib/handle-server-error'
+import { createServerError } from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
 
 import {
@@ -62,12 +63,14 @@ import {
   formatTimestamp,
   getMultiKeyStatusConfig,
   getMultiKeyConfirmMessage,
+  createChannelFieldUpdateScheduler,
   isDestructiveAction,
 } from '../../lib'
 import type { KeyStatus, MultiKeyConfirmAction } from '../../types'
 import { useChannels } from '../channels-provider'
 import { StatisticsCard } from './multi-key-statistics-card'
 import { MultiKeyTableRowActions } from './multi-key-table-row-actions'
+import { NumericSpinnerInput } from '../numeric-spinner-input'
 
 type MultiKeyManageDialogProps = {
   open: boolean
@@ -80,6 +83,75 @@ type MultiKeySettingsDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
   onSaved: () => void
+}
+
+function MultiKeyPriorityCell({
+  channelId,
+  keyStatus,
+  onSaved,
+}: {
+  channelId: number
+  keyStatus: KeyStatus
+  onSaved: () => void
+}) {
+  const { t } = useTranslation()
+  const queryClient = useQueryClient()
+  const serverValue = keyStatus.key_priority ?? 0
+  const [localValue, setLocalValue] = useState(serverValue)
+
+  useEffect(() => {
+    setLocalValue(serverValue)
+  }, [keyStatus.index, keyStatus.key_id, serverValue])
+
+  const scheduler = useMemo(
+    () =>
+      createChannelFieldUpdateScheduler((nextValue) => {
+        void (async () => {
+          try {
+            const response = await updateMultiKeySettings(
+              channelId,
+              keyStatus.index,
+              keyStatus.key_id,
+              { key_priority: nextValue }
+            )
+            if (!response.success) {
+              throw createServerError(response, t('Operation failed'))
+            }
+            await queryClient.invalidateQueries({
+              queryKey: channelsQueryKeys.lists(),
+            })
+            onSaved()
+          } catch (error: unknown) {
+            setLocalValue(serverValue)
+            handleServerError(error, t('Operation failed'))
+          }
+        })()
+      }),
+    [
+      channelId,
+      keyStatus.index,
+      keyStatus.key_id,
+      onSaved,
+      queryClient,
+      serverValue,
+      t,
+    ]
+  )
+
+  useEffect(() => () => scheduler.flush(), [scheduler])
+
+  return (
+    <NumericSpinnerInput
+      value={localValue}
+      min={0}
+      max={99}
+      onChange={(nextValue) => {
+        setLocalValue(nextValue)
+        scheduler.schedule(nextValue)
+      }}
+      onCommit={scheduler.flush}
+    />
+  )
 }
 
 function MultiKeySettingsDialog(props: MultiKeySettingsDialogProps) {
@@ -561,8 +633,16 @@ export function MultiKeyManageDialog({
                     id: 'key-priority',
                     header: t('Key priority'),
                     className: 'w-32',
-                    cellClassName: 'font-mono text-sm',
-                    cell: (key) => key.key_priority ?? 0,
+                    cellClassName: 'text-center',
+                    cell: (key) => (
+                      <MultiKeyPriorityCell
+                        channelId={currentRow.id}
+                        keyStatus={key}
+                        onSaved={() => {
+                          void loadKeyStatus(currentPage, pageSize)
+                        }}
+                      />
+                    ),
                   },
                   {
                     id: 'key-weight',

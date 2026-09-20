@@ -74,7 +74,7 @@ function ChannelCardComponent({
   const statusCell = renderCell('status')
   const actionsCell = renderCell('actions')
   const priorityCell = renderCell('priority')
-  const ratioCell = renderCell('conversion_ratio')
+  const ratioCell = renderCell('model_ratio')
   const balanceCell = renderCell('balance')
   const responseCell = renderCell('response_time')
   const testCell = renderCell('test_time')

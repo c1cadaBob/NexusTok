@@ -268,9 +268,31 @@ function ChannelFieldCell({
   )
 }
 
-function ConversionRatioCell({ channel }: { channel: Channel }) {
+function ConversionRatioCell({
+  channel,
+  modelRatioSortActive,
+}: {
+  channel: Channel
+  modelRatioSortActive: boolean
+}) {
   if (isTagAggregateRow(channel)) {
     return <span className='text-muted-foreground text-xs'>-</span>
+  }
+
+  if (modelRatioSortActive) {
+    return (
+      <span className='font-mono text-sm tabular-nums'>
+        {formatConversionRatio(channel.model_ratio)}
+      </span>
+    )
+  }
+
+  if (channel.model_ratio != null) {
+    return (
+      <span className='font-mono text-sm tabular-nums'>
+        {formatConversionRatio(channel.model_ratio)}
+      </span>
+    )
   }
 
   let ratio = channel.conversion_ratio
@@ -707,11 +729,13 @@ export function BalanceCell({ channel }: { channel: Channel }) {
 export function useChannelsColumns(
   options: {
     enableSelection?: boolean
+    modelRatioSortActive?: boolean
   } = {}
 ): ColumnDef<Channel>[] {
   const { t, i18n } = useTranslation()
   const { sensitiveVisible } = useChannels()
   const enableSelection = options.enableSelection ?? true
+  const modelRatioSortActive = options.modelRatioSortActive ?? false
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   // The column definitions only depend on the translation function, the active
   // locale, and sensitive-data visibility. Memoizing keeps the array (and every
@@ -1256,12 +1280,18 @@ export function useChannelsColumns(
 
       // 转换倍率列
       {
-        accessorKey: 'conversion_ratio',
+        id: 'model_ratio',
+        accessorKey: 'model_ratio',
         header: t('Minimum ratio'),
         meta: { mobileHidden: true },
-        cell: ({ row }) => <ConversionRatioCell channel={row.original} />,
+        cell: ({ row }) => (
+          <ConversionRatioCell
+            channel={row.original}
+            modelRatioSortActive={modelRatioSortActive}
+          />
+        ),
         size: 130,
-        enableSorting: false,
+        enableSorting: true,
       },
 
       // Tag column
@@ -1393,6 +1423,6 @@ export function useChannelsColumns(
         meta: { pinned: 'right' as const },
       },
     ],
-    [enableSelection, t, locale, sensitiveVisible]
+    [enableSelection, locale, modelRatioSortActive, sensitiveVisible, t]
   )
 }

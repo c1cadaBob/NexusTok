@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 	"github.com/c1cadaBob/NexusTok/constant"
 	"github.com/c1cadaBob/NexusTok/model"
 	"github.com/c1cadaBob/NexusTok/service"
+	"github.com/c1cadaBob/NexusTok/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -59,36 +61,39 @@ type UpstreamSiteStatusResponse struct {
 }
 
 type UpstreamKeyResponse struct {
-	ID                      uint     `json:"id"`
-	KeyID                   uint     `json:"key_id"`
-	ChannelID               int      `json:"channel_id"`
-	ExternalID              string   `json:"external_id"`
-	Name                    string   `json:"name"`
-	KeyPreview              string   `json:"key_preview"`
-	Models                  []string `json:"models"`
-	ModelsSynced            bool     `json:"models_synced"`
-	KeyPriority             int64    `json:"key_priority"`
-	SourceConversionRatio   float64  `json:"source_conversion_ratio"`
-	ConversionRatio         float64  `json:"conversion_ratio"`
-	ConversionRatioOverride *float64 `json:"conversion_ratio_override"`
-	Weight                  int      `json:"weight"`
-	AutoWeight              int      `json:"auto_weight"`
-	WeightOverride          *int     `json:"weight_override"`
-	Status                  int      `json:"status"`
-	DisabledReason          string   `json:"disabled_reason"`
-	LastSyncAt              int64    `json:"last_sync_at"`
-	Routable                bool     `json:"routable"`
-	AvailabilityReason      string   `json:"availability_reason,omitempty"`
-	SnapshotOnly            bool     `json:"snapshot_only,omitempty"`
-	CredentialUnavailable   bool     `json:"credential_unavailable,omitempty"`
+	ID                      uint      `json:"id"`
+	KeyID                   uint      `json:"key_id"`
+	ChannelID               int       `json:"channel_id"`
+	ExternalID              string    `json:"external_id"`
+	Name                    string    `json:"name"`
+	KeyPreview              string    `json:"key_preview"`
+	Models                  []string  `json:"models"`
+	AllowedModels           *[]string `json:"allowed_models,omitempty"`
+	ModelsSynced            bool      `json:"models_synced"`
+	KeyPriority             int64     `json:"key_priority"`
+	SourceConversionRatio   float64   `json:"source_conversion_ratio"`
+	ConversionRatio         float64   `json:"conversion_ratio"`
+	ConversionRatioOverride *float64  `json:"conversion_ratio_override"`
+	Weight                  int       `json:"weight"`
+	AutoWeight              int       `json:"auto_weight"`
+	WeightOverride          *int      `json:"weight_override"`
+	Status                  int       `json:"status"`
+	DisabledReason          string    `json:"disabled_reason"`
+	LastSyncAt              int64     `json:"last_sync_at"`
+	Routable                bool      `json:"routable"`
+	AvailabilityReason      string    `json:"availability_reason,omitempty"`
+	SnapshotOnly            bool      `json:"snapshot_only,omitempty"`
+	CredentialUnavailable   bool      `json:"credential_unavailable,omitempty"`
 }
 
 type UpstreamKeyPatchRequest struct {
-	KeyPriority          *int64   `json:"key_priority"`
-	ConversionRatio      *float64 `json:"conversion_ratio"`
-	ClearConversionRatio bool     `json:"clear_conversion_ratio"`
-	WeightOverride       *int     `json:"weight_override"`
-	ClearWeight          bool     `json:"clear_weight"`
+	KeyPriority          *int64    `json:"key_priority"`
+	ConversionRatio      *float64  `json:"conversion_ratio"`
+	ClearConversionRatio bool      `json:"clear_conversion_ratio"`
+	WeightOverride       *int      `json:"weight_override"`
+	ClearWeight          bool      `json:"clear_weight"`
+	AllowedModels        *[]string `json:"allowed_models"`
+	ClearAllowedModels   bool      `json:"clear_allowed_models"`
 }
 
 type UpstreamKeyBatchStatusRequest struct {
@@ -381,6 +386,11 @@ func toUpstreamKeyResponse(key *model.UpstreamKey) UpstreamKeyResponse {
 	if models == nil {
 		models = []string{}
 	}
+	allowedModels, configured, _ := key.GetAllowedModels()
+	var allowedModelsResponse *[]string
+	if configured {
+		allowedModelsResponse = &allowedModels
+	}
 	return UpstreamKeyResponse{
 		ID:                      key.ID,
 		KeyID:                   key.RoutingKeyID,
@@ -389,6 +399,7 @@ func toUpstreamKeyResponse(key *model.UpstreamKey) UpstreamKeyResponse {
 		Name:                    key.Name,
 		KeyPreview:              upstreamKeyPreview(key),
 		Models:                  models,
+		AllowedModels:           allowedModelsResponse,
 		KeyPriority:             key.KeyPriority,
 		SourceConversionRatio:   key.EffectiveSourceConversionRatio(),
 		ConversionRatio:         key.ConversionRatio,
@@ -553,6 +564,10 @@ func PatchUpstreamKey(c *gin.Context) {
 		common.ApiError(c, errors.New("不能同时设置和清除密钥倍率覆盖"))
 		return
 	}
+	if request.AllowedModels != nil && request.ClearAllowedModels {
+		common.ApiError(c, errors.New("不能同时设置和清除密钥允许模型"))
+		return
+	}
 	updates := map[string]any{}
 	if request.KeyPriority != nil {
 		if err := model.ValidateRoutingKeyPriority(*request.KeyPriority); err != nil {
@@ -612,12 +627,50 @@ func PatchUpstreamKey(c *gin.Context) {
 		}
 		updates["weight_override"] = *request.WeightOverride
 	}
+	if request.AllowedModels != nil {
+		normalizedModels := make([]string, 0, len(*request.AllowedModels))
+		seenModels := make(map[string]struct{}, len(*request.AllowedModels))
+		realModels := make(map[string]struct{})
+		for _, modelName := range key.GetModels() {
+			realModels[modelName] = struct{}{}
+			realModels[ratio_setting.RoutingMatchModelName(modelName)] = struct{}{}
+		}
+		for _, modelName := range *request.AllowedModels {
+			modelName = strings.TrimSpace(modelName)
+			if modelName == "" {
+				continue
+			}
+			if _, exists := realModels[modelName]; !exists {
+				if _, exists := realModels[ratio_setting.RoutingMatchModelName(modelName)]; !exists {
+					common.ApiError(c, fmt.Errorf("密钥允许模型不存在于当前同步模型中: %s", modelName))
+					return
+				}
+			}
+			if _, exists := seenModels[modelName]; exists {
+				continue
+			}
+			seenModels[modelName] = struct{}{}
+			normalizedModels = append(normalizedModels, modelName)
+		}
+		encoded, marshalErr := common.Marshal(normalizedModels)
+		if marshalErr != nil {
+			common.ApiError(c, marshalErr)
+			return
+		}
+		updates["allowed_models"] = string(encoded)
+	}
+	if request.ClearAllowedModels {
+		updates["allowed_models"] = nil
+	}
 	if len(updates) == 0 {
 		common.ApiError(c, errors.New("没有可更新的字段"))
 		return
 	}
 	if err := model.DB.Transaction(func(tx *gorm.DB) error {
-		return tx.Model(&key).Updates(updates).Error
+		if err := tx.Model(&key).Updates(updates).Error; err != nil {
+			return err
+		}
+		return model.RebuildPlatformSiteChannelModels(tx, channelID)
 	}); err != nil {
 		common.ApiError(c, err)
 		return
@@ -632,6 +685,7 @@ func PatchUpstreamKey(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	model.InitChannelCache()
 	common.ApiSuccess(c, toUpstreamKeyResponse(&key))
 }
 

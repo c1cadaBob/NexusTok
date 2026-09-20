@@ -124,6 +124,222 @@ func TestUpstreamKeyFreeWeightCannotBeOverridden(t *testing.T) {
 	assert.Equal(t, MaxUpstreamKeyWeight, key.EffectiveWeight())
 }
 
+func TestUpstreamKeyEffectiveModelsRespectAllowedModels(t *testing.T) {
+	tests := []struct {
+		name          string
+		allowedModels *string
+		expected      []string
+	}{
+		{
+			name:     "nil allows all synced models",
+			expected: []string{"gpt-a", "gpt-b"},
+		},
+		{
+			name:          "empty list disables all synced models",
+			allowedModels: stringPtrForTest("[]"),
+			expected:      []string{},
+		},
+		{
+			name:          "non-empty list is intersected with synced models",
+			allowedModels: stringPtrForTest(`["gpt-b", "unknown"]`),
+			expected:      []string{"gpt-b"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			key := UpstreamKey{
+				Models:            "gpt-a,gpt-b",
+				AllowedModelsJSON: test.allowedModels,
+			}
+			assert.Equal(t, test.expected, key.GetEffectiveModels())
+		})
+	}
+}
+
+func TestSortChannelsByModelRatioUsesSpecifiedModel(t *testing.T) {
+	previousDB := DB
+	previousSecret := common.CryptoSecret
+	common.CryptoSecret = "model-ratio-test-secret"
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&Channel{},
+		&PlatformSiteAccount{},
+		&UpstreamKey{},
+		&RoutingKey{},
+	))
+	DB = db
+	t.Cleanup(func() {
+		DB = previousDB
+		common.CryptoSecret = previousSecret
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	channels := []*Channel{
+		{
+			Id:           901,
+			Name:         "ratio-03",
+			Status:       common.ChannelStatusEnabled,
+			UpstreamKind: UpstreamKindPlatformSite,
+		},
+		{
+			Id:           902,
+			Name:         "ratio-05",
+			Status:       common.ChannelStatusEnabled,
+			UpstreamKind: UpstreamKindPlatformSite,
+		},
+		{
+			Id:           903,
+			Name:         "unsupported",
+			Status:       common.ChannelStatusEnabled,
+			UpstreamKind: UpstreamKindPlatformSite,
+		},
+		{
+			Id:           904,
+			Name:         "no-key",
+			Status:       common.ChannelStatusEnabled,
+			UpstreamKind: UpstreamKindPlatformSite,
+		},
+	}
+	require.NoError(t, db.Create(&channels).Error)
+	accounts := []PlatformSiteAccount{
+		{ChannelID: 901, SyncStatus: UpstreamSiteSyncSuccess},
+		{ChannelID: 902, SyncStatus: UpstreamSiteSyncSuccess},
+		{ChannelID: 903, SyncStatus: UpstreamSiteSyncSuccess},
+		{ChannelID: 904, SyncStatus: UpstreamSiteSyncSuccess},
+	}
+	require.NoError(t, db.Create(&accounts).Error)
+
+	secret, err := EncryptPlatformSiteCredential(PlatformSiteCredential{AccessToken: "ratio-test-token"})
+	require.NoError(t, err)
+	remaining := int64(100)
+	keys := []UpstreamKey{
+		{
+			ChannelID:        901,
+			ExternalID:       "ratio-03-key",
+			SecretCiphertext: secret,
+			Models:           "gpt-4o,claude-3",
+			ModelsSynced:     true,
+			Status:           UpstreamKeyStatusEnabled,
+			ConversionRatio:  0.3,
+			Weight:           1700,
+			RemainQuota:      &remaining,
+		},
+		{
+			ChannelID:        901,
+			ExternalID:       "ratio-01-key",
+			SecretCiphertext: secret,
+			Models:           "gpt-4o,claude-3",
+			ModelsSynced:     true,
+			Status:           UpstreamKeyStatusEnabled,
+			ConversionRatio:  0.1,
+			Weight:           1900,
+			RemainQuota:      &remaining,
+		},
+		{
+			ChannelID:        902,
+			ExternalID:       "ratio-05-key",
+			SecretCiphertext: secret,
+			Models:           "gpt-4o",
+			ModelsSynced:     true,
+			Status:           UpstreamKeyStatusEnabled,
+			ConversionRatio:  0.5,
+			Weight:           1500,
+			RemainQuota:      &remaining,
+		},
+		{
+			ChannelID:        903,
+			ExternalID:       "unsupported-key",
+			SecretCiphertext: secret,
+			Models:           "claude-3",
+			ModelsSynced:     true,
+			Status:           UpstreamKeyStatusEnabled,
+			ConversionRatio:  0.01,
+			Weight:           1990,
+			RemainQuota:      &remaining,
+		},
+	}
+	require.NoError(t, db.Create(&keys).Error)
+
+	SortChannelsByModelRatio(channels, "gpt-4o", "asc")
+	require.Equal(t, []int{901, 902, 903, 904}, []int{
+		channels[0].Id,
+		channels[1].Id,
+		channels[2].Id,
+		channels[3].Id,
+	})
+	require.NotNil(t, channels[0].ModelRatio)
+	assert.InDelta(t, 0.1, *channels[0].ModelRatio, 1e-12)
+	require.NotNil(t, channels[1].ModelRatio)
+	assert.InDelta(t, 0.5, *channels[1].ModelRatio, 1e-12)
+	assert.Nil(t, channels[2].ModelRatio)
+	assert.Nil(t, channels[3].ModelRatio)
+
+	SortChannelsByModelRatio(channels, "gpt-4o", "desc")
+	assert.Equal(t, []int{902, 901, 903, 904}, []int{
+		channels[0].Id,
+		channels[1].Id,
+		channels[2].Id,
+		channels[3].Id,
+	})
+}
+
+func TestPersistPlatformSiteKeyModelsMarksEmptyFetchAsSynced(t *testing.T) {
+	previousDB := DB
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&Channel{}, &UpstreamKey{}, &UpstreamKeyAbility{}))
+	DB = db
+	t.Cleanup(func() {
+		DB = previousDB
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	channel := &Channel{
+		Id:           905,
+		Name:         "empty-fetch",
+		Models:       "stale-model",
+		UpstreamKind: UpstreamKindPlatformSite,
+		Status:       common.ChannelStatusEnabled,
+	}
+	require.NoError(t, db.Create(channel).Error)
+	key := &UpstreamKey{
+		ChannelID:      channel.Id,
+		ExternalID:     "empty-fetch-key",
+		Models:         "stale-model",
+		ModelsSynced:   false,
+		Status:         UpstreamKeyStatusAutoDisabled,
+		DisabledReason: "models_unavailable",
+	}
+	require.NoError(t, db.Create(key).Error)
+
+	require.NoError(t, PersistPlatformSiteKeyModels(db, channel.Id, key.ID, nil))
+
+	var savedKey UpstreamKey
+	require.NoError(t, db.First(&savedKey, key.ID).Error)
+	assert.True(t, savedKey.ModelsSynced)
+	assert.Empty(t, savedKey.Models)
+	assert.Empty(t, savedKey.GetEffectiveModels())
+	assert.Equal(t, UpstreamKeyStatusAutoDisabled, savedKey.Status)
+
+	var savedChannel Channel
+	require.NoError(t, db.First(&savedChannel, channel.Id).Error)
+	assert.Empty(t, savedChannel.Models)
+}
+
+func stringPtrForTest(value string) *string {
+	return &value
+}
+
 func TestKeyChannelRoutingKeyPreservesConfiguredRatioAndWeight(t *testing.T) {
 	override := 321
 	channel := &Channel{

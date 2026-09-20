@@ -27,6 +27,7 @@ import {
   RESPONSE_TIME_THRESHOLDS,
   TYPE_TO_KEY_PROMPT,
 } from '../constants'
+import { normalizeModelName } from './model-mapping-validation'
 import type {
   Channel,
   ChannelOtherSettings,
@@ -671,7 +672,9 @@ export function filterUpstreamKeys(
 
     if (
       model &&
-      !key.models.some((item) => item.toLocaleLowerCase().includes(model))
+      !getEffectiveUpstreamKeyModels(key).some((item) =>
+        item.toLocaleLowerCase().includes(model)
+      )
     ) {
       return false
     }
@@ -685,6 +688,22 @@ export function filterUpstreamKeys(
 
     return true
   })
+}
+
+export function getEffectiveUpstreamKeyModels(
+  upstreamKey: UpstreamKey
+): string[] {
+  const models = [
+    ...new Set(upstreamKey.models.map((model) => model.trim()).filter(Boolean)),
+  ]
+  if (upstreamKey.allowed_models == null) {
+    return models
+  }
+
+  const allowedModels = new Set(
+    upstreamKey.allowed_models.map((model) => normalizeModelName(model))
+  )
+  return models.filter((model) => allowedModels.has(normalizeModelName(model)))
 }
 
 export function formatConversionRatio(
@@ -761,6 +780,15 @@ export function aggregateChannelsByTag(
       tagRow.priority = channel.priority
     } else if (tagRow.priority !== channel.priority) {
       tagRow.priority = null
+    }
+
+    if (tagRow.model_ratio === undefined || tagRow.model_ratio === null) {
+      tagRow.model_ratio = channel.model_ratio
+    } else if (
+      channel.model_ratio !== undefined &&
+      channel.model_ratio !== null
+    ) {
+      tagRow.model_ratio = Math.min(tagRow.model_ratio, channel.model_ratio)
     }
 
     // Aggregate weight (same value or null if different)

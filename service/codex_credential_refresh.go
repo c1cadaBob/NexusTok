@@ -13,7 +13,8 @@ import (
 )
 
 type CodexCredentialRefreshOptions struct {
-	ResetCaches bool
+	ResetCaches  bool
+	RoutingKeyID uint
 }
 
 type CodexOAuthKey struct {
@@ -51,7 +52,16 @@ func RefreshCodexChannelCredential(ctx context.Context, channelID int, opts Code
 		return nil, nil, fmt.Errorf("channel type is not Codex")
 	}
 
-	selected := model.SelectRoutableKey(ch, "", "")
+	var selected *model.Channel
+	if opts.RoutingKeyID != 0 {
+		var selectErr error
+		selected, selectErr = model.SelectRoutableKeyByIDForRefresh(ch, opts.RoutingKeyID)
+		if selectErr != nil {
+			return nil, nil, selectErr
+		}
+	} else {
+		selected = model.SelectRoutableKey(ch, "", "")
+	}
 	if selected == nil || selected.SelectedRoutingKey == nil || selected.SelectedRoutingKey.ChannelKeyID == 0 {
 		return nil, nil, fmt.Errorf("codex channel: no available channel key")
 	}

@@ -629,6 +629,77 @@ func GetRoutableKeyByID(channel *Channel, routingKeyID uint, group, modelName st
 	}
 }
 
+func GetRoutingKeyForModelFetch(channel *Channel, routingKeyID uint) (*RoutingKeySelection, error) {
+	if channel == nil {
+		return nil, errors.New("channel is nil")
+	}
+	if routingKeyID == 0 {
+		return nil, errors.New("key_id is required")
+	}
+	var routingKey RoutingKey
+	if err := DB.Where("id = ? AND channel_id = ?", routingKeyID, channel.Id).First(&routingKey).Error; err != nil {
+		return nil, err
+	}
+	switch routingKey.Source {
+	case RoutingKeySourceKeyChannel:
+		var key ChannelKey
+		if err := DB.Where("routing_key_id = ? AND channel_id = ?", routingKeyID, channel.Id).First(&key).Error; err != nil {
+			return nil, err
+		}
+		if key.Status != common.ChannelStatusEnabled {
+			return nil, errors.New("channel key is not enabled")
+		}
+		if err := key.LoadSecret(); err != nil {
+			return nil, errors.New("channel key credential is unavailable")
+		}
+		return channelKeySelection(channel, &key), nil
+	case RoutingKeySourcePlatformSite:
+		var key UpstreamKey
+		if err := DB.Where("routing_key_id = ? AND channel_id = ?", routingKeyID, channel.Id).First(&key).Error; err != nil {
+			return nil, err
+		}
+		if key.Status != UpstreamKeyStatusEnabled || key.MissingSince != 0 {
+			return nil, errors.New("upstream key is not available")
+		}
+		if key.ExpiresAt != nil && !key.ExpiresAt.After(time.Now()) {
+			return nil, errors.New("upstream key is expired")
+		}
+		if key.RemainQuota != nil && *key.RemainQuota <= 0 {
+			return nil, errors.New("upstream key quota is exhausted")
+		}
+		if err := key.LoadSecret(); err != nil {
+			return nil, errors.New("upstream key credential is unavailable")
+		}
+		return upstreamKeySelection(channel, &key), nil
+	default:
+		return nil, fmt.Errorf("unsupported routing key source %s", routingKey.Source)
+	}
+}
+
+func SelectRoutableKeyByIDForRefresh(channel *Channel, routingKeyID uint) (*Channel, error) {
+	if channel == nil {
+		return nil, errors.New("channel is nil")
+	}
+	selection, err := GetRoutableKeyByID(channel, routingKeyID, "", "")
+	if err != nil {
+		return nil, err
+	}
+	channelCopy := *channel
+	selectionCopy := *selection
+	channelCopy.SelectedRoutingKey = &selectionCopy
+	if selectionCopy.Source == RoutingKeySourceKeyChannel {
+		channelCopy.SelectedUpstreamKey = &UpstreamKey{
+			RoutingKeyID:    selectionCopy.KeyID,
+			ChannelID:       selectionCopy.ChannelID,
+			Secret:          selectionCopy.Secret,
+			KeyPriority:     selectionCopy.KeyPriority,
+			ConversionRatio: selectionCopy.ConversionRatio,
+			Weight:          selectionCopy.Weight,
+		}
+	}
+	return &channelCopy, nil
+}
+
 func TouchRoutingKeyLastUsed(routingKeyID uint, unixTime int64) error {
 	if routingKeyID == 0 || unixTime <= 0 {
 		return nil
@@ -650,6 +721,12 @@ func TouchRoutingKeyLastUsed(routingKeyID uint, unixTime int64) error {
 func GetChannelCredential(channel *Channel) (string, error) {
 	if channel == nil {
 		return "", errors.New("channel is nil")
+	}
+	if channel.SelectedRoutingKey != nil {
+		if strings.TrimSpace(channel.SelectedRoutingKey.Secret) == "" {
+			return "", errors.New("selected routing key secret unavailable")
+		}
+		return channel.SelectedRoutingKey.Secret, nil
 	}
 	if channel.UpstreamKind == UpstreamKindPlatformSite {
 		selected := SelectRoutableKey(channel, "", "")

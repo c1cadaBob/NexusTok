@@ -57,6 +57,7 @@ export const channelSchema = z.object({
   balance: z.number().default(0), // in USD
   balance_updated_time: z.number(),
   models: z.string().default(''),
+  model_ratio: z.number().nullish(),
   group: z.string().default('default'),
   used_quota: z.number().default(0),
   model_mapping: z.string().nullish(),
@@ -290,6 +291,7 @@ export type ChannelSortBy =
   | 'balance'
   | 'response_time'
   | 'test_time'
+  | 'model_ratio'
 
 export type ChannelSortOrder = 'asc' | 'desc'
 
@@ -468,6 +470,7 @@ export interface UpstreamKey {
   name: string
   key_preview?: string
   models: string[]
+  allowed_models?: string[] | null
   models_synced: boolean
   key_priority: number
   source_conversion_ratio: number

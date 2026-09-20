@@ -193,10 +193,15 @@ export async function patchUpstreamKey(
   channelId: number,
   keyId: number,
   data: Partial<
-    Pick<UpstreamKey, 'key_priority' | 'conversion_ratio' | 'weight_override'>
+    Pick<
+      UpstreamKey,
+      'key_priority' | 'conversion_ratio' | 'weight_override'
+    >
   > & {
     clear_conversion_ratio?: boolean
     clear_weight?: boolean
+    allowed_models?: string[]
+    clear_allowed_models?: boolean
   }
 ): Promise<{ success: boolean; message?: string; data?: UpstreamKey }> {
   const res = await api.patch(
@@ -325,11 +330,14 @@ export async function updateChannelBalance(
  * Fetch available models from upstream provider
  */
 export async function fetchUpstreamModels(
-  id: number
+  id: number,
+  keyId?: number
 ): Promise<FetchModelsResponse> {
   const res = await api.get(
     `/api/channel/fetch_models/${id}`,
-    channelActionConfig()
+    channelActionConfig({
+      params: keyId ? { key_id: keyId } : undefined,
+    })
   )
   return res.data
 }

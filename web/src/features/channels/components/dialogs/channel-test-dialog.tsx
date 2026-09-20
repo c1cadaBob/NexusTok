@@ -87,6 +87,7 @@ import { getUpstreamKeys, updateChannel } from '../../api'
 import {
   channelsQueryKeys,
   formatResponseTime,
+  getEffectiveUpstreamKeyModels,
   handleTestChannel,
 } from '../../lib'
 import type {
@@ -230,7 +231,7 @@ function isRoutableUpstreamKey(
     upstreamKey.status === ENABLED_UPSTREAM_KEY_STATUS &&
     upstreamKey.routable === true &&
     upstreamKey.models_synced &&
-    upstreamKey.models.some((model) => model.trim().length > 0)
+    getEffectiveUpstreamKeyModels(upstreamKey).length > 0
   )
 }
 
@@ -702,12 +703,12 @@ function ChannelTestDialogContent({
   const baseModels = useMemo(() => {
     if (selectedRoutingKeyId !== null) {
       return selectedUpstreamKey
-        ? uniqueModelNames(selectedUpstreamKey.models)
+        ? getEffectiveUpstreamKeyModels(selectedUpstreamKey)
         : []
     }
     if (isPlatformSite) {
       const modelsFromKeys = uniqueModelNames(
-        routableUpstreamKeys.flatMap((key) => key.models)
+        routableUpstreamKeys.flatMap(getEffectiveUpstreamKeyModels)
       )
       if (modelsFromKeys.length > 0 || upstreamKeys.length > 0) {
         return modelsFromKeys

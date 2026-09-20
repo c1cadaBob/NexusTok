@@ -601,7 +601,7 @@ export function ChannelMutateDrawer({
 }: ChannelMutateDrawerProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
-  const { setOpen } = useChannels()
+  const { setCurrentUpstreamKey, setOpen } = useChannels()
   const currentUser = useAuthStore((s) => s.auth.user)
   const canEditSensitive = hasPermission(
     currentUser,
@@ -1480,8 +1480,15 @@ export function ChannelMutateDrawer({
       }
     }
 
+    setCurrentUpstreamKey(null)
     setFetchModelsDialogOpen(true)
-  }, [isEditing, canEditSensitive, form, t])
+  }, [
+    isEditing,
+    canEditSensitive,
+    form,
+    setCurrentUpstreamKey,
+    t,
+  ])
 
   const formPreviewFetcher = useCallback(async (): Promise<string[]> => {
     if (!canEditSensitive) {

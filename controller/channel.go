@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -93,6 +94,91 @@ func buildChannelListQuery(group string, statusFilter int, typeFilter int) *gorm
 	return query
 }
 
+func sortTagChannelsByModelRatio(
+	channels []*model.Channel,
+	modelName string,
+	sortOrder string,
+	startIdx int,
+	pageSize int,
+) ([]*model.Channel, int64) {
+	model.SortChannelsByModelRatio(channels, modelName, sortOrder)
+
+	type tagGroup struct {
+		tag      string
+		channels []*model.Channel
+		ratio    *float64
+		minID    int
+		tieID    int
+	}
+
+	tagGroups := make(map[string]*tagGroup)
+	for _, channel := range channels {
+		if channel == nil {
+			continue
+		}
+		tag := channel.GetTag()
+		group, exists := tagGroups[tag]
+		if !exists {
+			group = &tagGroup{
+				tag:   tag,
+				minID: channel.Id,
+			}
+			tagGroups[tag] = group
+		}
+		group.channels = append(group.channels, channel)
+		if group.minID == 0 || channel.Id < group.minID {
+			group.minID = channel.Id
+		}
+		if channel.ModelRatio != nil &&
+			(group.ratio == nil || *channel.ModelRatio < *group.ratio) {
+			ratio := *channel.ModelRatio
+			group.ratio = &ratio
+		}
+	}
+
+	groups := make([]*tagGroup, 0, len(tagGroups))
+	for _, group := range tagGroups {
+		group.tieID = group.minID
+		if group.ratio != nil {
+			group.tieID = 0
+			for _, channel := range group.channels {
+				if channel.ModelRatio != nil &&
+					*channel.ModelRatio == *group.ratio &&
+					(group.tieID == 0 || channel.Id < group.tieID) {
+					group.tieID = channel.Id
+				}
+			}
+		}
+		groups = append(groups, group)
+	}
+
+	sort.SliceStable(groups, func(i, j int) bool {
+		left := groups[i]
+		right := groups[j]
+		if left.ratio == nil || right.ratio == nil {
+			if left.ratio == nil && right.ratio == nil {
+				return left.tieID < right.tieID
+			}
+			return right.ratio == nil
+		}
+		if *left.ratio != *right.ratio {
+			if strings.EqualFold(sortOrder, "desc") {
+				return *left.ratio > *right.ratio
+			}
+			return *left.ratio < *right.ratio
+		}
+		return left.tieID < right.tieID
+	})
+
+	start := min(startIdx, len(groups))
+	end := min(start+pageSize, len(groups))
+	pagedChannels := make([]*model.Channel, 0)
+	for _, group := range groups[start:end] {
+		pagedChannels = append(pagedChannels, group.channels...)
+	}
+	return pagedChannels, int64(len(groups))
+}
+
 func GetChannelOps(c *gin.Context) {
 	common.ApiSuccess(c, gin.H{
 		"retry_times": common.RetryTimes,
@@ -119,9 +205,16 @@ func GetAllChannels(c *gin.Context) {
 	}
 
 	var total int64
+	tagRatioPaged := false
 
 	if enableTagMode {
-		tags, err := model.GetPaginatedChannelTags(buildChannelListQuery(groupFilter, statusFilter, typeFilter), pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+		tagOffset := pageInfo.GetStartIdx()
+		tagLimit := pageInfo.GetPageSize()
+		if sortOptions.SortBy == "model_ratio" {
+			tagOffset = 0
+			tagLimit = 0
+		}
+		tags, err := model.GetPaginatedChannelTags(buildChannelListQuery(groupFilter, statusFilter, typeFilter), tagOffset, tagLimit)
 		if err != nil {
 			common.SysError("failed to get paginated tags: " + err.Error())
 			c.JSON(http.StatusOK, gin.H{"success": false, "message": "获取标签失败，请稍后重试"})
@@ -148,6 +241,16 @@ func GetAllChannels(c *gin.Context) {
 			}
 			channelData = append(channelData, tagChannels...)
 		}
+		if sortOptions.SortBy == "model_ratio" {
+			channelData, total = sortTagChannelsByModelRatio(
+				channelData,
+				"",
+				sortOptions.SortOrder,
+				pageInfo.GetStartIdx(),
+				pageInfo.GetPageSize(),
+			)
+			tagRatioPaged = true
+		}
 	} else {
 		if err := buildChannelListQuery(groupFilter, statusFilter, typeFilter).Count(&total).Error; err != nil {
 			common.SysError("failed to count channels: " + err.Error())
@@ -155,16 +258,25 @@ func GetAllChannels(c *gin.Context) {
 			return
 		}
 
-		err := sortOptions.Apply(buildChannelListQuery(groupFilter, statusFilter, typeFilter)).
-			Limit(pageInfo.GetPageSize()).
-			Offset(pageInfo.GetStartIdx()).
-			Omit("key").
-			Find(&channelData).Error
+		query := sortOptions.Apply(buildChannelListQuery(groupFilter, statusFilter, typeFilter))
+		if sortOptions.SortBy != "model_ratio" {
+			query = query.Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx())
+		}
+		err := query.Omit("key").Find(&channelData).Error
 		if err != nil {
 			common.SysError("failed to get channels: " + err.Error())
 			c.JSON(http.StatusOK, gin.H{"success": false, "message": "获取渠道列表失败，请稍后重试"})
 			return
 		}
+	}
+
+	if sortOptions.SortBy == "model_ratio" && !tagRatioPaged {
+		model.SortChannelsByModelRatio(channelData, "", sortOptions.SortOrder)
+		startIdx := min(pageInfo.GetStartIdx(), len(channelData))
+		endIdx := min(startIdx+pageInfo.GetPageSize(), len(channelData))
+		channelData = channelData[startIdx:endIdx]
+	} else if !tagRatioPaged {
+		model.PopulateChannelsModelRatio(channelData, "")
 	}
 
 	for _, datum := range channelData {
@@ -241,6 +353,19 @@ func FetchUpstreamModels(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if rawKeyID := strings.TrimSpace(c.Query("key_id")); rawKeyID != "" {
+		keyID, parseErr := strconv.ParseUint(rawKeyID, 10, 64)
+		if parseErr != nil || keyID == 0 {
+			common.ApiError(c, errors.New("key_id 格式错误"))
+			return
+		}
+		selection, selectErr := model.GetRoutingKeyForModelFetch(channel, uint(keyID))
+		if selectErr != nil {
+			common.ApiError(c, selectErr)
+			return
+		}
+		channel.SelectedRoutingKey = selection
+	}
 
 	ids, err := fetchChannelUpstreamModelIDs(channel)
 	if err != nil {
@@ -249,6 +374,19 @@ func FetchUpstreamModels(c *gin.Context) {
 			"message": fmt.Sprintf("获取模型列表失败: %s", err.Error()),
 		})
 		return
+	}
+	if channel.SelectedRoutingKey != nil &&
+		channel.SelectedRoutingKey.Source == model.RoutingKeySourcePlatformSite {
+		if err := model.PersistPlatformSiteKeyModels(
+			nil,
+			channel.Id,
+			channel.SelectedRoutingKey.UpstreamKeyID,
+			ids,
+		); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		model.InitChannelCache()
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -284,8 +422,13 @@ func SearchChannels(c *gin.Context) {
 	sortOptions := model.NewChannelSortOptions(c.Query("sort_by"), c.Query("sort_order"), idSort)
 	enableTagMode, _ := strconv.ParseBool(c.Query("tag_mode"))
 	channelData := make([]*model.Channel, 0)
+	tagRatioSort := enableTagMode && sortOptions.SortBy == "model_ratio"
 	if enableTagMode {
-		tags, err := model.SearchTags(keyword, group, modelKeyword, idSort)
+		tagModel := modelKeyword
+		if tagRatioSort {
+			tagModel = ""
+		}
+		tags, err := model.SearchTags(keyword, group, tagModel, idSort)
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,
@@ -357,6 +500,46 @@ func SearchChannels(c *gin.Context) {
 			}
 		}
 		channelData = filtered
+	}
+
+	if sortOptions.SortBy == "model_ratio" {
+		if tagRatioSort {
+			page, _ := strconv.Atoi(c.DefaultQuery("p", "1"))
+			pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+			if page < 1 {
+				page = 1
+			}
+			if pageSize <= 0 {
+				pageSize = 20
+			}
+			channelData, tagTotal := sortTagChannelsByModelRatio(
+				channelData,
+				modelKeyword,
+				sortOptions.SortOrder,
+				(page-1)*pageSize,
+				pageSize,
+			)
+			typeCounts = make(map[int64]int64)
+			for _, channel := range channelData {
+				typeCounts[int64(channel.Type)]++
+			}
+			for _, datum := range channelData {
+				clearChannelInfo(datum)
+			}
+			c.JSON(http.StatusOK, gin.H{
+				"success": true,
+				"message": "",
+				"data": gin.H{
+					"items":       channelData,
+					"total":       tagTotal,
+					"type_counts": typeCounts,
+				},
+			})
+			return
+		}
+		model.SortChannelsByModelRatio(channelData, modelKeyword, sortOptions.SortOrder)
+	} else {
+		model.PopulateChannelsModelRatio(channelData, "")
 	}
 
 	page, _ := strconv.Atoi(c.DefaultQuery("p", "1"))

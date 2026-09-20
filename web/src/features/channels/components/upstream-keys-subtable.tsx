@@ -68,11 +68,13 @@ import { batchUpdateUpstreamKeyStatus, patchUpstreamKey } from '../api'
 import { CHANNEL_STATUS_CONFIG } from '../constants'
 import {
   channelsQueryKeys,
+  createChannelFieldUpdateScheduler,
   formatConversionRatio,
   formatRelativeTime,
 } from '../lib'
 import type { Channel, UpstreamKey } from '../types'
 import { useChannels } from './channels-provider'
+import { MultiSelect } from '@/components/multi-select'
 import { NumericSpinnerInput } from './numeric-spinner-input'
 
 const SENSITIVE_MASK = '••••'
@@ -389,6 +391,66 @@ function UpstreamKeyRatioCell({ upstreamKey }: { upstreamKey: UpstreamKey }) {
   )
 }
 
+function UpstreamKeyPriorityCell({
+  channelId,
+  upstreamKey,
+}: {
+  channelId: number
+  upstreamKey: UpstreamKey
+}) {
+  const { t } = useTranslation()
+  const queryClient = useQueryClient()
+  const serverValue = upstreamKey.key_priority ?? 0
+  const [localValue, setLocalValue] = useState(serverValue)
+
+  useEffect(() => {
+    setLocalValue(serverValue)
+  }, [serverValue, upstreamKey.id])
+
+  const scheduler = useMemo(
+    () =>
+      createChannelFieldUpdateScheduler((nextValue) => {
+        void (async () => {
+          try {
+            const response = await patchUpstreamKey(channelId, upstreamKey.id, {
+              key_priority: nextValue,
+            })
+            if (!response.success) {
+              throw createServerError(response, t('Operation failed'))
+            }
+            await Promise.all([
+              queryClient.invalidateQueries({
+                queryKey: ['upstream-keys', channelId],
+              }),
+              queryClient.invalidateQueries({
+                queryKey: channelsQueryKeys.lists(),
+              }),
+            ])
+          } catch (error: unknown) {
+            setLocalValue(serverValue)
+            handleServerError(error, t('Operation failed'))
+          }
+        })()
+      }),
+    [channelId, queryClient, serverValue, t, upstreamKey.id]
+  )
+
+  useEffect(() => () => scheduler.flush(), [scheduler])
+
+  return (
+    <NumericSpinnerInput
+      value={localValue}
+      min={0}
+      max={99}
+      onChange={(nextValue) => {
+        setLocalValue(nextValue)
+        scheduler.schedule(nextValue)
+      }}
+      onCommit={scheduler.flush}
+    />
+  )
+}
+
 function UpstreamKeyModelsCell({ upstreamKey }: { upstreamKey: UpstreamKey }) {
   const { t } = useTranslation()
 
@@ -424,12 +486,18 @@ function UpstreamKeyBatchToolbar(props: {
   onToggleAll: (checked: boolean) => void
   partiallySelected: boolean
   selectedCount: number
+  className?: string
 }) {
   const { t } = useTranslation()
   const checked = props.allSelected
 
   return (
-    <div className='mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
+    <div
+      className={cn(
+        'mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between',
+        props.className
+      )}
+    >
       <label className='flex min-w-0 items-center gap-2 text-sm'>
         <Checkbox
           checked={checked}
@@ -710,8 +778,9 @@ export function UpstreamKeysMobileList(props: UpstreamKeysSubTableProps) {
           {t('No upstream keys')}
         </div>
       ) : (
-        <>
+        <div className='max-h-[70vh] overflow-auto'>
           <UpstreamKeyBatchToolbar
+            className='bg-background/95 sticky top-0 z-20 -mx-1 px-1 py-2 backdrop-blur'
             allSelected={selection.allSelected}
             disabled={batchDisabled}
             onClear={selection.clearSelection}
@@ -778,9 +847,10 @@ export function UpstreamKeysMobileList(props: UpstreamKeysSubTableProps) {
                     <UpstreamKeyRatioCell upstreamKey={upstreamKey} />
                   </UpstreamKeyMobileField>
                   <UpstreamKeyMobileField label={t('Key priority')}>
-                    <span className='font-mono tabular-nums'>
-                      {upstreamKey.key_priority}
-                    </span>
+                    <UpstreamKeyPriorityCell
+                      channelId={props.channel.id}
+                      upstreamKey={upstreamKey}
+                    />
                   </UpstreamKeyMobileField>
                   <UpstreamKeyMobileField label={t('Key weight')}>
                     <UpstreamKeyWeightCell upstreamKey={upstreamKey} />
@@ -800,7 +870,7 @@ export function UpstreamKeysMobileList(props: UpstreamKeysSubTableProps) {
               </div>
             ))}
           </div>
-        </>
+        </div>
       )}
       <UpstreamKeyEditDialog
         channel={props.channel}
@@ -823,6 +893,8 @@ function UpstreamKeyEditDialog(props: UpstreamKeyEditDialogProps) {
   const [ratioOverrideEnabled, setRatioOverrideEnabled] = useState(false)
   const [conversionRatio, setConversionRatio] = useState('')
   const [weightOverride, setWeightOverride] = useState('')
+  const [allowedModels, setAllowedModels] = useState<string[]>([])
+  const [allowedModelsLimited, setAllowedModelsLimited] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
 
   useEffect(() => {
@@ -844,6 +916,8 @@ function UpstreamKeyEditDialog(props: UpstreamKeyEditDialogProps) {
         ? ''
         : String(props.upstreamKey.weight_override)
     )
+    setAllowedModels(props.upstreamKey.allowed_models ?? props.upstreamKey.models)
+    setAllowedModelsLimited(props.upstreamKey.allowed_models != null)
   }, [props.open, props.upstreamKey])
 
   const handleSave = async () => {
@@ -854,6 +928,12 @@ function UpstreamKeyEditDialog(props: UpstreamKeyEditDialogProps) {
 
     const payload: Parameters<typeof patchUpstreamKey>[2] = {
       key_priority: keyPriority,
+    }
+
+    if (allowedModelsLimited) {
+      payload.allowed_models = allowedModels
+    } else {
+      payload.clear_allowed_models = true
     }
 
     let parsedRatio: number | undefined
@@ -1053,6 +1133,38 @@ function UpstreamKeyEditDialog(props: UpstreamKeyEditDialogProps) {
               : t('Leave empty to use automatic weight.')}
           </p>
         </div>
+        <div className='grid gap-3 rounded-md border p-3'>
+          <div className='flex items-center justify-between gap-3'>
+            <Label
+              htmlFor='upstream-key-allowed-models'
+              className='text-sm'
+            >
+              {t('Limit which models can be used with this key')}
+            </Label>
+            <Switch
+              id='upstream-key-allowed-models'
+              checked={allowedModelsLimited}
+              onCheckedChange={setAllowedModelsLimited}
+            />
+          </div>
+          {allowedModelsLimited && (
+            <>
+              <MultiSelect
+                options={(props.upstreamKey?.models || []).map((model) => ({
+                  label: model,
+                  value: model,
+                }))}
+                selected={allowedModels}
+                onChange={setAllowedModels}
+                placeholder={t('Select models')}
+                emptyText={t('No models available')}
+              />
+              <div className='text-muted-foreground text-xs'>
+                {t('Synced')}: {props.upstreamKey?.models.length ?? 0}
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </Dialog>
   )
@@ -1168,8 +1280,13 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
         id: 'key-priority',
         header: t('Key priority'),
         className: 'w-32 text-center',
-        cellClassName: 'text-center font-mono tabular-nums',
-        cell: (upstreamKey: UpstreamKey) => upstreamKey.key_priority,
+        cellClassName: 'text-center',
+        cell: (upstreamKey: UpstreamKey) => (
+          <UpstreamKeyPriorityCell
+            channelId={props.channel.id}
+            upstreamKey={upstreamKey}
+          />
+        ),
       },
       {
         id: 'key-weight',
@@ -1208,32 +1325,35 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
   )
 
   return (
-    <div className='border-border bg-muted/20 w-full max-w-full min-w-0 overflow-visible border-y px-3 py-3'>
-      {keys.length > 0 && (
-        <UpstreamKeyBatchToolbar
-          allSelected={selection.allSelected}
-          disabled={batchDisabled}
-          onClear={selection.clearSelection}
-          onDisable={() => selection.updateSelectedStatus(2)}
-          onEnable={() => selection.updateSelectedStatus(1)}
-          onToggleAll={selection.toggleAll}
-          partiallySelected={selection.partiallySelected}
-          selectedCount={selection.selectedIdList.length}
+    <div className='border-border bg-muted/20 w-full max-w-full min-w-0 overflow-hidden border-y px-3 py-3'>
+      <div className='max-h-[70vh] max-w-full overflow-auto rounded-md'>
+        {keys.length > 0 && (
+          <UpstreamKeyBatchToolbar
+            className='bg-muted/95 sticky top-0 z-20 min-w-max px-3 py-2 backdrop-blur'
+            allSelected={selection.allSelected}
+            disabled={batchDisabled}
+            onClear={selection.clearSelection}
+            onDisable={() => selection.updateSelectedStatus(2)}
+            onEnable={() => selection.updateSelectedStatus(1)}
+            onToggleAll={selection.toggleAll}
+            partiallySelected={selection.partiallySelected}
+            selectedCount={selection.selectedIdList.length}
+          />
+        )}
+        <StaticDataTable
+          className='bg-background relative min-w-0 overflow-visible rounded-md'
+          tableClassName='w-max min-w-full'
+          tableProps={{ withContainer: false }}
+          data={keys}
+          columns={columns}
+          getRowKey={(upstreamKey) => upstreamKey.id}
+          emptyContent={
+            <span className='text-muted-foreground text-sm'>
+              {t('No upstream keys')}
+            </span>
+          }
         />
-      )}
-      <StaticDataTable
-        className='bg-background relative max-w-full min-w-0 overflow-visible rounded-md'
-        tableClassName='w-max min-w-full'
-        tableProps={{ withContainer: false }}
-        data={keys}
-        columns={columns}
-        getRowKey={(upstreamKey) => upstreamKey.id}
-        emptyContent={
-          <span className='text-muted-foreground text-sm'>
-            {t('No upstream keys')}
-          </span>
-        }
-      />
+      </div>
       <UpstreamKeyEditDialog
         channel={props.channel}
         upstreamKey={editingKey}

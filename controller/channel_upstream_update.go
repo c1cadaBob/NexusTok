@@ -375,7 +375,7 @@ func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
 	}
 
 	if channel.Type == constant.ChannelTypeOllama {
-		key, err := model.GetChannelCredential(channel)
+		key, err := getFetchModelsCredential(channel)
 		if err != nil {
 			return nil, fmt.Errorf("获取渠道密钥失败: %w", err)
 		}
@@ -390,9 +390,9 @@ func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
 	}
 
 	if channel.Type == constant.ChannelTypeGemini {
-		key, _, apiErr := channel.GetNextEnabledKey()
-		if apiErr != nil {
-			return nil, fmt.Errorf("获取渠道密钥失败: %w", apiErr)
+		key, err := getFetchModelsCredential(channel)
+		if err != nil {
+			return nil, fmt.Errorf("获取渠道密钥失败: %w", err)
 		}
 		key = strings.TrimSpace(key)
 		models, err := gemini.FetchGeminiModels(baseURL, key, channel.GetSetting().Proxy)
@@ -439,9 +439,9 @@ func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
 		url = fmt.Sprintf("%s/v1/models", baseURL)
 	}
 
-	key, _, apiErr := channel.GetNextEnabledKey()
-	if apiErr != nil {
-		return nil, fmt.Errorf("获取渠道密钥失败: %w", apiErr)
+	key, err := getFetchModelsCredential(channel)
+	if err != nil {
+		return nil, fmt.Errorf("获取渠道密钥失败: %w", err)
 	}
 	key = strings.TrimSpace(key)
 
@@ -469,9 +469,9 @@ func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
 }
 
 func fetchAdvancedCustomUpstreamModelIDs(channel *model.Channel, baseURL string) ([]string, error) {
-	key, _, apiErr := channel.GetNextEnabledKey()
-	if apiErr != nil {
-		return nil, fmt.Errorf("获取渠道密钥失败: %w", apiErr)
+	key, err := getFetchModelsCredential(channel)
+	if err != nil {
+		return nil, fmt.Errorf("获取渠道密钥失败: %w", err)
 	}
 	key = strings.TrimSpace(key)
 
@@ -501,6 +501,20 @@ func fetchAdvancedCustomUpstreamModelIDs(channel *model.Channel, baseURL string)
 		return nil, sanitizeFetchModelsError(err, key)
 	}
 	return parseOpenAIModelIDs(body)
+}
+
+func getFetchModelsCredential(channel *model.Channel) (string, error) {
+	if channel == nil {
+		return "", errors.New("channel is nil")
+	}
+	if channel.SelectedRoutingKey != nil {
+		return model.GetChannelCredential(channel)
+	}
+	key, _, apiErr := channel.GetNextEnabledKey()
+	if apiErr != nil {
+		return "", apiErr
+	}
+	return key, nil
 }
 
 func updateChannelUpstreamModelSettings(channel *model.Channel, settings dto.ChannelOtherSettings, updateModels bool) error {

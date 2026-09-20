@@ -86,7 +86,7 @@ export function FetchModelsDialog({
   channelName,
 }: FetchModelsDialogProps) {
   const { t } = useTranslation()
-  const { currentRow } = useChannels()
+  const { currentRow, currentUpstreamKey } = useChannels()
   const activeChannel = customFetcher ? null : currentRow
   const queryClient = useQueryClient()
   const [isFetching, setIsFetching] = useState(false)
@@ -98,8 +98,11 @@ export function FetchModelsDialog({
   // Parse existing models
   const existingModels = useMemo(
     () =>
-      existingModelsOverride ?? parseModelsString(activeChannel?.models || ''),
-    [existingModelsOverride, activeChannel?.models]
+      existingModelsOverride ??
+      parseModelsString(
+        currentUpstreamKey?.models?.join(',') ?? activeChannel?.models ?? ''
+      ),
+    [activeChannel?.models, currentUpstreamKey?.models, existingModelsOverride]
   )
 
   // Categorize models with redirect models
@@ -138,7 +141,7 @@ export function FetchModelsDialog({
       handleFetchModels()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, activeChannel?.id, customFetcher])
+  }, [open, activeChannel?.id, currentUpstreamKey?.key_id, customFetcher])
 
   const handleFetchModels = async () => {
     if (!activeChannel && !customFetcher) return
@@ -151,11 +154,24 @@ export function FetchModelsDialog({
         setSelectedModels(existingModels)
         toast.success(t('Fetched {{count}} models', { count: list.length }))
       } else if (activeChannel) {
-        const response = await fetchUpstreamModels(activeChannel.id)
+        const response = await fetchUpstreamModels(
+          activeChannel.id,
+          currentUpstreamKey?.key_id
+        )
         if (response.success) {
           const list = Array.isArray(response.data) ? response.data : []
           setFetchedModels(list)
           setSelectedModels(existingModels)
+          if (currentUpstreamKey) {
+            await Promise.all([
+              queryClient.invalidateQueries({
+                queryKey: ['upstream-keys', activeChannel.id],
+              }),
+              queryClient.invalidateQueries({
+                queryKey: channelsQueryKeys.lists(),
+              }),
+            ])
+          }
           toast.success(t('Fetched {{count}} models', { count: list.length }))
         } else {
           handleServerError(response, t('Failed to fetch models'))
@@ -181,6 +197,19 @@ export function FetchModelsDialog({
 
     // Otherwise, directly save to API (standalone mode)
     if (!activeChannel) return
+    if (currentUpstreamKey) {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ['upstream-keys', activeChannel.id],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: channelsQueryKeys.lists(),
+        }),
+      ])
+      toast.success(t('Models updated successfully'))
+      onOpenChange(false)
+      return
+    }
     setIsSaving(true)
     try {
       const modelsString = selectedModels.join(',')

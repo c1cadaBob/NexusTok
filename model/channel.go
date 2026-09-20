@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"math/rand"
+	"sort"
 	"strings"
 	"sync"
 
@@ -63,6 +65,7 @@ type Channel struct {
 	Keys                []string             `json:"-" gorm:"-"`
 	SelectedUpstreamKey *UpstreamKey         `json:"-" gorm:"-"`
 	SelectedRoutingKey  *RoutingKeySelection `json:"-" gorm:"-"`
+	ModelRatio          *float64             `json:"model_ratio" gorm:"-"`
 }
 
 type ChannelInfo struct {
@@ -88,6 +91,7 @@ var channelSortColumns = map[string]string{
 	"balance":       "balance",
 	"response_time": "response_time",
 	"test_time":     "test_time",
+	"model_ratio":   "",
 }
 
 func NewChannelSortOptions(sortBy string, sortOrder string, idSort bool) ChannelSortOptions {
@@ -108,6 +112,9 @@ func NewChannelSortOptions(sortBy string, sortOrder string, idSort bool) Channel
 }
 
 func (options ChannelSortOptions) Apply(query *gorm.DB) *gorm.DB {
+	if options.SortBy == "model_ratio" {
+		return query
+	}
 	if columnName, ok := channelSortColumns[options.SortBy]; ok {
 		return query.Order(clause.OrderByColumn{
 			Column: clause.Column{Name: columnName},
@@ -123,6 +130,82 @@ func (options ChannelSortOptions) Apply(query *gorm.DB) *gorm.DB {
 	return query.Order(clause.OrderByColumn{
 		Column: clause.Column{Name: "priority"},
 		Desc:   true,
+	})
+}
+
+func calculateChannelModelRatio(channel *Channel, modelName string) (float64, bool) {
+	if channel == nil {
+		return 0, false
+	}
+
+	var ratios []float64
+	if channel.UpstreamKind == UpstreamKindPlatformSite {
+		for _, key := range loadRoutableUpstreamKeys(channel, "", modelName) {
+			if key == nil || math.IsNaN(key.ConversionRatio) ||
+				math.IsInf(key.ConversionRatio, 0) || key.ConversionRatio < 0 {
+				continue
+			}
+			ratios = append(ratios, key.ConversionRatio)
+		}
+	} else {
+		for _, key := range loadRoutableChannelKeys(channel, "", modelName) {
+			if key == nil || math.IsNaN(key.ConversionRatio) ||
+				math.IsInf(key.ConversionRatio, 0) || key.ConversionRatio < 0 {
+				continue
+			}
+			ratios = append(ratios, key.ConversionRatio)
+		}
+	}
+	if len(ratios) == 0 {
+		return 0, false
+	}
+	return slicesMin(ratios), true
+}
+
+func slicesMin(values []float64) float64 {
+	minimum := values[0]
+	for _, value := range values[1:] {
+		if value < minimum {
+			minimum = value
+		}
+	}
+	return minimum
+}
+
+func PopulateChannelsModelRatio(channels []*Channel, modelName string) {
+	for _, channel := range channels {
+		ratio, ok := calculateChannelModelRatio(channel, strings.TrimSpace(modelName))
+		if !ok {
+			channel.ModelRatio = nil
+			continue
+		}
+		channel.ModelRatio = &ratio
+	}
+}
+
+// SortChannelsByModelRatio 只用于管理员渠道列表展示，不参与实际路由。
+// 空倍率在升序和降序中都排在最后，渠道 ID 作为稳定的最终排序条件。
+func SortChannelsByModelRatio(channels []*Channel, modelName, sortOrder string) {
+	PopulateChannelsModelRatio(channels, modelName)
+	sort.SliceStable(channels, func(i, j int) bool {
+		left := channels[i]
+		right := channels[j]
+		if left == nil || right == nil {
+			return left != nil
+		}
+		if left.ModelRatio == nil || right.ModelRatio == nil {
+			if left.ModelRatio == nil && right.ModelRatio == nil {
+				return left.Id < right.Id
+			}
+			return right.ModelRatio == nil
+		}
+		if *left.ModelRatio != *right.ModelRatio {
+			if strings.EqualFold(sortOrder, "desc") {
+				return *left.ModelRatio > *right.ModelRatio
+			}
+			return *left.ModelRatio < *right.ModelRatio
+		}
+		return left.Id < right.Id
 	})
 }
 
@@ -420,6 +503,8 @@ func GetChannelsByTag(tag string, idSort bool, selectAll bool, sortOptions ...Ch
 
 func SearchChannels(keyword string, group string, model string, idSort bool, sortOptions ...ChannelSortOptions) ([]*Channel, error) {
 	var channels []*Channel
+	order := resolveChannelSortOptions(idSort, sortOptions)
+	modelRatioSort := order.SortBy == "model_ratio"
 	modelsCol := "`models`"
 
 	// 如果是 PostgreSQL，使用双引号
@@ -433,16 +518,19 @@ func SearchChannels(keyword string, group string, model string, idSort bool, sor
 		baseURLCol = `"base_url"`
 	}
 
-	order := resolveChannelSortOptions(idSort, sortOptions)
-
 	// 构造基础查询
 	baseQuery := DB.Model(&Channel{}).Omit("key")
 
 	// 父渠道搜索仍保持原有字段；平台站点额外通过子查询匹配上游密钥名称、
 	// 外部 ID 和模型，避免把真实密钥值加载到管理端搜索路径。
-	whereClause := "(id = ? OR name LIKE ? OR " + commonKeyCol + " = ? OR " + baseURLCol + " LIKE ?) AND " + modelsCol + " LIKE ?"
-	args := []any{common.String2Int(keyword), "%" + keyword + "%", keyword, "%" + keyword + "%", "%" + model + "%"}
-	if (keyword != "" || model != "") && DB.Migrator().HasTable(&UpstreamKey{}) {
+	whereClause := "(id = ? OR name LIKE ? OR " + commonKeyCol + " = ? OR " + baseURLCol + " LIKE ?)"
+	args := []any{common.String2Int(keyword), "%" + keyword + "%", keyword, "%" + keyword + "%"}
+	if !modelRatioSort {
+		whereClause += " AND " + modelsCol + " LIKE ?"
+		args = append(args, "%"+model+"%")
+	}
+	if (keyword != "" || (!modelRatioSort && model != "")) &&
+		DB.Migrator().HasTable(&UpstreamKey{}) {
 		upstreamKeyQuery := DB.Model(&UpstreamKey{}).Select("channel_id")
 		if keyword != "" {
 			upstreamKeyQuery = upstreamKeyQuery.Where(
@@ -452,7 +540,7 @@ func SearchChannels(keyword string, group string, model string, idSort bool, sor
 				"%"+keyword+"%",
 			)
 		}
-		if model != "" {
+		if !modelRatioSort && model != "" {
 			upstreamKeyQuery = upstreamKeyQuery.Where("models LIKE ?", "%"+model+"%")
 		}
 		baseQuery = baseQuery.Where(

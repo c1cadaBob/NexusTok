@@ -632,7 +632,6 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 			return err
 		}
 		seen := make(map[string]struct{}, len(snapshot.Keys))
-		allModels := make([]string, 0)
 		for _, item := range snapshot.Keys {
 			if item.ExternalID == "" {
 				return fmt.Errorf("%w: 上游密钥数据不完整", ErrPlatformSiteResponse)
@@ -732,9 +731,6 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 			}
 			models := uniqueStrings(item.Models)
 			modelsSynced := item.ModelsSynced && len(models) > 0
-			if modelsSynced {
-				allModels = append(allModels, item.Models...)
-			}
 			sourceRatio := item.SourceConversionRatio
 			sourceRatioSet := item.SourceConversionRatioSet
 			if !sourceRatioSet {
@@ -857,12 +853,12 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 				}
 			}
 		}
-		allModels = uniqueStrings(allModels)
-		channel.Models = strings.Join(allModels, ",")
 		channel.Balance = snapshot.Balance
 		channel.UsedQuota = snapshot.UsedQuota
-		if err := tx.Model(&channel).Select("models", "balance", "used_quota", "balance_updated_time").Updates(map[string]any{
-			"models":               channel.Models,
+		if err := model.RebuildPlatformSiteChannelModels(tx, account.ChannelID); err != nil {
+			return err
+		}
+		if err := tx.Model(&channel).Select("balance", "used_quota", "balance_updated_time").Updates(map[string]any{
 			"balance":              snapshot.Balance,
 			"used_quota":           snapshot.UsedQuota,
 			"balance_updated_time": now,

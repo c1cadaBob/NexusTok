@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/c1cadaBob/NexusTok/common"
+	"github.com/c1cadaBob/NexusTok/setting/ratio_setting"
 	"gorm.io/gorm"
 )
 
@@ -100,6 +101,7 @@ type UpstreamKey struct {
 	SecretFingerprint       string     `json:"secret_fingerprint" gorm:"type:varchar(128);index"`
 	Models                  string     `json:"models" gorm:"type:text"`
 	ModelsSynced            bool       `json:"models_synced"`
+	AllowedModelsJSON       *string    `json:"-" gorm:"type:text;column:allowed_models"`
 	KeyPriority             int64      `json:"key_priority" gorm:"bigint;index"`
 	SourceConversionRatio   *float64   `json:"source_conversion_ratio"`
 	ConversionRatio         float64    `json:"conversion_ratio"`
@@ -246,7 +248,7 @@ func (key *UpstreamKey) AvailabilityReason(now time.Time) string {
 		}
 		return UpstreamAvailabilityUpstreamDisabled
 	}
-	if !key.ModelsSynced || len(key.GetModels()) == 0 {
+	if !key.ModelsSynced || len(key.GetEffectiveModels()) == 0 {
 		return UpstreamAvailabilityModelsUnavailable
 	}
 	if key.ExpiresAt != nil && !key.ExpiresAt.After(now) {
@@ -342,6 +344,9 @@ func CalculatePlatformKeyConversionRatio(siteRatio, sourceRatio float64) (float6
 }
 
 func (key *UpstreamKey) GetModels() []string {
+	if key == nil {
+		return nil
+	}
 	if strings.TrimSpace(key.Models) == "" {
 		return nil
 	}
@@ -354,6 +359,77 @@ func (key *UpstreamKey) GetModels() []string {
 		}
 	}
 	return result
+}
+
+// GetAllowedModels 返回管理员配置的允许模型列表。第二个返回值表示是否
+// 配置过限制，用于区分 NULL（未限制）和 []（明确禁止全部模型）。
+func (key *UpstreamKey) GetAllowedModels() ([]string, bool, error) {
+	if key == nil || key.AllowedModelsJSON == nil ||
+		strings.TrimSpace(*key.AllowedModelsJSON) == "" {
+		return nil, false, nil
+	}
+	var models []string
+	if err := common.Unmarshal([]byte(*key.AllowedModelsJSON), &models); err != nil {
+		return nil, true, err
+	}
+	normalized := make([]string, 0, len(models))
+	seen := make(map[string]struct{}, len(models))
+	for _, modelName := range models {
+		modelName = strings.TrimSpace(modelName)
+		if modelName == "" {
+			continue
+		}
+		if _, exists := seen[modelName]; exists {
+			continue
+		}
+		seen[modelName] = struct{}{}
+		normalized = append(normalized, modelName)
+	}
+	return normalized, true, nil
+}
+
+func (key *UpstreamKey) GetEffectiveModels() []string {
+	if key == nil {
+		return nil
+	}
+	allowed, configured, err := key.GetAllowedModels()
+	if err != nil || !configured {
+		return key.GetModels()
+	}
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, modelName := range allowed {
+		allowedSet[modelName] = struct{}{}
+		allowedSet[ratio_setting.RoutingMatchModelName(modelName)] = struct{}{}
+	}
+	effective := make([]string, 0, len(allowed))
+	for _, modelName := range key.GetModels() {
+		if _, exists := allowedSet[modelName]; exists {
+			effective = append(effective, modelName)
+			continue
+		}
+		if _, exists := allowedSet[ratio_setting.RoutingMatchModelName(modelName)]; exists {
+			effective = append(effective, modelName)
+		}
+	}
+	return effective
+}
+
+func (key *UpstreamKey) AllowsModel(modelName string) bool {
+	if key == nil {
+		return false
+	}
+	allowed, configured, err := key.GetAllowedModels()
+	if err != nil || !configured {
+		return true
+	}
+	normalizedModel := ratio_setting.RoutingMatchModelName(modelName)
+	for _, allowedModel := range allowed {
+		if allowedModel == modelName ||
+			ratio_setting.RoutingMatchModelName(allowedModel) == normalizedModel {
+			return true
+		}
+	}
+	return false
 }
 
 func (key *UpstreamKey) IsRoutable(now time.Time) bool {
@@ -426,6 +502,96 @@ func UpdateUpstreamKeyLastUsed(keyID uint, unixTime int64) error {
 		return nil
 	}
 	return DB.Model(&UpstreamKey{}).Where("id = ?", keyID).Update("last_used_at", unixTime).Error
+}
+
+func RebuildPlatformSiteChannelModels(tx *gorm.DB, channelID int) error {
+	if tx == nil {
+		tx = DB
+	}
+	if channelID <= 0 {
+		return errors.New("channel ID is invalid")
+	}
+	var keys []UpstreamKey
+	if err := tx.Where("channel_id = ?", channelID).Order("id ASC").Find(&keys).Error; err != nil {
+		return err
+	}
+	seen := make(map[string]struct{})
+	models := make([]string, 0)
+	for _, key := range keys {
+		if !key.ModelsSynced {
+			continue
+		}
+		for _, modelName := range key.GetEffectiveModels() {
+			if _, exists := seen[modelName]; exists {
+				continue
+			}
+			seen[modelName] = struct{}{}
+			models = append(models, modelName)
+		}
+	}
+	return tx.Model(&Channel{}).
+		Where("id = ?", channelID).
+		Update("models", strings.Join(models, ",")).Error
+}
+
+func PersistPlatformSiteKeyModels(tx *gorm.DB, channelID int, keyID uint, models []string) error {
+	if tx == nil {
+		tx = DB
+	}
+	if channelID <= 0 || keyID == 0 {
+		return errors.New("平台站点密钥参数无效")
+	}
+	normalized := make([]string, 0, len(models))
+	seen := make(map[string]struct{}, len(models))
+	for _, modelName := range models {
+		modelName = strings.TrimSpace(modelName)
+		if modelName == "" {
+			continue
+		}
+		if _, exists := seen[modelName]; exists {
+			continue
+		}
+		seen[modelName] = struct{}{}
+		normalized = append(normalized, modelName)
+	}
+	return tx.Transaction(func(tx *gorm.DB) error {
+		var key UpstreamKey
+		if err := tx.Where("id = ? AND channel_id = ?", keyID, channelID).First(&key).Error; err != nil {
+			return err
+		}
+		updates := map[string]any{
+			"models":        strings.Join(normalized, ","),
+			"models_synced": true,
+			"last_sync_at":  common.GetTimestamp(),
+		}
+		key.Models = strings.Join(normalized, ",")
+		key.ModelsSynced = true
+		if key.Status != UpstreamKeyStatusManualDisabled {
+			if len(key.GetEffectiveModels()) > 0 {
+				updates["status"] = UpstreamKeyStatusEnabled
+				updates["disabled_reason"] = ""
+			} else {
+				updates["status"] = UpstreamKeyStatusAutoDisabled
+				updates["disabled_reason"] = "models_unavailable"
+			}
+		}
+		if err := tx.Model(&key).Updates(updates).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("upstream_key_id = ?", key.ID).Delete(&UpstreamKeyAbility{}).Error; err != nil {
+			return err
+		}
+		for _, modelName := range normalized {
+			if err := tx.Create(&UpstreamKeyAbility{
+				UpstreamKeyID: key.ID,
+				Model:         modelName,
+				Enabled:       true,
+			}).Error; err != nil {
+				return err
+			}
+		}
+		return RebuildPlatformSiteChannelModels(tx, channelID)
+	})
 }
 
 func DeleteUpstreamData(tx *gorm.DB, channelIDs []int) error {

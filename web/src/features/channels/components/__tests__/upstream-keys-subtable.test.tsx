@@ -28,6 +28,7 @@ import type { Channel, UpstreamKey } from '@/features/channels/types'
 
 import { ChannelsProvider, useChannels } from '../channels-provider'
 import { ChannelTestDialog } from '../dialogs/channel-test-dialog'
+import { FetchModelsDialog } from '../dialogs/fetch-models-dialog'
 import {
   UpstreamKeysMobileList,
   UpstreamKeysSubTable,
@@ -42,6 +43,7 @@ vi.mock('@/features/channels/api', async () => {
     getUpstreamKeys: vi.fn(),
     batchUpdateUpstreamKeyStatus: vi.fn(),
     patchUpstreamKey: vi.fn(),
+    fetchUpstreamModels: vi.fn(),
   }
 })
 
@@ -72,6 +74,7 @@ beforeEach(() => {
   vi.mocked(channelsApi.getUpstreamKeys).mockReset()
   vi.mocked(channelsApi.batchUpdateUpstreamKeyStatus).mockReset()
   vi.mocked(channelsApi.patchUpstreamKey).mockReset()
+  vi.mocked(channelsApi.fetchUpstreamModels).mockReset()
   vi.mocked(channelsLib.handleTestChannel).mockClear()
 })
 
@@ -93,6 +96,7 @@ function upstreamKey(overrides: Partial<UpstreamKey> = {}): UpstreamKey {
     name: 'Production key',
     key_preview: 'sk-live...mask',
     models: ['gpt-key-only'],
+    allowed_models: null,
     models_synced: true,
     key_priority: 9,
     source_conversion_ratio: 1,
@@ -203,6 +207,7 @@ test('未开启倍率覆盖时保存子密钥会清除覆盖而不是写入有�
       expect.objectContaining({
         key_priority: 9,
         clear_conversion_ratio: true,
+        clear_allowed_models: true,
       })
     )
   })
@@ -439,6 +444,105 @@ test('平台站点测试弹窗按所选密钥过滤模型并透传全局 key_id'
         keyId: key.key_id,
       }),
       expect.any(Function)
+    )
+  })
+})
+
+test('渠道级获取模型时不传递子密钥 key_id', async () => {
+  vi.mocked(channelsApi.fetchUpstreamModels).mockResolvedValue({
+    success: true,
+    data: ['gpt-parent'],
+  })
+
+  renderWithProviders(
+    <FetchModelsHarness channel={platformChannel()} upstreamKey={null} />
+  )
+
+  await waitFor(() => {
+    expect(channelsApi.fetchUpstreamModels).toHaveBeenCalledWith(101, undefined)
+  })
+})
+
+test('平台站点子密钥编辑支持保存允许模型列表', async () => {
+  const user = userEvent.setup()
+  const key = upstreamKey({
+    models: ['gpt-key-only', 'gpt-secondary'],
+  })
+  vi.mocked(channelsApi.patchUpstreamKey).mockResolvedValue({
+    success: true,
+    data: key,
+  })
+
+  renderWithProviders(<UpstreamKeysSubTable channel={platformChannel(key)} />)
+
+  await user.click(screen.getByRole('button', { name: 'Edit' }))
+  await user.click(
+    await screen.findByRole('switch', {
+      name: 'Limit which models can be used with this key',
+    })
+  )
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+
+  await waitFor(() => {
+    expect(channelsApi.patchUpstreamKey).toHaveBeenCalledWith(
+      101,
+      7,
+      expect.objectContaining({
+        allowed_models: ['gpt-key-only', 'gpt-secondary'],
+      })
+    )
+  })
+  const payload = vi.mocked(channelsApi.patchUpstreamKey).mock.calls[0]?.[2]
+  expect(payload).not.toHaveProperty('clear_allowed_models')
+})
+
+test('平台站点测试弹窗只展示子密钥允许使用的模型', async () => {
+  const key = upstreamKey({
+    models: ['gpt-key-only', 'gpt-restricted'],
+    allowed_models: ['gpt-restricted'],
+  })
+  vi.mocked(channelsApi.getUpstreamKeys).mockResolvedValue({
+    success: true,
+    data: { items: [key], total: 1 },
+  })
+
+  renderWithProviders(
+    <ChannelTestHarness channel={platformChannel(key)} upstreamKey={key} />
+  )
+
+  expect(await screen.findByText('gpt-restricted')).toBeInTheDocument()
+  expect(screen.queryByText('gpt-key-only')).not.toBeInTheDocument()
+})
+
+function FetchModelsHarness(props: {
+  channel: Channel
+  upstreamKey?: UpstreamKey | null
+}) {
+  const { setCurrentRow, setCurrentUpstreamKey } = useChannels()
+
+  React.useEffect(() => {
+    setCurrentRow(props.channel)
+    setCurrentUpstreamKey(props.upstreamKey ?? null)
+  }, [props.channel, props.upstreamKey, setCurrentRow, setCurrentUpstreamKey])
+
+  return <FetchModelsDialog open onOpenChange={() => undefined} />
+}
+
+test('平台站点子密钥获取模型时传递全局 key_id', async () => {
+  const key = upstreamKey()
+  vi.mocked(channelsApi.fetchUpstreamModels).mockResolvedValue({
+    success: true,
+    data: ['gpt-key-only'],
+  })
+
+  renderWithProviders(
+    <FetchModelsHarness channel={platformChannel(key)} upstreamKey={key} />
+  )
+
+  await waitFor(() => {
+    expect(channelsApi.fetchUpstreamModels).toHaveBeenCalledWith(
+      101,
+      key.key_id
     )
   })
 })

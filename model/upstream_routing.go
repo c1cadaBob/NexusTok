@@ -324,6 +324,15 @@ func platformSiteRoutingModels(channel *Channel) []string {
 }
 
 func upstreamKeySupportsModel(key *UpstreamKey, group, modelName string) bool {
+	if key == nil {
+		return false
+	}
+	if strings.TrimSpace(modelName) == "" {
+		return true
+	}
+	if !key.AllowsModel(modelName) {
+		return false
+	}
 	var abilities []UpstreamKeyAbility
 	if err := DB.Where("upstream_key_id = ? AND enabled = ?", key.ID, true).Find(&abilities).Error; err == nil && len(abilities) > 0 {
 		normalizedModel := ratio_setting.RoutingMatchModelName(modelName)
@@ -339,7 +348,7 @@ func upstreamKeySupportsModel(key *UpstreamKey, group, modelName string) bool {
 	}
 	if key.ModelsSynced {
 		normalizedModel := ratio_setting.RoutingMatchModelName(modelName)
-		for _, item := range key.GetModels() {
+		for _, item := range key.GetEffectiveModels() {
 			if item == modelName || ratio_setting.RoutingMatchModelName(item) == normalizedModel {
 				return true
 			}
