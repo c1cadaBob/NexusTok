@@ -27,7 +27,14 @@ import {
   Power,
   PowerOff,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -122,6 +129,44 @@ function hasConversionRatioOverride(upstreamKey: UpstreamKey): boolean {
 
 function isFreeUpstreamKey(upstreamKey: UpstreamKey): boolean {
   return upstreamKey.conversion_ratio === 0
+}
+
+function useParentTableViewportWidth(
+  rootRef: React.RefObject<HTMLDivElement | null>
+) {
+  const [viewportWidth, setViewportWidth] = useState<number | null>(null)
+
+  useLayoutEffect(() => {
+    const root = rootRef.current
+    const tableContainer = root?.closest<HTMLElement>(
+      '[data-slot="table-container"]'
+    )
+    if (!tableContainer) {
+      return
+    }
+
+    const updateViewportWidth = () => {
+      const nextWidth = tableContainer.clientWidth
+      if (nextWidth <= 0) {
+        return
+      }
+      setViewportWidth((previousWidth) =>
+        previousWidth === nextWidth ? previousWidth : nextWidth
+      )
+    }
+
+    updateViewportWidth()
+
+    if (typeof ResizeObserver === 'undefined') {
+      return
+    }
+
+    const resizeObserver = new ResizeObserver(updateViewportWidth)
+    resizeObserver.observe(tableContainer)
+    return () => resizeObserver.disconnect()
+  }, [rootRef])
+
+  return viewportWidth
 }
 
 function getEffectiveWeight(upstreamKey: UpstreamKey): number {
@@ -1174,6 +1219,9 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
   const { sensitiveVisible } = useChannels()
   const [editingKey, setEditingKey] = useState<UpstreamKey | null>(null)
   const keys = props.channel.upstream_keys || []
+  const subTableRootRef = useRef<HTMLDivElement>(null)
+  const parentTableViewportWidth =
+    useParentTableViewportWidth(subTableRootRef)
   const selection = useUpstreamKeySelection(props.channel, keys)
   const batchDisabled =
     selection.isBatchUpdating || selection.selectedIdList.length === 0
@@ -1324,7 +1372,15 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
   )
 
   return (
-    <div className='border-border bg-muted/20 w-full max-w-full min-w-0 overflow-visible border-y px-3 py-3'>
+    <div
+      ref={subTableRootRef}
+      className='border-border bg-muted/20 sticky left-0 z-20 w-full max-w-none min-w-0 overflow-visible border-y px-3 py-3'
+      style={
+        parentTableViewportWidth === null
+          ? undefined
+          : { width: parentTableViewportWidth }
+      }
+    >
       <div className='relative max-h-[70vh] max-w-full overflow-auto overscroll-contain rounded-md'>
         {keys.length > 0 && (
           <UpstreamKeyBatchToolbar

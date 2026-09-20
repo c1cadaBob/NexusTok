@@ -174,6 +174,31 @@ test('平台站点子密钥操作列固定在表格右侧', () => {
   expect(actionCell?.className).toContain('right-0')
 })
 
+test('平台站点子表根区域锚定到渠道表可视宽度', () => {
+  const tableContainer = document.createElement('div')
+  tableContainer.setAttribute('data-slot', 'table-container')
+  Object.defineProperty(tableContainer, 'clientWidth', {
+    configurable: true,
+    value: 640,
+  })
+
+  const view = render(
+    <QueryClientProvider client={queryClient}>
+      <ChannelsProvider>
+        <UpstreamKeysSubTable channel={platformChannel()} />
+      </ChannelsProvider>
+    </QueryClientProvider>,
+    { container: tableContainer }
+  )
+
+  const actionHeader = view.getByRole('columnheader', { name: 'Actions' })
+  const subTableRoot = actionHeader.closest('div.sticky')
+
+  expect(subTableRoot).not.toBeNull()
+  expect(subTableRoot).toHaveClass('sticky', 'left-0', 'max-w-none', 'min-w-0')
+  expect(subTableRoot).toHaveStyle({ width: '640px' })
+})
+
 test('平台站点展开子表时批量操作栏固定在内部滚动区域顶部', () => {
   renderWithProviders(<UpstreamKeysSubTable channel={platformChannel()} />)
 
