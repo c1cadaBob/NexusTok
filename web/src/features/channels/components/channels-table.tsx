@@ -60,6 +60,7 @@ import {
 } from '../api'
 import {
   DEFAULT_PAGE_SIZE,
+  CHANNEL_ACTIONS_COLUMN_CLASS_NAME,
   CHANNEL_STATUS,
   CHANNEL_STATUS_OPTIONS,
 } from '../constants'
@@ -105,6 +106,9 @@ function isDisabledChannelRow(channel: Channel) {
 function getChannelColumnClassName(columnId: string) {
   if (columnId === 'select') {
     return 'text-center'
+  }
+  if (columnId === 'actions') {
+    return `${CHANNEL_ACTIONS_COLUMN_CLASS_NAME} text-center`
   }
   if (['name', 'models', 'group', 'tag'].includes(columnId)) {
     return 'text-left'

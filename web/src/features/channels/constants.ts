@@ -25,6 +25,7 @@ export const CHANNEL_TYPE_NEW_API = 60
 export const CHANNEL_TYPE_SUB2_API = 59
 
 export const CHANNEL_TYPE_TASK_PLUGIN = 61
+export const CHANNEL_ACTIONS_COLUMN_CLASS_NAME = 'w-36 min-w-36'
 
 export const CHANNEL_TYPES = {
   0: 'Unknown',

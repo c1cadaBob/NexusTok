@@ -73,7 +73,10 @@ import { createServerError } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
 import { batchUpdateUpstreamKeyStatus, patchUpstreamKey } from '../api'
-import { CHANNEL_STATUS_CONFIG } from '../constants'
+import {
+  CHANNEL_ACTIONS_COLUMN_CLASS_NAME,
+  CHANNEL_STATUS_CONFIG,
+} from '../constants'
 import {
   channelsQueryKeys,
   createChannelFieldUpdateScheduler,
@@ -1481,8 +1484,8 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
         id: 'actions',
         header: t('Actions'),
         pinned: 'right',
-        className: 'w-48 min-w-48 text-center',
-        cellClassName: 'w-48 min-w-48 text-center',
+        className: `${CHANNEL_ACTIONS_COLUMN_CLASS_NAME} text-center`,
+        cellClassName: `${CHANNEL_ACTIONS_COLUMN_CLASS_NAME} text-center`,
         cell: (upstreamKey: UpstreamKey) => (
           <UpstreamKeyActions
             channel={props.channel}
@@ -1524,8 +1527,8 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
         </div>
       )}
       <StaticDataTable
-        className='bg-background relative min-w-0 !overflow-visible rounded-md'
-        tableClassName='w-max min-w-full'
+        className='relative min-w-0 !overflow-visible !rounded-none !border-0 !bg-transparent'
+        tableClassName='bg-background w-max min-w-full'
         tableProps={{ withContainer: false }}
         data={keys}
         columns={columns}

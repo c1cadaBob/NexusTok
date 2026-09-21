@@ -23,6 +23,7 @@ import * as React from 'react'
 import { beforeEach, expect, test, vi } from 'vitest'
 
 import * as channelsApi from '@/features/channels/api'
+import { CHANNEL_ACTIONS_COLUMN_CLASS_NAME } from '@/features/channels/constants'
 import * as channelsLib from '@/features/channels/lib'
 import type { Channel, UpstreamKey } from '@/features/channels/types'
 
@@ -166,12 +167,35 @@ test('平台站点子密钥操作列固定在表格右侧', () => {
   const actionHeader = screen.getByRole('columnheader', { name: 'Actions' })
   expect(actionHeader.className).toContain('sticky')
   expect(actionHeader.className).toContain('right-0')
+  expect(actionHeader.className).toContain(CHANNEL_ACTIONS_COLUMN_CLASS_NAME)
+  expect(actionHeader.className).not.toContain('w-48')
+  expect(actionHeader.className).not.toContain('min-w-48')
 
   const editButton = screen.getByRole('button', { name: 'Edit' })
   const actionCell = editButton.closest('td')
   expect(actionCell).not.toBeNull()
   expect(actionCell?.className).toContain('sticky')
   expect(actionCell?.className).toContain('right-0')
+  expect(actionCell?.className).toContain(CHANNEL_ACTIONS_COLUMN_CLASS_NAME)
+  expect(actionCell?.className).not.toContain('w-48')
+  expect(actionCell?.className).not.toContain('min-w-48')
+})
+
+test('平台站点子表移除内部卡片容器样式并保留表格底色', () => {
+  renderWithProviders(<UpstreamKeysSubTable channel={platformChannel()} />)
+
+  const actionHeader = screen.getByRole('columnheader', { name: 'Actions' })
+  const table = actionHeader.closest('table')
+  const tableContainer = table?.parentElement
+
+  expect(table).toHaveClass('bg-background', 'w-max', 'min-w-full')
+  expect(tableContainer).toHaveClass(
+    '!overflow-visible',
+    '!rounded-none',
+    '!border-0',
+    '!bg-transparent'
+  )
+  expect(tableContainer).not.toHaveClass('rounded-md', 'border', 'bg-background')
 })
 
 test('平台站点子表根区域锚定到渠道表可视宽度', () => {
