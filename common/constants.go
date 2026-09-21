@@ -205,6 +205,9 @@ var (
 )
 
 const (
+	DefaultGlobalRateLimitNum      = 10
+	DefaultGlobalRateLimitDuration = 60
+
 	DefaultAuthRefreshRateLimitNum      = 60
 	DefaultAuthRefreshRateLimitDuration = 20 * 60
 )
