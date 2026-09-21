@@ -192,14 +192,21 @@ test('平台站点子表根区域锚定到渠道表可视宽度', () => {
   )
 
   const actionHeader = view.getByRole('columnheader', { name: 'Actions' })
-  const subTableRoot = actionHeader.closest('div.sticky')
+  const subTableRoot = actionHeader.closest('table')?.parentElement?.parentElement
 
   expect(subTableRoot).not.toBeNull()
-  expect(subTableRoot).toHaveClass('sticky', 'left-0', 'max-w-none', 'min-w-0')
+  expect(subTableRoot).toHaveClass(
+    'relative',
+    'max-w-none',
+    'min-w-0',
+    'overflow-visible'
+  )
+  expect(subTableRoot).not.toHaveClass('sticky', 'left-0')
   expect(subTableRoot).toHaveAttribute(
     'style',
     expect.stringContaining('width: 640px')
   )
+  expect(actionHeader.closest('table')).toHaveClass('w-max', 'min-w-full')
 })
 
 test('平台站点展开子表时批量操作栏固定在内部滚动区域顶部', () => {
@@ -226,10 +233,12 @@ test('平台站点桌面子表复用渠道滚动容器而不创建独立横向�
   renderWithProviders(<UpstreamKeysSubTable channel={platformChannel()} />)
 
   const actionHeader = screen.getByRole('columnheader', { name: 'Actions' })
-  const subTableRoot = actionHeader.closest('div.sticky')
+  const subTableRoot = actionHeader.closest('table')?.parentElement?.parentElement
 
   expect(subTableRoot).not.toBeNull()
   expect(subTableRoot).toHaveClass('overflow-visible')
+  expect(subTableRoot).toHaveClass('relative')
+  expect(subTableRoot).not.toHaveClass('sticky', 'left-0')
   expect(subTableRoot).not.toHaveClass('overflow-auto')
 
   const internalContainer = actionHeader.closest('table')?.parentElement

@@ -253,6 +253,10 @@ function useParentTablePinnedActionsSync(
       )
 
       for (const actionCell of actionCells) {
+        actionCell.style.transform = ''
+      }
+
+      for (const actionCell of actionCells) {
         actionCell.style.transform = `translateX(${
           containerRight - actionCell.getBoundingClientRect().right
         }px)`
@@ -1494,7 +1498,7 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
   return (
     <div
       ref={subTableRootRef}
-      className='border-border bg-muted/20 sticky left-0 z-20 w-full max-w-none min-w-0 overflow-visible border-y px-3 py-3'
+      className='border-border bg-muted/20 relative z-20 w-full max-w-none min-w-0 overflow-visible border-y px-3 py-3'
       style={
         parentTableViewportWidth === null
           ? undefined
