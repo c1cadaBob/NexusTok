@@ -6,7 +6,7 @@
 
 - Access Token 是有效期 15 分钟的 JWT，只保存在浏览器内存中，通过 `Authorization: Bearer <token>` 发送。
 - Refresh Token 是随机不透明值，有效期最长 30 天。浏览器只通过 `HttpOnly`、`SameSite=Strict` Cookie 持有它；服务端仅保存 HMAC 摘要，并在每次刷新时轮换。
-- `new_api_has_session` 是 Refresh Cookie 的会话提示，值恒为 `1`，`Path=/`、非 `HttpOnly`，与 Refresh Cookie 同时写入、同时清除、同一过期时间。它只声明"曾签发过 Refresh Cookie"，不含任何凭据，也不参与任何鉴权判定；伪造它唯一的效果是自费一次注定失败的 refresh。它存在的原因是 Refresh Cookie 被 `HttpOnly` 和 `Path=/api/user/auth` 双重限制，`/` 上的页面无法判断自己是否匿名，否则每次冷启动都要发一次注定 401 的 refresh，而该请求还会占用按 IP 计数的 `CriticalRateLimit` 配额。
+- `new_api_has_session` 是 Refresh Cookie 的会话提示，值恒为 `1`，`Path=/`、非 `HttpOnly`，与 Refresh Cookie 同时写入、同时清除、同一过期时间。它只声明"曾签发过 Refresh Cookie"，不含任何凭据，也不参与任何鉴权判定；伪造它唯一的效果是自费一次注定失败的 refresh。它存在的原因是 Refresh Cookie 被 `HttpOnly` 和 `Path=/api/user/auth` 双重限制，`/` 上的页面无法判断自己是否匿名，否则每次冷启动都要发一次注定 401 的 refresh，而该请求只会占用独立的 `auth-refresh` IP 限流桶，不会消耗登录或注册额度。
 - `user_sessions` 是登录会话控制面，记录设备、IP、登录方式、最后活跃时间、到期时间和撤销状态。数据库中的 Session 状态是最终权威；撤销传播速度取决于下文所述的 Redis 拓扑。
 - 用户的密码、状态、角色或安全因子发生安全相关变化时，`auth_version` 会递增并使旧登录会话失效。订阅带来的分组升降级只刷新授权缓存，不会退出任何登录设备。
 - Redis 缓存保存用户鉴权快照和登录会话快照。版本栅栏和撤销 tombstone 防止旧缓存重新授权；Session 快照使用跟随 `SYNC_FREQUENCY` 的短 TTL，缓存未命中或未启用 Redis 时回退到数据库校验。
@@ -124,6 +124,30 @@ SESSION_COOKIE_TRUSTED_URL=https://panel.example.com,https://admin.example.com
 ```
 
 该开关只控制面板 Refresh Cookie 和 refresh/logout 的 OriginGuard，不会修改 relay、旧 billing dashboard、`/api/usage/token` 或 `/api/log/token` 的 CORS 行为。
+
+## 认证限流分桶
+
+认证相关的关键请求不再全部共用单一的 `CT` IP 桶。仍然保留同一客户端 IP 的固定窗口限流，但按用途分为独立作用域：
+
+| 作用域 | 请求范围 |
+| --- | --- |
+| `auth-login` | 密码登录、2FA、登录验证码和 Passkey 登录开始/完成 |
+| `auth-register` | 用户注册 |
+| `auth-refresh` | `POST /api/user/auth/refresh` |
+| `auth-session` | 登录会话退出 |
+| `auth-recovery` | 找回密码和重置密码 |
+| `auth-oauth` | OAuth 状态、OAuth/微信/Telegram 登录入口及绑定流程 |
+
+Redis 键格式为 `rateLimit:v2:ip:CT:<scope>:<client_ip>`。登录、注册和刷新请求因此不会互相消耗额度；无效或缺少 Refresh Cookie 的刷新请求仍然会先消耗 `auth-refresh` 桶，避免通过伪造刷新请求绕过防护。未拆分的其他关键业务继续使用兼容的 `rateLimit:v2:ip:CT:<client_ip>` 键。
+
+登录、注册等防爆破请求使用 `CRITICAL_RATE_LIMIT` 和 `CRITICAL_RATE_LIMIT_DURATION`，默认是 `20 次 / 20 分钟`。会话刷新使用独立配置：
+
+```env
+AUTH_REFRESH_RATE_LIMIT=60
+AUTH_REFRESH_RATE_LIMIT_DURATION=1200
+```
+
+默认值为 `60 次 / 20 分钟`。配置值为零、负数或无法解析时回退默认值，并记录启动告警。所有 Redis 和内存限流路径都使用相同的作用域规则；被拒绝时返回 `429` 和 `Retry-After`，并记录不包含凭据的限流告警。
 
 ## 可信代理与 IP 限流
 

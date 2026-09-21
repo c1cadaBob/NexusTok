@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/c1cadaBob/NexusTok/common"
 	"github.com/c1cadaBob/NexusTok/logger"
@@ -121,6 +123,7 @@ func redisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, mark st
 	}
 	if !allowed {
 		writeRateLimited(c, ttlSeconds)
+		logRateLimitRejection(c, mark, ttlSeconds)
 	}
 }
 
@@ -128,8 +131,37 @@ func memoryRateLimiter(c *gin.Context, maxRequestNum int, duration int64, mark s
 	key := mark + c.ClientIP()
 	if !inMemoryRateLimiter.Request(key, maxRequestNum, duration) {
 		writeRateLimited(c, duration)
+		logRateLimitRejection(c, mark, duration)
 		return
 	}
+}
+
+func logRateLimitRejection(c *gin.Context, mark string, retryAfterSeconds int64) {
+	path := c.Request.URL.Path
+	if routePath := c.FullPath(); routePath != "" {
+		path = routePath
+	}
+	logger.LogWarn(
+		c.Request.Context(),
+		"rate limit rejected mark=%s method=%s path=%s client_ip=%s retry_after=%d node=%s",
+		mark,
+		c.Request.Method,
+		path,
+		maskedClientIP(c.ClientIP()),
+		retryAfterSeconds,
+		common.NodeName,
+	)
+}
+
+func maskedClientIP(clientIP string) string {
+	ip := net.ParseIP(strings.TrimSpace(clientIP))
+	if ip == nil {
+		return "invalid"
+	}
+	if ipv4 := ip.To4(); ipv4 != nil {
+		return ipv4.Mask(net.CIDRMask(24, 32)).String() + "/24"
+	}
+	return ip.Mask(net.CIDRMask(64, 128)).String() + "/64"
 }
 
 // writeRateLimited rejects the request with 429 and a Retry-After hint so
@@ -178,6 +210,32 @@ func CriticalRateLimit() func(c *gin.Context) {
 	return defNext
 }
 
+func CriticalRateLimitScope(scope string) func(c *gin.Context) {
+	if !common.CriticalRateLimitEnable {
+		return defNext
+	}
+	scope = strings.TrimSpace(scope)
+	if scope == "" {
+		return CriticalRateLimit()
+	}
+	return rateLimitFactory(
+		common.CriticalRateLimitNum,
+		common.CriticalRateLimitDuration,
+		"CT:"+scope,
+	)
+}
+
+func AuthRefreshRateLimit() func(c *gin.Context) {
+	if !common.CriticalRateLimitEnable {
+		return defNext
+	}
+	return rateLimitFactory(
+		common.AuthRefreshRateLimitNum,
+		common.AuthRefreshRateLimitDuration,
+		"CT:auth-refresh",
+	)
+}
+
 func UserCriticalRateLimit(scope string) func(c *gin.Context) {
 	if !common.CriticalRateLimitEnable {
 		return defNext
@@ -209,7 +267,7 @@ func userRateLimitFactory(maxRequestNum int, duration int64, mark string) func(c
 				c.Abort()
 				return
 			}
-			userRedisRateLimiter(c, maxRequestNum, duration, redisUserRateLimitKey(mark, userID))
+			userRedisRateLimiter(c, maxRequestNum, duration, redisUserRateLimitKey(mark, userID), mark)
 		}
 	}
 	// It's safe to call multi times.
@@ -224,6 +282,7 @@ func userRateLimitFactory(maxRequestNum int, duration int64, mark string) func(c
 		key := fmt.Sprintf("%s:user:%d", mark, userID)
 		if !inMemoryRateLimiter.Request(key, maxRequestNum, duration) {
 			writeRateLimited(c, duration)
+			logRateLimitRejection(c, mark, duration)
 			return
 		}
 	}
@@ -231,7 +290,7 @@ func userRateLimitFactory(maxRequestNum int, duration int64, mark string) func(c
 
 // userRedisRateLimiter is like redisRateLimiter but accepts a pre-built key
 // (to support user-ID-based keys).
-func userRedisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, key string) {
+func userRedisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, key string, mark string) {
 	allowed, _, ttlSeconds, err := redisFixedWindowTake(c.Request.Context(), key, maxRequestNum, duration)
 	if err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("rate limit check failed (key=%s): %v", key, err))
@@ -241,6 +300,7 @@ func userRedisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, key
 	}
 	if !allowed {
 		writeRateLimited(c, ttlSeconds)
+		logRateLimitRejection(c, mark, ttlSeconds)
 	}
 }
 

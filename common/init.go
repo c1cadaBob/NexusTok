@@ -131,6 +131,11 @@ func InitEnv() {
 	CriticalRateLimitEnable = GetEnvOrDefaultBool("CRITICAL_RATE_LIMIT_ENABLE", true)
 	CriticalRateLimitNum = GetEnvOrDefault("CRITICAL_RATE_LIMIT", 20)
 	CriticalRateLimitDuration = int64(GetEnvOrDefault("CRITICAL_RATE_LIMIT_DURATION", 20*60))
+	AuthRefreshRateLimitNum = positiveRateLimitEnv("AUTH_REFRESH_RATE_LIMIT", DefaultAuthRefreshRateLimitNum)
+	AuthRefreshRateLimitDuration = int64(positiveRateLimitEnv(
+		"AUTH_REFRESH_RATE_LIMIT_DURATION",
+		DefaultAuthRefreshRateLimitDuration,
+	))
 
 	SearchRateLimitEnable = GetEnvOrDefaultBool("SEARCH_RATE_LIMIT_ENABLE", true)
 	SearchRateLimitNum = GetEnvOrDefault("SEARCH_RATE_LIMIT", 10)
@@ -167,6 +172,15 @@ func initUserSessionSettings() {
 }
 
 func positiveUserSessionEnv(name string, fallback int) int {
+	value := GetEnvOrDefault(name, fallback)
+	if value <= 0 {
+		SysError(fmt.Sprintf("%s must be positive, using default value: %d", name, fallback))
+		return fallback
+	}
+	return value
+}
+
+func positiveRateLimitEnv(name string, fallback int) int {
 	value := GetEnvOrDefault(name, fallback)
 	if value <= 0 {
 		SysError(fmt.Sprintf("%s must be positive, using default value: %d", name, fallback))

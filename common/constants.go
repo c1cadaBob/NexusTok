@@ -204,6 +204,11 @@ var (
 	ImageDownloadPermission = RoleGuestUser
 )
 
+const (
+	DefaultAuthRefreshRateLimitNum      = 60
+	DefaultAuthRefreshRateLimitDuration = 20 * 60
+)
+
 // All duration's unit is seconds
 // Shouldn't larger then RateLimitKeyExpirationDuration
 var (
@@ -218,6 +223,9 @@ var (
 	CriticalRateLimitEnable   bool
 	CriticalRateLimitNum            = 20
 	CriticalRateLimitDuration int64 = 20 * 60
+
+	AuthRefreshRateLimitNum      = DefaultAuthRefreshRateLimitNum
+	AuthRefreshRateLimitDuration = int64(DefaultAuthRefreshRateLimitDuration)
 
 	UploadRateLimitNum            = 10
 	UploadRateLimitDuration int64 = 60
