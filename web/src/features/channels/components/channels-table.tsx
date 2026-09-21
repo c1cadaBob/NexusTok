@@ -39,8 +39,8 @@ import {
   useDebouncedColumnFilter,
   useDataTable,
 } from '@/components/data-table'
+import { ComboboxInput } from '@/components/ui/combobox-input'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { TableCell, TableRow } from '@/components/ui/table'
 import {
   Tooltip,
@@ -53,6 +53,7 @@ import { requireServerSuccess } from '@/lib/server-error-message'
 
 import {
   getChannels,
+  getEnabledModels,
   getGroups,
   getUpstreamKeys,
   getUpstreamSiteStatus,
@@ -68,9 +69,11 @@ import {
   channelsQueryKeys,
   aggregateChannelsByTag,
   filterUpstreamKeys,
+  getEffectiveUpstreamKeyModels,
   getChannelTableRowId,
   isTagAggregateRow,
   getChannelTypeLabel,
+  parseModelsList,
 } from '../lib'
 import type { Channel, ChannelSortBy, UpstreamKey } from '../types'
 import { ChannelCard } from './channel-card'
@@ -262,18 +265,13 @@ export function ChannelsTable() {
   const {
     value: modelFilter,
     inputValue: modelFilterInput,
-    onChange: onModelFilterInputChange,
-    onCompositionStart: onModelFilterCompositionStart,
-    onCompositionEnd: onModelFilterCompositionEnd,
+    setInputValue: setModelFilterInput,
     resetInput: resetModelFilterInput,
   } = useDebouncedColumnFilter({
     columnFilters,
     columnId: 'model',
     onColumnFiltersChange,
   })
-
-  // Determine whether to use search or regular list API
-  const shouldSearch = Boolean(globalFilter?.trim() || modelFilter.trim())
 
   const sortParams = useMemo(() => {
     const activeSort = sorting[0]
@@ -289,6 +287,12 @@ export function ChannelsTable() {
       sort_order: activeSort.desc ? 'desc' : 'asc',
     } as const
   }, [sorting])
+  const modelRatioSortActive = sortParams.sort_by === 'model_ratio'
+
+  // 最低倍率排序模式下，模型只作为倍率计算目标；其他模式继续作为渠道和密钥筛选条件。
+  const shouldSearch = Boolean(
+    globalFilter?.trim() || (modelFilter.trim() && !modelRatioSortActive)
+  )
 
   const handleSortingChange: OnChangeFn<SortingState> = (updater) => {
     setSorting((previous) => {
@@ -325,6 +329,12 @@ export function ChannelsTable() {
       })),
     [groupsData]
   )
+
+  const { data: enabledModelsData } = useQuery({
+    queryKey: ['enabled-models'],
+    queryFn: async () => requireServerSuccess(await getEnabledModels()),
+    staleTime: 60_000,
+  })
 
   // Fetch channels data
   // eslint-disable-next-line @tanstack/query/exhaustive-deps
@@ -444,6 +454,39 @@ export function ChannelsTable() {
     return result
   }, [platformChannels, upstreamSiteStatusQueries])
 
+  const modelOptions = useMemo(() => {
+    const models = new Set<string>(enabledModelsData?.data || [])
+
+    for (const channel of data?.data?.items || []) {
+      for (const model of parseModelsList(channel.models)) {
+        models.add(model)
+      }
+    }
+
+    for (const keys of upstreamKeysByChannelId.values()) {
+      for (const key of keys) {
+        for (const model of getEffectiveUpstreamKeyModels(key)) {
+          models.add(model)
+        }
+      }
+    }
+
+    return [...models]
+      .map((model) => model.trim())
+      .filter(Boolean)
+      .sort((left, right) =>
+        left.localeCompare(right, undefined, {
+          numeric: true,
+          sensitivity: 'base',
+        })
+      )
+      .map((model) => ({ label: model, value: model }))
+  }, [data, enabledModelsData, upstreamKeysByChannelId])
+
+  const upstreamKeyModelFilter = modelRatioSortActive
+    ? undefined
+    : modelFilter
+
   // Apply tag aggregation if tag mode is enabled
   const channels = useMemo(() => {
     const rawChannels = data?.data?.items || []
@@ -455,7 +498,7 @@ export function ChannelsTable() {
         upstreamKeysByChannelId.get(channel.id) || [],
         {
           keyword: globalFilter,
-          model: modelFilter,
+          model: upstreamKeyModelFilter,
           status: statusFilter,
         }
       )
@@ -478,7 +521,7 @@ export function ChannelsTable() {
     data,
     globalFilter,
     enableTagMode,
-    modelFilter,
+    upstreamKeyModelFilter,
     statusFilter,
     upstreamKeysByChannelId,
     upstreamSiteStatusByChannelId,
@@ -490,7 +533,7 @@ export function ChannelsTable() {
   // Columns configuration
   const columns = useChannelsColumns({
     enableSelection: batchMode,
-    modelRatioSortActive: sorting[0]?.id === 'model_ratio',
+    modelRatioSortActive,
   })
 
   // React Table instance
@@ -667,12 +710,14 @@ export function ChannelsTable() {
           resetModelFilterInput()
         },
         additionalSearch: (
-          <Input
+          <ComboboxInput
             placeholder={t('Filter by model...')}
             value={modelFilterInput}
-            onChange={onModelFilterInputChange}
-            onCompositionStart={onModelFilterCompositionStart}
-            onCompositionEnd={onModelFilterCompositionEnd}
+            options={modelOptions}
+            onValueChange={setModelFilterInput}
+            allowCustomValue
+            aria-label={t('Filter by model...')}
+            emptyText={t('No model found.')}
             className='w-full sm:w-[150px] lg:w-[180px]'
           />
         ),

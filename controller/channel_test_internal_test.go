@@ -213,6 +213,32 @@ func TestGetAllChannelsSortsModelRatioWithModelCondition(t *testing.T) {
 	require.NotNil(t, response.Data.Items[1].ModelRatio)
 	assert.InDelta(t, 0.6, *response.Data.Items[1].ModelRatio, 1e-12)
 	assert.Nil(t, response.Data.Items[2].ModelRatio)
+
+	searchRecorder := httptest.NewRecorder()
+	searchContext, _ := gin.CreateTestContext(searchRecorder)
+	searchContext.Request = httptest.NewRequest(
+		http.MethodGet,
+		"/api/channel/search?keyword=ratio&model=gpt-special&sort_by=model_ratio&sort_order=asc&p=1&page_size=20",
+		nil,
+	)
+
+	SearchChannels(searchContext)
+
+	require.Equal(t, http.StatusOK, searchRecorder.Code)
+	var searchResponse channelListTestResponse
+	require.NoError(t, common.Unmarshal(searchRecorder.Body.Bytes(), &searchResponse))
+	require.True(t, searchResponse.Success)
+	require.Len(t, searchResponse.Data.Items, 3)
+	assert.Equal(t, []int{7103, 7101, 7102}, []int{
+		searchResponse.Data.Items[0].Id,
+		searchResponse.Data.Items[1].Id,
+		searchResponse.Data.Items[2].Id,
+	})
+	require.NotNil(t, searchResponse.Data.Items[0].ModelRatio)
+	assert.InDelta(t, 0.2, *searchResponse.Data.Items[0].ModelRatio, 1e-12)
+	require.NotNil(t, searchResponse.Data.Items[1].ModelRatio)
+	assert.InDelta(t, 0.6, *searchResponse.Data.Items[1].ModelRatio, 1e-12)
+	assert.Nil(t, searchResponse.Data.Items[2].ModelRatio)
 }
 
 func TestCopyChannelRejectsInvalidLegacyProxySettings(t *testing.T) {
