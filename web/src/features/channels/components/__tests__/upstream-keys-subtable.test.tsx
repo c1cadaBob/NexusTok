@@ -176,7 +176,7 @@ test('平台站点子密钥操作列固定在表格右侧', () => {
 
 test('平台站点子表根区域锚定到渠道表可视宽度', () => {
   const tableContainer = document.createElement('div')
-  tableContainer.setAttribute('data-slot', 'table-container')
+  tableContainer.setAttribute('data-slot', 'data-table-scroll-container')
   Object.defineProperty(tableContainer, 'clientWidth', {
     configurable: true,
     value: 640,
@@ -251,6 +251,89 @@ test('平台站点空子密钥列表不显示批量操作栏', () => {
   expect(
     screen.queryByRole('button', { name: 'Disable selected keys' })
   ).not.toBeInTheDocument()
+})
+
+test('平台站点子表使用分体表头的渠道滚动容器同步批量工具栏', async () => {
+  const tableContainer = document.createElement('div')
+  tableContainer.setAttribute('data-slot', 'data-table-scroll-container')
+  Object.defineProperty(tableContainer, 'clientWidth', {
+    configurable: true,
+    value: 640,
+  })
+  const addEventListener = vi.spyOn(tableContainer, 'addEventListener')
+  tableContainer.getBoundingClientRect = () =>
+    ({
+      left: 100,
+      right: 740,
+      width: 640,
+      top: 0,
+      bottom: 800,
+      height: 800,
+      x: 100,
+      y: 0,
+      toJSON: () => ({}),
+    }) as DOMRect
+
+  const view = render(
+    <QueryClientProvider client={queryClient}>
+      <ChannelsProvider>
+        <UpstreamKeysSubTable channel={platformChannel()} />
+      </ChannelsProvider>
+    </QueryClientProvider>,
+    { container: tableContainer }
+  )
+
+  const enableButton = view.getByRole('button', {
+    name: 'Enable selected keys',
+  })
+  const toolbar = enableButton.closest('div.sticky')
+
+  expect(toolbar).not.toBeNull()
+  expect(toolbar).toHaveClass('sticky', 'top-0', 'left-0', 'w-full')
+  expect(toolbar).not.toHaveClass('min-w-max')
+
+  const toolbarViewport = toolbar?.parentElement
+  expect(toolbarViewport).not.toBeNull()
+  if (!toolbarViewport) {
+    return
+  }
+  expect(addEventListener).toHaveBeenCalledWith(
+    'scroll',
+    expect.any(Function),
+    expect.objectContaining({ passive: true })
+  )
+
+  const subTableRoot = toolbarViewport.parentElement
+  expect(subTableRoot).not.toBeNull()
+  subTableRoot?.style.setProperty('padding-left', '0px')
+  subTableRoot?.style.setProperty('border-left-width', '0px')
+
+  toolbarViewport.getBoundingClientRect = () =>
+    ({
+      left: 0,
+      right: 640,
+      width: 640,
+      top: 0,
+      bottom: 44,
+      height: 44,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    }) as DOMRect
+
+  const scrollCall = addEventListener.mock.calls.find(
+    ([eventName]) => eventName === 'scroll'
+  )
+  const scrollListener = scrollCall?.[1]
+  expect(typeof scrollListener).toBe('function')
+
+  await act(async () => {
+    if (typeof scrollListener === 'function') {
+      scrollListener(new Event('scroll'))
+    }
+  })
+
+  expect(toolbarViewport.style.transform).toBe('translateX(100px)')
 })
 
 test('平台站点卡片展开区在窄布局中保留密钥字段和操作入口', () => {

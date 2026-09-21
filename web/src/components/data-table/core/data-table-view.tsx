@@ -137,6 +137,7 @@ function SplitHeaderTableView<TData>({
       )}
     >
       <div
+        data-slot='data-table-scroll-container'
         className={cn(
           'min-h-0 flex-1 overflow-auto',
           '**:data-[slot=table-header]:[--table-header-bg:var(--table-header)]',

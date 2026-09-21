@@ -131,6 +131,16 @@ function isFreeUpstreamKey(upstreamKey: UpstreamKey): boolean {
   return upstreamKey.conversion_ratio === 0
 }
 
+function getParentTableScrollContainer(
+  root: HTMLElement | null
+): HTMLElement | null {
+  return (
+    root?.closest<HTMLElement>(
+      '[data-slot="table-container"], [data-slot="data-table-scroll-container"]'
+    ) ?? null
+  )
+}
+
 function useParentTableViewportWidth(
   rootRef: React.RefObject<HTMLDivElement | null>
 ) {
@@ -138,9 +148,7 @@ function useParentTableViewportWidth(
 
   useLayoutEffect(() => {
     const root = rootRef.current
-    const tableContainer = root?.closest<HTMLElement>(
-      '[data-slot="table-container"]'
-    )
+    const tableContainer = getParentTableScrollContainer(root)
     if (!tableContainer) {
       return
     }
@@ -181,9 +189,7 @@ function useParentTableHorizontalScrollSync(
 
     const root = rootRef.current
     const target = targetRef.current
-    const tableContainer = root?.closest<HTMLElement>(
-      '[data-slot="table-container"]'
-    )
+    const tableContainer = getParentTableScrollContainer(root)
     if (!root || !tableContainer || !target) {
       return
     }
@@ -194,8 +200,8 @@ function useParentTableHorizontalScrollSync(
 
       const rootStyles = getComputedStyle(root)
       const rootLeftInset =
-        Number.parseFloat(rootStyles.paddingLeft) +
-        Number.parseFloat(rootStyles.borderLeftWidth)
+        (Number.parseFloat(rootStyles.paddingLeft) || 0) +
+        (Number.parseFloat(rootStyles.borderLeftWidth) || 0)
       const targetLeft =
         tableContainer.getBoundingClientRect().left + rootLeftInset
       const currentLeft = target.getBoundingClientRect().left
@@ -235,9 +241,7 @@ function useParentTablePinnedActionsSync(
     }
 
     const root = rootRef.current
-    const tableContainer = root?.closest<HTMLElement>(
-      '[data-slot="table-container"]'
-    )
+    const tableContainer = getParentTableScrollContainer(root)
     if (!root || !tableContainer) {
       return
     }
