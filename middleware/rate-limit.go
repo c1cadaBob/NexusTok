@@ -11,7 +11,10 @@ import (
 
 	"github.com/c1cadaBob/NexusTok/common"
 	"github.com/c1cadaBob/NexusTok/logger"
+	"github.com/c1cadaBob/NexusTok/model"
+	"github.com/c1cadaBob/NexusTok/service"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm/clause"
 )
 
 const redisRateLimitNamespace = "rateLimit:v2"
@@ -197,10 +200,70 @@ func GlobalWebRateLimit() func(c *gin.Context) {
 }
 
 func GlobalAPIRateLimit() func(c *gin.Context) {
-	if common.GlobalApiRateLimitEnable {
-		return rateLimitFactory(common.GlobalApiRateLimitNum, common.GlobalApiRateLimitDuration, "GA")
+	if !common.GlobalApiRateLimitEnable {
+		return defNext
 	}
-	return defNext
+	limiter := rateLimitFactory(common.GlobalApiRateLimitNum, common.GlobalApiRateLimitDuration, "GA")
+	return func(c *gin.Context) {
+		if isVerifiedAdminRequest(c) {
+			c.Next()
+			return
+		}
+		limiter(c)
+	}
+}
+
+// isVerifiedAdminRequest 只用于判断是否可以跳过全局 API 访问限流。
+// 认证中间件位于全局限流之后，因此这里必须独立完成凭据、Session、用户状态和角色校验。
+// 校验失败时返回 false，保证无效凭据不会获得限流豁免。
+func isVerifiedAdminRequest(c *gin.Context) bool {
+	raw, ok := authorizationToken(c.GetHeader("Authorization"))
+	if !ok {
+		return false
+	}
+
+	identity, internal, err := service.ParseDashboardAccessToken(raw)
+	if internal {
+		if err != nil {
+			return false
+		}
+		_, user, err := service.ValidateLoginSession(identity)
+		return err == nil && user != nil &&
+			user.Status == common.UserStatusEnabled &&
+			user.Role >= common.RoleAdminUser
+	}
+
+	patUser, err := model.ValidateAccessToken(raw)
+	if err != nil {
+		return false
+	}
+	if patUser != nil && patUser.Id > 0 {
+		user, err := model.GetUserCache(patUser.Id)
+		return err == nil && user != nil &&
+			user.Status == common.UserStatusEnabled &&
+			user.Role >= common.RoleAdminUser
+	}
+
+	// 旧版 billing dashboard 通过 TokenAuth 使用用户 API Token。仅当 Token
+	// 本身仍然有效且所属用户是启用状态的管理员时，才允许它跳过 GA。
+	token := raw
+	token = strings.TrimPrefix(token, "sk-")
+	if parts := strings.SplitN(token, "-", 2); len(parts) > 0 {
+		token = parts[0]
+	}
+	var userToken model.Token
+	if err := model.DB.Where(clause.Eq{Column: clause.Column{Name: "key"}, Value: token}).First(&userToken).Error; err != nil {
+		return false
+	}
+	if userToken.Status != common.TokenStatusEnabled ||
+		(userToken.ExpiredTime != -1 && userToken.ExpiredTime < common.GetTimestamp()) ||
+		(!userToken.UnlimitedQuota && userToken.RemainQuota <= 0) {
+		return false
+	}
+	user, err := model.GetUserCache(userToken.UserId)
+	return err == nil && user != nil &&
+		user.Status == common.UserStatusEnabled &&
+		user.Role >= common.RoleAdminUser
 }
 
 func CriticalRateLimit() func(c *gin.Context) {

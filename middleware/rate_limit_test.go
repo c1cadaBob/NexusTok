@@ -11,6 +11,8 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/c1cadaBob/NexusTok/common"
+	"github.com/c1cadaBob/NexusTok/model"
+	"github.com/c1cadaBob/NexusTok/service"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
@@ -71,6 +73,148 @@ func TestRedisIPRateLimiterThresholdTTLAndNamespace(t *testing.T) {
 	assert.Equal(t, "3", count)
 	assert.Equal(t, 37*time.Second, redisServer.TTL(key))
 	assert.True(t, redisServer.Exists(legacyKey), "the v2 counter must not touch an old list key")
+}
+
+func TestGlobalAPIRateLimitSkipsOnlyVerifiedAdministrators(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupDashboardAuthMiddlewareTest(t)
+	redisServer, _ := useRateLimitMiniRedis(t)
+
+	previousEnabled := common.GlobalApiRateLimitEnable
+	previousNum := common.GlobalApiRateLimitNum
+	previousDuration := common.GlobalApiRateLimitDuration
+	t.Cleanup(func() {
+		common.GlobalApiRateLimitEnable = previousEnabled
+		common.GlobalApiRateLimitNum = previousNum
+		common.GlobalApiRateLimitDuration = previousDuration
+	})
+	common.GlobalApiRateLimitEnable = true
+	common.GlobalApiRateLimitNum = 1
+	common.GlobalApiRateLimitDuration = 60
+	require.NoError(t, model.DB.AutoMigrate(&model.Token{}))
+
+	now := time.Now().Unix()
+	createUser := func(t *testing.T, username string, role int) (*model.User, string) {
+		t.Helper()
+		token := username + "-pat"
+		user := &model.User{
+			Username: username, Password: "password-placeholder", Role: role,
+			Status: common.UserStatusEnabled, Group: "default", AccessToken: &token,
+			AuthVersion: 1, AffCode: "middleware-rate-" + username,
+		}
+		require.NoError(t, model.DB.Create(user).Error)
+		session := &model.UserSession{
+			SID: username + "-session", UserID: user.Id, Version: 1,
+			UserAuthVersion: user.AuthVersion, Status: model.UserSessionStatusActive,
+			RefreshHash: username + "-refresh-hash", LoginMethod: "password",
+			CreatedAt: now, LastActiveAt: now, ExpiresAt: now + 3600,
+		}
+		require.NoError(t, model.CreateUserSession(session))
+		identity := service.AuthIdentity{
+			UserID: user.Id, SessionID: session.SID,
+			UserAuthVersion: session.UserAuthVersion, SessionVersion: session.Version,
+		}
+		accessToken, _, err := service.IssueAccessToken(identity)
+		require.NoError(t, err)
+		return user, accessToken
+	}
+
+	admin, adminAccessToken := createUser(t, "rate-admin", common.RoleAdminUser)
+	root, rootAccessToken := createUser(t, "rate-root", common.RoleRootUser)
+	_, ordinaryAccessToken := createUser(t, "rate-ordinary", common.RoleCommonUser)
+
+	newRouter := func() *gin.Engine {
+		router := gin.New()
+		require.NoError(t, router.SetTrustedProxies(nil))
+		router.GET("/limited", GlobalAPIRateLimit(), func(c *gin.Context) {
+			c.Status(http.StatusNoContent)
+		})
+		return router
+	}
+	request := func(router http.Handler, token string, remoteAddr string) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, "/limited", nil)
+		request.RemoteAddr = remoteAddr
+		if token != "" {
+			request.Header.Set("Authorization", "Bearer "+token)
+		}
+		router.ServeHTTP(recorder, request)
+		return recorder
+	}
+
+	t.Run("anonymous requests use the GA bucket", func(t *testing.T) {
+		router := newRouter()
+		assert.Equal(t, http.StatusNoContent, request(router, "", "192.0.2.100:12345").Code)
+		assert.Equal(t, http.StatusTooManyRequests, request(router, "", "192.0.2.100:12345").Code)
+		count, err := redisServer.Get(redisIPRateLimitKey("GA", "192.0.2.100"))
+		require.NoError(t, err)
+		assert.Equal(t, "2", count)
+	})
+
+	t.Run("ordinary user requests remain limited", func(t *testing.T) {
+		router := newRouter()
+		assert.Equal(t, http.StatusNoContent, request(router, ordinaryAccessToken, "192.0.2.101:12345").Code)
+		assert.Equal(t, http.StatusTooManyRequests, request(router, ordinaryAccessToken, "192.0.2.101:12345").Code)
+		count, err := redisServer.Get(redisIPRateLimitKey("GA", "192.0.2.101"))
+		require.NoError(t, err)
+		assert.Equal(t, "2", count)
+	})
+
+	t.Run("verified admin and root requests bypass GA", func(t *testing.T) {
+		router := newRouter()
+		for range 3 {
+			assert.Equal(t, http.StatusNoContent, request(router, adminAccessToken, "192.0.2.102:12345").Code)
+			assert.Equal(t, http.StatusNoContent, request(router, rootAccessToken, "192.0.2.103:12345").Code)
+		}
+		assert.False(t, redisServer.Exists(redisIPRateLimitKey("GA", "192.0.2.102")))
+		assert.False(t, redisServer.Exists(redisIPRateLimitKey("GA", "192.0.2.103")))
+		assert.Equal(t, common.RoleAdminUser, admin.Role)
+		assert.Equal(t, common.RoleRootUser, root.Role)
+	})
+
+	t.Run("verified admin PAT bypasses GA", func(t *testing.T) {
+		router := newRouter()
+		for range 3 {
+			assert.Equal(t, http.StatusNoContent, request(router, *admin.AccessToken, "192.0.2.104:12345").Code)
+		}
+		assert.False(t, redisServer.Exists(redisIPRateLimitKey("GA", "192.0.2.104")))
+	})
+
+	t.Run("verified admin API token bypasses GA", func(t *testing.T) {
+		require.NoError(t, model.DB.Create(&model.Token{
+			UserId:         admin.Id,
+			Key:            "legacyadminapitoken",
+			Status:         common.TokenStatusEnabled,
+			UnlimitedQuota: true,
+		}).Error)
+		router := newRouter()
+		for range 3 {
+			assert.Equal(t, http.StatusNoContent, request(router, "sk-legacyadminapitoken", "192.0.2.108:12345").Code)
+		}
+		assert.False(t, redisServer.Exists(redisIPRateLimitKey("GA", "192.0.2.108")))
+	})
+
+	t.Run("expired or tampered admin tokens remain limited", func(t *testing.T) {
+		router := newRouter()
+		identity := service.AuthIdentity{
+			UserID: admin.Id, SessionID: "expired-admin-session",
+			UserAuthVersion: admin.AuthVersion, SessionVersion: 1,
+		}
+		expired := issueExpiredDashboardAccessToken(t, identity)
+		tampered := tamperDashboardToken(adminAccessToken)
+		assert.Equal(t, http.StatusNoContent, request(router, expired, "192.0.2.105:12345").Code)
+		assert.Equal(t, http.StatusTooManyRequests, request(router, expired, "192.0.2.105:12345").Code)
+		assert.Equal(t, http.StatusNoContent, request(router, tampered, "192.0.2.106:12345").Code)
+		assert.Equal(t, http.StatusTooManyRequests, request(router, tampered, "192.0.2.106:12345").Code)
+		assert.True(t, redisServer.Exists(redisIPRateLimitKey("GA", "192.0.2.105")))
+		assert.True(t, redisServer.Exists(redisIPRateLimitKey("GA", "192.0.2.106")))
+
+		revokedPAT := *admin.AccessToken
+		require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", admin.Id).Update("access_token", nil).Error)
+		assert.Equal(t, http.StatusNoContent, request(router, revokedPAT, "192.0.2.107:12345").Code)
+		assert.Equal(t, http.StatusTooManyRequests, request(router, revokedPAT, "192.0.2.107:12345").Code)
+		assert.True(t, redisServer.Exists(redisIPRateLimitKey("GA", "192.0.2.107")))
+	})
 }
 
 func TestRedisUserRateLimiterUsesSharedFixedWindow(t *testing.T) {

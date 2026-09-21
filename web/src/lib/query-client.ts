@@ -41,7 +41,7 @@ export function createAppQueryClient(
       queries: {
         retry: (failureCount, error) => {
           if (import.meta.env.DEV || failureCount > 3) return false
-          return ![401, 403].includes(getServerErrorStatus(error) ?? 0)
+          return ![401, 403, 429].includes(getServerErrorStatus(error) ?? 0)
         },
         refetchOnWindowFocus: false,
         staleTime: 10 * 1000,

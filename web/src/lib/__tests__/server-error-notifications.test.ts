@@ -180,6 +180,42 @@ it('only reports a query failure after retries are exhausted and stays silent wh
   client.clear()
 })
 
+it('does not retry a query after a 429 response', async () => {
+  const client = createAppQueryClient()
+  const notify = vi.spyOn(toast, 'error').mockReturnValue('error')
+  let attempts = 0
+  api.defaults.adapter = async (config) => {
+    attempts++
+    throw new AxiosError(
+      'Too many requests',
+      'ERR_BAD_REQUEST',
+      config,
+      undefined,
+      {
+        data: { success: false, message: '请求过于频繁' },
+        status: 429,
+        statusText: 'Too Many Requests',
+        headers: {},
+        config,
+      }
+    )
+  }
+
+  await client
+    .fetchQuery({
+      queryKey: ['rate limited'],
+      queryFn: () => api.get('/rate-limited'),
+      retryDelay: 0,
+    })
+    .catch(handleServerError)
+
+  expect(attempts).toBe(1)
+  expect(notify.mock.calls.map(([message]) => message)).toEqual([
+    '请求过于频繁',
+  ])
+  client.clear()
+})
+
 it('lets a local handler own notifications when automatic error toasts are disabled', async () => {
   const client = createAppQueryClient()
   const notify = vi.spyOn(toast, 'error').mockReturnValue('error')
