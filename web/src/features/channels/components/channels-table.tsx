@@ -390,6 +390,8 @@ export function ChannelsTable() {
               typeFilter.length > 0 && !typeFilter.includes('all')
                 ? Number(typeFilter[0])
                 : undefined,
+            model:
+              sortParams.sort_by === 'model_ratio' ? modelFilter : undefined,
             tag_mode: enableTagMode,
             id_sort: idSort,
             ...sortParams,

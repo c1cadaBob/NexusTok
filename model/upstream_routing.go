@@ -84,20 +84,26 @@ func loadRoutableChannelKeys(channel *Channel, group, modelName string) []*Routi
 	if strings.TrimSpace(modelName) != "" && !channelSupportsModel(channel, modelName) {
 		return nil
 	}
-	keys, err := LoadChannelKeys(nil, channel.Id, true)
+	keys, err := LoadChannelKeys(nil, channel.Id, false)
 	if err != nil {
 		logger.LogWarn(nil, "load channel keys failed: channel_id=%d error=%v", channel.Id, err)
 		return nil
 	}
 	if len(keys) == 0 && strings.TrimSpace(channel.Key) != "" {
 		if err := SyncChannelKeysFromLegacyField(nil, channel); err == nil {
-			keys, _ = LoadChannelKeys(nil, channel.Id, true)
+			keys, _ = LoadChannelKeys(nil, channel.Id, false)
 		}
 	}
 	result := make([]*RoutingKeySelection, 0, len(keys))
 	for index := range keys {
 		key := &keys[index]
 		if key.Status != common.ChannelStatusEnabled || key.RoutingKeyID == 0 {
+			continue
+		}
+		if err := key.LoadSecret(); err != nil {
+			continue
+		}
+		if !RoutingKeyHealthAllowsRouting(key.RoutingKeyID, key.Status, UpstreamAvailabilityRoutable, time.Now()) {
 			continue
 		}
 		result = append(result, channelKeySelection(channel, key))
@@ -237,8 +243,10 @@ func loadRoutableUpstreamKeys(channel *Channel, group, modelName string) []*Upst
 				continue
 			}
 		}
+		availabilityReason := key.AvailabilityReason(now)
 		if !key.ModelsSynced ||
-			!key.IsRoutable(now) ||
+			availabilityReason != UpstreamAvailabilityRoutable ||
+			!RoutingKeyHealthAllowsRouting(key.RoutingKeyID, key.Status, availabilityReason, now) ||
 			!upstreamKeySupportsModel(key, group, upstreamModelName) {
 			continue
 		}

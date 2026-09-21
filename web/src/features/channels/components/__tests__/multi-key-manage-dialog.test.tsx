@@ -100,6 +100,7 @@ test('多密钥管理表展示全局 key_id 并用 key_id 保存编辑', async (
           key_priority: 7,
           weight: 300,
           auto_weight: 200,
+          health_status: 'degraded',
         },
       ],
       total: 1,
@@ -119,7 +120,10 @@ test('多密钥管理表展示全局 key_id 并用 key_id 保存编辑', async (
 
   expect(await screen.findByText('#1201')).toBeInTheDocument()
   expect(screen.getByText('7')).toBeInTheDocument()
-  expect(screen.getByText('300 (200)')).toBeInTheDocument()
+  expect(screen.getByText('Degraded')).toBeInTheDocument()
+  expect(screen.getByText('300')).toBeInTheDocument()
+  expect(screen.getByText('Override')).toBeInTheDocument()
+  expect(screen.queryByText('300 (200)')).not.toBeInTheDocument()
 
   await user.click(screen.getByRole('button', { name: 'Edit' }))
   const priorityInput = await screen.findByLabelText('Key priority')

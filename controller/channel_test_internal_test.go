@@ -134,6 +134,87 @@ func TestMultiprotocolGatewayEndpointTypes(t *testing.T) {
 	assert.Equal(t, want, common.GetEndpointTypesByChannelType(constant.ChannelTypeSub2API, "gpt-5"))
 }
 
+type channelListTestResponse struct {
+	Success bool `json:"success"`
+	Data    struct {
+		Items []model.Channel `json:"items"`
+		Total int64           `json:"total"`
+	} `json:"data"`
+}
+
+func TestGetAllChannelsSortsModelRatioWithModelCondition(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.RoutingKeyHealth{}))
+	previousSecret := common.CryptoSecret
+	common.CryptoSecret = "channel-list-model-ratio-secret"
+	t.Cleanup(func() {
+		common.CryptoSecret = previousSecret
+	})
+
+	channels := []*model.Channel{
+		{
+			Id:              7101,
+			Name:            "ratio-target-slower",
+			Type:            constant.ChannelTypeOpenAI,
+			Status:          common.ChannelStatusEnabled,
+			Models:          "gpt-special",
+			Group:           "default",
+			UpstreamKind:    model.UpstreamKindKeyChannel,
+			ConversionRatio: 0.6,
+		},
+		{
+			Id:              7102,
+			Name:            "ratio-unsupported-cheaper",
+			Type:            constant.ChannelTypeOpenAI,
+			Status:          common.ChannelStatusEnabled,
+			Models:          "gpt-other",
+			Group:           "default",
+			UpstreamKind:    model.UpstreamKindKeyChannel,
+			ConversionRatio: 0.1,
+		},
+		{
+			Id:              7103,
+			Name:            "ratio-target-faster",
+			Type:            constant.ChannelTypeOpenAI,
+			Status:          common.ChannelStatusEnabled,
+			Models:          "gpt-special",
+			Group:           "default",
+			UpstreamKind:    model.UpstreamKindKeyChannel,
+			ConversionRatio: 0.2,
+		},
+	}
+	require.NoError(t, db.Create(&channels).Error)
+	for _, channel := range channels {
+		require.NoError(t, model.ReplaceChannelKeysFromPlaintext(db, channel, []string{"sk-test"}))
+	}
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(
+		http.MethodGet,
+		"/api/channel?model=gpt-special&sort_by=model_ratio&sort_order=asc&p=1&page_size=20",
+		nil,
+	)
+
+	GetAllChannels(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response channelListTestResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	require.Len(t, response.Data.Items, 3)
+	assert.Equal(t, []int{7103, 7101, 7102}, []int{
+		response.Data.Items[0].Id,
+		response.Data.Items[1].Id,
+		response.Data.Items[2].Id,
+	})
+	require.NotNil(t, response.Data.Items[0].ModelRatio)
+	assert.InDelta(t, 0.2, *response.Data.Items[0].ModelRatio, 1e-12)
+	require.NotNil(t, response.Data.Items[1].ModelRatio)
+	assert.InDelta(t, 0.6, *response.Data.Items[1].ModelRatio, 1e-12)
+	assert.Nil(t, response.Data.Items[2].ModelRatio)
+}
+
 func TestCopyChannelRejectsInvalidLegacyProxySettings(t *testing.T) {
 	db := setupModelListControllerTestDB(t)
 	settingBytes, err := common.Marshal(dto.ChannelSettings{

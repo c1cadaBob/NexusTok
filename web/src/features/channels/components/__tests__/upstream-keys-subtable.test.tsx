@@ -108,7 +108,12 @@ function upstreamKey(overrides: Partial<UpstreamKey> = {}): UpstreamKey {
     weight_override: null,
     status: 1,
     last_sync_at: 1_700_000_000,
+    last_used_at: 1_700_000_100,
     routable: true,
+    health_status: 'normal',
+    health_sample_count: 5,
+    health_success_count: 5,
+    health_first_latency_ms: 800,
   }
   return { ...key, ...overrides }
 }
@@ -158,7 +163,34 @@ test('平台站点展开区按密钥级字段展示且不暴露明文密钥', ()
   expect(screen.queryByText('Upstream used')).not.toBeInTheDocument()
   expect(screen.getByText('Production key')).toBeInTheDocument()
   expect(screen.getByText('sk-live...mask')).toBeInTheDocument()
+  expect(screen.getByText('Normal')).toBeInTheDocument()
   expect(screen.queryByText('sk-secret-real')).not.toBeInTheDocument()
+})
+
+test('平台站点子密钥紧凑展示密钥相关列并隐藏权重括号', () => {
+  renderWithProviders(<UpstreamKeysSubTable channel={platformChannel()} />)
+
+  expect(screen.getByRole('columnheader', { name: 'Key ID' })).toHaveClass(
+    'w-20',
+    'min-w-20'
+  )
+  expect(screen.getByRole('columnheader', { name: 'Name' })).toHaveClass(
+    'w-32',
+    'min-w-32',
+    'max-w-32'
+  )
+  expect(screen.getByRole('columnheader', { name: 'Key' })).toHaveClass(
+    'w-40',
+    'min-w-40',
+    'max-w-40'
+  )
+  expect(screen.getByRole('columnheader', { name: 'Models' })).toHaveClass(
+    'w-48',
+    'min-w-48',
+    'max-w-48'
+  )
+  expect(screen.getByText('1900')).toBeInTheDocument()
+  expect(screen.queryByText('(1900)')).not.toBeInTheDocument()
 })
 
 test('平台站点子密钥操作列固定在表格右侧', () => {

@@ -1241,7 +1241,7 @@ export function useChannelsColumns(
             />
           )
         },
-        size: 200,
+        size: 160,
         enableSorting: false,
       },
 

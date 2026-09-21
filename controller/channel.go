@@ -190,6 +190,7 @@ func GetAllChannels(c *gin.Context) {
 	channelData := make([]*model.Channel, 0)
 	idSort, _ := strconv.ParseBool(c.Query("id_sort"))
 	sortOptions := model.NewChannelSortOptions(c.Query("sort_by"), c.Query("sort_order"), idSort)
+	modelKeyword := c.Query("model")
 	enableTagMode, _ := strconv.ParseBool(c.Query("tag_mode"))
 	groupFilter := model.NormalizeChannelGroupFilter(c.Query("group"))
 	statusParam := c.Query("status")
@@ -244,7 +245,7 @@ func GetAllChannels(c *gin.Context) {
 		if sortOptions.SortBy == "model_ratio" {
 			channelData, total = sortTagChannelsByModelRatio(
 				channelData,
-				"",
+				modelKeyword,
 				sortOptions.SortOrder,
 				pageInfo.GetStartIdx(),
 				pageInfo.GetPageSize(),
@@ -271,7 +272,7 @@ func GetAllChannels(c *gin.Context) {
 	}
 
 	if sortOptions.SortBy == "model_ratio" && !tagRatioPaged {
-		model.SortChannelsByModelRatio(channelData, "", sortOptions.SortOrder)
+		model.SortChannelsByModelRatio(channelData, modelKeyword, sortOptions.SortOrder)
 		startIdx := min(pageInfo.GetStartIdx(), len(channelData))
 		endIdx := min(startIdx+pageInfo.GetPageSize(), len(channelData))
 		channelData = channelData[startIdx:endIdx]
@@ -1876,15 +1877,21 @@ type MultiKeyStatusResponse struct {
 }
 
 type KeyStatus struct {
-	Index        int    `json:"index"`
-	KeyID        uint   `json:"key_id"`
-	Status       int    `json:"status"` // 1: enabled, 2: disabled
-	DisabledTime int64  `json:"disabled_time,omitempty"`
-	Reason       string `json:"reason,omitempty"`
-	KeyPreview   string `json:"key_preview"` // first 10 chars of key for identification
-	KeyPriority  int64  `json:"key_priority"`
-	Weight       int    `json:"weight"`
-	AutoWeight   int    `json:"auto_weight"`
+	Index                int    `json:"index"`
+	KeyID                uint   `json:"key_id"`
+	Status               int    `json:"status"` // 1: enabled, 2: disabled
+	DisabledTime         int64  `json:"disabled_time,omitempty"`
+	Reason               string `json:"reason,omitempty"`
+	KeyPreview           string `json:"key_preview"` // first 10 chars of key for identification
+	KeyPriority          int64  `json:"key_priority"`
+	Weight               int    `json:"weight"`
+	AutoWeight           int    `json:"auto_weight"`
+	HealthStatus         string `json:"health_status,omitempty"`
+	HealthReason         string `json:"health_reason,omitempty"`
+	HealthSampleCount    int    `json:"health_sample_count,omitempty"`
+	HealthSuccessCount   int    `json:"health_success_count,omitempty"`
+	HealthFirstLatencyMs int64  `json:"health_first_latency_ms,omitempty"`
+	LastUsedAt           int64  `json:"last_used_at,omitempty"`
 }
 
 func channelKeyPreview(key *model.ChannelKey) string {
@@ -1908,16 +1915,34 @@ func keyStatusFromChannelKey(key *model.ChannelKey) KeyStatus {
 	if status == 0 {
 		status = common.ChannelStatusEnabled
 	}
+	availabilityReason := model.UpstreamAvailabilityRoutable
+	if status == common.ChannelStatusEnabled {
+		if err := key.LoadSecret(); err != nil {
+			availabilityReason = model.UpstreamAvailabilityCredentialUnavailable
+		}
+	}
+	health := model.GetRoutingKeyHealthSummary(
+		key.RoutingKeyID,
+		status,
+		availabilityReason,
+		time.Now(),
+	)
 	return KeyStatus{
-		Index:        key.KeyIndex,
-		KeyID:        key.RoutingKeyID,
-		Status:       status,
-		DisabledTime: key.DisabledTime,
-		Reason:       key.DisabledReason,
-		KeyPreview:   channelKeyPreview(key),
-		KeyPriority:  key.KeyPriority,
-		Weight:       key.EffectiveWeight(),
-		AutoWeight:   key.AutoWeight(),
+		Index:                key.KeyIndex,
+		KeyID:                key.RoutingKeyID,
+		Status:               status,
+		DisabledTime:         key.DisabledTime,
+		Reason:               key.DisabledReason,
+		KeyPreview:           channelKeyPreview(key),
+		KeyPriority:          key.KeyPriority,
+		Weight:               key.EffectiveWeight(),
+		AutoWeight:           key.AutoWeight(),
+		HealthStatus:         health.Status,
+		HealthReason:         health.Reason,
+		HealthSampleCount:    health.SampleCount,
+		HealthSuccessCount:   health.SuccessCount,
+		HealthFirstLatencyMs: health.FirstLatencyMs,
+		LastUsedAt:           key.LastUsedAt,
 	}
 }
 
@@ -1946,7 +1971,7 @@ func handleChannelKeysManage(c *gin.Context, channel *model.Channel, request Mul
 		common.ApiError(c, err)
 		return true
 	}
-	keys, err := model.LoadChannelKeys(nil, channel.Id, true)
+	keys, err := model.LoadChannelKeys(nil, channel.Id, false)
 	if err != nil {
 		common.ApiError(c, err)
 		return true

@@ -289,6 +289,119 @@ func TestSortChannelsByModelRatioUsesSpecifiedModel(t *testing.T) {
 	})
 }
 
+func TestRoutingKeyHealthSummaryWindow(t *testing.T) {
+	previousDB := DB
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&RoutingKeyHealth{}))
+	DB = db
+	t.Cleanup(func() {
+		DB = previousDB
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	now := time.Unix(2_000_000_000, 0)
+	summary := GetRoutingKeyHealthSummary(101, common.ChannelStatusEnabled, UpstreamAvailabilityRoutable, now)
+	assert.Equal(t, RoutingKeyHealthEnabled, summary.Status)
+
+	for i := range 4 {
+		require.NoError(t, RecordRoutingKeyHealthSample(101, 1, RoutingKeySourceKeyChannel, false, 0, now.Unix()+int64(i)))
+	}
+	summary = GetRoutingKeyHealthSummary(101, common.ChannelStatusEnabled, UpstreamAvailabilityRoutable, now)
+	assert.Equal(t, RoutingKeyHealthEnabled, summary.Status)
+	assert.True(t, RoutingKeyHealthAllowsRouting(101, common.ChannelStatusEnabled, UpstreamAvailabilityRoutable, now))
+
+	require.NoError(t, RecordRoutingKeyHealthSample(101, 1, RoutingKeySourceKeyChannel, true, 100, now.Unix()+4))
+	summary = GetRoutingKeyHealthSummary(101, common.ChannelStatusEnabled, UpstreamAvailabilityRoutable, now)
+	assert.Equal(t, RoutingKeyHealthInvalid, summary.Status)
+	assert.Equal(t, 1, summary.SuccessCount)
+	assert.False(t, RoutingKeyHealthAllowsRouting(101, common.ChannelStatusEnabled, UpstreamAvailabilityRoutable, now))
+
+	for i := range 5 {
+		require.NoError(t, RecordRoutingKeyHealthSample(102, 1, RoutingKeySourceKeyChannel, i < 2, 100, now.Unix()+int64(i)))
+	}
+	summary = GetRoutingKeyHealthSummary(102, common.ChannelStatusEnabled, UpstreamAvailabilityRoutable, now)
+	assert.Equal(t, RoutingKeyHealthDegraded, summary.Status)
+	assert.True(t, RoutingKeyHealthAllowsRouting(102, common.ChannelStatusEnabled, UpstreamAvailabilityRoutable, now))
+
+	for i := range 5 {
+		require.NoError(t, RecordRoutingKeyHealthSample(103, 1, RoutingKeySourcePlatformSite, true, 9_999, now.Unix()+int64(i)))
+	}
+	summary = GetRoutingKeyHealthSummary(103, common.ChannelStatusEnabled, UpstreamAvailabilityRoutable, now)
+	assert.Equal(t, RoutingKeyHealthNormal, summary.Status)
+
+	for i := range 5 {
+		require.NoError(t, RecordRoutingKeyHealthSample(104, 1, RoutingKeySourcePlatformSite, true, 10_000, now.Unix()+int64(i)))
+	}
+	summary = GetRoutingKeyHealthSummary(104, common.ChannelStatusEnabled, UpstreamAvailabilityRoutable, now)
+	assert.Equal(t, RoutingKeyHealthDegraded, summary.Status)
+
+	staleNow := now.Add(25 * time.Hour)
+	summary = GetRoutingKeyHealthSummary(101, common.ChannelStatusEnabled, UpstreamAvailabilityRoutable, staleNow)
+	assert.Equal(t, RoutingKeyHealthEnabled, summary.Status)
+	assert.True(t, RoutingKeyHealthAllowsRouting(101, common.ChannelStatusEnabled, UpstreamAvailabilityRoutable, staleNow))
+
+	summary = GetRoutingKeyHealthSummary(103, common.ChannelStatusManuallyDisabled, UpstreamAvailabilityRoutable, now)
+	assert.Equal(t, RoutingKeyHealthDisabled, summary.Status)
+	assert.False(t, RoutingKeyHealthAllowsRouting(103, common.ChannelStatusManuallyDisabled, UpstreamAvailabilityRoutable, now))
+
+	summary = GetRoutingKeyHealthSummary(103, common.ChannelStatusEnabled, UpstreamAvailabilityMissing, now)
+	assert.Equal(t, RoutingKeyHealthInvalid, summary.Status)
+	assert.False(t, RoutingKeyHealthAllowsRouting(103, common.ChannelStatusEnabled, UpstreamAvailabilityMissing, now))
+}
+
+func TestRoutingKeyHealthFiltersRoutableChannelKeys(t *testing.T) {
+	previousDB := DB
+	previousSecret := common.CryptoSecret
+	common.CryptoSecret = "routing-health-filter-secret"
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&Channel{}, &RoutingKey{}, &ChannelKey{}, &RoutingKeyHealth{}))
+	DB = db
+	t.Cleanup(func() {
+		DB = previousDB
+		common.CryptoSecret = previousSecret
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	channel := &Channel{
+		Id:           807,
+		Name:         "health-filter",
+		Status:       common.ChannelStatusEnabled,
+		UpstreamKind: UpstreamKindKeyChannel,
+		Models:       "gpt-health",
+		Group:        "default",
+	}
+	require.NoError(t, db.Create(channel).Error)
+	invalidKey, err := createChannelKey(db, channel, "sk-invalid", 0, common.ChannelStatusEnabled, "", 0)
+	require.NoError(t, err)
+	degradedKey, err := createChannelKey(db, channel, "sk-degraded", 1, common.ChannelStatusEnabled, "", 0)
+	require.NoError(t, err)
+	corruptKey, err := createChannelKey(db, channel, "sk-corrupt", 2, common.ChannelStatusEnabled, "", 0)
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&ChannelKey{}).
+		Where("routing_key_id = ?", corruptKey.RoutingKeyID).
+		Update("secret_ciphertext", "not-a-valid-ciphertext").Error)
+
+	now := time.Unix(2_000_000_000, 0)
+	for i := range 5 {
+		require.NoError(t, RecordRoutingKeyHealthSample(invalidKey.RoutingKeyID, channel.Id, RoutingKeySourceKeyChannel, i == 0, 100, now.Unix()+int64(i)))
+		require.NoError(t, RecordRoutingKeyHealthSample(degradedKey.RoutingKeyID, channel.Id, RoutingKeySourceKeyChannel, i < 2, 100, now.Unix()+int64(i)))
+	}
+
+	keys := loadRoutableChannelKeys(channel, "default", "gpt-health")
+	require.Len(t, keys, 1)
+	assert.Equal(t, degradedKey.RoutingKeyID, keys[0].KeyID)
+}
+
 func TestPersistPlatformSiteKeyModelsMarksEmptyFetchAsSynced(t *testing.T) {
 	previousDB := DB
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
@@ -581,6 +694,7 @@ func TestUpstreamChannelDatabaseCompatibility(t *testing.T) {
 					&UpstreamKey{},
 					&PlatformSiteAccount{},
 					&ChannelKey{},
+					&RoutingKeyHealth{},
 					&RoutingKey{},
 					&Ability{},
 					&Channel{},
@@ -622,6 +736,7 @@ func TestUpstreamChannelDatabaseCompatibility(t *testing.T) {
 					&Channel{},
 					&RoutingKey{},
 					&ChannelKey{},
+					&RoutingKeyHealth{},
 					&PlatformSiteAccount{},
 					&UpstreamKey{},
 					&UpstreamKeyAbility{},
@@ -631,6 +746,7 @@ func TestUpstreamChannelDatabaseCompatibility(t *testing.T) {
 				require.NoError(t, migrateUpstreamChannelDefaults())
 			}
 			assert.True(t, db.Migrator().HasColumn(&UpstreamKey{}, "LastUsedAt"))
+			assert.True(t, db.Migrator().HasTable(&RoutingKeyHealth{}))
 
 			var migratedLegacy Channel
 			require.NoError(t, db.First(&migratedLegacy, "id = ?", 41).Error)

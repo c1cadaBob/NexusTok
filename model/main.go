@@ -342,6 +342,7 @@ func migrateDB() error {
 		&Channel{},
 		&RoutingKey{},
 		&ChannelKey{},
+		&RoutingKeyHealth{},
 		&PlatformSiteAccount{},
 		&UpstreamKey{},
 		&UpstreamKeyAbility{},

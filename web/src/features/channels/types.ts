@@ -251,6 +251,12 @@ export interface KeyStatus {
   key_priority?: number
   weight?: number
   auto_weight?: number
+  health_status?: 'disabled' | 'enabled' | 'normal' | 'degraded' | 'invalid'
+  health_reason?: string
+  health_sample_count?: number
+  health_success_count?: number
+  health_first_latency_ms?: number
+  last_used_at?: number
 }
 
 export type MultiKeyConfirmAction = {
@@ -301,6 +307,7 @@ export interface GetChannelsParams {
   status?: string // 'enabled', 'disabled', or empty for all
   type?: number
   group?: string
+  model?: string
   id_sort?: boolean
   tag_mode?: boolean
   sort_by?: ChannelSortBy
@@ -482,10 +489,16 @@ export interface UpstreamKey {
   status: number
   disabled_reason?: string
   last_sync_at: number
+  last_used_at?: number
   routable?: boolean
   availability_reason?: string
   snapshot_only?: boolean
   credential_unavailable?: boolean
+  health_status?: 'disabled' | 'enabled' | 'normal' | 'degraded' | 'invalid'
+  health_reason?: string
+  health_sample_count?: number
+  health_success_count?: number
+  health_first_latency_ms?: number
 }
 
 export interface UpstreamSiteStatusResponse {

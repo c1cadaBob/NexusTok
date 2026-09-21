@@ -154,6 +154,46 @@ function MultiKeyPriorityCell({
   )
 }
 
+function getMultiKeyHealthStatusConfig(keyStatus: KeyStatus) {
+  switch (keyStatus.health_status) {
+    case 'disabled':
+      return { label: 'Disabled', variant: 'neutral' as const }
+    case 'enabled':
+      return { label: 'Enabled', variant: 'info' as const }
+    case 'normal':
+      return { label: 'Normal', variant: 'success' as const }
+    case 'degraded':
+      return { label: 'Degraded', variant: 'warning' as const }
+    case 'invalid':
+      return { label: 'Invalid', variant: 'danger' as const }
+    default:
+      return getMultiKeyStatusConfig(keyStatus.status)
+  }
+}
+
+function MultiKeyWeightCell({ keyStatus }: { keyStatus: KeyStatus }) {
+  const { t } = useTranslation()
+  const weight = keyStatus.weight ?? 0
+  const hasOverride =
+    keyStatus.weight !== undefined &&
+    keyStatus.auto_weight !== undefined &&
+    keyStatus.weight !== keyStatus.auto_weight
+
+  return (
+    <div className='flex items-center justify-center gap-1'>
+      <span className='font-mono text-sm tabular-nums'>{weight}</span>
+      {hasOverride && (
+        <StatusBadge
+          label={t('Override')}
+          variant='blue'
+          size='sm'
+          copyable={false}
+        />
+      )}
+    </div>
+  )
+}
+
 function MultiKeySettingsDialog(props: MultiKeySettingsDialogProps) {
   const { t } = useTranslation()
   const [keyPriority, setKeyPriority] = useState(0)
@@ -432,8 +472,8 @@ export function MultiKeyManageDialog({
     }
   }
 
-  const renderStatusBadge = (status: number) => {
-    const config = getMultiKeyStatusConfig(status)
+  const renderStatusBadge = (keyStatus: KeyStatus) => {
+    const config = getMultiKeyHealthStatusConfig(keyStatus)
     return (
       <StatusBadge
         label={t(config.label)}
@@ -627,7 +667,7 @@ export function MultiKeyManageDialog({
                     id: 'status',
                     header: t('Status'),
                     className: 'w-32',
-                    cell: (key) => renderStatusBadge(key.status),
+                    cell: (key) => renderStatusBadge(key),
                   },
                   {
                     id: 'key-priority',
@@ -648,8 +688,8 @@ export function MultiKeyManageDialog({
                     id: 'key-weight',
                     header: t('Key weight'),
                     className: 'w-32',
-                    cellClassName: 'font-mono text-sm',
-                    cell: (key) => `${key.weight ?? 0} (${key.auto_weight ?? 0})`,
+                    cellClassName: 'text-center',
+                    cell: (key) => <MultiKeyWeightCell keyStatus={key} />,
                   },
                   {
                     id: 'reason',

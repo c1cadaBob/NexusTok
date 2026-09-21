@@ -119,6 +119,65 @@ function getUpstreamKeyStatusConfig(status: number): {
   return { label: config.label, variant: config.variant }
 }
 
+function getUpstreamKeyHealthStatusConfig(
+  upstreamKey: UpstreamKey
+): {
+  label: string
+  variant: StatusBadgeProps['variant']
+} {
+  switch (upstreamKey.health_status) {
+    case 'disabled':
+      return { label: 'Disabled', variant: 'neutral' }
+    case 'enabled':
+      return { label: 'Enabled', variant: 'info' }
+    case 'normal':
+      return { label: 'Normal', variant: 'success' }
+    case 'degraded':
+      return { label: 'Degraded', variant: 'warning' }
+    case 'invalid':
+      return { label: 'Invalid', variant: 'danger' }
+    default:
+      return getUpstreamKeyStatusConfig(upstreamKey.status)
+  }
+}
+
+function getUpstreamKeyHealthReasonLabel(reason?: string): string | null {
+  switch (reason) {
+    case 'credential_unavailable':
+      return 'Credential unavailable'
+    case 'models_unavailable':
+      return 'Model capability unavailable'
+    case 'snapshot_only':
+      return 'Historical snapshot'
+    case 'missing':
+      return 'Missing'
+    case 'expired':
+      return 'Expired'
+    case 'quota_exhausted':
+      return 'Quota exhausted'
+    case 'upstream_disabled':
+      return 'Upstream disabled'
+    case 'manual_disabled':
+      return 'Manually disabled'
+    case 'site_sync_unavailable':
+      return 'Platform snapshot unavailable'
+    case 'not_enough_samples':
+      return 'Not enough recent samples'
+    case 'stale_samples':
+      return 'No recent key usage'
+    case 'no_health_record':
+      return 'No health samples yet'
+    case 'recent_failures':
+      return 'Recent failures exceeded threshold'
+    case 'recent_degraded':
+      return 'Recent success rate degraded'
+    case 'high_first_latency':
+      return 'First response latency exceeded threshold'
+    default:
+      return null
+  }
+}
+
 function getKeyDisplayName(upstreamKey: UpstreamKey): string {
   return upstreamKey.name || upstreamKey.external_id || `#${upstreamKey.id}`
 }
@@ -445,49 +504,28 @@ function LastSyncCell({ timestamp }: { timestamp: number }) {
 
 function UpstreamKeyStatusBadge({ upstreamKey }: { upstreamKey: UpstreamKey }) {
   const { t } = useTranslation()
-  const config = getUpstreamKeyStatusConfig(upstreamKey.status)
-  let availabilityLabel = t(config.label)
-  let availabilityVariant: StatusBadgeProps['variant'] = config.variant
-  switch (upstreamKey.availability_reason) {
-    case 'credential_unavailable':
-      availabilityLabel = t('Credential unavailable')
-      availabilityVariant = 'danger'
-      break
-    case 'models_unavailable':
-      availabilityLabel = t('Model capability unavailable')
-      break
-    case 'snapshot_only':
-      availabilityLabel = t('Historical snapshot')
-      break
-    case 'missing':
-      availabilityLabel = t('Missing')
-      break
-    case 'expired':
-      availabilityLabel = t('Expired')
-      break
-    case 'quota_exhausted':
-      availabilityLabel = t('Quota exhausted')
-      break
-    case 'upstream_disabled':
-      availabilityLabel = t('Upstream disabled')
-      break
-    case 'manual_disabled':
-      availabilityLabel = t('Manually disabled')
-      break
-  }
+  const config = getUpstreamKeyHealthStatusConfig(upstreamKey)
+  const reasonLabel = getUpstreamKeyHealthReasonLabel(
+    upstreamKey.health_reason || upstreamKey.availability_reason
+  )
 
   return (
     <div className='flex flex-wrap items-center justify-center gap-1'>
-      <StatusBadge
-        label={
-          upstreamKey.routable === true ? t('Routable') : availabilityLabel
-        }
-        variant={
-          upstreamKey.routable === true ? 'success' : availabilityVariant
-        }
-        size='sm'
-        copyable={false}
-      />
+      <TooltipProvider delay={100}>
+        <Tooltip>
+          <TooltipTrigger render={<span />}>
+            <StatusBadge
+              label={t(config.label)}
+              variant={config.variant}
+              size='sm'
+              copyable={false}
+            />
+          </TooltipTrigger>
+          {reasonLabel && (
+            <TooltipContent side='top'>{t(reasonLabel)}</TooltipContent>
+          )}
+        </Tooltip>
+      </TooltipProvider>
       {upstreamKey.snapshot_only && (
         <StatusBadge
           label={t('Historical snapshot')}
@@ -510,12 +548,6 @@ function UpstreamKeyWeightCell({ upstreamKey }: { upstreamKey: UpstreamKey }) {
   return (
     <div className='flex items-center justify-center gap-1'>
       <span className='font-mono text-sm tabular-nums'>{weight}</span>
-      <span
-        className='text-muted-foreground font-mono text-[11px] tabular-nums'
-        title={t('Automatic weight')}
-      >
-        ({upstreamKey.auto_weight ?? upstreamKey.weight})
-      </span>
       {hasOverride && (
         <StatusBadge
           label={t('Override')}
@@ -1380,7 +1412,7 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
       {
         id: 'key-id',
         header: t('Key ID'),
-        className: 'w-28 text-left',
+        className: 'w-20 min-w-20 text-left',
         cellClassName: 'text-left',
         cell: (upstreamKey: UpstreamKey) => (
           <StatusBadge
@@ -1395,14 +1427,14 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
       {
         id: 'name',
         header: t('Name'),
-        className: 'min-w-40 text-left',
+        className: 'w-32 min-w-32 max-w-32 text-left',
         cellClassName: 'text-left',
         cell: (upstreamKey: UpstreamKey) => (
           <TruncatedText
             text={
               sensitiveVisible ? getKeyDisplayName(upstreamKey) : SENSITIVE_MASK
             }
-            maxWidth='max-w-[180px]'
+            maxWidth='max-w-32'
             className='font-medium'
           />
         ),
@@ -1410,11 +1442,11 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
       {
         id: 'key',
         header: t('Key'),
-        className: 'min-w-44 text-left',
+        className: 'w-40 min-w-40 max-w-40 text-left',
         cellClassName: 'text-left',
         cell: (upstreamKey: UpstreamKey) => (
           <span
-            className='font-mono text-sm'
+            className='block max-w-40 truncate font-mono text-sm'
             title={
               sensitiveVisible ? upstreamKey.key_preview || '-' : undefined
             }
@@ -1435,7 +1467,7 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
       {
         id: 'models',
         header: t('Models'),
-        className: 'min-w-56 text-left',
+        className: 'w-48 min-w-48 max-w-48 text-left',
         cellClassName: 'text-left',
         cell: (upstreamKey: UpstreamKey) => (
           <UpstreamKeyModelsCell upstreamKey={upstreamKey} />

@@ -262,6 +262,11 @@ func ReplaceChannelKeysFromPlaintext(tx *gorm.DB, channel *Channel, secrets []st
 			}
 		}
 		if len(routingIDs) > 0 {
+			if tx.Migrator().HasTable(&RoutingKeyHealth{}) {
+				if err := tx.Where("routing_key_id IN ?", routingIDs).Delete(&RoutingKeyHealth{}).Error; err != nil {
+					return err
+				}
+			}
 			if err := tx.Where("id IN ?", routingIDs).Delete(&RoutingKey{}).Error; err != nil {
 				return err
 			}
@@ -461,6 +466,11 @@ func DeleteChannelKey(tx *gorm.DB, channelID int, routingKeyID uint) error {
 		}
 		if err := tx.Delete(&key).Error; err != nil {
 			return err
+		}
+		if tx.Migrator().HasTable(&RoutingKeyHealth{}) {
+			if err := tx.Where("routing_key_id = ?", routingKeyID).Delete(&RoutingKeyHealth{}).Error; err != nil {
+				return err
+			}
 		}
 		if err := tx.Where("id = ?", routingKeyID).Delete(&RoutingKey{}).Error; err != nil {
 			return err

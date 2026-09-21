@@ -80,10 +80,16 @@ type UpstreamKeyResponse struct {
 	Status                  int       `json:"status"`
 	DisabledReason          string    `json:"disabled_reason"`
 	LastSyncAt              int64     `json:"last_sync_at"`
+	LastUsedAt              int64     `json:"last_used_at"`
 	Routable                bool      `json:"routable"`
 	AvailabilityReason      string    `json:"availability_reason,omitempty"`
 	SnapshotOnly            bool      `json:"snapshot_only,omitempty"`
 	CredentialUnavailable   bool      `json:"credential_unavailable,omitempty"`
+	HealthStatus            string    `json:"health_status,omitempty"`
+	HealthReason            string    `json:"health_reason,omitempty"`
+	HealthSampleCount       int       `json:"health_sample_count,omitempty"`
+	HealthSuccessCount      int       `json:"health_success_count,omitempty"`
+	HealthFirstLatencyMs    int64     `json:"health_first_latency_ms,omitempty"`
 }
 
 type UpstreamKeyPatchRequest struct {
@@ -411,6 +417,7 @@ func toUpstreamKeyResponse(key *model.UpstreamKey) UpstreamKeyResponse {
 		Status:                  key.Status,
 		DisabledReason:          key.DisabledReason,
 		LastSyncAt:              key.LastSyncAt,
+		LastUsedAt:              key.LastUsedAt,
 	}
 }
 
@@ -421,20 +428,41 @@ func toPlatformSiteKeyResponse(
 ) UpstreamKeyResponse {
 	response := toUpstreamKeyResponse(key)
 	response.SnapshotOnly = model.PlatformSiteUsingLastSnapshot(account)
+	fillHealth := func(reason string) {
+		health := model.GetRoutingKeyHealthSummary(
+			key.RoutingKeyID,
+			key.Status,
+			reason,
+			time.Now(),
+		)
+		response.HealthStatus = health.Status
+		response.HealthReason = health.Reason
+		response.HealthSampleCount = health.SampleCount
+		response.HealthSuccessCount = health.SuccessCount
+		response.HealthFirstLatencyMs = health.FirstLatencyMs
+	}
 	if channel == nil || channel.Status != common.ChannelStatusEnabled {
 		response.Routable = false
 		response.AvailabilityReason = model.UpstreamAvailabilityManualDisabled
+		fillHealth(response.AvailabilityReason)
 		return response
 	}
 	if !model.PlatformSiteSnapshotUsable(account) {
 		response.Routable = false
 		response.AvailabilityReason = model.UpstreamAvailabilitySiteSyncUnavailable
+		fillHealth(response.AvailabilityReason)
 		return response
 	}
 	response.AvailabilityReason = key.AvailabilityReason(time.Now())
+	fillHealth(response.AvailabilityReason)
 	if response.AvailabilityReason != model.UpstreamAvailabilityRoutable {
 		response.CredentialUnavailable =
 			response.AvailabilityReason == model.UpstreamAvailabilityCredentialUnavailable
+		return response
+	}
+	if response.HealthStatus == model.RoutingKeyHealthDisabled ||
+		response.HealthStatus == model.RoutingKeyHealthInvalid {
+		response.Routable = false
 		return response
 	}
 	if err := key.LoadSecret(); err != nil {

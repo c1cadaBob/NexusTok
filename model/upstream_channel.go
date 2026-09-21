@@ -598,6 +598,11 @@ func DeleteUpstreamData(tx *gorm.DB, channelIDs []int) error {
 	if tx == nil || len(channelIDs) == 0 {
 		return nil
 	}
+	if tx.Migrator().HasTable(&RoutingKeyHealth{}) {
+		if err := tx.Where("channel_id IN ?", channelIDs).Delete(&RoutingKeyHealth{}).Error; err != nil {
+			return err
+		}
+	}
 	if tx.Migrator().HasTable(&ChannelKey{}) {
 		if err := tx.Where("channel_id IN ?", channelIDs).Delete(&ChannelKey{}).Error; err != nil {
 			return err

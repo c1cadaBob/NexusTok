@@ -79,7 +79,7 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model
 	})
 	model.UpdateUserUsedQuotaAndRequestCount(info.UserId, info.PriceData.Quota)
 	model.UpdateChannelUsedQuota(info.ChannelId, info.PriceData.Quota)
-	TouchSelectedUpstreamKeyLastUsed(c)
+	TouchSelectedUpstreamKeyLastUsed(c, info)
 }
 
 // ---------------------------------------------------------------------------

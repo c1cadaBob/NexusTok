@@ -562,11 +562,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		Other:            other,
 	})
 	common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
-	if routingKeyID := common.GetContextKeyInt(c, constant.ContextKeyRoutingKeyId); routingKeyID > 0 {
-		if err := model.TouchRoutingKeyLastUsed(uint(routingKeyID), common.GetTimestamp()); err != nil {
-			common.SysError(fmt.Sprintf("failed to update routing key last used: %v", err))
-		}
-	}
+	service.TouchSelectedUpstreamKeyLastUsed(c, info)
 	return testResult{
 		context:     c,
 		localErr:    nil,
@@ -627,6 +623,7 @@ func recordManualChannelTestError(result testResult, channel *model.Channel, tes
 	if ctx == nil {
 		return
 	}
+	service.RecordSelectedRoutingKeyFailure(ctx, nil)
 	other := model.NewLogOther()
 	if ctx.Request != nil && ctx.Request.URL != nil {
 		other.SetPublic("request_path", ctx.Request.URL.Path)

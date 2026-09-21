@@ -495,6 +495,7 @@ func TestPatchUpstreamKeyClearsWeightWhenRestoredRatioIsFree(t *testing.T) {
 			"status": 1,
 			"disabled_reason": "",
 			"last_sync_at": 0,
+			"last_used_at": 0,
 			"routable": false
 		}
 	}`, recorder.Body.String())
