@@ -23,6 +23,8 @@ import {
   filterUpstreamKeys,
   formatConversionRatio,
   getChannelTableRowId,
+  isUpstreamKeySchedulable,
+  sortUpstreamKeysForDisplay,
   type TagRow,
 } from '../channel-utils'
 
@@ -122,5 +124,61 @@ describe('channel table row identity', () => {
     expect(formatConversionRatio(1.23456)).toBe('1.235')
     expect(formatConversionRatio(null)).toBe('-')
     expect(formatConversionRatio(Number.POSITIVE_INFINITY)).toBe('-')
+  })
+})
+
+describe('upstream key display order', () => {
+  test('puts only schedulable keys first and preserves order within each group', () => {
+    const keys = [
+      {
+        id: 1,
+        status: 2,
+        routable: false,
+        models_synced: true,
+        models: ['disabled-model'],
+      },
+      {
+        id: 2,
+        status: 1,
+        routable: true,
+        models_synced: true,
+        models: ['routable-a'],
+      },
+      {
+        id: 3,
+        status: 1,
+        routable: true,
+        credential_unavailable: true,
+        models_synced: true,
+        models: ['credential-error'],
+      },
+      {
+        id: 4,
+        status: 1,
+        routable: true,
+        models_synced: false,
+        models: ['unsynced-model'],
+      },
+      {
+        id: 5,
+        status: 1,
+        routable: true,
+        models_synced: true,
+        models: [],
+      },
+      {
+        id: 6,
+        status: 1,
+        routable: true,
+        models_synced: true,
+        models: ['routable-b'],
+      },
+    ] as UpstreamKey[]
+
+    expect(isUpstreamKeySchedulable(keys[1] as UpstreamKey)).toBe(true)
+    expect(isUpstreamKeySchedulable(keys[2] as UpstreamKey)).toBe(false)
+    expect(sortUpstreamKeysForDisplay(keys).map((key) => key.id)).toEqual([
+      2, 6, 1, 3, 4, 5,
+    ])
   })
 })

@@ -39,8 +39,8 @@ import {
   useDebouncedColumnFilter,
   useDataTable,
 } from '@/components/data-table'
-import { ComboboxInput } from '@/components/ui/combobox-input'
 import { Button } from '@/components/ui/button'
+import { ComboboxInput } from '@/components/ui/combobox-input'
 import { TableCell, TableRow } from '@/components/ui/table'
 import {
   Tooltip,
@@ -88,7 +88,6 @@ const CHANNELS_COLUMN_VISIBILITY_STORAGE_KEY = 'channels:column-visibility'
 const CHANNELS_COLUMN_SIZING_STORAGE_KEY = 'channels:column-sizing'
 const CHANNELS_VIEW_MODE_STORAGE_KEY = 'channels:view-mode'
 const CHANNELS_STATUS_FILTER_STORAGE_KEY = 'channel-status-filter'
-const CHANNELS_UPSTREAM_EXPANDED_STORAGE_KEY = 'channels:upstream-expanded:v1'
 
 const CHANNEL_SORTABLE_COLUMNS = new Set<ChannelSortBy>([
   'id',
@@ -128,59 +127,6 @@ function resolveTableUpdater<TValue>(
     : updater
 }
 
-function readUpstreamExpandedState(): ExpandedState {
-  if (typeof window === 'undefined') {
-    return {}
-  }
-
-  try {
-    const raw = window.localStorage.getItem(
-      CHANNELS_UPSTREAM_EXPANDED_STORAGE_KEY
-    )
-    if (!raw) {
-      return {}
-    }
-    const ids = JSON.parse(raw) as unknown
-    if (!Array.isArray(ids)) {
-      return {}
-    }
-    return ids.reduce<Record<string, boolean>>((state, id) => {
-      if (typeof id === 'number' && Number.isInteger(id) && id > 0) {
-        state[`channel:${id}`] = true
-      }
-      return state
-    }, {})
-  } catch {
-    return {}
-  }
-}
-
-function persistUpstreamExpandedState(expanded: ExpandedState): void {
-  if (typeof window === 'undefined' || expanded === true) {
-    return
-  }
-
-  try {
-    const ids = Object.entries(expanded)
-      .filter(([, value]) => value)
-      .map(([rowId]) => {
-        const prefix = 'channel:'
-        if (!rowId.startsWith(prefix)) {
-          return null
-        }
-        const id = Number(rowId.slice(prefix.length))
-        return Number.isInteger(id) && id > 0 ? id : null
-      })
-      .filter((id): id is number => id !== null)
-    window.localStorage.setItem(
-      CHANNELS_UPSTREAM_EXPANDED_STORAGE_KEY,
-      JSON.stringify(ids)
-    )
-  } catch {
-    // Storage can be unavailable; expansion still works for the current page.
-  }
-}
-
 export function ChannelsTable() {
   const { t } = useTranslation()
   const {
@@ -194,9 +140,7 @@ export function ChannelsTable() {
 
   // Table state
   const [sorting, setSorting] = useState<SortingState>([])
-  const [expanded, setExpanded] = useState<ExpandedState>(() =>
-    readUpstreamExpandedState()
-  )
+  const [expanded, setExpanded] = useState<ExpandedState>({})
 
   // URL state management
   const {
@@ -307,9 +251,7 @@ export function ChannelsTable() {
   const handleExpandedChange: OnChangeFn<ExpandedState> = useCallback(
     (updater) => {
       setExpanded((previous) => {
-        const next = resolveTableUpdater(updater, previous)
-        persistUpstreamExpandedState(next)
-        return next
+        return resolveTableUpdater(updater, previous)
       })
     },
     []
@@ -483,9 +425,7 @@ export function ChannelsTable() {
       .map((model) => ({ label: model, value: model }))
   }, [data, enabledModelsData, upstreamKeysByChannelId])
 
-  const upstreamKeyModelFilter = modelRatioSortActive
-    ? undefined
-    : modelFilter
+  const upstreamKeyModelFilter = modelRatioSortActive ? undefined : modelFilter
 
   // Apply tag aggregation if tag mode is enabled
   const channels = useMemo(() => {
@@ -611,7 +551,7 @@ export function ChannelsTable() {
             cellRenderColumns={columns}
           />
           {shouldRenderUpstreamKeys && (
-            <TableRow className='w-full bg-muted/20 hover:bg-muted/20'>
+            <TableRow className='bg-muted/20 hover:bg-muted/20 w-full'>
               <TableCell
                 colSpan={row.getVisibleCells().length}
                 className='relative w-0 max-w-0 min-w-0 overflow-visible p-0 whitespace-normal'

@@ -80,7 +80,16 @@ vi.mock('../channels-columns', () => ({
     {
       accessorKey: 'name',
       header: 'Name',
-      cell: ({ row }) => row.original.name,
+      cell: ({ row }) => (
+        <button
+          type='button'
+          aria-label='Expand upstream keys'
+          aria-expanded={row.getIsExpanded()}
+          onClick={row.getToggleExpandedHandler()}
+        >
+          {row.original.name}
+        </button>
+      ),
     },
     {
       id: 'model_ratio',
@@ -161,12 +170,8 @@ function upstreamKey(name: string, models: string[]): UpstreamKey {
   }
 }
 
-function renderTable(items: Channel[] = [channel()]) {
+function renderTable() {
   localStorage.setItem('channels:view-mode', 'table')
-  localStorage.setItem(
-    'channels:upstream-expanded:v1',
-    JSON.stringify(items.map((item) => item.id))
-  )
 
   return render(
     <QueryClientProvider client={queryClient}>
@@ -185,6 +190,7 @@ beforeEach(() => {
     },
   })
   vi.clearAllMocks()
+  localStorage.removeItem('channels:upstream-expanded:v1')
   Object.assign(routeSearch, {
     page: 1,
     pageSize: 20,
@@ -297,9 +303,13 @@ test('最低倍率排序激活时不会用指定模型过滤子密钥列表', as
 
   await screen.findByRole('combobox', { name: 'Filter by model...' })
   await waitFor(() =>
-    expect(screen.getByTestId('upstream-keys')).toHaveTextContent(
-      'key-a,key-b'
-    )
+    expect(channelsApi.getUpstreamKeys).toHaveBeenCalledWith(1)
+  )
+  await user.click(
+    await screen.findByRole('button', { name: 'Expand upstream keys' })
+  )
+  await waitFor(() =>
+    expect(screen.getByTestId('upstream-keys')).toHaveTextContent('key-a,key-b')
   )
 
   const modelInput = screen.getByRole('combobox', {
@@ -313,8 +323,16 @@ test('最低倍率排序激活时不会用指定模型过滤子密钥列表', as
   await user.click(screen.getByRole('menuitem', { name: 'Asc' }))
 
   await waitFor(() =>
-    expect(screen.getByTestId('upstream-keys')).toHaveTextContent(
-      'key-a,key-b'
-    )
+    expect(screen.getByTestId('upstream-keys')).toHaveTextContent('key-a,key-b')
   )
+})
+
+test('进入渠道页时忽略历史展开状态并默认折叠', async () => {
+  localStorage.setItem('channels:upstream-expanded:v1', JSON.stringify([1]))
+  renderTable()
+
+  expect(
+    await screen.findByRole('button', { name: 'Expand upstream keys' })
+  ).toHaveAttribute('aria-expanded', 'false')
+  expect(screen.queryByTestId('upstream-keys')).not.toBeInTheDocument()
 })

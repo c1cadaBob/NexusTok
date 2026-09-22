@@ -222,15 +222,19 @@ test('平台站点子表移除内部卡片容器样式并保留表格底色', ()
 
   expect(table).toHaveClass('bg-background', 'w-max', 'min-w-full')
   expect(tableContainer).toHaveClass(
-    '!overflow-hidden',
+    '!overflow-visible',
     '!rounded-none',
     '!border-0',
     '!bg-transparent'
   )
-  expect(tableContainer).not.toHaveClass('rounded-md', 'border', 'bg-background')
+  expect(tableContainer).not.toHaveClass(
+    'rounded-md',
+    'border',
+    'bg-background'
+  )
 })
 
-test('平台站点子表根区域锚定到渠道表可视宽度', () => {
+test('平台站点子表根区域不再写入固定宽度', () => {
   const tableContainer = document.createElement('div')
   tableContainer.setAttribute('data-slot', 'data-table-scroll-container')
   Object.defineProperty(tableContainer, 'clientWidth', {
@@ -248,68 +252,30 @@ test('平台站点子表根区域锚定到渠道表可视宽度', () => {
   )
 
   const actionHeader = view.getByRole('columnheader', { name: 'Actions' })
-  const subTableRoot = actionHeader.closest('table')?.parentElement?.parentElement
+  const subTableRoot =
+    actionHeader.closest('table')?.parentElement?.parentElement
 
   expect(subTableRoot).not.toBeNull()
   expect(subTableRoot).toHaveClass(
     'relative',
     'max-w-none',
     'min-w-0',
-    'overflow-hidden'
+    'overflow-visible'
   )
   expect(subTableRoot).not.toHaveClass('sticky', 'left-0')
-  expect(subTableRoot).toHaveAttribute(
-    'style',
-    expect.stringContaining('width: 640px')
-  )
+  expect(subTableRoot).not.toHaveAttribute('style')
   expect(actionHeader.closest('table')).toHaveClass('w-max', 'min-w-full')
 })
 
-test('平台站点展开子表时批量操作栏固定在内部滚动区域顶部', () => {
+test('平台站点子表不显示多选和批量启停控件', () => {
   renderWithProviders(<UpstreamKeysSubTable channel={platformChannel()} />)
 
-  const enableButton = screen.getByRole('button', {
-    name: 'Enable selected keys',
-  })
-  const toolbar = enableButton.closest('div.sticky')
-
-  expect(toolbar).not.toBeNull()
-  expect(toolbar).toHaveClass(
-    'sticky',
-    'top-0',
-    'left-0',
-    'w-full',
-    'min-w-full',
-    'z-20'
-  )
-  expect(toolbar).not.toHaveClass('min-w-max')
-})
-
-test('平台站点桌面子表复用渠道滚动容器而不创建独立横向滚动层', () => {
-  renderWithProviders(<UpstreamKeysSubTable channel={platformChannel()} />)
-
-  const actionHeader = screen.getByRole('columnheader', { name: 'Actions' })
-  const subTableRoot = actionHeader.closest('table')?.parentElement?.parentElement
-
-  expect(subTableRoot).not.toBeNull()
-  expect(subTableRoot).toHaveClass('overflow-hidden')
-  expect(subTableRoot).toHaveClass('relative')
-  expect(subTableRoot).not.toHaveClass('sticky', 'left-0')
-  expect(subTableRoot).not.toHaveClass('overflow-auto')
-
-  const internalContainer = actionHeader.closest('table')?.parentElement
-  expect(internalContainer).not.toBeNull()
-  expect(internalContainer).toHaveClass('!overflow-hidden')
-  expect(internalContainer).not.toHaveClass('overflow-auto')
-})
-
-test('平台站点空子密钥列表不显示批量操作栏', () => {
-  renderWithProviders(
-    <UpstreamKeysSubTable
-      channel={{ ...platformChannel(), upstream_keys: [] }}
-    />
-  )
-
+  expect(
+    screen.queryByRole('checkbox', { name: 'Select upstream key' })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('checkbox', { name: 'Select all upstream keys' })
+  ).not.toBeInTheDocument()
   expect(
     screen.queryByRole('button', { name: 'Enable selected keys' })
   ).not.toBeInTheDocument()
@@ -318,26 +284,80 @@ test('平台站点空子密钥列表不显示批量操作栏', () => {
   ).not.toBeInTheDocument()
 })
 
-test('平台站点子表使用分体表头的渠道滚动容器同步批量工具栏', async () => {
+test('平台站点子表将不可调度密钥放在可调度密钥之后', () => {
+  const unavailable = upstreamKey({
+    id: 8,
+    name: 'Unavailable key',
+    routable: false,
+  })
+  const routableA = upstreamKey({
+    id: 9,
+    name: 'Routable key A',
+  })
+  const routableB = upstreamKey({
+    id: 10,
+    name: 'Routable key B',
+  })
+
+  renderWithProviders(
+    <UpstreamKeysSubTable
+      channel={{
+        ...platformChannel(routableA),
+        upstream_keys: [unavailable, routableA, routableB],
+      }}
+    />
+  )
+
+  const positions = ['Routable key A', 'Routable key B', 'Unavailable key'].map(
+    (name) => screen.getByText(name)
+  )
+  expect(
+    positions[0]?.compareDocumentPosition(positions[1] as Node) &
+      Node.DOCUMENT_POSITION_FOLLOWING
+  ).not.toBe(0)
+  expect(
+    positions[1]?.compareDocumentPosition(positions[2] as Node) &
+      Node.DOCUMENT_POSITION_FOLLOWING
+  ).not.toBe(0)
+})
+
+test('平台站点桌面子表复用渠道滚动容器而不创建独立横向滚动层', () => {
+  renderWithProviders(<UpstreamKeysSubTable channel={platformChannel()} />)
+
+  const actionHeader = screen.getByRole('columnheader', { name: 'Actions' })
+  const subTableRoot =
+    actionHeader.closest('table')?.parentElement?.parentElement
+
+  expect(subTableRoot).not.toBeNull()
+  expect(subTableRoot).toHaveClass('overflow-visible')
+  expect(subTableRoot).toHaveClass('relative')
+  expect(subTableRoot).not.toHaveClass('sticky', 'left-0')
+  expect(subTableRoot).not.toHaveClass('overflow-auto')
+
+  const internalContainer = actionHeader.closest('table')?.parentElement
+  expect(internalContainer).not.toBeNull()
+  expect(internalContainer).toHaveClass('!overflow-visible')
+  expect(internalContainer).not.toHaveClass('overflow-auto')
+})
+
+test('平台站点空子密钥列表不显示多选控件', () => {
+  renderWithProviders(
+    <UpstreamKeysSubTable
+      channel={{ ...platformChannel(), upstream_keys: [] }}
+    />
+  )
+
+  expect(
+    screen.queryByRole('checkbox', { name: 'Select all upstream keys' })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('checkbox', { name: 'Select upstream key' })
+  ).not.toBeInTheDocument()
+})
+
+test('平台站点子表不注册横向滚动补偿或写入动态变换', () => {
   const tableContainer = document.createElement('div')
   tableContainer.setAttribute('data-slot', 'data-table-scroll-container')
-  Object.defineProperty(tableContainer, 'clientWidth', {
-    configurable: true,
-    value: 640,
-  })
-  const addEventListener = vi.spyOn(tableContainer, 'addEventListener')
-  tableContainer.getBoundingClientRect = () =>
-    ({
-      left: 100,
-      right: 740,
-      width: 640,
-      top: 0,
-      bottom: 800,
-      height: 800,
-      x: 100,
-      y: 0,
-      toJSON: () => ({}),
-    }) as DOMRect
 
   const view = render(
     <QueryClientProvider client={queryClient}>
@@ -348,57 +368,12 @@ test('平台站点子表使用分体表头的渠道滚动容器同步批量工�
     { container: tableContainer }
   )
 
-  const enableButton = view.getByRole('button', {
-    name: 'Enable selected keys',
-  })
-  const toolbar = enableButton.closest('div.sticky')
-
-  expect(toolbar).not.toBeNull()
-  expect(toolbar).toHaveClass('sticky', 'top-0', 'left-0', 'w-full')
-  expect(toolbar).not.toHaveClass('min-w-max')
-
-  const toolbarViewport = toolbar?.parentElement
-  expect(toolbarViewport).not.toBeNull()
-  if (!toolbarViewport) {
-    return
-  }
-  expect(addEventListener).toHaveBeenCalledWith(
-    'scroll',
-    expect.any(Function),
-    expect.objectContaining({ passive: true })
-  )
-
-  const subTableRoot = toolbarViewport.parentElement
-  expect(subTableRoot).not.toBeNull()
-  subTableRoot?.style.setProperty('padding-left', '0px')
-  subTableRoot?.style.setProperty('border-left-width', '0px')
-
-  toolbarViewport.getBoundingClientRect = () =>
-    ({
-      left: 0,
-      right: 640,
-      width: 640,
-      top: 0,
-      bottom: 44,
-      height: 44,
-      x: 0,
-      y: 0,
-      toJSON: () => ({}),
-    }) as DOMRect
-
-  const scrollCall = addEventListener.mock.calls.find(
-    ([eventName]) => eventName === 'scroll'
-  )
-  const scrollListener = scrollCall?.[1]
-  expect(typeof scrollListener).toBe('function')
-
-  await act(async () => {
-    if (typeof scrollListener === 'function') {
-      scrollListener(new Event('scroll'))
-    }
-  })
-
-  expect(toolbarViewport.style.transform).toBe('translateX(100px)')
+  expect(view.container.querySelector('[style*="transform"]')).toBeNull()
+  expect(
+    view.container.querySelectorAll(
+      '[data-column-id="actions"][style*="transform"]'
+    )
+  ).toHaveLength(0)
 })
 
 test('平台站点卡片展开区在窄布局中保留密钥字段和操作入口', () => {
@@ -407,18 +382,63 @@ test('平台站点卡片展开区在窄布局中保留密钥字段和操作入�
   renderWithProviders(<UpstreamKeysMobileList channel={platformChannel(key)} />)
 
   expect(screen.getByText('Upstream keys (1)')).toBeInTheDocument()
-  const enableButton = screen.getByRole('button', {
-    name: 'Enable selected keys',
-  })
-  const toolbar = enableButton.closest('div.sticky')
-  expect(toolbar).not.toBeNull()
-  expect(toolbar).toHaveClass('sticky', 'top-0', 'left-0', 'w-full')
+  expect(
+    screen.queryByRole('checkbox', { name: 'Select upstream key' })
+  ).not.toBeInTheDocument()
   expect(screen.getByText('sk-live...mask')).toBeInTheDocument()
   expect(screen.getByText('gpt-key-only')).toBeInTheDocument()
   expect(
     screen.getByRole('button', { name: 'Test Connection' })
   ).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Disable' })).toBeInTheDocument()
+})
+
+test('平台站点卡片列表沿用不可调度密钥置后的顺序', () => {
+  const unavailable = upstreamKey({
+    id: 8,
+    name: 'Unavailable mobile key',
+    routable: false,
+  })
+  const routable = upstreamKey({
+    id: 9,
+    name: 'Routable mobile key',
+  })
+
+  renderWithProviders(
+    <UpstreamKeysMobileList
+      channel={{
+        ...platformChannel(routable),
+        upstream_keys: [unavailable, routable],
+      }}
+    />
+  )
+
+  const routableElement = screen.getByText('Routable mobile key')
+  const unavailableElement = screen.getByText('Unavailable mobile key')
+  expect(
+    routableElement.compareDocumentPosition(unavailableElement) &
+      Node.DOCUMENT_POSITION_FOLLOWING
+  ).not.toBe(0)
+})
+
+test('平台站点子密钥仍保留单行启用停用操作', async () => {
+  const user = userEvent.setup()
+  vi.mocked(channelsApi.batchUpdateUpstreamKeyStatus).mockResolvedValue({
+    success: true,
+    data: { updated: 1 },
+  })
+
+  renderWithProviders(<UpstreamKeysSubTable channel={platformChannel()} />)
+
+  await user.click(screen.getByRole('button', { name: 'Disable' }))
+
+  await waitFor(() => {
+    expect(channelsApi.batchUpdateUpstreamKeyStatus).toHaveBeenCalledWith(
+      101,
+      [7],
+      2
+    )
+  })
 })
 
 test('未开启倍率覆盖时保存子密钥会清除覆盖而不是写入有效倍率', async () => {
@@ -497,59 +517,6 @@ test('子密钥编辑弹窗展示上游原始倍率和覆盖状态', async () =>
   expect(
     screen.getByRole('switch', { name: 'Override conversion ratio' })
   ).toBeChecked()
-})
-
-test('平台站点子密钥支持批量禁用选中项', async () => {
-  const user = userEvent.setup()
-  vi.mocked(channelsApi.batchUpdateUpstreamKeyStatus).mockResolvedValue({
-    success: true,
-    data: { updated: 1 },
-  })
-
-  renderWithProviders(<UpstreamKeysSubTable channel={platformChannel()} />)
-
-  await user.click(
-    screen.getByRole('checkbox', { name: 'Select upstream key' })
-  )
-  await user.click(
-    screen.getByRole('button', { name: 'Disable selected keys' })
-  )
-
-  await waitFor(() => {
-    expect(channelsApi.batchUpdateUpstreamKeyStatus).toHaveBeenCalledWith(
-      101,
-      [7],
-      2
-    )
-  })
-})
-
-test('平台站点子密钥部分选中时全选框展示半选状态', async () => {
-  const user = userEvent.setup()
-  const firstKey = upstreamKey()
-  const secondKey = upstreamKey({ id: 8, external_id: 'backup-key' })
-  const channel = {
-    ...platformChannel(firstKey),
-    upstream_keys: [firstKey, secondKey],
-  }
-
-  renderWithProviders(<UpstreamKeysSubTable channel={channel} />)
-
-  const rowCheckboxes = screen.getAllByRole('checkbox', {
-    name: 'Select upstream key',
-  })
-  const firstCheckbox = rowCheckboxes[0]
-  if (!firstCheckbox) {
-    throw new Error('未找到子密钥选择框')
-  }
-  await user.click(firstCheckbox)
-
-  const selectAllCheckboxes = screen.getAllByRole('checkbox', {
-    name: 'Select all upstream keys',
-  })
-  for (const checkbox of selectAllCheckboxes) {
-    expect(checkbox).toHaveAttribute('aria-checked', 'mixed')
-  }
 })
 
 test('密钥级更多菜单不显示渠道级复制和账号池入口', async () => {

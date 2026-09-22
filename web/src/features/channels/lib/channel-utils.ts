@@ -27,13 +27,13 @@ import {
   RESPONSE_TIME_THRESHOLDS,
   TYPE_TO_KEY_PROMPT,
 } from '../constants'
-import { normalizeModelName } from './model-mapping-validation'
 import type {
   Channel,
   ChannelOtherSettings,
   ChannelSettings,
   UpstreamKey,
 } from '../types'
+import { normalizeModelName } from './model-mapping-validation'
 
 // ============================================================================
 // Channel Type Utilities
@@ -688,6 +688,31 @@ export function filterUpstreamKeys(
 
     return true
   })
+}
+
+export function isUpstreamKeySchedulable(upstreamKey: UpstreamKey): boolean {
+  return (
+    upstreamKey.status === 1 &&
+    upstreamKey.routable === true &&
+    upstreamKey.models_synced &&
+    upstreamKey.credential_unavailable !== true &&
+    getEffectiveUpstreamKeyModels(upstreamKey).length > 0
+  )
+}
+
+export function sortUpstreamKeysForDisplay(keys: UpstreamKey[]): UpstreamKey[] {
+  const schedulableKeys: UpstreamKey[] = []
+  const unavailableKeys: UpstreamKey[] = []
+
+  for (const key of keys) {
+    if (isUpstreamKeySchedulable(key)) {
+      schedulableKeys.push(key)
+    } else {
+      unavailableKeys.push(key)
+    }
+  }
+
+  return [...schedulableKeys, ...unavailableKeys]
 }
 
 export function getEffectiveUpstreamKeyModels(

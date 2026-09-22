@@ -27,14 +27,7 @@ import {
   Power,
   PowerOff,
 } from 'lucide-react'
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -48,7 +41,6 @@ import { MultiSelect } from '@/components/multi-select'
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
 import { TruncatedText } from '@/components/truncated-text'
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -82,6 +74,7 @@ import {
   createChannelFieldUpdateScheduler,
   formatConversionRatio,
   formatRelativeTime,
+  sortUpstreamKeysForDisplay,
 } from '../lib'
 import type { Channel, UpstreamKey } from '../types'
 import { useChannels } from './channels-provider'
@@ -119,9 +112,7 @@ function getUpstreamKeyStatusConfig(status: number): {
   return { label: config.label, variant: config.variant }
 }
 
-function getUpstreamKeyHealthStatusConfig(
-  upstreamKey: UpstreamKey
-): {
+function getUpstreamKeyHealthStatusConfig(upstreamKey: UpstreamKey): {
   label: string
   variant: StatusBadgeProps['variant']
 } {
@@ -193,290 +184,11 @@ function isFreeUpstreamKey(upstreamKey: UpstreamKey): boolean {
   return upstreamKey.conversion_ratio === 0
 }
 
-function getParentTableScrollContainer(
-  root: HTMLElement | null
-): HTMLElement | null {
-  return (
-    root?.closest<HTMLElement>(
-      '[data-slot="table-container"], [data-slot="data-table-scroll-container"]'
-    ) ?? null
-  )
-}
-
-function useParentTableViewportWidth(
-  rootRef: React.RefObject<HTMLDivElement | null>
-) {
-  const [viewportWidth, setViewportWidth] = useState<number | null>(null)
-
-  useLayoutEffect(() => {
-    const root = rootRef.current
-    const tableContainer = getParentTableScrollContainer(root)
-    if (!tableContainer) {
-      return
-    }
-
-    const updateViewportWidth = () => {
-      const nextWidth = tableContainer.clientWidth
-      if (nextWidth <= 0) {
-        return
-      }
-      setViewportWidth((previousWidth) =>
-        previousWidth === nextWidth ? previousWidth : nextWidth
-      )
-    }
-
-    updateViewportWidth()
-
-    if (typeof ResizeObserver === 'undefined') {
-      return
-    }
-
-    const resizeObserver = new ResizeObserver(updateViewportWidth)
-    resizeObserver.observe(tableContainer)
-    return () => resizeObserver.disconnect()
-  }, [rootRef])
-
-  return viewportWidth
-}
-
-function useParentTableHorizontalScrollSync(
-  rootRef: React.RefObject<HTMLDivElement | null>,
-  targetRef: React.RefObject<HTMLDivElement | null>,
-  enabled: boolean
-) {
-  useLayoutEffect(() => {
-    if (!enabled) {
-      return
-    }
-
-    const root = rootRef.current
-    const target = targetRef.current
-    const tableContainer = getParentTableScrollContainer(root)
-    if (!root || !tableContainer || !target) {
-      return
-    }
-
-    const updateTransform = () => {
-      // 先清除上一次补偿，再根据当前布局重新计算，避免滚动和尺寸变化时累积偏移。
-      target.style.transform = ''
-
-      const rootStyles = getComputedStyle(root)
-      const rootLeftInset =
-        (Number.parseFloat(rootStyles.paddingLeft) || 0) +
-        (Number.parseFloat(rootStyles.borderLeftWidth) || 0)
-      const targetLeft =
-        tableContainer.getBoundingClientRect().left + rootLeftInset
-      const currentLeft = target.getBoundingClientRect().left
-      const translateX = targetLeft - currentLeft
-
-      if (Math.abs(translateX) > 0.5) {
-        target.style.transform = `translateX(${translateX}px)`
-      }
-    }
-
-    updateTransform()
-    tableContainer.addEventListener('scroll', updateTransform, {
-      passive: true,
-    })
-
-    const resizeObserver =
-      typeof ResizeObserver === 'undefined'
-        ? null
-        : new ResizeObserver(updateTransform)
-    resizeObserver?.observe(tableContainer)
-
-    return () => {
-      tableContainer.removeEventListener('scroll', updateTransform)
-      resizeObserver?.disconnect()
-      target.style.transform = ''
-    }
-  }, [enabled, rootRef, targetRef])
-}
-
-function useParentTablePinnedActionsSync(
-  rootRef: React.RefObject<HTMLDivElement | null>,
-  enabled: boolean
-) {
-  useLayoutEffect(() => {
-    if (!enabled) {
-      return
-    }
-
-    const root = rootRef.current
-    const tableContainer = getParentTableScrollContainer(root)
-    if (!root || !tableContainer) {
-      return
-    }
-
-    const updateTransforms = () => {
-      const containerRight = tableContainer.getBoundingClientRect().right
-      const actionCells = root.querySelectorAll<HTMLElement>(
-        '[data-column-id="actions"]'
-      )
-
-      for (const actionCell of actionCells) {
-        actionCell.style.transform = ''
-      }
-
-      for (const actionCell of actionCells) {
-        const containerRect = tableContainer.getBoundingClientRect()
-        const rect = actionCell.getBoundingClientRect()
-        const desiredTranslateX = containerRight - rect.right
-        const minTranslateX = containerRect.left - rect.left
-        const maxTranslateX = containerRight - rect.right
-        const translateX = Math.min(
-          Math.max(desiredTranslateX, minTranslateX),
-          maxTranslateX
-        )
-        if (Math.abs(translateX) > 0.5) {
-          actionCell.style.transform = `translateX(${translateX}px)`
-        }
-      }
-    }
-
-    updateTransforms()
-    tableContainer.addEventListener('scroll', updateTransforms, {
-      passive: true,
-    })
-
-    const resizeObserver =
-      typeof ResizeObserver === 'undefined'
-        ? null
-        : new ResizeObserver(updateTransforms)
-    resizeObserver?.observe(tableContainer)
-
-    return () => {
-      tableContainer.removeEventListener('scroll', updateTransforms)
-      resizeObserver?.disconnect()
-      for (const actionCell of root.querySelectorAll<HTMLElement>(
-        '[data-column-id="actions"]'
-      )) {
-        actionCell.style.transform = ''
-      }
-    }
-  }, [enabled, rootRef])
-}
-
 function getEffectiveWeight(upstreamKey: UpstreamKey): number {
   if (upstreamKey.conversion_ratio === 0) {
     return 2000
   }
   return upstreamKey.weight
-}
-
-function useUpstreamKeySelection(channel: Channel, keys: UpstreamKey[]) {
-  const { t } = useTranslation()
-  const queryClient = useQueryClient()
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set())
-  const [isBatchUpdating, setIsBatchUpdating] = useState(false)
-
-  useEffect(() => {
-    const visibleIds = new Set(keys.map((upstreamKey) => upstreamKey.id))
-    setSelectedIds((previous) => {
-      const next = new Set<number>()
-      for (const id of previous) {
-        if (visibleIds.has(id)) {
-          next.add(id)
-        }
-      }
-      if (next.size === previous.size) {
-        return previous
-      }
-      return next
-    })
-  }, [keys])
-
-  const selectedIdList = useMemo(() => [...selectedIds], [selectedIds])
-  const allSelected = keys.length > 0 && selectedIds.size === keys.length
-  const partiallySelected =
-    selectedIds.size > 0 && selectedIds.size < keys.length
-
-  const toggleSelected = useCallback((id: number, checked: boolean) => {
-    setSelectedIds((previous) => {
-      const next = new Set(previous)
-      if (checked) {
-        next.add(id)
-      } else {
-        next.delete(id)
-      }
-      return next
-    })
-  }, [])
-
-  const toggleAll = useCallback(
-    (checked: boolean) => {
-      if (!checked) {
-        setSelectedIds(new Set())
-        return
-      }
-      setSelectedIds(new Set(keys.map((upstreamKey) => upstreamKey.id)))
-    },
-    [keys]
-  )
-
-  const clearSelection = useCallback(() => {
-    setSelectedIds(new Set())
-  }, [])
-
-  const updateSelectedStatus = useCallback(
-    async (status: number) => {
-      if (selectedIdList.length === 0) {
-        return
-      }
-
-      setIsBatchUpdating(true)
-      try {
-        const response = await batchUpdateUpstreamKeyStatus(
-          channel.id,
-          selectedIdList,
-          status
-        )
-        if (!response.success) {
-          throw createServerError(response, t('Operation failed'))
-        }
-        toast.success(t('Operation successful'))
-        setSelectedIds(new Set())
-        await Promise.all([
-          queryClient.invalidateQueries({
-            queryKey: ['upstream-keys', channel.id],
-          }),
-          queryClient.invalidateQueries({
-            queryKey: channelsQueryKeys.lists(),
-          }),
-        ])
-      } catch (error: unknown) {
-        handleServerError(error, t('Operation failed'))
-      } finally {
-        setIsBatchUpdating(false)
-      }
-    },
-    [channel.id, queryClient, selectedIdList, t]
-  )
-
-  return useMemo(
-    () => ({
-      allSelected,
-      clearSelection,
-      isBatchUpdating,
-      partiallySelected,
-      selectedIds,
-      selectedIdList,
-      toggleAll,
-      toggleSelected,
-      updateSelectedStatus,
-    }),
-    [
-      allSelected,
-      clearSelection,
-      isBatchUpdating,
-      partiallySelected,
-      selectedIds,
-      selectedIdList,
-      toggleAll,
-      toggleSelected,
-      updateSelectedStatus,
-    ]
-  )
 }
 
 function LastSyncCell({ timestamp }: { timestamp: number }) {
@@ -679,75 +391,6 @@ function UpstreamKeyModelsCell({ upstreamKey }: { upstreamKey: UpstreamKey }) {
         size='sm'
         copyable={false}
       />
-    </div>
-  )
-}
-
-function UpstreamKeyBatchToolbar(props: {
-  allSelected: boolean
-  disabled: boolean
-  onClear: () => void
-  onDisable: () => void
-  onEnable: () => void
-  onToggleAll: (checked: boolean) => void
-  partiallySelected: boolean
-  selectedCount: number
-  className?: string
-}) {
-  const { t } = useTranslation()
-  const checked = props.allSelected
-
-  return (
-    <div
-      className={cn(
-        'mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between',
-        props.className
-      )}
-    >
-      <label className='flex min-w-0 items-center gap-2 text-sm'>
-        <Checkbox
-          checked={checked}
-          indeterminate={props.partiallySelected}
-          onCheckedChange={(value) => props.onToggleAll(!!value)}
-          aria-label={t('Select all upstream keys')}
-        />
-        <span className='text-muted-foreground min-w-0'>
-          {props.selectedCount} {t('selected')}
-        </span>
-      </label>
-      <div className='flex w-full min-w-0 flex-wrap items-center gap-2 sm:w-auto sm:justify-end'>
-        <Button
-          type='button'
-          variant='outline'
-          size='sm'
-          disabled={props.disabled}
-          onClick={props.onEnable}
-        >
-          <Power />
-          {t('Enable selected keys')}
-        </Button>
-        <Button
-          type='button'
-          variant='outline'
-          size='sm'
-          disabled={props.disabled}
-          onClick={props.onDisable}
-        >
-          <PowerOff />
-          {t('Disable selected keys')}
-        </Button>
-        {props.selectedCount > 0 && (
-          <Button
-            type='button'
-            variant='ghost'
-            size='sm'
-            disabled={props.disabled}
-            onClick={props.onClear}
-          >
-            {t('Clear selection')}
-          </Button>
-        )}
-      </div>
     </div>
   )
 }
@@ -969,10 +612,7 @@ export function UpstreamKeysMobileList(props: UpstreamKeysSubTableProps) {
   const { t } = useTranslation()
   const { sensitiveVisible } = useChannels()
   const [editingKey, setEditingKey] = useState<UpstreamKey | null>(null)
-  const keys = props.channel.upstream_keys || []
-  const selection = useUpstreamKeySelection(props.channel, keys)
-  const batchDisabled =
-    selection.isBatchUpdating || selection.selectedIdList.length === 0
+  const keys = sortUpstreamKeysForDisplay(props.channel.upstream_keys || [])
 
   return (
     <div className='border-border mt-3 border-t pt-3'>
@@ -985,30 +625,11 @@ export function UpstreamKeysMobileList(props: UpstreamKeysSubTableProps) {
         </div>
       ) : (
         <div className='relative max-h-[70vh] w-full overflow-auto overscroll-contain'>
-          <UpstreamKeyBatchToolbar
-            className='bg-background/95 sticky top-0 left-0 z-20 w-full min-w-full px-1 py-2 backdrop-blur'
-            allSelected={selection.allSelected}
-            disabled={batchDisabled}
-            onClear={selection.clearSelection}
-            onDisable={() => selection.updateSelectedStatus(2)}
-            onEnable={() => selection.updateSelectedStatus(1)}
-            onToggleAll={selection.toggleAll}
-            partiallySelected={selection.partiallySelected}
-            selectedCount={selection.selectedIdList.length}
-          />
           <div className='divide-y rounded-md border'>
             {keys.map((upstreamKey) => (
               <div key={upstreamKey.id} className='space-y-3 p-3'>
                 <div className='flex min-w-0 items-start justify-between gap-2'>
                   <div className='flex min-w-0 items-start gap-2'>
-                    <Checkbox
-                      checked={selection.selectedIds.has(upstreamKey.id)}
-                      onCheckedChange={(value) =>
-                        selection.toggleSelected(upstreamKey.id, !!value)
-                      }
-                      aria-label={t('Select upstream key')}
-                      className='mt-0.5'
-                    />
                     <TruncatedText
                       text={
                         sensitiveVisible
@@ -1379,45 +1000,10 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
   const { t } = useTranslation()
   const { sensitiveVisible } = useChannels()
   const [editingKey, setEditingKey] = useState<UpstreamKey | null>(null)
-  const keys = props.channel.upstream_keys || []
-  const subTableRootRef = useRef<HTMLDivElement>(null)
-  const batchToolbarViewportRef = useRef<HTMLDivElement>(null)
-  const parentTableViewportWidth =
-    useParentTableViewportWidth(subTableRootRef)
-  useParentTableHorizontalScrollSync(
-    subTableRootRef,
-    batchToolbarViewportRef,
-    keys.length > 0
-  )
-  useParentTablePinnedActionsSync(subTableRootRef, keys.length > 0)
-  const selection = useUpstreamKeySelection(props.channel, keys)
-  const batchDisabled =
-    selection.isBatchUpdating || selection.selectedIdList.length === 0
+  const keys = sortUpstreamKeysForDisplay(props.channel.upstream_keys || [])
 
   const columns = useMemo<StaticDataTableColumn<UpstreamKey>[]>(
     () => [
-      {
-        id: 'select',
-        header: (
-          <Checkbox
-            checked={selection.allSelected}
-            indeterminate={selection.partiallySelected}
-            onCheckedChange={(value) => selection.toggleAll(!!value)}
-            aria-label={t('Select all upstream keys')}
-          />
-        ),
-        className: 'w-10 text-center',
-        cellClassName: 'text-center',
-        cell: (upstreamKey: UpstreamKey) => (
-          <Checkbox
-            checked={selection.selectedIds.has(upstreamKey.id)}
-            onCheckedChange={(value) =>
-              selection.toggleSelected(upstreamKey.id, !!value)
-            }
-            aria-label={t('Select upstream key')}
-          />
-        ),
-      },
       {
         id: 'key-id',
         header: t('Key ID'),
@@ -1536,39 +1122,13 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
         ),
       },
     ],
-    [props.channel, selection, sensitiveVisible, t]
+    [props.channel, sensitiveVisible, t]
   )
 
   return (
-    <div
-      ref={subTableRootRef}
-      className='border-border bg-muted/20 relative z-20 w-full max-w-none min-w-0 overflow-hidden border-y px-3 py-3'
-      style={
-        parentTableViewportWidth === null
-          ? undefined
-          : { width: parentTableViewportWidth }
-      }
-    >
-      {keys.length > 0 && (
-        <div
-          ref={batchToolbarViewportRef}
-          className='sticky top-0 left-0 z-20 w-full min-w-0'
-        >
-          <UpstreamKeyBatchToolbar
-            className='bg-muted/95 sticky top-0 left-0 z-20 w-full min-w-full px-3 py-2 shadow-sm backdrop-blur'
-            allSelected={selection.allSelected}
-            disabled={batchDisabled}
-            onClear={selection.clearSelection}
-            onDisable={() => selection.updateSelectedStatus(2)}
-            onEnable={() => selection.updateSelectedStatus(1)}
-            onToggleAll={selection.toggleAll}
-            partiallySelected={selection.partiallySelected}
-            selectedCount={selection.selectedIdList.length}
-          />
-        </div>
-      )}
+    <div className='border-border bg-muted/20 relative z-20 w-full max-w-none min-w-0 overflow-visible border-y px-3 py-3'>
       <StaticDataTable
-        className='relative min-w-0 !overflow-hidden !rounded-none !border-0 !bg-transparent'
+        className='relative min-w-0 !overflow-visible !rounded-none !border-0 !bg-transparent'
         tableClassName='bg-background w-max min-w-full'
         tableProps={{ withContainer: false }}
         data={keys}
