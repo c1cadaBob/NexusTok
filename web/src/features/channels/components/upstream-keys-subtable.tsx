@@ -319,9 +319,18 @@ function useParentTablePinnedActionsSync(
       }
 
       for (const actionCell of actionCells) {
-        actionCell.style.transform = `translateX(${
-          containerRight - actionCell.getBoundingClientRect().right
-        }px)`
+        const containerRect = tableContainer.getBoundingClientRect()
+        const rect = actionCell.getBoundingClientRect()
+        const desiredTranslateX = containerRight - rect.right
+        const minTranslateX = containerRect.left - rect.left
+        const maxTranslateX = containerRight - rect.right
+        const translateX = Math.min(
+          Math.max(desiredTranslateX, minTranslateX),
+          maxTranslateX
+        )
+        if (Math.abs(translateX) > 0.5) {
+          actionCell.style.transform = `translateX(${translateX}px)`
+        }
       }
     }
 
@@ -1533,7 +1542,7 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
   return (
     <div
       ref={subTableRootRef}
-      className='border-border bg-muted/20 relative z-20 w-full max-w-none min-w-0 overflow-visible border-y px-3 py-3'
+      className='border-border bg-muted/20 relative z-20 w-full max-w-none min-w-0 overflow-hidden border-y px-3 py-3'
       style={
         parentTableViewportWidth === null
           ? undefined
@@ -1559,7 +1568,7 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
         </div>
       )}
       <StaticDataTable
-        className='relative min-w-0 !overflow-visible !rounded-none !border-0 !bg-transparent'
+        className='relative min-w-0 !overflow-hidden !rounded-none !border-0 !bg-transparent'
         tableClassName='bg-background w-max min-w-full'
         tableProps={{ withContainer: false }}
         data={keys}

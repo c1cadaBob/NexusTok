@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/c1cadaBob/NexusTok/common"
 	"github.com/c1cadaBob/NexusTok/model"
-	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/go-redis/redis/v8"
@@ -98,11 +98,11 @@ func cachedLoginSessionKey(t *testing.T, server *miniredis.Miniredis) string {
 func TestCreateLoginSessionEnforcesActiveLimitAcrossAuthVersions(t *testing.T) {
 	useTestSessionSecret(t)
 	user := setupAuthSessionTestDB(t)
-	common.UserSessionActiveLimit = 50
+	common.UserSessionActiveLimit = common.DefaultUserSessionActiveLimit
 	common.UserSessionIssuanceLimit = 100
 	now := time.Now().Unix()
-	rows := make([]model.UserSession, 0, 49)
-	for i := range 49 {
+	rows := make([]model.UserSession, 0, common.DefaultUserSessionActiveLimit-1)
+	for i := range common.DefaultUserSessionActiveLimit - 1 {
 		authVersion := user.AuthVersion
 		if i == 0 {
 			authVersion++
@@ -123,13 +123,13 @@ func TestCreateLoginSessionEnforcesActiveLimitAcrossAuthVersions(t *testing.T) {
 	require.NoError(t, model.DB.Create(&rows).Error)
 
 	_, err := CreateLoginSession(user.Id, "password", "127.0.0.1", "test-agent")
-	require.NoError(t, err, "49 active sessions must allow creation of the 50th")
+	require.NoError(t, err, "达到上限前的活跃会话应允许创建登录会话")
 
 	_, err = CreateLoginSession(user.Id, "password", "127.0.0.1", "test-agent")
 	assert.ErrorIs(t, err, model.ErrUserSessionLimit)
 	var count int64
 	require.NoError(t, model.DB.Model(&model.UserSession{}).Count(&count).Error)
-	assert.Equal(t, int64(50), count)
+	assert.Equal(t, int64(common.DefaultUserSessionActiveLimit), count)
 }
 
 func TestCreateLoginSessionEnforcesIssuanceLimitAcrossAllStatuses(t *testing.T) {

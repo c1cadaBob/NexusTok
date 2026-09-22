@@ -37,6 +37,7 @@ import { AuthOperationError } from '@/lib/secure-verification'
 import {
   createServerError,
   getServerErrorMessage,
+  getServerErrorStatus,
 } from '@/lib/server-error-message'
 import { useAuthStore, type AuthBundle } from '@/stores/auth-store'
 
@@ -257,6 +258,29 @@ it('keeps cancellations silent even after wrapping them in another error', () =>
     handleServerError(new Error('Request failed', { cause: error }))
   }
   expect(notify).not.toHaveBeenCalled()
+})
+
+it('does not treat the active-session limit as an internal server error', () => {
+  const client = createAppQueryClient()
+  const sessionLimit = new AxiosError('Conflict', 'ERR_BAD_REQUEST', undefined, undefined, {
+    data: { code: 'AUTH_SESSION_LIMIT' },
+    status: 409,
+    statusText: 'Conflict',
+    headers: {},
+    config: { headers: new AxiosHeaders() },
+  })
+
+  const query = client.getQueryCache().build(client, {
+    queryKey: ['auth-session-limit'],
+    queryFn: async () => {
+      throw sessionLimit
+    },
+  })
+
+  return query.fetch().catch(() => {
+    expect(getServerErrorStatus(sessionLimit)).toBe(409)
+    client.clear()
+  })
 })
 
 it.each([

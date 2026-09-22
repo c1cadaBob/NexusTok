@@ -28,6 +28,20 @@ describe('server error message mapping', () => {
     expect(message ?? '').toMatch(/reset your password/)
   })
 
+  test('keeps internal authentication failures generic', () => {
+    expect(
+      getServerErrorMessageKey({
+        response: {
+          status: 500,
+          data: {
+            code: 'AUTH_INTERNAL_ERROR',
+            message: 'database password and connection details',
+          },
+        },
+      })
+    ).toBe('Please try again later.')
+  })
+
   test('maps an Axios-shaped issuance limit to rolling-window guidance', () => {
     const message = getServerErrorMessageKey({
       response: { data: { code: 'AUTH_SESSION_ISSUANCE_LIMIT' } },

@@ -1131,7 +1131,7 @@ export function useChannelsColumns(
 
           if (channel.upstream_kind === 'platform_site') {
             return (
-              <div className='flex min-w-0 items-center gap-2'>
+              <div className='flex min-w-0 max-w-full flex-col items-start gap-1'>
                 <StatusBadge
                   label={label}
                   variant={config.variant}
@@ -1241,7 +1241,9 @@ export function useChannelsColumns(
             />
           )
         },
-        size: 160,
+        size: 125,
+        minSize: 110,
+        maxSize: 180,
         enableSorting: false,
       },
 
@@ -1274,7 +1276,9 @@ export function useChannelsColumns(
           const groupArray = parseGroupsList(group)
           return groupArray.some((g) => value.includes(g))
         },
-        size: 150,
+        size: 190,
+        minSize: 150,
+        maxSize: 260,
         enableSorting: false,
       },
 

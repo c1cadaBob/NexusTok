@@ -222,7 +222,7 @@ test('平台站点子表移除内部卡片容器样式并保留表格底色', ()
 
   expect(table).toHaveClass('bg-background', 'w-max', 'min-w-full')
   expect(tableContainer).toHaveClass(
-    '!overflow-visible',
+    '!overflow-hidden',
     '!rounded-none',
     '!border-0',
     '!bg-transparent'
@@ -255,7 +255,7 @@ test('平台站点子表根区域锚定到渠道表可视宽度', () => {
     'relative',
     'max-w-none',
     'min-w-0',
-    'overflow-visible'
+    'overflow-hidden'
   )
   expect(subTableRoot).not.toHaveClass('sticky', 'left-0')
   expect(subTableRoot).toHaveAttribute(
@@ -292,14 +292,14 @@ test('平台站点桌面子表复用渠道滚动容器而不创建独立横向�
   const subTableRoot = actionHeader.closest('table')?.parentElement?.parentElement
 
   expect(subTableRoot).not.toBeNull()
-  expect(subTableRoot).toHaveClass('overflow-visible')
+  expect(subTableRoot).toHaveClass('overflow-hidden')
   expect(subTableRoot).toHaveClass('relative')
   expect(subTableRoot).not.toHaveClass('sticky', 'left-0')
   expect(subTableRoot).not.toHaveClass('overflow-auto')
 
   const internalContainer = actionHeader.closest('table')?.parentElement
   expect(internalContainer).not.toBeNull()
-  expect(internalContainer).toHaveClass('!overflow-visible')
+  expect(internalContainer).toHaveClass('!overflow-hidden')
   expect(internalContainer).not.toHaveClass('overflow-auto')
 })
 
