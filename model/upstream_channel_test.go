@@ -309,6 +309,47 @@ func TestSortChannelsByModelRatioUsesSpecifiedModel(t *testing.T) {
 		channels[2].Id,
 		channels[3].Id,
 	})
+
+	PopulateChannelsModelRatio(channels, "gpt")
+	ratioChannel := func(id int) *Channel {
+		for _, channel := range channels {
+			if channel.Id == id {
+				return channel
+			}
+		}
+		return nil
+	}
+	require.NotNil(t, ratioChannel(901))
+	assert.InDelta(t, 0.1, *ratioChannel(901).ModelRatio, 1e-12)
+	PopulateChannelsModelRatio(channels, "claude-*")
+	assert.InDelta(t, 0.01, *ratioChannel(901).ModelRatio, 1e-12)
+	PopulateChannelsModelRatio(channels, "missing-*")
+	assert.Nil(t, ratioChannel(901).ModelRatio)
+}
+
+func TestAdminModelFilterSupportsSubstringAndGlobMatching(t *testing.T) {
+	tests := []struct {
+		name     string
+		model    string
+		filter   string
+		expected bool
+	}{
+		{name: "substring", model: "gpt-4o-mini", filter: "4O", expected: true},
+		{name: "prefix glob", model: "gpt-4o-mini", filter: "GPT-*", expected: true},
+		{name: "single character glob", model: "gpt-4o", filter: "gpt-?o", expected: true},
+		{name: "suffix glob", model: "gpt-4o-mini", filter: "*MINI", expected: true},
+		{name: "mismatch", model: "claude-3-7", filter: "gpt-*", expected: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(
+				t,
+				test.expected,
+				matchesAdminModelFilter(test.model, test.filter),
+			)
+		})
+	}
 }
 
 func TestRoutingKeyHealthSummaryWindow(t *testing.T) {
@@ -869,6 +910,16 @@ func TestUpstreamChannelDatabaseCompatibility(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, found, 1)
 			assert.Equal(t, channel.Id, found[0].Id)
+
+			wildcardFound, err := SearchChannels(
+				"child-searchable",
+				"default",
+				"GPT-*",
+				true,
+			)
+			require.NoError(t, err)
+			require.Len(t, wildcardFound, 1)
+			assert.Equal(t, channel.Id, wildcardFound[0].Id)
 
 			missingGroup, err := SearchChannels("child-searchable", "vip", "gpt-4o-mini", true)
 			require.NoError(t, err)

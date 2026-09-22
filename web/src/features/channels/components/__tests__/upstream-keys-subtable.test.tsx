@@ -185,12 +185,32 @@ test('平台站点子密钥紧凑展示密钥相关列并隐藏权重括号', ()
     'max-w-40'
   )
   expect(screen.getByRole('columnheader', { name: 'Models' })).toHaveClass(
-    'w-48',
-    'min-w-48',
-    'max-w-48'
+    'w-[334.95px]',
+    'min-w-[334.95px]',
+    'max-w-[334.95px]'
   )
+  expect(screen.getByRole('cell', { name: /gpt-key-only/ })).toHaveClass(
+    'w-[334.95px]',
+    'min-w-[334.95px]',
+    'max-w-[334.95px]'
+  )
+  expect(screen.queryByText('Synced')).not.toBeInTheDocument()
   expect(screen.getByText('1900')).toBeInTheDocument()
   expect(screen.queryByText('(1900)')).not.toBeInTheDocument()
+})
+
+test('模型未同步时仍显示不可用状态', () => {
+  renderWithProviders(
+    <UpstreamKeysSubTable
+      channel={platformChannel(
+        upstreamKey({
+          models_synced: false,
+        })
+      )}
+    />
+  )
+
+  expect(screen.getByText('Unavailable')).toBeInTheDocument()
 })
 
 test('平台站点子密钥操作列固定在表格右侧', () => {

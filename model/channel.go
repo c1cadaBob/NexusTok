@@ -138,9 +138,20 @@ func calculateChannelModelRatio(channel *Channel, modelName string) (float64, bo
 		return 0, false
 	}
 
+	modelName = strings.TrimSpace(modelName)
 	var ratios []float64
 	if channel.UpstreamKind == UpstreamKindPlatformSite {
-		for _, key := range loadRoutableUpstreamKeys(channel, "", modelName) {
+		keys := loadRoutableUpstreamKeys(channel, "", "")
+		if modelName != "" {
+			filteredKeys := make([]*UpstreamKey, 0, len(keys))
+			for _, key := range keys {
+				if upstreamKeyMatchesAdminModelFilter(key, modelName) {
+					filteredKeys = append(filteredKeys, key)
+				}
+			}
+			keys = filteredKeys
+		}
+		for _, key := range keys {
 			if key == nil || math.IsNaN(key.ConversionRatio) ||
 				math.IsInf(key.ConversionRatio, 0) || key.ConversionRatio < 0 {
 				continue
@@ -148,7 +159,12 @@ func calculateChannelModelRatio(channel *Channel, modelName string) (float64, bo
 			ratios = append(ratios, key.ConversionRatio)
 		}
 	} else {
-		for _, key := range loadRoutableChannelKeys(channel, "", modelName) {
+		if modelName != "" &&
+			!channelModelsMatchAdminModelFilter(channel, modelName) {
+			return 0, false
+		}
+		keys := loadRoutableChannelKeys(channel, "", "")
+		for _, key := range keys {
 			if key == nil || math.IsNaN(key.ConversionRatio) ||
 				math.IsInf(key.ConversionRatio, 0) || key.ConversionRatio < 0 {
 				continue
@@ -160,6 +176,30 @@ func calculateChannelModelRatio(channel *Channel, modelName string) (float64, bo
 		return 0, false
 	}
 	return slicesMin(ratios), true
+}
+
+func upstreamKeyMatchesAdminModelFilter(key *UpstreamKey, filter string) bool {
+	if key == nil {
+		return false
+	}
+	for _, modelName := range key.GetEffectiveModels() {
+		if matchesAdminModelFilter(modelName, filter) {
+			return true
+		}
+	}
+	return false
+}
+
+func channelModelsMatchAdminModelFilter(channel *Channel, filter string) bool {
+	if channel == nil {
+		return false
+	}
+	for _, modelName := range channel.GetModels() {
+		if matchesAdminModelFilter(modelName, filter) {
+			return true
+		}
+	}
+	return false
 }
 
 func slicesMin(values []float64) float64 {
@@ -505,6 +545,7 @@ func SearchChannels(keyword string, group string, model string, idSort bool, sor
 	var channels []*Channel
 	order := resolveChannelSortOptions(idSort, sortOptions)
 	modelRatioSort := order.SortBy == "model_ratio"
+	model = strings.TrimSpace(model)
 	modelsCol := "`models`"
 
 	// 如果是 PostgreSQL，使用双引号
@@ -526,8 +567,8 @@ func SearchChannels(keyword string, group string, model string, idSort bool, sor
 	whereClause := "(id = ? OR name LIKE ? OR " + commonKeyCol + " = ? OR " + baseURLCol + " LIKE ?)"
 	args := []any{common.String2Int(keyword), "%" + keyword + "%", keyword, "%" + keyword + "%"}
 	if !modelRatioSort {
-		whereClause += " AND " + modelsCol + " LIKE ?"
-		args = append(args, "%"+model+"%")
+		whereClause += " AND " + adminModelLikeClause(modelsCol)
+		args = append(args, adminModelLikePattern(model))
 	}
 	if (keyword != "" || (!modelRatioSort && model != "")) &&
 		DB.Migrator().HasTable(&UpstreamKey{}) {
@@ -541,7 +582,10 @@ func SearchChannels(keyword string, group string, model string, idSort bool, sor
 			)
 		}
 		if !modelRatioSort && model != "" {
-			upstreamKeyQuery = upstreamKeyQuery.Where("models LIKE ?", "%"+model+"%")
+			upstreamKeyQuery = upstreamKeyQuery.Where(
+				adminModelLikeClause("models"),
+				adminModelLikePattern(model),
+			)
 		}
 		baseQuery = baseQuery.Where(
 			"(("+whereClause+") OR id IN (?))",
@@ -556,6 +600,12 @@ func SearchChannels(keyword string, group string, model string, idSort bool, sor
 	err := order.Apply(baseQuery).Find(&channels).Error
 	if err != nil {
 		return nil, err
+	}
+	if !modelRatioSort && model != "" {
+		channels, err = filterChannelsByAdminModel(channels, model)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return channels, nil
 }
@@ -1114,46 +1164,28 @@ func GetPaginatedChannelTags(query *gorm.DB, offset int, limit int) ([]*string, 
 }
 
 func SearchTags(keyword string, group string, model string, idSort bool) ([]*string, error) {
-	var tags []*string
-	modelsCol := "`models`"
-
-	// 如果是 PostgreSQL，使用双引号
-	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
-		modelsCol = `"models"`
-	}
-
-	baseURLCol := "`base_url`"
-	// 如果是 PostgreSQL，使用双引号
-	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
-		baseURLCol = `"base_url"`
-	}
-
-	order := "priority desc"
-	if idSort {
-		order = "id desc"
-	}
-
-	// 构造基础查询
-	baseQuery := DB.Model(&Channel{}).Omit("key")
-
-	// 构造WHERE子句
-	whereClause := "(id = ? OR name LIKE ? OR " + commonKeyCol + " = ? OR " + baseURLCol + " LIKE ?) AND " + modelsCol + " LIKE ?"
-	args := []any{common.String2Int(keyword), "%" + keyword + "%", keyword, "%" + keyword + "%", "%" + model + "%"}
-	baseQuery = ApplyChannelGroupFilter(baseQuery.Where(whereClause, args...), group)
-
-	subQuery := baseQuery.
-		Select("tag").
-		Where("tag != ''").
-		Order(order)
-
-	err := DB.Table("(?) as sub", subQuery).
-		Select("DISTINCT tag").
-		Find(&tags).Error
-
+	channels, err := SearchChannels(keyword, group, model, idSort)
 	if err != nil {
 		return nil, err
 	}
 
+	tags := make([]*string, 0)
+	seen := make(map[string]struct{})
+	for _, channel := range channels {
+		if channel == nil {
+			continue
+		}
+		tag := channel.GetTag()
+		if tag == "" {
+			continue
+		}
+		if _, exists := seen[tag]; exists {
+			continue
+		}
+		tagCopy := tag
+		seen[tag] = struct{}{}
+		tags = append(tags, &tagCopy)
+	}
 	return tags, nil
 }
 

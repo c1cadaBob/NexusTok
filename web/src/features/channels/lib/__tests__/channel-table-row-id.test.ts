@@ -24,6 +24,7 @@ import {
   formatConversionRatio,
   getChannelTableRowId,
   isUpstreamKeySchedulable,
+  matchesModelFilter,
   sortUpstreamKeysForDisplay,
   type TagRow,
 } from '../channel-utils'
@@ -116,6 +117,38 @@ describe('channel table row identity', () => {
     expect(
       filterUpstreamKeys(keys, { keyword: 'backup...' }).map((key) => key.id)
     ).toEqual([2])
+  })
+
+  test('supports case-insensitive model glob filters and effective models', () => {
+    const keys = [
+      {
+        id: 1,
+        models: ['gpt-4o', 'claude-3-7'],
+        allowed_models: null,
+      },
+      {
+        id: 2,
+        models: ['gpt-4o-mini'],
+        allowed_models: ['claude-3-7'],
+      },
+      {
+        id: 3,
+        models: ['text-embedding-3-small'],
+        allowed_models: null,
+      },
+    ] as UpstreamKey[]
+
+    expect(matchesModelFilter('gpt-4o', 'GPT-*')).toBe(true)
+    expect(matchesModelFilter('gpt-4o', 'gpt-?o')).toBe(true)
+    expect(matchesModelFilter('gpt-4o-mini', '*MINI')).toBe(true)
+    expect(matchesModelFilter('prefix-gpt-4o-suffix', '*GPT-*')).toBe(true)
+    expect(matchesModelFilter('gpt-4o', 'claude-*')).toBe(false)
+    expect(
+      filterUpstreamKeys(keys, { model: 'gpt-*' }).map((key) => key.id)
+    ).toEqual([1])
+    expect(
+      filterUpstreamKeys(keys, { model: 'claude-*' }).map((key) => key.id)
+    ).toEqual([1])
   })
 
   test('formats conversion ratio with bounded readable precision', () => {

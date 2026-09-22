@@ -277,7 +277,7 @@ func GetAllChannels(c *gin.Context) {
 		endIdx := min(startIdx+pageInfo.GetPageSize(), len(channelData))
 		channelData = channelData[startIdx:endIdx]
 	} else if !tagRatioPaged {
-		model.PopulateChannelsModelRatio(channelData, "")
+		model.PopulateChannelsModelRatio(channelData, modelKeyword)
 	}
 
 	for _, datum := range channelData {
@@ -540,7 +540,7 @@ func SearchChannels(c *gin.Context) {
 		}
 		model.SortChannelsByModelRatio(channelData, modelKeyword, sortOptions.SortOrder)
 	} else {
-		model.PopulateChannelsModelRatio(channelData, "")
+		model.PopulateChannelsModelRatio(channelData, modelKeyword)
 	}
 
 	page, _ := strconv.Atoi(c.DefaultQuery("p", "1"))

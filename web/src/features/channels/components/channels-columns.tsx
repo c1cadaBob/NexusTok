@@ -271,15 +271,17 @@ function ChannelFieldCell({
 function ConversionRatioCell({
   channel,
   modelRatioSortActive,
+  modelFilter,
 }: {
   channel: Channel
   modelRatioSortActive: boolean
+  modelFilter: string
 }) {
   if (isTagAggregateRow(channel)) {
     return <span className='text-muted-foreground text-xs'>-</span>
   }
 
-  if (modelRatioSortActive) {
+  if (modelRatioSortActive || modelFilter.trim()) {
     return (
       <span className='font-mono text-sm tabular-nums'>
         {formatConversionRatio(channel.model_ratio)}
@@ -315,7 +317,7 @@ function ConversionRatioCell({
   )
 }
 
-function UpstreamSiteSyncStatusCell({ channel }: { channel: Channel }) {
+export function UpstreamSiteSyncStatusCell({ channel }: { channel: Channel }) {
   const { t, i18n } = useTranslation()
   const status = channel.upstream_site_status
   if (!status) {
@@ -340,48 +342,40 @@ function UpstreamSiteSyncStatusCell({ channel }: { channel: Channel }) {
       : t('Never')
 
   const usingLastSnapshot =
-    (status.sync_status === 'failed' || status.sync_status === 'running') &&
-    status.last_sync_at > 0
-  const credentialUnavailable = status.needs_credential_save === true
-  let effectiveStatusConfig: {
-    label: string
-    variant: StatusBadgeProps['variant']
-  } = statusConfig
-  if (credentialUnavailable) {
-    effectiveStatusConfig = {
-      label: t('Credential unavailable; resave platform credentials'),
-      variant: 'danger' as const,
-    }
-  } else if (usingLastSnapshot) {
-    effectiveStatusConfig = {
-      label: t('Using last successful snapshot'),
-      variant: 'warning' as const,
-    }
-  }
+    status.using_last_snapshot ??
+    ((status.sync_status === 'failed' || status.sync_status === 'running') &&
+      status.last_sync_at > 0)
+  const credentialUnavailable =
+    status.needs_credential_save === true ||
+    status.credential_available === false
 
   return (
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger
           render={
-            <div className='flex min-w-0 flex-col items-start gap-1'>
-              <StatusBadge
-                label={effectiveStatusConfig.label}
-                variant={effectiveStatusConfig.variant}
-                size='sm'
-                copyable={false}
-              />
-              <span className='text-muted-foreground max-w-full truncate text-xs'>
-                {lastSync}
-              </span>
-            </div>
+            <StatusBadge
+              label={lastSync}
+              variant='neutral'
+              size='sm'
+              copyable={false}
+              className='cursor-help'
+            />
           }
         />
         <TooltipContent side='top' className='max-w-xs'>
           <div className='space-y-1 text-xs'>
             <div>
+              {t('Sync status')}: {statusConfig.label}
+            </div>
+            <div>
               {t('Last sync')}: {lastSync}
             </div>
+            {status.last_sync_at > 0 && (
+              <div>
+                {t('Time:')} {formatTimestampToDate(status.last_sync_at)}
+              </div>
+            )}
             {status.consecutive_failures > 0 && (
               <div>
                 {t('Consecutive failures')}: {status.consecutive_failures}
@@ -397,7 +391,11 @@ function UpstreamSiteSyncStatusCell({ channel }: { channel: Channel }) {
               </div>
             )}
             {credentialUnavailable && (
-              <div>{t('Credential cannot be decrypted; resave platform credentials.')}</div>
+              <div>
+                {t(
+                  'Credential cannot be decrypted; resave platform credentials.'
+                )}
+              </div>
             )}
             {status.last_sync_error && <div>{status.last_sync_error}</div>}
           </div>
@@ -423,8 +421,12 @@ export function BalanceCell({ channel }: { channel: Channel }) {
   const layout = useContext(ChannelRowActionsLayoutContext)
   const { sensitiveVisible, setCurrentRow } = useChannels()
   const isTagRow = isTagAggregateRow(channel)
-  const balance = channel.balance || 0
-  const usedQuota = channel.used_quota || 0
+  const upstreamSiteStatus =
+    channel.upstream_kind === 'platform_site'
+      ? channel.upstream_site_status
+      : undefined
+  const balance = upstreamSiteStatus?.balance ?? channel.balance ?? 0
+  const usedQuota = upstreamSiteStatus?.used_quota ?? channel.used_quota ?? 0
   const [isUpdating, setIsUpdating] = useState(false)
   const isUpdatingRef = useRef(false)
   const [rawBalanceResponse, setRawBalanceResponse] = useState<string | null>(
@@ -581,7 +583,10 @@ export function BalanceCell({ channel }: { channel: Channel }) {
         setCurrentRow({
           ...channel,
           balance: response.balance,
-          used_quota: response.used_quota ?? channel.used_quota,
+          used_quota:
+            response.used_quota ??
+            channel.upstream_site_status?.used_quota ??
+            channel.used_quota,
           balance_updated_time: balanceUpdatedTime,
           upstream_site_status: upstreamSiteStatus,
         })
@@ -730,12 +735,14 @@ export function useChannelsColumns(
   options: {
     enableSelection?: boolean
     modelRatioSortActive?: boolean
+    modelFilter?: string
   } = {}
 ): ColumnDef<Channel>[] {
   const { t, i18n } = useTranslation()
   const { sensitiveVisible } = useChannels()
   const enableSelection = options.enableSelection ?? true
   const modelRatioSortActive = options.modelRatioSortActive ?? false
+  const modelFilter = options.modelFilter ?? ''
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   // The column definitions only depend on the translation function, the active
   // locale, and sensitive-data visibility. Memoizing keeps the array (and every
@@ -1131,7 +1138,7 @@ export function useChannelsColumns(
 
           if (channel.upstream_kind === 'platform_site') {
             return (
-              <div className='flex min-w-0 max-w-full flex-col items-start gap-1'>
+              <div className='flex max-w-full min-w-0 flex-col items-start gap-1'>
                 <StatusBadge
                   label={label}
                   variant={config.variant}
@@ -1292,6 +1299,7 @@ export function useChannelsColumns(
           <ConversionRatioCell
             channel={row.original}
             modelRatioSortActive={modelRatioSortActive}
+            modelFilter={modelFilter}
           />
         ),
         size: 130,
@@ -1427,6 +1435,13 @@ export function useChannelsColumns(
         meta: { pinned: 'right' as const },
       },
     ],
-    [enableSelection, locale, modelRatioSortActive, sensitiveVisible, t]
+    [
+      enableSelection,
+      locale,
+      modelFilter,
+      modelRatioSortActive,
+      sensitiveVisible,
+      t,
+    ]
   )
 }

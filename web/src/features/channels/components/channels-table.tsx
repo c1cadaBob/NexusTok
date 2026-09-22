@@ -474,6 +474,7 @@ export function ChannelsTable() {
   const columns = useChannelsColumns({
     enableSelection: batchMode,
     modelRatioSortActive,
+    modelFilter,
   })
 
   // React Table instance

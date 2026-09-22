@@ -385,12 +385,14 @@ function UpstreamKeyModelsCell({ upstreamKey }: { upstreamKey: UpstreamKey }) {
           />
         ))}
       />
-      <StatusBadge
-        label={upstreamKey.models_synced ? t('Synced') : t('Unavailable')}
-        variant={upstreamKey.models_synced ? 'success' : 'warning'}
-        size='sm'
-        copyable={false}
-      />
+      {!upstreamKey.models_synced && (
+        <StatusBadge
+          label={t('Unavailable')}
+          variant='warning'
+          size='sm'
+          copyable={false}
+        />
+      )}
     </div>
   )
 }
@@ -1062,8 +1064,9 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
       {
         id: 'models',
         header: t('Models'),
-        className: 'w-48 min-w-48 max-w-48 text-left',
-        cellClassName: 'text-left',
+        className: 'w-[334.95px] min-w-[334.95px] max-w-[334.95px] text-left',
+        cellClassName:
+          'w-[334.95px] min-w-[334.95px] max-w-[334.95px] text-left',
         cell: (upstreamKey: UpstreamKey) => (
           <UpstreamKeyModelsCell upstreamKey={upstreamKey} />
         ),

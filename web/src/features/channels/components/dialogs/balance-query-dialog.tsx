@@ -65,6 +65,16 @@ export function BalanceQueryDialog(props: BalanceQueryDialogProps) {
     useState<CodexUsageDialogData | null>(null)
 
   const isCodex = currentRow?.type === 57
+  const currentUpstreamSiteStatus =
+    currentRow?.upstream_kind === 'platform_site'
+      ? currentRow.upstream_site_status
+      : undefined
+  const currentBalance =
+    currentUpstreamSiteStatus?.balance ?? currentRow?.balance ?? 0
+  const currentBalanceUpdatedTime =
+    currentUpstreamSiteStatus?.balance_updated_time ??
+    currentRow?.balance_updated_time ??
+    0
 
   const handleQueryCodexUsage = async () => {
     const row = currentRow
@@ -124,7 +134,8 @@ export function BalanceQueryDialog(props: BalanceQueryDialogProps) {
                 sync_status:
                   response.sync_status ?? row.upstream_site_status.sync_status,
                 last_sync_at:
-                  response.last_sync_at ?? row.upstream_site_status.last_sync_at,
+                  response.last_sync_at ??
+                  row.upstream_site_status.last_sync_at,
                 last_sync_error:
                   response.last_sync_error ??
                   row.upstream_site_status.last_sync_error,
@@ -138,7 +149,10 @@ export function BalanceQueryDialog(props: BalanceQueryDialogProps) {
         setCurrentRow({
           ...row,
           balance: newBalance,
-          used_quota: response.used_quota ?? row.used_quota,
+          used_quota:
+            response.used_quota ??
+            currentUpstreamSiteStatus?.used_quota ??
+            row.used_quota,
           balance_updated_time: updatedTime,
           upstream_site_status: upstreamSiteStatus,
         })
@@ -252,13 +266,11 @@ export function BalanceQueryDialog(props: BalanceQueryDialogProps) {
               <div className='text-2xl font-bold'>
                 {balance !== null
                   ? formatBalance(balance)
-                  : formatBalance(currentRow.balance)}
+                  : formatBalance(currentBalance)}
               </div>
               <div className='text-muted-foreground mt-2 text-xs'>
                 {t('Last updated:')}{' '}
-                {formatDate(
-                  balanceUpdatedTime ?? currentRow.balance_updated_time
-                )}
+                {formatDate(balanceUpdatedTime ?? currentBalanceUpdatedTime)}
               </div>
             </div>
           </>

@@ -673,7 +673,7 @@ export function filterUpstreamKeys(
     if (
       model &&
       !getEffectiveUpstreamKeyModels(key).some((item) =>
-        item.toLocaleLowerCase().includes(model)
+        matchesModelFilter(item, model)
       )
     ) {
       return false
@@ -688,6 +688,65 @@ export function filterUpstreamKeys(
 
     return true
   })
+}
+
+/**
+ * Match a model name using the channel page's filter semantics.
+ *
+ * Plain text keeps the historical case-insensitive substring behavior. Once
+ * a wildcard is present, the whole model name is matched as a glob where `*`
+ * means zero or more characters and `?` means exactly one character.
+ */
+export function matchesModelFilter(modelName: string, filter: string): boolean {
+  const normalizedModel = modelName.trim().toLocaleLowerCase()
+  const normalizedFilter = filter.trim().toLocaleLowerCase()
+  if (!normalizedFilter) {
+    return true
+  }
+
+  if (!normalizedFilter.includes('*') && !normalizedFilter.includes('?')) {
+    return normalizedModel.includes(normalizedFilter)
+  }
+
+  const pattern = [...normalizedFilter]
+  const value = [...normalizedModel]
+  let patternIndex = 0
+  let valueIndex = 0
+  let lastStarIndex = -1
+  let starValueIndex = -1
+
+  while (valueIndex < value.length) {
+    const patternChar = pattern[patternIndex]
+    if (
+      patternIndex < pattern.length &&
+      (patternChar === '?' || patternChar === value[valueIndex])
+    ) {
+      patternIndex += 1
+      valueIndex += 1
+      continue
+    }
+
+    if (patternIndex < pattern.length && patternChar === '*') {
+      lastStarIndex = patternIndex
+      starValueIndex = valueIndex
+      patternIndex += 1
+      continue
+    }
+
+    if (lastStarIndex < 0) {
+      return false
+    }
+
+    patternIndex = lastStarIndex + 1
+    starValueIndex += 1
+    valueIndex = starValueIndex
+  }
+
+  while (patternIndex < pattern.length && pattern[patternIndex] === '*') {
+    patternIndex += 1
+  }
+
+  return patternIndex === pattern.length
 }
 
 export function isUpstreamKeySchedulable(upstreamKey: UpstreamKey): boolean {

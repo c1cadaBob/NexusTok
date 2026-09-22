@@ -163,6 +163,26 @@ test('平台站点余额刷新成功后使用服务端时间并刷新站点和�
   expect(screen.getByText(/2027-01-15/)).toBeInTheDocument()
 })
 
+test('平台站点余额单元格优先显示上游状态中的余额和已使用余额', () => {
+  const channel = platformChannel()
+  channel.balance = 1
+  channel.used_quota = 10
+  const upstreamSiteStatus = channel.upstream_site_status
+  if (!upstreamSiteStatus) {
+    throw new Error('platform fixture must include upstream site status')
+  }
+  channel.upstream_site_status = {
+    ...upstreamSiteStatus,
+    balance: 8,
+    used_quota: 10_000_000,
+  }
+
+  renderBalanceCell(channel)
+
+  expect(screen.getByText('$20')).toBeInTheDocument()
+  expect(screen.getByText('$8')).toBeInTheDocument()
+})
+
 test('平台站点余额刷新失败时展示错误且不清空已有余额', async () => {
   const user = userEvent.setup()
   vi.mocked(channelsApi.updateChannelBalance).mockResolvedValue({

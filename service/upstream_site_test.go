@@ -889,8 +889,9 @@ func TestPersistPlatformSiteSnapshotIsolatesUnavailableKeys(t *testing.T) {
 	}).Error)
 
 	require.NoError(t, persistPlatformSiteSnapshot(context.Background(), account, PlatformSiteSnapshot{
-		Balance: 7,
-		Models:  []string{"gpt-4o"},
+		Balance:   7,
+		UsedQuota: 123456,
+		Models:    []string{"gpt-4o"},
 		Keys: []UpstreamKeySnapshot{
 			{
 				ExternalID: "old-key",
@@ -950,6 +951,12 @@ func TestPersistPlatformSiteSnapshotIsolatesUnavailableKeys(t *testing.T) {
 	var savedAccount model.PlatformSiteAccount
 	require.NoError(t, db.Where("channel_id = ?", channel.Id).First(&savedAccount).Error)
 	assert.Equal(t, 7.0, savedAccount.Balance)
+	assert.Equal(t, int64(123456), savedAccount.UsedQuota)
+
+	var savedChannel model.Channel
+	require.NoError(t, db.First(&savedChannel, channel.Id).Error)
+	assert.Equal(t, 7.0, savedChannel.Balance)
+	assert.Equal(t, int64(123456), savedChannel.UsedQuota)
 }
 
 func TestPersistPlatformSiteCredentialStoresOnlyEncryptedRotatedValues(t *testing.T) {
