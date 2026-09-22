@@ -18,6 +18,8 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -143,6 +145,8 @@ func TestNewAPIAdapterPasswordAuthenticationAndSnapshot(t *testing.T) {
 	snapshot, err := adapter.FetchSnapshot(context.Background(), session)
 	require.NoError(t, err)
 	assert.Equal(t, 1.25, snapshot.Balance)
+	assert.Equal(t, int64(3), snapshot.UsedQuota)
+	assert.True(t, snapshot.UsedQuotaSet)
 	require.Len(t, snapshot.Keys, 1)
 	assert.Equal(t, "sk-newapi", snapshot.Keys[0].Secret)
 	assert.Equal(t, int64(8), *snapshot.Keys[0].RemainQuota)
@@ -613,6 +617,8 @@ func TestSub2APIAdapterAdminKeyReadsNestedCredentialAndPagination(t *testing.T) 
 	snapshot, err := adapter.FetchSnapshot(context.Background(), session)
 	require.NoError(t, err)
 	assert.Equal(t, float64(4), snapshot.Balance)
+	assert.Equal(t, int64(1), snapshot.UsedQuota)
+	assert.True(t, snapshot.UsedQuotaSet)
 	require.Len(t, snapshot.Keys, 1)
 	assert.Equal(t, "sk-sub2api", snapshot.Keys[0].Secret)
 	assert.Equal(t, 0.5, snapshot.Keys[0].ConversionRatio)
@@ -656,6 +662,7 @@ func TestSub2APIAdapterUsesProfileUsageGroupAliasesAndModelAliases(t *testing.T)
 	require.NoError(t, err)
 	assert.Equal(t, 6.5, snapshot.Balance)
 	assert.Equal(t, int64(2), snapshot.UsedQuota)
+	assert.True(t, snapshot.UsedQuotaSet)
 	require.Len(t, snapshot.Keys, 1)
 	assert.Equal(t, "default", snapshot.Keys[0].Group)
 	assert.Equal(t, 0.25, snapshot.Keys[0].SourceConversionRatio)
@@ -1175,6 +1182,18 @@ func TestPersistPlatformSiteSnapshotRebuildsAbilitiesAndAutoDisablesUnavailableK
 			Group:        "default",
 			Models:       []string{"gpt-4o"},
 			ModelsSynced: true,
+			UsedQuota:    4,
+			UsedQuotaSet: true,
+			RemainQuota:  &remaining,
+		}, {
+			ExternalID:   "key-2",
+			Name:         "key-2",
+			Secret:       "sk-test-2",
+			Group:        "default",
+			Models:       []string{"gpt-4o"},
+			ModelsSynced: true,
+			UsedQuota:    7,
+			UsedQuotaSet: true,
 			RemainQuota:  &remaining,
 		}},
 	}))
@@ -1183,12 +1202,14 @@ func TestPersistPlatformSiteSnapshotRebuildsAbilitiesAndAutoDisablesUnavailableK
 	require.NoError(t, db.Where("channel_id = ?", channel.Id).First(&key).Error)
 	assert.Equal(t, model.UpstreamKeyStatusAutoDisabled, key.Status)
 	assert.Equal(t, "密钥剩余额度不足", key.DisabledReason)
-	assert.Equal(t, 1900, key.Weight)
-
 	var savedAccount model.PlatformSiteAccount
 	require.NoError(t, db.Where("channel_id = ?", channel.Id).First(&savedAccount).Error)
 	assert.Equal(t, 5.0, savedAccount.Balance)
-	assert.Equal(t, int64(0), savedAccount.UsedQuota)
+	assert.Equal(t, int64(11), savedAccount.UsedQuota)
+	var savedChannel model.Channel
+	require.NoError(t, db.First(&savedChannel, channel.Id).Error)
+	assert.Equal(t, int64(11), savedChannel.UsedQuota)
+	assert.Equal(t, 1900, key.Weight)
 
 	var ability model.Ability
 	assert.ErrorIs(t, db.Where(&model.Ability{
@@ -1243,6 +1264,155 @@ func TestPersistPlatformSiteSnapshotRebuildsAbilitiesAndAutoDisablesUnavailableK
 	assert.Equal(t, model.UpstreamKeyStatusEnabled, restoredKey.Status)
 	assert.Zero(t, restoredKey.MissingSince)
 	assert.True(t, restoredKey.IsRoutable(time.Now()))
+}
+
+func TestPersistPlatformSiteSnapshotUsedQuotaDatabaseMatrix(t *testing.T) {
+	// TEST_UPSTREAM_SITE_MYSQL_DSN and TEST_UPSTREAM_SITE_POSTGRES_DSN must
+	// point to isolated scratch databases because this test drops its tables.
+	for _, dialect := range []struct {
+		name string
+		dsn  string
+		open func(string) gorm.Dialector
+	}{
+		{
+			name: "sqlite",
+			dsn:  fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_")),
+			open: func(dsn string) gorm.Dialector { return sqlite.Open(dsn) },
+		},
+		{
+			name: "mysql",
+			dsn:  strings.TrimSpace(os.Getenv("TEST_UPSTREAM_SITE_MYSQL_DSN")),
+			open: func(dsn string) gorm.Dialector { return mysql.Open(dsn) },
+		},
+		{
+			name: "postgres",
+			dsn:  strings.TrimSpace(os.Getenv("TEST_UPSTREAM_SITE_POSTGRES_DSN")),
+			open: func(dsn string) gorm.Dialector {
+				return postgres.New(postgres.Config{
+					DSN:                  dsn,
+					PreferSimpleProtocol: true,
+				})
+			},
+		},
+	} {
+		t.Run(dialect.name, func(t *testing.T) {
+			if dialect.dsn == "" {
+				t.Skip("测试数据库 DSN 未配置")
+			}
+			db, err := gorm.Open(dialect.open(dialect.dsn), &gorm.Config{})
+			require.NoError(t, err)
+			sqlDB, err := db.DB()
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+			if dialect.name != "sqlite" {
+				require.NoError(t, db.Exec("DROP TABLE IF EXISTS upstream_key_abilities").Error)
+				require.NoError(t, db.Exec("DROP TABLE IF EXISTS upstream_keys").Error)
+				require.NoError(t, db.Exec("DROP TABLE IF EXISTS platform_site_accounts").Error)
+				require.NoError(t, db.Exec("DROP TABLE IF EXISTS abilities").Error)
+				require.NoError(t, db.Exec("DROP TABLE IF EXISTS channels").Error)
+			}
+			t.Cleanup(func() {
+				if dialect.name != "sqlite" {
+					require.NoError(t, db.Exec("DROP TABLE IF EXISTS upstream_key_abilities").Error)
+					require.NoError(t, db.Exec("DROP TABLE IF EXISTS upstream_keys").Error)
+					require.NoError(t, db.Exec("DROP TABLE IF EXISTS platform_site_accounts").Error)
+					require.NoError(t, db.Exec("DROP TABLE IF EXISTS abilities").Error)
+					require.NoError(t, db.Exec("DROP TABLE IF EXISTS channels").Error)
+				}
+			})
+			require.NoError(t, db.AutoMigrate(
+				&model.Channel{},
+				&model.Ability{},
+				&model.PlatformSiteAccount{},
+				&model.UpstreamKey{},
+				&model.UpstreamKeyAbility{},
+			))
+			versionQuery := "select version()"
+			if dialect.name == "sqlite" {
+				versionQuery = "select sqlite_version()"
+			}
+			var version string
+			require.NoError(t, db.Raw(versionQuery).Scan(&version).Error)
+			t.Logf("database: %s", version)
+
+			previousDB := model.DB
+			previousSecret := common.CryptoSecret
+			model.DB = db
+			common.CryptoSecret = "upstream-site-used-quota-matrix-secret"
+			t.Cleanup(func() {
+				model.DB = previousDB
+				common.CryptoSecret = previousSecret
+			})
+
+			priority := int64(1)
+			channel := &model.Channel{
+				Name:         "matrix-site",
+				Status:       common.ChannelStatusEnabled,
+				UpstreamKind: model.UpstreamKindPlatformSite,
+				Group:        "default",
+				Priority:     &priority,
+			}
+			require.NoError(t, db.Create(channel).Error)
+			account := &model.PlatformSiteAccount{
+				ChannelID:       channel.Id,
+				Platform:        model.PlatformNewAPI,
+				BaseURL:         "https://upstream.example",
+				ConversionRatio: 0.1,
+			}
+			require.NoError(t, db.Create(account).Error)
+
+			require.NoError(t, persistPlatformSiteSnapshot(context.Background(), account, PlatformSiteSnapshot{
+				Balance: 12,
+				Keys: []UpstreamKeySnapshot{
+					{
+						ExternalID:   "key-a",
+						Name:         "key-a",
+						Secret:       "sk-a",
+						Models:       []string{"gpt-4o"},
+						ModelsSynced: true,
+						UsedQuota:    6,
+						UsedQuotaSet: true,
+					},
+					{
+						ExternalID:   "key-b",
+						Name:         "key-b",
+						Secret:       "sk-b",
+						Models:       []string{"gpt-4o-mini"},
+						ModelsSynced: true,
+						UsedQuota:    9,
+						UsedQuotaSet: true,
+					},
+				},
+			}))
+
+			var savedAccount model.PlatformSiteAccount
+			require.NoError(t, db.Where("channel_id = ?", channel.Id).First(&savedAccount).Error)
+			assert.Equal(t, int64(15), savedAccount.UsedQuota)
+			var savedChannel model.Channel
+			require.NoError(t, db.First(&savedChannel, channel.Id).Error)
+			assert.Equal(t, int64(15), savedChannel.UsedQuota)
+
+			require.NoError(t, persistPlatformSiteSnapshot(context.Background(), account, PlatformSiteSnapshot{
+				Balance:      12,
+				UsedQuota:    0,
+				UsedQuotaSet: true,
+				Keys: []UpstreamKeySnapshot{{
+					ExternalID:   "key-a",
+					Name:         "key-a",
+					Secret:       "sk-a",
+					Models:       []string{"gpt-4o"},
+					ModelsSynced: true,
+					UsedQuota:    6,
+					UsedQuotaSet: true,
+				}},
+			}))
+
+			require.NoError(t, db.Where("channel_id = ?", channel.Id).First(&savedAccount).Error)
+			assert.Zero(t, savedAccount.UsedQuota)
+			require.NoError(t, db.First(&savedChannel, channel.Id).Error)
+			assert.Zero(t, savedChannel.UsedQuota)
+		})
+	}
 }
 
 func TestPersistPlatformSiteSnapshotPreservesManualRatioAndWeightOverrides(t *testing.T) {

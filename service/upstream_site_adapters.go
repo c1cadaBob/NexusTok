@@ -103,9 +103,19 @@ func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *Platfo
 		return PlatformSiteSnapshot{}, wrapPlatformSiteStage("NewAPI 当前用户", err)
 	}
 	self := firstNestedRecord(selfPayload, "user", "account", "profile")
+	usedQuota, usedQuotaSet := firstOptionalInt64(
+		self,
+		"used_quota",
+		"used",
+		"used_quota_amount",
+		"quota_used",
+		"usedQuota",
+		"total_used",
+	)
 	snapshot := PlatformSiteSnapshot{
-		Balance:   normalizeNewAPIQuota(firstFloat(self, "quota", "balance", "money", "credit"), quotaPerUnit),
-		UsedQuota: firstInt64(self, "used_quota", "used", "used_quota_amount"),
+		Balance:      normalizeNewAPIQuota(firstFloat(self, "quota", "balance", "money", "credit"), quotaPerUnit),
+		UsedQuota:    usedQuota,
+		UsedQuotaSet: usedQuotaSet,
 	}
 	groupRates := fetchNewAPIGroupRates(ctx, session)
 	tokens, err := fetchNewAPITokens(ctx, session)
@@ -127,6 +137,13 @@ func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *Platfo
 			ratio = groupRates[group]
 		}
 		itemModels := modelsFromRecord(token)
+		keyUsedQuota, keyUsedQuotaSet := firstOptionalInt64(
+			token,
+			"used_quota",
+			"used",
+			"quota_used",
+			"usedQuota",
+		)
 		item := UpstreamKeySnapshot{
 			ExternalID:               externalID,
 			Name:                     firstString(token, "name", "key_name", "token_name"),
@@ -137,7 +154,8 @@ func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *Platfo
 			SourceConversionRatioSet: ratioKeysPresent || groupRateSet,
 			ConversionRatio:          ratio,
 			ConversionRatioSet:       ratioKeysPresent || groupRateSet,
-			UsedQuota:                firstInt64(token, "used_quota", "used", "quota_used"),
+			UsedQuota:                keyUsedQuota,
+			UsedQuotaSet:             keyUsedQuotaSet,
 			RemainQuota:              newAPIRemainQuota(token),
 			ExpiresAt:                firstTime(token, "expired_time", "expires_at", "expire_at"),
 			Disabled:                 isUpstreamKeyDisabled(token),
@@ -264,9 +282,18 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 		return PlatformSiteSnapshot{}, wrapPlatformSiteStage("Sub2API 当前用户", err)
 	}
 	me := firstNestedRecord(mePayload, "user", "account", "profile")
+	usedQuota, usedQuotaSet := firstOptionalInt64(
+		me,
+		"used_quota",
+		"quota_used",
+		"used",
+		"usedQuota",
+		"total_used",
+	)
 	snapshot := PlatformSiteSnapshot{
 		Balance:      firstFloat(me, "balance", "quota", "credit"),
-		UsedQuota:    firstInt64(me, "used_quota", "quota_used", "used"),
+		UsedQuota:    usedQuota,
+		UsedQuotaSet: usedQuotaSet,
 		RelayBaseURL: strings.TrimRight(strings.TrimSpace(session.ModelBaseURL), "/"),
 	}
 	if payload, requestErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/user/profile", nil, nil); requestErr == nil {
@@ -274,11 +301,31 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 		if balance := firstFloat(profile, "balance", "quota", "credit"); balance > 0 {
 			snapshot.Balance = balance
 		}
+		if profileUsedQuota, profileUsedQuotaSet := firstOptionalInt64(
+			profile,
+			"used_quota",
+			"quota_used",
+			"used",
+			"usedQuota",
+			"total_used",
+		); profileUsedQuotaSet {
+			snapshot.UsedQuota = profileUsedQuota
+			snapshot.UsedQuotaSet = true
+		}
 	}
 	if payload, requestErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/usage/dashboard/stats", nil, nil); requestErr == nil {
 		usage := firstRecord(payload)
-		if used := firstInt64(usage, "total_actual_cost", "total_cost", "today_actual_cost"); used > 0 {
+		if used, usedSet := firstOptionalInt64(
+			usage,
+			"total_actual_cost",
+			"total_cost",
+			"today_actual_cost",
+			"used_quota",
+			"quota_used",
+			"used",
+		); usedSet {
 			snapshot.UsedQuota = used
+			snapshot.UsedQuotaSet = true
 		}
 	}
 	rates := map[string]float64{}
@@ -1110,6 +1157,13 @@ func fetchSub2APIKeys(ctx context.Context, session *PlatformSiteSession, rates m
 				ratio = firstGroupRate(rates, groupID, groupName)
 			}
 			itemModels := modelsFromRecord(item)
+			keyUsedQuota, keyUsedQuotaSet := firstOptionalInt64(
+				item,
+				"quota_used",
+				"used_quota",
+				"used",
+				"usedQuota",
+			)
 			keySnapshot := UpstreamKeySnapshot{
 				ExternalID:               externalID,
 				Name:                     firstString(item, "name", "key_name"),
@@ -1120,7 +1174,8 @@ func fetchSub2APIKeys(ctx context.Context, session *PlatformSiteSession, rates m
 				SourceConversionRatioSet: ratioKeysPresent || groupRateSet,
 				ConversionRatio:          ratio,
 				ConversionRatioSet:       ratioKeysPresent || groupRateSet,
-				UsedQuota:                firstInt64(item, "quota_used", "used_quota", "used"),
+				UsedQuota:                keyUsedQuota,
+				UsedQuotaSet:             keyUsedQuotaSet,
 				RemainQuota:              sub2APIRemainQuota(item),
 				ExpiresAt:                firstTime(item, "expires_at", "expired_at", "expire_at"),
 				Disabled:                 isUpstreamKeyDisabled(item),
@@ -1216,6 +1271,13 @@ func fetchSub2APIAdminKeys(ctx context.Context, session *PlatformSiteSession, ra
 				ratio = firstGroupRate(rates, groupID, groupName)
 			}
 			itemModels := modelsFromRecord(item)
+			keyUsedQuota, keyUsedQuotaSet := firstOptionalInt64(
+				item,
+				"quota_used",
+				"used_quota",
+				"used",
+				"usedQuota",
+			)
 			keySnapshot := UpstreamKeySnapshot{
 				ExternalID:               id,
 				Name:                     firstString(item, "name", "account_name"),
@@ -1226,7 +1288,8 @@ func fetchSub2APIAdminKeys(ctx context.Context, session *PlatformSiteSession, ra
 				SourceConversionRatioSet: ratioKeysPresent || groupRateSet,
 				ConversionRatio:          ratio,
 				ConversionRatioSet:       ratioKeysPresent || groupRateSet,
-				UsedQuota:                firstInt64(item, "quota_used", "used_quota", "used"),
+				UsedQuota:                keyUsedQuota,
+				UsedQuotaSet:             keyUsedQuotaSet,
 				RemainQuota:              sub2APIRemainQuota(item),
 				ExpiresAt:                firstTime(item, "expires_at", "expired_at", "expire_at"),
 				Disabled:                 isUpstreamKeyDisabled(item),

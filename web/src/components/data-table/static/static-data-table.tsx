@@ -71,6 +71,9 @@ export type StaticDataTableColumn<TData = unknown> = {
   id: string
   header: React.ReactNode
   pinned?: DataTablePinnedColumn['side']
+  width?: React.CSSProperties['width']
+  minWidth?: React.CSSProperties['minWidth']
+  maxWidth?: React.CSSProperties['maxWidth']
   className?: string
   cellClassName?: string | ((row: TData, index: number) => string | undefined)
   cell?: (row: TData, index: number) => React.ReactNode
@@ -122,12 +125,22 @@ function StaticDataTableWithColumns<TData>({
 
   return (
     <>
+      <colgroup>
+        {columns.map((column) => (
+          <col
+            key={column.id}
+            data-column-id={column.id}
+            style={getStaticColumnStyle(column)}
+          />
+        ))}
+      </colgroup>
       <TableHeader>
         <TableRow className={headerRowClassName}>
           {columns.map((column) => (
             <TableHead
               key={column.id}
               data-column-id={column.id}
+              style={getStaticColumnStyle(column)}
               className={cn(
                 column.className,
                 getStaticPinnedColumnClassName(column, 'header')
@@ -179,6 +192,7 @@ function StaticDataTableRow<TData>({
         <TableCell
           key={column.id}
           data-column-id={column.id}
+          style={getStaticColumnStyle(column)}
           className={cn(
             'max-w-full min-w-0 overflow-hidden',
             getStaticCellClassName(column, row, index),
@@ -243,6 +257,24 @@ function getStaticCellClassName<TData>(
   return typeof column.cellClassName === 'function'
     ? column.cellClassName(row, index)
     : column.cellClassName
+}
+
+function getStaticColumnStyle<TData>(
+  column: StaticDataTableColumn<TData>
+): React.CSSProperties | undefined {
+  if (
+    column.width === undefined &&
+    column.minWidth === undefined &&
+    column.maxWidth === undefined
+  ) {
+    return undefined
+  }
+
+  return {
+    width: column.width,
+    minWidth: column.minWidth,
+    maxWidth: column.maxWidth,
+  }
 }
 
 type StaticDataTableEmptyRowProps = {

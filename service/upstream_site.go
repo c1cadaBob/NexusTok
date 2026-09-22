@@ -73,6 +73,7 @@ type UpstreamKeySnapshot struct {
 	ConversionRatio          float64
 	ConversionRatioSet       bool
 	UsedQuota                int64
+	UsedQuotaSet             bool
 	RemainQuota              *int64
 	ExpiresAt                *time.Time
 	Disabled                 bool
@@ -82,6 +83,7 @@ type UpstreamKeySnapshot struct {
 type PlatformSiteSnapshot struct {
 	Balance      float64
 	UsedQuota    int64
+	UsedQuotaSet bool
 	Models       []string
 	Keys         []UpstreamKeySnapshot
 	RelayBaseURL string
@@ -397,6 +399,16 @@ func firstInt64(record map[string]any, keys ...string) int64 {
 	return int64(value)
 }
 
+func firstOptionalInt64(record map[string]any, keys ...string) (int64, bool) {
+	for _, key := range keys {
+		if _, exists := record[key]; !exists {
+			continue
+		}
+		return firstInt64(record, key), true
+	}
+	return 0, false
+}
+
 func firstTime(record map[string]any, keys ...string) *time.Time {
 	for _, key := range keys {
 		value, exists := record[key]
@@ -623,6 +635,22 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 	}
 	if math.IsNaN(snapshot.Balance) || math.IsInf(snapshot.Balance, 0) ||
 		snapshot.UsedQuota < 0 {
+		return fmt.Errorf("%w: 站点额度数据无效", ErrPlatformSiteResponse)
+	}
+	for _, key := range snapshot.Keys {
+		if key.UsedQuota < 0 {
+			return fmt.Errorf("%w: 密钥额度数据无效", ErrPlatformSiteResponse)
+		}
+	}
+	usedQuota := snapshot.UsedQuota
+	if !snapshot.UsedQuotaSet && snapshot.UsedQuota == 0 {
+		var err error
+		usedQuota, err = sumUpstreamKeyUsedQuota(snapshot.Keys)
+		if err != nil {
+			return fmt.Errorf("%w: %v", ErrPlatformSiteResponse, err)
+		}
+	}
+	if usedQuota < 0 {
 		return fmt.Errorf("%w: 站点额度数据无效", ErrPlatformSiteResponse)
 	}
 	now := common.GetTimestamp()
@@ -854,20 +882,20 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 			}
 		}
 		channel.Balance = snapshot.Balance
-		channel.UsedQuota = snapshot.UsedQuota
+		channel.UsedQuota = usedQuota
 		if err := model.RebuildPlatformSiteChannelModels(tx, account.ChannelID); err != nil {
 			return err
 		}
 		if err := tx.Model(&channel).Select("balance", "used_quota", "balance_updated_time").Updates(map[string]any{
 			"balance":              snapshot.Balance,
-			"used_quota":           snapshot.UsedQuota,
+			"used_quota":           usedQuota,
 			"balance_updated_time": now,
 		}).Error; err != nil {
 			return err
 		}
 		accountUpdates := map[string]any{
 			"balance":    snapshot.Balance,
-			"used_quota": snapshot.UsedQuota,
+			"used_quota": usedQuota,
 		}
 		relayBaseURL := strings.TrimRight(strings.TrimSpace(snapshot.RelayBaseURL), "/")
 		if relayBaseURL == "" && account.Platform == model.PlatformSub2API {
@@ -891,6 +919,21 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 		}
 		return nil
 	})
+}
+
+func sumUpstreamKeyUsedQuota(keys []UpstreamKeySnapshot) (int64, error) {
+	const maxInt64 = int64(^uint64(0) >> 1)
+	total := int64(0)
+	for _, key := range keys {
+		if !key.UsedQuotaSet && key.UsedQuota == 0 {
+			continue
+		}
+		if total > maxInt64-key.UsedQuota {
+			return 0, errors.New("密钥已用额度汇总超出范围")
+		}
+		total += key.UsedQuota
+	}
+	return total, nil
 }
 
 func upstreamKeySyncErrorReason(reason string) string {

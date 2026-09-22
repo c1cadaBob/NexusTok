@@ -1064,6 +1064,9 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
       {
         id: 'models',
         header: t('Models'),
+        width: '334.95px',
+        minWidth: '334.95px',
+        maxWidth: '334.95px',
         className: 'w-[334.95px] min-w-[334.95px] max-w-[334.95px] text-left',
         cellClassName:
           'w-[334.95px] min-w-[334.95px] max-w-[334.95px] text-left',
@@ -1132,7 +1135,7 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
     <div className='border-border bg-muted/20 relative z-20 w-full max-w-none min-w-0 overflow-visible border-y px-3 py-3'>
       <StaticDataTable
         className='relative min-w-0 !overflow-visible !rounded-none !border-0 !bg-transparent'
-        tableClassName='bg-background w-max min-w-full'
+        tableClassName='bg-background w-max min-w-full table-fixed'
         tableProps={{ withContainer: false }}
         data={keys}
         columns={columns}
