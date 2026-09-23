@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { ExternalLink, Loader2, RefreshCw, ShieldCheck } from 'lucide-react'
 import { useFormContext, useWatch } from 'react-hook-form'
@@ -42,6 +42,56 @@ type PlatformSiteFieldsProps = {
 
 const RATIO_COMPARE_EPSILON = 0.0000001
 const RATIO_INPUT_PRECISION = 1000000
+
+function openPlatformCaptureURL(
+  url: string,
+  targetWindow?: Window | null
+): boolean {
+  const targetURL = url.trim()
+  if (!targetURL) return false
+  try {
+    if (targetWindow && !targetWindow.closed) {
+      targetWindow.location.href = targetURL
+      targetWindow.focus()
+      return true
+    }
+  } catch {
+    // 复用预打开窗口失败时继续尝试创建新标签页。
+  }
+  try {
+    const opened = window.open(targetURL, '_blank')
+    if (!opened) return false
+    try {
+      opened.opener = null
+    } catch {
+      // 部分浏览器不允许修改 opener；打开结果仍然可用。
+    }
+    opened.focus()
+    return true
+  } catch {
+    return false
+  }
+}
+
+function formatPlatformAuthType(
+  value: string | undefined,
+  t: (key: string) => string
+): string {
+  switch (value) {
+    case 'password':
+      return t('Username and password')
+    case 'auto':
+      return t('Automatic configuration')
+    case 'access_token':
+      return t('Access token')
+    case 'admin_key':
+      return t('Admin Key')
+    case 'cookie':
+      return t('Cookie')
+    default:
+      return value || '-'
+  }
+}
 
 function normalizePlatformNumber(
   value: number | null | undefined,
@@ -109,6 +159,10 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
       : undefined
   const ratioIsOverridden = watchedRatioIsOverridden === true
   const completedCaptureRef = useRef('')
+  const pendingCaptureWindowRef = useRef<Window | null>(null)
+  const activeCaptureWindowRef = useRef<Window | null>(null)
+  const [handoffURL, setHandoffURL] = useState('')
+  const [showHandoffFallback, setShowHandoffFallback] = useState(false)
 
   const captureStatusQuery = useQuery({
     queryKey: ['platform-site-capture-status', captureID],
@@ -123,6 +177,7 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
   const captureMutation = useMutation({
     mutationFn: () => {
       if (
+        authType !== 'auto' &&
         authType !== 'access_token' &&
         authType !== 'admin_key' &&
         authType !== 'cookie'
@@ -146,17 +201,36 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
         shouldValidate: true,
       })
       completedCaptureRef.current = ''
-      const opened = window.open(
-        response.data.handoff_url,
-        '_blank',
-        'noopener,noreferrer'
-      )
+      setHandoffURL(response.data.handoff_url)
+      const targetWindow = pendingCaptureWindowRef.current
+      pendingCaptureWindowRef.current = null
+      const hasTargetWindow = Boolean(targetWindow && !targetWindow.closed)
+      if (hasTargetWindow) {
+        activeCaptureWindowRef.current = targetWindow
+      }
+      const opened =
+        hasTargetWindow &&
+        openPlatformCaptureURL(response.data.handoff_url, targetWindow)
       if (!opened) {
-        toast.error(t('Browser blocked the upstream capture tab.'))
+        setShowHandoffFallback(true)
+        toast.info(
+          t(
+            'Browser blocked the upstream capture tab. Use the button below to continue.'
+          )
+        )
+      } else {
+        setShowHandoffFallback(false)
       }
       toast.success(t('Capture session created'))
     },
     onError: (error: unknown) => {
+      if (
+        pendingCaptureWindowRef.current &&
+        !pendingCaptureWindowRef.current.closed
+      ) {
+        pendingCaptureWindowRef.current.close()
+      }
+      pendingCaptureWindowRef.current = null
       toast.error(
         error instanceof Error
           ? error.message
@@ -172,9 +246,51 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
     if (!captureStatus || captureStatus.status !== 'completed') return
     if (completedCaptureRef.current === captureStatus.capture_id) return
     completedCaptureRef.current = captureStatus.capture_id
+    setShowHandoffFallback(false)
     toast.success(t('Upstream login state captured'))
     onCaptureCompleted?.(captureStatus.capture_id)
   }, [captureStatus, onCaptureCompleted, t])
+
+  function handleStartCapture() {
+    if (props.disabled || captureMutation.isPending || !(baseURL || '').trim()) {
+      return
+    }
+    try {
+      pendingCaptureWindowRef.current = window.open('about:blank', '_blank')
+      activeCaptureWindowRef.current = pendingCaptureWindowRef.current
+      if (pendingCaptureWindowRef.current) {
+        try {
+          pendingCaptureWindowRef.current.opener = null
+        } catch {
+          // 部分浏览器不允许修改 opener；仍保留窗口引用用于后续导航。
+        }
+      }
+    } catch {
+      pendingCaptureWindowRef.current = null
+      activeCaptureWindowRef.current = null
+    }
+    if (!pendingCaptureWindowRef.current) {
+      setShowHandoffFallback(true)
+      toast.info(
+        t(
+          'Browser blocked the upstream capture tab. Use the button below to continue.'
+        )
+      )
+    }
+    captureMutation.mutate()
+  }
+
+  function handleOpenHandoff() {
+    const opened = openPlatformCaptureURL(
+      handoffURL || captureStatus?.handoff_url || '',
+      activeCaptureWindowRef.current
+    )
+    if (!opened) {
+      toast.error(t('Capture page is not ready yet'))
+      return
+    }
+    setShowHandoffFallback(false)
+  }
 
   useEffect(() => {
     if (ratioIsOverridden || previewRatio === undefined) {
@@ -204,6 +320,19 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
       })
     }
   }, [channelType, form, platform])
+
+  useEffect(() => {
+    if (
+      authType === 'access_token' ||
+      authType === 'admin_key' ||
+      authType === 'cookie'
+    ) {
+      form.setValue('platform_site_auth_type', 'auto', {
+        shouldDirty: false,
+        shouldValidate: true,
+      })
+    }
+  }, [authType, form])
 
   return (
     <fieldset
@@ -295,13 +424,13 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
                     form.setValue('platform_site_cookie', '')
                   }
                   form.setValue('platform_site_capture_id', '')
+                  setHandoffURL('')
+                  setShowHandoffFallback(false)
                   completedCaptureRef.current = ''
                 }}
                 items={[
                   { value: 'password', label: t('Username and password') },
-                  { value: 'access_token', label: t('Access token') },
-                  { value: 'admin_key', label: t('Admin Key') },
-                  { value: 'cookie', label: t('Cookie') },
+                  { value: 'auto', label: t('Automatic configuration') },
                 ]}
               >
                 <FormControl>
@@ -313,11 +442,9 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
                   <SelectItem value='password'>
                     {t('Username and password')}
                   </SelectItem>
-                  <SelectItem value='access_token'>
-                    {t('Access token')}
+                  <SelectItem value='auto'>
+                    {t('Automatic configuration')}
                   </SelectItem>
-                  <SelectItem value='admin_key'>{t('Admin Key')}</SelectItem>
-                  <SelectItem value='cookie'>{t('Cookie')}</SelectItem>
                 </SelectContent>
               </Select>
               <FormMessage />
@@ -395,14 +522,14 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
           </div>
           <p className='text-muted-foreground text-xs'>
             {t(
-              'Open the upstream site and let the Capture Helper collect the selected authentication method. Tokens, cookies, and Admin Keys are never entered here.'
+              'Open the upstream site and let the Capture Helper choose the best available authentication method. Tokens, cookies, and Admin Keys are never entered here.'
             )}
           </p>
           <div className='flex flex-wrap gap-2'>
             <Button
               type='button'
               size='sm'
-              onClick={() => captureMutation.mutate()}
+              onClick={handleStartCapture}
               disabled={
                 props.disabled ||
                 captureMutation.isPending ||
@@ -416,6 +543,17 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
               )}
               {t('Capture upstream login state')}
             </Button>
+            {showHandoffFallback && (handoffURL || captureStatus?.handoff_url) && (
+              <Button
+                type='button'
+                variant='outline'
+                size='sm'
+                onClick={handleOpenHandoff}
+              >
+                <ExternalLink className='size-4' aria-hidden='true' />
+                {t('Open upstream capture page')}
+              </Button>
+            )}
             {captureStatus?.helper_install_url && (
               <Button
                 type='button'
@@ -457,7 +595,8 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
           {captureStatus?.summary && (
             <div className='text-muted-foreground grid gap-1 text-xs'>
               <span>
-                {t('Authentication method')}: {captureStatus.summary.auth_type}
+                {t('Authentication method')}:{' '}
+                {formatPlatformAuthType(captureStatus.summary.auth_type, t)}
               </span>
               {captureStatus.summary.access_token_masked && (
                 <span>

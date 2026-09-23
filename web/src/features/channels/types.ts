@@ -429,12 +429,15 @@ export type UpstreamAuthType =
   | 'access_token'
   | 'admin_key'
   | 'cookie'
+export type PlatformSiteCaptureAuthType =
+  | 'auto'
+  | Exclude<UpstreamAuthType, 'password'>
 
 export interface PlatformSiteInput {
   platform: 'newapi' | 'sub2api'
   base_url: string
   relay_base_url?: string
-  auth_type: UpstreamAuthType
+  auth_type: UpstreamAuthType | 'auto'
   capture_id?: string
   username?: string
   password?: string
@@ -514,13 +517,13 @@ export interface UpstreamSiteStatusResponse {
 export interface PlatformSiteCaptureStartRequest {
   platform: 'newapi' | 'sub2api'
   base_url: string
-  auth_type: Exclude<UpstreamAuthType, 'password'>
+  auth_type: PlatformSiteCaptureAuthType
   channel_id?: number
 }
 
 export interface PlatformSiteCaptureSummary {
   platform: string
-  auth_type: Exclude<UpstreamAuthType, 'password'>
+  auth_type: Exclude<PlatformSiteCaptureAuthType, 'auto'>
   base_url: string
   management_base_url?: string
   relay_base_url?: string
@@ -545,7 +548,7 @@ export interface PlatformSiteCaptureStartResponse {
     expires_at: number
     platform: string
     base_url: string
-    auth_type: Exclude<UpstreamAuthType, 'password'>
+    auth_type: PlatformSiteCaptureAuthType
     origin: string
     userscript_url: string
     helper_install_url: string
@@ -564,7 +567,7 @@ export interface PlatformSiteCaptureStatusResponse {
     expires_at: number
     platform: string
     base_url: string
-    auth_type: Exclude<UpstreamAuthType, 'password'>
+    auth_type: PlatformSiteCaptureAuthType
     origin: string
     userscript_url?: string
     helper_install_url?: string

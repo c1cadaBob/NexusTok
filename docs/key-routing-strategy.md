@@ -327,11 +327,11 @@ GET /api/channel/search?model=<model>&sort_by=model_ratio&sort_order=asc
 `PlatformSiteAccount.base_url`，页面配置发现的 OpenAI 兼容地址使用
 `relay_base_url`，父渠道基础地址使用实际转发地址并避免重复 `/v1`。
 
-平台站点的 `password` 认证继续手动输入用户名和密码；`access_token`、`admin_key`
-和 `cookie` 通过短期、管理员绑定、Origin 精确匹配、一次性消费的浏览器 Capture
-Session 采集。采集不到 Admin Key 或 HttpOnly Cookie 时失败，不允许手动补填或
-静默降级认证类型；前端表单只提交 `capture_id`，凭据最终仍整体加密保存。同步
-失败继续保留最近一次成功快照。
+平台站点的 `password` 认证继续手动输入用户名和密码；其他认证统一通过“自动配置”
+入口和短期、管理员绑定、Origin 精确匹配、一次性消费的浏览器 Capture Session
+采集。采集过程中按 Access Token/Refresh Token、Admin Key、Cookie 的顺序自动选择；
+采集不到任何可用凭据时失败，不允许手动补填或静默改变认证类型。前端表单只提交
+`capture_id`，凭据最终仍整体加密保存。同步失败继续保留最近一次成功快照。
 
 标签模式以标签内最小倍率作为标签排序值，按标签分页并返回该页标签下的全部渠道。没有有效倍率的标签排在最后。
 

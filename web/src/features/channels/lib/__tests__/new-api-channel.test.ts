@@ -216,14 +216,14 @@ describe('New API channel', () => {
     expect(result.success).toBe(true)
   })
 
-  test('sends only capture_id for non-password platform authentication', () => {
+  test('sends only capture_id for automatic platform authentication', () => {
     const payload = transformFormDataToCreatePayload({
       ...CHANNEL_FORM_DEFAULT_VALUES,
       name: 'Captured platform site',
       type: CHANNEL_TYPE_SUB2_API,
       upstream_kind: 'platform_site',
       platform_site_platform: 'sub2api',
-      platform_site_auth_type: 'access_token',
+      platform_site_auth_type: 'auto',
       platform_site_capture_id: 'capture-123',
       platform_site_access_token: 'should-not-be-sent',
       base_url: 'http://127.0.0.1:8080',
@@ -233,7 +233,7 @@ describe('New API channel', () => {
     })
 
     expect(payload.platform_site).toMatchObject({
-      auth_type: 'access_token',
+      auth_type: 'auto',
       capture_id: 'capture-123',
     })
     expect(payload.platform_site?.access_token).toBeUndefined()

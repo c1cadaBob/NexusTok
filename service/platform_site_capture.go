@@ -21,8 +21,10 @@ const (
 	platformSiteCaptureStatusPending  = "pending"
 	platformSiteCaptureStatusComplete = "completed"
 	platformSiteCaptureStatusFailed   = "failed"
-	platformSiteCaptureHelperVersion  = "1.1.0"
+	platformSiteCaptureHelperVersion  = "1.2.0"
 	platformSiteCaptureHandoffParam   = "nexustok_capture"
+
+	PlatformSiteCaptureAuthAuto = "auto"
 )
 
 type PlatformSiteCaptureStartRequest struct {
@@ -166,10 +168,8 @@ func StartPlatformSiteCaptureSession(
 	if platform != model.PlatformNewAPI && platform != model.PlatformSub2API {
 		return nil, errorsForCapture("平台站点类型不受支持")
 	}
-	if authType != model.UpstreamAuthAccessToken &&
-		authType != model.UpstreamAuthAdminKey &&
-		authType != model.UpstreamAuthCookie {
-		return nil, errorsForCapture("仅支持 Access Token、Admin Key 和 Cookie 采集")
+	if !isPlatformSiteCaptureAuthType(authType) {
+		return nil, errorsForCapture("仅支持自动配置、Access Token、Admin Key 和 Cookie 采集")
 	}
 	baseURL, err := normalizePlatformSiteURL(request.BaseURL)
 	if err != nil {
@@ -271,7 +271,10 @@ func CompletePlatformSiteCaptureSession(
 		return nil, errorsForCapture("采集平台与会话不匹配")
 	}
 	if authType := strings.ToLower(strings.TrimSpace(request.AuthType)); authType != "" && authType != record.AuthType {
-		return nil, errorsForCapture("采集认证方式与会话不匹配")
+		if record.AuthType != PlatformSiteCaptureAuthAuto ||
+			(authType != PlatformSiteCaptureAuthAuto && !isPlatformSiteScriptAuthType(authType)) {
+			return nil, errorsForCapture("采集认证方式与会话不匹配")
+		}
 	}
 	origin := strings.TrimRight(strings.TrimSpace(request.Origin), "/")
 	if origin == "" {
@@ -339,7 +342,10 @@ func ResolvePlatformSiteCapture(
 		return PlatformSiteCaptureResolution{}, errorsForCapture("采集平台与渠道不匹配")
 	}
 	if normalized := strings.ToLower(strings.TrimSpace(authType)); normalized != "" && normalized != record.AuthType {
-		return PlatformSiteCaptureResolution{}, errorsForCapture("采集认证方式与渠道不匹配")
+		if normalized != PlatformSiteCaptureAuthAuto &&
+			!(record.AuthType == PlatformSiteCaptureAuthAuto && normalized == record.Credential.AuthType) {
+			return PlatformSiteCaptureResolution{}, errorsForCapture("采集认证方式与渠道不匹配")
+		}
 	}
 	return PlatformSiteCaptureResolution{
 		Platform:          record.Platform,
@@ -477,6 +483,15 @@ func buildPlatformSiteCaptureResolution(
 		relayBaseURL = apiBaseURL
 	}
 	authType := record.AuthType
+	strictAuthType := authType != PlatformSiteCaptureAuthAuto
+	if authType == PlatformSiteCaptureAuthAuto {
+		authType = selectPlatformSiteCaptureAuthType(request)
+		if authType == "" {
+			return PlatformSiteCaptureResolution{}, nil, errorsForCapture("自动配置未采集到可用登录态")
+		}
+	} else if !isPlatformSiteScriptAuthType(authType) {
+		return PlatformSiteCaptureResolution{}, nil, errorsForCapture("采集认证方式不受支持")
+	}
 	credential := model.PlatformSiteCredential{AuthType: authType}
 	switch authType {
 	case model.UpstreamAuthAccessToken:
@@ -484,7 +499,7 @@ func buildPlatformSiteCaptureResolution(
 		if accessToken == "" {
 			return PlatformSiteCaptureResolution{}, nil, errorsForCapture("未采集到 Access Token")
 		}
-		if strings.TrimSpace(request.AdminKey) != "" || strings.TrimSpace(request.Cookie) != "" {
+		if strictAuthType && (strings.TrimSpace(request.AdminKey) != "" || strings.TrimSpace(request.Cookie) != "") {
 			return PlatformSiteCaptureResolution{}, nil, errorsForCapture("采集结果不是 Access Token")
 		}
 		userID := captureUserID(request)
@@ -500,9 +515,9 @@ func buildPlatformSiteCaptureResolution(
 		if adminKey == "" {
 			return PlatformSiteCaptureResolution{}, nil, errorsForCapture("未采集到 Admin Key")
 		}
-		if strings.TrimSpace(request.AccessToken) != "" ||
+		if strictAuthType && (strings.TrimSpace(request.AccessToken) != "" ||
 			strings.TrimSpace(request.RefreshToken) != "" ||
-			strings.TrimSpace(request.Cookie) != "" {
+			strings.TrimSpace(request.Cookie) != "") {
 			return PlatformSiteCaptureResolution{}, nil, errorsForCapture("采集结果不是 Admin Key")
 		}
 		credential.AdminKey = adminKey
@@ -511,9 +526,9 @@ func buildPlatformSiteCaptureResolution(
 		if cookie == "" {
 			return PlatformSiteCaptureResolution{}, nil, errorsForCapture("未读取到可用 Cookie，HttpOnly Cookie 无法通过浏览器脚本采集")
 		}
-		if strings.TrimSpace(request.AccessToken) != "" ||
+		if strictAuthType && (strings.TrimSpace(request.AccessToken) != "" ||
 			strings.TrimSpace(request.RefreshToken) != "" ||
-			strings.TrimSpace(request.AdminKey) != "" {
+			strings.TrimSpace(request.AdminKey) != "") {
 			return PlatformSiteCaptureResolution{}, nil, errorsForCapture("采集结果不是 Cookie")
 		}
 		credential.Cookie = cookie
@@ -545,6 +560,33 @@ func buildPlatformSiteCaptureResolution(
 		RelayBaseURL:      relayBaseURL,
 		APIBaseURL:        apiBaseURL,
 	}, summary, nil
+}
+
+func isPlatformSiteScriptAuthType(authType string) bool {
+	switch strings.ToLower(strings.TrimSpace(authType)) {
+	case model.UpstreamAuthAccessToken, model.UpstreamAuthAdminKey, model.UpstreamAuthCookie:
+		return true
+	default:
+		return false
+	}
+}
+
+func isPlatformSiteCaptureAuthType(authType string) bool {
+	authType = strings.ToLower(strings.TrimSpace(authType))
+	return authType == PlatformSiteCaptureAuthAuto || isPlatformSiteScriptAuthType(authType)
+}
+
+func selectPlatformSiteCaptureAuthType(request PlatformSiteCaptureCompleteRequest) string {
+	if strings.TrimSpace(request.AccessToken) != "" {
+		return model.UpstreamAuthAccessToken
+	}
+	if strings.TrimSpace(request.AdminKey) != "" {
+		return model.UpstreamAuthAdminKey
+	}
+	if strings.TrimSpace(request.Cookie) != "" {
+		return model.UpstreamAuthCookie
+	}
+	return ""
 }
 
 func firstCaptureURL(values ...string) (string, error) {
@@ -712,6 +754,10 @@ func maskPlatformSiteCaptureToken(value string) string {
 func safePlatformSiteCaptureFailure(value string) string {
 	lower := strings.ToLower(value)
 	switch {
+	case strings.Contains(lower, "automatic") ||
+		strings.Contains(lower, "auto") ||
+		strings.Contains(value, "自动配置"):
+		return "自动配置未采集到可用登录态"
 	case strings.Contains(lower, "cookie"):
 		return "未读取到可用 Cookie"
 	case strings.Contains(lower, "admin"):
@@ -1110,6 +1156,138 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
     });
   }
 
+  async function fillCookieCredential(result) {
+    result.cookie = await readCookieHeader();
+    if (!result.cookie) throw new Error('cookie is not readable; HttpOnly cookie cannot be captured');
+  }
+
+  function fillAdminKeyCredential(result) {
+    result.admin_key = readNamed(
+      ['admin_key', 'adminKey', 'admin_token', 'adminToken', 'x-api-key'],
+      ['admin_key', 'adminkey', 'admin_token', 'admintoken', 'x-api-key']
+    );
+    if (!result.admin_key) throw new Error('admin key was not found in an explicitly named field');
+  }
+
+  async function fillAccessTokenCredential(result, platform) {
+    const apiBase = result.api_base_url;
+    let accessToken = readHashValue(
+      ['auth_token', 'access_token', 'token', 'jwt']
+    ) || readNamed(
+      ['auth_token', 'access_token', 'accessToken', 'token', 'jwt'],
+      ['auth_token', 'access_token', 'accesstoken', 'token', 'jwt']
+    ) || readDeepStorageValue(
+      ['access_token', 'auth_token', 'token', 'jwt']
+    );
+    let refreshToken = readHashValue(
+      ['refresh_token', 'refreshToken', 'rt']
+    ) || readNamed(
+      ['refresh_token', 'refreshToken'],
+      ['refresh_token', 'refreshtoken']
+    ) || readDeepStorageValue(
+      ['refresh_token', 'refreshtoken', 'rt']
+    );
+    let expiresAt = normalizeExpiresAt(readHashValue(
+      ['token_expires_at', 'tokenExpiresAt', 'expires_at', 'expiresAt']
+    ) || readNamed(
+      ['token_expires_at', 'tokenExpiresAt', 'expires_at', 'expiresAt'],
+      ['token_expires_at', 'tokenexpiresat', 'expires_at', 'expiresat']
+    ) || readDeepStorageValue(
+      ['token_expires_at', 'tokenexpiresat', 'expires_at', 'expiresat']
+    ));
+    const storedAuthUser = readStructured([
+      'auth_user',
+      'authUser',
+      'current_user',
+      'currentUser',
+      'user',
+    ]);
+    const storedUserID = nestedValue(
+      storedAuthUser,
+      ['id', 'user_id', 'userid', 'uid', 'sub'],
+      0
+    );
+    if (/^\d+$/.test(text(storedUserID))) {
+      result.user_id = text(storedUserID);
+    }
+    if (!accessToken && platform === 'newapi') {
+      const bundle = await readNewAPIAuthBundle(apiBase);
+      if (bundle) {
+        accessToken = bundle.accessToken;
+        refreshToken = bundle.refreshToken;
+        expiresAt = bundle.expiresAt;
+        result.auth_user = bundle.authUser;
+      }
+    }
+    if (!accessToken && platform === 'sub2api') {
+      const restored = await restoreSub2APIBrowserSession(apiBase);
+      if (restored) {
+        accessToken = restored.accessToken;
+        refreshToken = restored.refreshToken;
+        expiresAt = restored.expiresAt;
+        result.auth_user = restored.authUser;
+      }
+    }
+    if (platform === 'sub2api' && refreshToken && expiresAt > 0 && expiresAt < Math.floor(Date.now() / 1000) + 300) {
+      try {
+        const refreshed = await jsonRequest(new URL('/api/v1/auth/refresh', apiBase).toString(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refresh_token: refreshToken }),
+        });
+        accessToken = tokenFromResponse(refreshed) || accessToken;
+        refreshToken = refreshTokenFromResponse(refreshed) || refreshToken;
+        expiresAt = expiryFromResponse(refreshed) || expiresAt;
+      } catch (_) {}
+    }
+    if (!accessToken) throw new Error('access token was not found in an explicitly named field');
+    const authHeaders = { Authorization: 'Bearer ' + accessToken };
+    let validatedUser = null;
+    const mePaths = platform === 'sub2api'
+      ? ['/api/v1/auth/me', '/api/auth/me']
+      : ['/api/user/self', '/api/user/me', '/api/user/profile', '/api/user/info'];
+    for (const mePath of mePaths) {
+      try {
+        const me = await jsonRequest(new URL(mePath, apiBase).toString(), { headers: authHeaders });
+        validatedUser = me && (me.data || me.user || me);
+        const id = nestedValue(validatedUser, ['id', 'user_id', 'userid', 'uid', 'sub'], 0);
+        if (/^\d+$/.test(text(id))) result.user_id = text(id);
+        break;
+      } catch (_) {}
+    }
+    if (!validatedUser) throw new Error('access token validation failed');
+    result.auth_user = validatedUser;
+    if (!result.user_id && platform === 'newapi') {
+      result.user_id = userIDFromToken(accessToken);
+    }
+    result.access_token = accessToken;
+    result.refresh_token = refreshToken;
+    if (expiresAt > 0) result.token_expires_at = expiresAt;
+    result.username = text(nestedValue(
+      result.auth_user,
+      ['username', 'user_name', 'display_name', 'name'],
+      0
+    ));
+    result.email = text(nestedValue(result.auth_user, ['email', 'mail'], 0));
+    delete result.auth_user;
+  }
+
+  async function fillSelectedCredential(result, platform, authType) {
+    if (authType === 'access_token') {
+      await fillAccessTokenCredential(result, platform);
+      return;
+    }
+    if (authType === 'admin_key') {
+      fillAdminKeyCredential(result);
+      return;
+    }
+    if (authType === 'cookie') {
+      await fillCookieCredential(result);
+      return;
+    }
+    throw new Error('unsupported capture auth type');
+  }
+
   async function collect(payload) {
     if (!payload || !payload.capture_secret || payload.origin !== window.location.origin) {
       throw new Error('capture handoff is invalid');
@@ -1120,123 +1298,27 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
       capture_secret: payload.capture_secret,
       complete_url: payload.complete_url,
       capture_source: 'capture_helper',
-      helper_version: config.version || '1.1.0',
+      helper_version: config.version || '1.2.0',
       platform,
       auth_type: authType,
       base_url: window.location.origin,
       origin: window.location.origin,
       api_base_url: apiBaseURL(payload),
     };
-    if (authType === 'cookie') {
-      result.cookie = await readCookieHeader();
-      if (!result.cookie) throw new Error('cookie is not readable; HttpOnly cookie cannot be captured');
-    } else if (authType === 'admin_key') {
-      result.admin_key = readNamed(
-        ['admin_key', 'adminKey', 'admin_token', 'adminToken', 'x-api-key'],
-        ['admin_key', 'adminkey', 'admin_token', 'admintoken', 'x-api-key']
-      );
-      if (!result.admin_key) throw new Error('admin key was not found in an explicitly named field');
-    } else if (authType === 'access_token') {
-      const apiBase = result.api_base_url;
-      let accessToken = readHashValue(
-        ['auth_token', 'access_token', 'token', 'jwt']
-      ) || readNamed(
-        ['auth_token', 'access_token', 'accessToken', 'token', 'jwt'],
-        ['auth_token', 'access_token', 'accesstoken', 'token', 'jwt']
-      ) || readDeepStorageValue(
-        ['access_token', 'auth_token', 'token', 'jwt']
-      );
-      let refreshToken = readHashValue(
-        ['refresh_token', 'refreshToken', 'rt']
-      ) || readNamed(
-        ['refresh_token', 'refreshToken'],
-        ['refresh_token', 'refreshtoken']
-      ) || readDeepStorageValue(
-        ['refresh_token', 'refreshtoken', 'rt']
-      );
-      let expiresAt = normalizeExpiresAt(readHashValue(
-        ['token_expires_at', 'tokenExpiresAt', 'expires_at', 'expiresAt']
-      ) || readNamed(
-        ['token_expires_at', 'tokenExpiresAt', 'expires_at', 'expiresAt'],
-        ['token_expires_at', 'tokenexpiresat', 'expires_at', 'expiresat']
-      ) || readDeepStorageValue(
-        ['token_expires_at', 'tokenexpiresat', 'expires_at', 'expiresat']
-      ));
-      const storedAuthUser = readStructured([
-        'auth_user',
-        'authUser',
-        'current_user',
-        'currentUser',
-        'user',
-      ]);
-      const storedUserID = nestedValue(
-        storedAuthUser,
-        ['id', 'user_id', 'userid', 'uid', 'sub'],
-        0
-      );
-      if (/^\d+$/.test(text(storedUserID))) {
-        result.user_id = text(storedUserID);
-      }
-      if (!accessToken && platform === 'newapi') {
-        const bundle = await readNewAPIAuthBundle(apiBase);
-        if (bundle) {
-          accessToken = bundle.accessToken;
-          refreshToken = bundle.refreshToken;
-          expiresAt = bundle.expiresAt;
-          result.auth_user = bundle.authUser;
-        }
-      }
-      if (!accessToken && platform === 'sub2api') {
-        const restored = await restoreSub2APIBrowserSession(apiBase);
-        if (restored) {
-          accessToken = restored.accessToken;
-          refreshToken = restored.refreshToken;
-          expiresAt = restored.expiresAt;
-          result.auth_user = restored.authUser;
-        }
-      }
-      if (platform === 'sub2api' && refreshToken && expiresAt > 0 && expiresAt < Math.floor(Date.now() / 1000) + 300) {
+    if (authType === 'auto') {
+      let selected = null;
+      for (const candidateType of ['access_token', 'admin_key', 'cookie']) {
+        const candidate = { ...result, auth_type: candidateType };
         try {
-          const refreshed = await jsonRequest(new URL('/api/v1/auth/refresh', apiBase).toString(), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ refresh_token: refreshToken }),
-          });
-          accessToken = tokenFromResponse(refreshed) || accessToken;
-          refreshToken = refreshTokenFromResponse(refreshed) || refreshToken;
-          expiresAt = expiryFromResponse(refreshed) || expiresAt;
-        } catch (_) {}
-      }
-      if (!accessToken) throw new Error('access token was not found in an explicitly named field');
-      const authHeaders = { Authorization: 'Bearer ' + accessToken };
-      let validatedUser = null;
-      const mePaths = platform === 'sub2api'
-        ? ['/api/v1/auth/me', '/api/auth/me']
-        : ['/api/user/self', '/api/user/me', '/api/user/profile', '/api/user/info'];
-      for (const mePath of mePaths) {
-        try {
-          const me = await jsonRequest(new URL(mePath, apiBase).toString(), { headers: authHeaders });
-          validatedUser = me && (me.data || me.user || me);
-          const id = nestedValue(validatedUser, ['id', 'user_id', 'userid', 'uid', 'sub'], 0);
-          if (/^\d+$/.test(text(id))) result.user_id = text(id);
+          await fillSelectedCredential(candidate, platform, candidateType);
+          selected = candidate;
           break;
         } catch (_) {}
       }
-      if (!validatedUser) throw new Error('access token validation failed');
-      result.auth_user = validatedUser;
-      if (!result.user_id && platform === 'newapi') {
-        result.user_id = userIDFromToken(accessToken);
-      }
-      result.access_token = accessToken;
-      result.refresh_token = refreshToken;
-      if (expiresAt > 0) result.token_expires_at = expiresAt;
-      result.username = text(nestedValue(
-        result.auth_user,
-        ['username', 'user_name', 'display_name', 'name'],
-        0
-      ));
-      result.email = text(nestedValue(result.auth_user, ['email', 'mail'], 0));
-      delete result.auth_user;
+      if (!selected) throw new Error('automatic capture failed');
+      Object.assign(result, selected);
+    } else if (authType === 'access_token' || authType === 'admin_key' || authType === 'cookie') {
+      await fillSelectedCredential(result, platform, authType);
     } else {
       throw new Error('unsupported capture auth type');
     }
@@ -1253,7 +1335,7 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
 
   function markReady() {
     try {
-        window.dispatchEvent(new CustomEvent(readyEvent, { detail: { version: config.version || '1.1.0' } }));
+        window.dispatchEvent(new CustomEvent(readyEvent, { detail: { version: config.version || '1.2.0' } }));
     } catch (_) {}
   }
 
@@ -1263,16 +1345,20 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
     return;
   }
   collect(payload).catch((error) => {
-    const safeMessage = text(error && error.message).toLowerCase().includes('cookie')
-      ? 'cookie capture failed'
-      : text(error && error.message).toLowerCase().includes('admin')
-        ? 'admin key capture failed'
-        : 'access token capture failed';
+    const requestedAuthType = text(payload.auth_type).toLowerCase();
+    const errorMessage = text(error && error.message).toLowerCase();
+    const safeMessage = requestedAuthType === 'auto'
+      ? 'automatic capture failed'
+      : errorMessage.includes('cookie')
+        ? 'cookie capture failed'
+        : errorMessage.includes('admin')
+          ? 'admin key capture failed'
+          : 'access token capture failed';
     send({
       capture_secret: payload.capture_secret,
       complete_url: payload.complete_url,
       capture_source: 'capture_helper',
-      helper_version: config.version || '1.1.0',
+      helper_version: config.version || '1.2.0',
       platform: payload.platform,
       auth_type: payload.auth_type,
       origin: window.location.origin,

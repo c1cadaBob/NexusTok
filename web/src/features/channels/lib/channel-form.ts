@@ -220,7 +220,7 @@ export const channelFormSchema = z
     key_weight_override: z.number().int().min(0).max(2000).optional(),
     platform_site_platform: z.enum(['newapi', 'sub2api']).default('newapi'),
     platform_site_auth_type: z
-      .enum(['password', 'access_token', 'admin_key', 'cookie'])
+      .enum(['password', 'auto', 'access_token', 'admin_key', 'cookie'])
       .default('password'),
     platform_site_capture_id: z.string().optional(),
     platform_site_username: z.string().optional(),

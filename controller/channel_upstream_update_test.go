@@ -13,6 +13,7 @@ import (
 	"github.com/c1cadaBob/NexusTok/constant"
 	"github.com/c1cadaBob/NexusTok/model"
 	"github.com/c1cadaBob/NexusTok/relaykit/dto"
+	"github.com/c1cadaBob/NexusTok/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -654,6 +655,52 @@ func TestSavePlatformSiteAccountAllowsCredentialReplacementWhenStoredCiphertextI
 	assert.Equal(t, "new-access-token", credential.AccessToken)
 	assert.Empty(t, credential.Username)
 	assert.Empty(t, credential.Password)
+}
+
+func TestSavePlatformSiteAccountKeepsExistingCredentialForAutomaticEdit(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.PlatformSiteAccount{}))
+
+	encrypted, err := model.EncryptPlatformSiteCredential(model.PlatformSiteCredential{
+		AuthType: model.UpstreamAuthAdminKey,
+		AdminKey: "existing-admin-key",
+	})
+	require.NoError(t, err)
+
+	channel := &model.Channel{
+		Name:         "Sub2API platform site",
+		Type:         constant.ChannelTypeSub2API,
+		UpstreamKind: model.UpstreamKindPlatformSite,
+		Status:       common.ChannelStatusEnabled,
+	}
+	require.NoError(t, db.Create(channel).Error)
+	account := &model.PlatformSiteAccount{
+		ChannelID:            channel.Id,
+		Platform:             model.PlatformSub2API,
+		BaseURL:              "http://127.0.0.1:8089",
+		AuthType:             model.UpstreamAuthAdminKey,
+		CredentialCiphertext: encrypted,
+		CredentialKeyVersion: "v1",
+		RechargeAmount:       1,
+		CreditedAmount:       1,
+		ConversionRatio:      1,
+	}
+	require.NoError(t, db.Create(account).Error)
+
+	err = savePlatformSiteAccount(channel.Id, &PlatformSiteInput{
+		Platform: model.PlatformSub2API,
+		BaseURL:  "http://127.0.0.1:8089",
+		AuthType: service.PlatformSiteCaptureAuthAuto,
+	}, account)
+	require.NoError(t, err)
+
+	var saved model.PlatformSiteAccount
+	require.NoError(t, db.Where("channel_id = ?", channel.Id).First(&saved).Error)
+	assert.Equal(t, model.UpstreamAuthAdminKey, saved.AuthType)
+	credential, err := model.DecryptPlatformSiteCredential(saved.CredentialCiphertext)
+	require.NoError(t, err)
+	assert.Equal(t, model.UpstreamAuthAdminKey, credential.AuthType)
+	assert.Equal(t, "existing-admin-key", credential.AdminKey)
 }
 
 func TestGetUpstreamSiteStatusReturnsBalanceRefreshAndKeyCounts(t *testing.T) {

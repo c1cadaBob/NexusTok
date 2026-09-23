@@ -1298,7 +1298,10 @@ export function ChannelMutateDrawer({
         ...defaults,
         base_url: site?.base_url ?? defaults.base_url,
         platform_site_platform: platformSitePlatform,
-        platform_site_auth_type: site?.auth_type ?? 'password',
+        platform_site_auth_type:
+          site?.auth_type && site.auth_type !== 'password'
+            ? 'auto'
+            : 'password',
         platform_site_recharge_amount: site?.recharge_amount ?? 0,
         platform_site_credited_amount: site?.credited_amount ?? 0,
         platform_site_conversion_ratio: site?.conversion_ratio ?? 1,

@@ -177,6 +177,110 @@ func TestPlatformSiteCaptureSessionBindsUserAndConsumesAfterSave(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestPlatformSiteCaptureSessionAutoSelectsCredentialPriority(t *testing.T) {
+	tests := []struct {
+		name       string
+		request    PlatformSiteCaptureCompleteRequest
+		wantAuth   string
+		wantAccess string
+		wantAdmin  string
+		wantCookie string
+	}{
+		{
+			name: "access token wins over admin key and cookie",
+			request: PlatformSiteCaptureCompleteRequest{
+				AccessToken:  "access-token",
+				RefreshToken: "refresh-token",
+				AdminKey:     "admin-key",
+				Cookie:       "session=secret",
+				AuthUser:     map[string]any{"id": 23},
+			},
+			wantAuth:   model.UpstreamAuthAccessToken,
+			wantAccess: "access-token",
+		},
+		{
+			name: "admin key wins when access token is missing",
+			request: PlatformSiteCaptureCompleteRequest{
+				AdminKey: "admin-key",
+				Cookie:   "session=secret",
+			},
+			wantAuth:  model.UpstreamAuthAdminKey,
+			wantAdmin: "admin-key",
+		},
+		{
+			name: "cookie is used as last resort",
+			request: PlatformSiteCaptureCompleteRequest{
+				Cookie: "session=secret",
+			},
+			wantAuth:   model.UpstreamAuthCookie,
+			wantCookie: "session=secret",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			start, err := StartPlatformSiteCaptureSession(17, PlatformSiteCaptureStartRequest{
+				Platform: model.PlatformNewAPI,
+				BaseURL:  "http://127.0.0.1:8181",
+				AuthType: PlatformSiteCaptureAuthAuto,
+			}, "http://127.0.0.1:3003")
+			require.NoError(t, err)
+			record, found, err := platformSiteCaptureCache.Get(start.CaptureID)
+			require.NoError(t, err)
+			require.True(t, found)
+
+			request := testCase.request
+			request.CaptureSecret = record.Secret
+			request.Platform = model.PlatformNewAPI
+			request.AuthType = PlatformSiteCaptureAuthAuto
+			request.Origin = record.Origin
+			status, err := CompletePlatformSiteCaptureSession(start.CaptureID, request)
+			require.NoError(t, err)
+			require.NotNil(t, status.Summary)
+			assert.Equal(t, PlatformSiteCaptureAuthAuto, status.AuthType)
+			assert.Equal(t, testCase.wantAuth, status.Summary.AuthType)
+
+			resolved, err := ResolvePlatformSiteCapture(
+				17,
+				start.CaptureID,
+				0,
+				model.PlatformNewAPI,
+				PlatformSiteCaptureAuthAuto,
+			)
+			require.NoError(t, err)
+			assert.Equal(t, testCase.wantAuth, resolved.Credential.AuthType)
+			assert.Equal(t, testCase.wantAccess, resolved.Credential.AccessToken)
+			assert.Equal(t, testCase.wantAdmin, resolved.Credential.AdminKey)
+			assert.Equal(t, testCase.wantCookie, resolved.Credential.Cookie)
+		})
+	}
+}
+
+func TestPlatformSiteCaptureSessionAutoFailsWithoutReadableCredential(t *testing.T) {
+	start, err := StartPlatformSiteCaptureSession(18, PlatformSiteCaptureStartRequest{
+		Platform: model.PlatformNewAPI,
+		BaseURL:  "http://127.0.0.1:8182",
+		AuthType: PlatformSiteCaptureAuthAuto,
+	}, "http://127.0.0.1:3003")
+	require.NoError(t, err)
+	record, found, err := platformSiteCaptureCache.Get(start.CaptureID)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	_, err = CompletePlatformSiteCaptureSession(start.CaptureID, PlatformSiteCaptureCompleteRequest{
+		CaptureSecret: record.Secret,
+		Platform:      model.PlatformNewAPI,
+		AuthType:      PlatformSiteCaptureAuthAuto,
+		Origin:        record.Origin,
+	})
+	require.Error(t, err)
+
+	status, err := GetPlatformSiteCaptureStatus(18, start.CaptureID, "http://127.0.0.1:3003")
+	require.NoError(t, err)
+	assert.Equal(t, platformSiteCaptureStatusFailed, status.Status)
+	assert.Equal(t, "自动配置未采集到可用登录态", status.Message)
+}
+
 func TestPlatformSiteCaptureSessionRejectsAuthTypeDowngradeAndCrossUserAccess(t *testing.T) {
 	start, err := StartPlatformSiteCaptureSession(8, PlatformSiteCaptureStartRequest{
 		Platform:  model.PlatformNewAPI,

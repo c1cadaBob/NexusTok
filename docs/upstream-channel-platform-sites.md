@@ -99,7 +99,7 @@ weight = clamp(round(2000 - conversion_ratio * 1000), 0, 2000)
 | `platform` | `newapi`、`sub2api` |
 | `base_url` | 规范化站点地址 |
 | `relay_base_url` | Sub2API 页面发现的实际 OpenAI 兼容转发地址；管理接口仍使用 `base_url` |
-| `auth_type` | `password`、`access_token`、`admin_key`、`cookie` |
+| `auth_type` | 持久化为 `password`、`access_token`、`admin_key`、`cookie`；前端采集阶段另有临时值 `auto` |
 | `credential_ciphertext` | 加密后的凭据对象 |
 | `credential_key_version` | 凭据加密密钥版本 |
 | `credential_fingerprint` | 不可逆凭据指纹 |
@@ -264,18 +264,21 @@ Sub2API 首期协议范围：
 
 适配器不能绕过验证码、交互式二次验证或站点风控。密码登录无法完成时返回可识别的认证状态，管理员可以切换为 Cookie 或令牌认证。
 
-平台站点表单保留四种认证方式：`password`、`access_token`、`admin_key` 和
-`cookie`。账号密码认证由管理员手动输入用户名和密码；其他三种认证通过短期
-Capture Session 和目标站浏览器脚本采集。采集会话绑定管理员、目标 Origin、平台、
-认证类型和可选渠道，默认有效期 10 分钟，完成保存后消费，结果只在短期缓存中
-传递，最终仍使用现有整体加密字段保存。
+平台站点表单提供两种认证方式：`password` 和 `auto`（自动配置）。账号密码认证
+由管理员手动输入用户名和密码；自动配置通过短期 Capture Session 和目标站浏览器
+脚本自动判断并采集 Access Token、Admin Key 或 Cookie。采集会话绑定管理员、目标
+Origin、平台、认证类型和可选渠道，默认有效期 10 分钟，完成保存后消费，结果只在
+短期缓存中传递，最终仍使用现有整体加密字段保存。`auto` 只存在于表单和采集会话
+期间，成功后按实际采集结果持久化为 `access_token`、`admin_key` 或 `cookie`。
 
 浏览器脚本只读取明确命名的 Access Token、Refresh Token、Admin Key、Cookie 和
 用户对象。Sub2API 的 `auth_token`/`refresh_token` 会在临近过期且存在刷新令牌时
 尝试刷新，并用 `/api/v1/auth/me` 或兼容接口确认登录态；NewAPI 会读取数字用户
 ID，用于需要兼容用户请求头的派生站点。Admin Key 或 HttpOnly Cookie 无法被脚本
-读取时直接失败，不手动补填、不把 Access Token 降级成其他认证方式，也不保存
-混合认证结果。前端只提交 `capture_id`，不提交原始令牌、Cookie 或 Admin Key。
+读取时直接跳过该候选；自动配置按 Access Token/Refresh Token、Admin Key、Cookie
+的顺序选择首个可用凭据。三者都不可用时失败，不手动补填、不把一种凭据冒充成
+另一种认证方式，也不保存混合认证结果。前端只提交 `capture_id`，不提交原始令牌、
+Cookie 或 Admin Key。
 
 Sub2API 管理地址和转发地址分离处理：账号、分组和密钥接口始终使用
 `base_url` 指向的管理站地址；页面配置中的 `api_base_url` 用于发现 OpenAI
@@ -449,8 +452,10 @@ POST  /api/channel/:id/upstream-keys/batch-status
 - 转换倍率预览；
 - 手动同步和同步状态。
 
-点击脚本采集入口后，管理端创建短期会话并打开目标站；Capture Helper 或一次性
-userscript 在目标站页面内采集登录态并通过一次性 secret 回传。状态查询只返回
+点击自动配置入口后，管理端创建短期会话。前端会在点击事件同步阶段预开标签页，
+再把创建成功的 handoff 地址导航到该标签页；如果浏览器仍拦截弹窗，则保留会话并
+显示手动打开采集页按钮。Capture Helper 或一次性 userscript 在目标站页面内采集
+登录态并通过一次性 secret 回传。状态查询只返回
 认证类型、管理/转发地址、掩码 Access Token、Refresh Token/Admin Key/Cookie
 是否存在和令牌过期时间，不返回原始敏感值。已有渠道采集完成后自动保存，新渠道
 创建时携带 `capture_id`，只有保存成功后才消费会话。

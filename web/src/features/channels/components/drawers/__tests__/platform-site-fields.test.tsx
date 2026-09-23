@@ -47,6 +47,8 @@ vi.mock('@/features/channels/api', async () => {
     getGroups: vi.fn(),
     getPrefillGroups: vi.fn(),
     getTaskPluginOptions: vi.fn(),
+    startPlatformSiteCapture: vi.fn(),
+    getPlatformSiteCaptureStatus: vi.fn(),
   }
 })
 
@@ -80,6 +82,23 @@ beforeEach(() => {
     data: [],
   })
   vi.mocked(channelsApi.getTaskPluginOptions).mockResolvedValue([])
+  vi.mocked(channelsApi.startPlatformSiteCapture).mockResolvedValue({
+    success: true,
+    data: {
+      capture_id: 'capture-123',
+      expires_at: Math.floor(Date.now() / 1000) + 600,
+      platform: 'newapi',
+      base_url: 'https://upstream.example',
+      auth_type: 'auto',
+      origin: 'https://upstream.example',
+      userscript_url:
+        'https://nexustok.example/api/channel/platform-site/capture-session/capture-123/userscript.user.js',
+      helper_install_url:
+        'https://nexustok.example/api/channel/platform-site/capture-helper.user.js',
+      handoff_url: 'https://upstream.example/?nexustok_capture=payload',
+      login_url: 'https://upstream.example',
+    },
+  })
 })
 
 function PlatformSiteForm(props: PlatformSiteFormProps) {
@@ -356,10 +375,13 @@ test('提交时仅在手动覆盖后发送平台转换倍率', async () => {
   expect(payload.platform_site?.conversion_ratio).toBe(0.25)
 })
 
-test('非密码认证显示脚本采集入口且不显示手动凭据输入框', () => {
+test('自动配置显示脚本采集入口且不显示手动凭据输入框', () => {
   render(<PlatformSiteForm authType='access_token' />)
 
   expect(screen.getByText('Browser login state capture')).toBeInTheDocument()
+  expect(screen.getAllByText('Automatic configuration').length).toBeGreaterThan(
+    0
+  )
   expect(
     screen.getByRole('button', { name: 'Capture upstream login state' })
   ).toBeInTheDocument()
@@ -367,4 +389,66 @@ test('非密码认证显示脚本采集入口且不显示手动凭据输入框',
   expect(screen.queryByLabelText('Admin Key')).not.toBeInTheDocument()
   expect(screen.queryByLabelText('Cookie')).not.toBeInTheDocument()
   expect(screen.queryByLabelText('Username')).not.toBeInTheDocument()
+})
+
+test('点击自动配置时同步预开窗口并仅提交自动认证方式', async () => {
+  const user = userEvent.setup()
+  const pendingWindow = {
+    closed: false,
+    focus: vi.fn(),
+    location: { href: '' },
+    opener: null,
+  } as unknown as Window
+  const openSpy = vi
+    .spyOn(window, 'open')
+    .mockReturnValueOnce(pendingWindow)
+    .mockReturnValueOnce(pendingWindow)
+
+  render(<PlatformSiteForm authType='auto' />)
+  await user.click(
+    screen.getByRole('button', { name: 'Capture upstream login state' })
+  )
+
+  expect(openSpy).toHaveBeenCalledWith('about:blank', '_blank')
+  await waitFor(() => {
+    expect(channelsApi.startPlatformSiteCapture).toHaveBeenCalledWith(
+      expect.objectContaining({
+        auth_type: 'auto',
+      })
+    )
+  })
+  expect(pendingWindow.location.href).toBe(
+    'https://upstream.example/?nexustok_capture=payload'
+  )
+  openSpy.mockRestore()
+})
+
+test('预开窗口被拦截时保留会话并提供手动打开按钮', async () => {
+  const user = userEvent.setup()
+  const openedWindow = {
+    closed: false,
+    focus: vi.fn(),
+    location: { href: '' },
+    opener: null,
+  } as unknown as Window
+  const openSpy = vi
+    .spyOn(window, 'open')
+    .mockReturnValueOnce(null)
+    .mockReturnValueOnce(openedWindow)
+
+  render(<PlatformSiteForm authType='auto' />)
+  await user.click(
+    screen.getByRole('button', { name: 'Capture upstream login state' })
+  )
+
+  const fallbackButton = await screen.findByRole('button', {
+    name: 'Open upstream capture page',
+  })
+  expect(fallbackButton).toBeInTheDocument()
+  await user.click(fallbackButton)
+  expect(openSpy).toHaveBeenLastCalledWith(
+    'https://upstream.example/?nexustok_capture=payload',
+    '_blank'
+  )
+  openSpy.mockRestore()
 })

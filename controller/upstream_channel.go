@@ -127,6 +127,9 @@ func validatePlatformSiteInput(input *PlatformSiteInput, existing *model.Platfor
 		input.AuthType != model.UpstreamAuthAccessToken &&
 		input.AuthType != model.UpstreamAuthAdminKey &&
 		input.AuthType != model.UpstreamAuthCookie {
+		if input.AuthType == service.PlatformSiteCaptureAuthAuto {
+			return model.PlatformSiteCredential{}, 0, errors.New("自动配置需要先完成上游登录态采集")
+		}
 		return model.PlatformSiteCredential{}, 0, errors.New("认证方式不受支持")
 	}
 	if err := service.ValidatePlatformSiteURLForAdmin(input.BaseURL); err != nil {
@@ -232,6 +235,10 @@ func savePlatformSiteAccount(channelID int, input *PlatformSiteInput, existing *
 			merged.RelayBaseURL = existing.RelayBaseURL
 		}
 		if strings.TrimSpace(merged.AuthType) == "" {
+			merged.AuthType = existing.AuthType
+		}
+		if strings.EqualFold(strings.TrimSpace(merged.AuthType), service.PlatformSiteCaptureAuthAuto) &&
+			!hasCredentialInput(&merged) {
 			merged.AuthType = existing.AuthType
 		}
 		if merged.RechargeAmount == nil {
