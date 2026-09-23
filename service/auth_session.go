@@ -71,26 +71,11 @@ func createLoginSession(userID int, expectedAuthVersion int64, loginMethod, ip, 
 	if expectedAuthVersion > 0 && user.AuthVersion != expectedAuthVersion {
 		return nil, ErrLoginSessionRevoked
 	}
-	now := time.Now().Unix()
-	activeCount, err := model.CountActiveUserSessions(userID, now)
-	if err != nil {
-		return nil, err
-	}
-	if activeCount >= int64(common.UserSessionActiveLimit) {
-		return nil, model.ErrUserSessionLimit
-	}
-	issuanceCount, err := model.CountUserSessionsCreatedSince(userID, now-common.UserSessionIssuanceWindowSeconds)
-	if err != nil {
-		return nil, err
-	}
-	if issuanceCount >= int64(common.UserSessionIssuanceLimit) {
-		return nil, model.ErrUserSessionIssuanceLimit
-	}
 	session, refreshSecret, err := newLoginSession(userID, user.AuthVersion, loginMethod, ip, userAgent)
 	if err != nil {
 		return nil, err
 	}
-	if err := model.CreateUserSession(session); err != nil {
+	if err := model.CreateUserSessionWithLimits(session); err != nil {
 		return nil, err
 	}
 	bundle, err := issueAuthBundle(session, session.SID+"."+refreshSecret, true)

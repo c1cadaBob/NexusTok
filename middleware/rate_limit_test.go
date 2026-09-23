@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -215,6 +216,110 @@ func TestGlobalAPIRateLimitSkipsOnlyVerifiedAdministrators(t *testing.T) {
 		assert.Equal(t, http.StatusTooManyRequests, request(router, revokedPAT, "192.0.2.107:12345").Code)
 		assert.True(t, redisServer.Exists(redisIPRateLimitKey("GA", "192.0.2.107")))
 	})
+}
+
+func TestGlobalAPIRateLimitSkipsAuthenticationBootstrapRoutes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	redisServer, _ := useRateLimitMiniRedis(t)
+
+	previousEnabled := common.GlobalApiRateLimitEnable
+	previousNum := common.GlobalApiRateLimitNum
+	previousDuration := common.GlobalApiRateLimitDuration
+	t.Cleanup(func() {
+		common.GlobalApiRateLimitEnable = previousEnabled
+		common.GlobalApiRateLimitNum = previousNum
+		common.GlobalApiRateLimitDuration = previousDuration
+	})
+	common.GlobalApiRateLimitEnable = true
+	common.GlobalApiRateLimitNum = 1
+	common.GlobalApiRateLimitDuration = 60
+
+	router := gin.New()
+	require.NoError(t, router.SetTrustedProxies(nil))
+	router.Any("/api/status", GlobalAPIRateLimit(), func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+	router.Any("/api/setup", GlobalAPIRateLimit(), func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+	router.Any("/api/user/login", GlobalAPIRateLimit(), func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+	router.Any("/api/user/login/encryption-key", GlobalAPIRateLimit(), func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+	router.Any("/api/user/auth/refresh", GlobalAPIRateLimit(), func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+	router.Any("/api/ordinary", GlobalAPIRateLimit(), func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	request := func(path, remoteAddr string) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.RemoteAddr = remoteAddr
+		router.ServeHTTP(recorder, req)
+		return recorder
+	}
+
+	for index, path := range []string{
+		"/api/status",
+		"/api/setup",
+		"/api/user/login",
+		"/api/user/login/encryption-key",
+		"/api/user/auth/refresh",
+	} {
+		remoteIP := fmt.Sprintf("192.0.2.%d", 120+index)
+		remoteAddr := remoteIP + ":12345"
+		for range 3 {
+			assert.Equal(t, http.StatusNoContent, request(path, remoteAddr).Code, path)
+		}
+		assert.False(t, redisServer.Exists(redisIPRateLimitKey("GA", remoteIP)))
+	}
+
+	ordinaryIP := "192.0.2.130"
+	assert.Equal(t, http.StatusNoContent, request("/api/ordinary", ordinaryIP+":12345").Code)
+	assert.Equal(t, http.StatusTooManyRequests, request("/api/ordinary", ordinaryIP+":12345").Code)
+	count, err := redisServer.Get(redisIPRateLimitKey("GA", ordinaryIP))
+	require.NoError(t, err)
+	assert.Equal(t, "2", count)
+}
+
+func TestGlobalWebRateLimitSkipsStaticAssets(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	redisServer, _ := useRateLimitMiniRedis(t)
+
+	previousEnabled := common.GlobalWebRateLimitEnable
+	previousNum := common.GlobalWebRateLimitNum
+	previousDuration := common.GlobalWebRateLimitDuration
+	t.Cleanup(func() {
+		common.GlobalWebRateLimitEnable = previousEnabled
+		common.GlobalWebRateLimitNum = previousNum
+		common.GlobalWebRateLimitDuration = previousDuration
+	})
+	common.GlobalWebRateLimitEnable = true
+	common.GlobalWebRateLimitNum = 1
+	common.GlobalWebRateLimitDuration = 60
+
+	router := gin.New()
+	require.NoError(t, router.SetTrustedProxies(nil))
+	router.Any("/*path", GlobalWebRateLimit(), func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	for range 3 {
+		assert.Equal(t, http.StatusNoContent, performRateLimitRequest(router, "/static/js/index.js", "192.0.2.140:12345").Code)
+		assert.Equal(t, http.StatusNoContent, performRateLimitRequest(router, "/assets/index.css", "192.0.2.141:12345").Code)
+	}
+	assert.False(t, redisServer.Exists(redisIPRateLimitKey("GW", "192.0.2.140")))
+	assert.False(t, redisServer.Exists(redisIPRateLimitKey("GW", "192.0.2.141")))
+
+	assert.Equal(t, http.StatusNoContent, performRateLimitRequest(router, "/sign-in", "192.0.2.142:12345").Code)
+	assert.Equal(t, http.StatusTooManyRequests, performRateLimitRequest(router, "/sign-in", "192.0.2.142:12345").Code)
+	count, err := redisServer.Get(redisIPRateLimitKey("GW", "192.0.2.142"))
+	require.NoError(t, err)
+	assert.Equal(t, "2", count)
 }
 
 func TestRedisUserRateLimiterUsesSharedFixedWindow(t *testing.T) {

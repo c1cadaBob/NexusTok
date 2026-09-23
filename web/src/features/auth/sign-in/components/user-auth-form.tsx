@@ -19,7 +19,7 @@ For commercial licensing, please contact support@c1cadabob.dev
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Link } from '@tanstack/react-router'
 import { Loader2, LogIn, KeyRound } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -72,6 +72,7 @@ export function UserAuthForm({
   const [isWeChatDialogOpen, setIsWeChatDialogOpen] = useState(false)
   const [isWeChatSubmitting, setIsWeChatSubmitting] = useState(false)
   const [turnstileWidgetKey, setTurnstileWidgetKey] = useState(0)
+  const loginSubmissionInFlightRef = useRef(false)
   const legalConsentErrorMessage = t('Please agree to the legal terms first')
   const loginFailedMessage = t('Login failed')
 
@@ -152,40 +153,46 @@ export function UserAuthForm({
   }, [status])
 
   async function onSubmit(data: z.infer<typeof loginFormSchema>) {
-    if (requiresLegalConsent && !agreedToLegal) {
-      toast.error(legalConsentErrorMessage)
-      return
-    }
-
-    if (!validateTurnstile()) return
-
-    const submittedTurnstileToken = turnstileToken
-    if (isTurnstileEnabled) {
-      setTurnstileToken('')
-      setTurnstileWidgetKey((current) => current + 1)
-    }
-
-    setIsLoading(true)
+    if (loginSubmissionInFlightRef.current) return
+    loginSubmissionInFlightRef.current = true
     try {
-      const res = await login({
-        username: data.username,
-        password: data.password,
-        turnstile: submittedTurnstileToken,
-        passwordEncryptionEnabled: passwordLoginEncryptionEnabled,
-      })
-
-      if (res.success) {
-        form.setValue('password', '')
-        if (await handleLoginResult(res.data, redirectTo)) {
-          toast.success(t('Welcome back!'))
-        }
-      } else {
-        handleServerError(createServerError(res, loginFailedMessage))
+      if (requiresLegalConsent && !agreedToLegal) {
+        toast.error(legalConsentErrorMessage)
+        return
       }
-    } catch (error: unknown) {
-      handleServerError(AuthOperationError.from(error, loginFailedMessage))
+
+      if (!validateTurnstile()) return
+
+      const submittedTurnstileToken = turnstileToken
+      if (isTurnstileEnabled) {
+        setTurnstileToken('')
+        setTurnstileWidgetKey((current) => current + 1)
+      }
+
+      setIsLoading(true)
+      try {
+        const res = await login({
+          username: data.username,
+          password: data.password,
+          turnstile: submittedTurnstileToken,
+          passwordEncryptionEnabled: passwordLoginEncryptionEnabled,
+        })
+
+        if (res.success) {
+          form.setValue('password', '')
+          if (await handleLoginResult(res.data, redirectTo)) {
+            toast.success(t('Welcome back!'))
+          }
+        } else {
+          handleServerError(createServerError(res, loginFailedMessage))
+        }
+      } catch (error: unknown) {
+        handleServerError(AuthOperationError.from(error, loginFailedMessage))
+      } finally {
+        setIsLoading(false)
+      }
     } finally {
-      setIsLoading(false)
+      loginSubmissionInFlightRef.current = false
     }
   }
 

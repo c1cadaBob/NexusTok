@@ -30,6 +30,8 @@ func TestAuthenticationRoutesUseIndependentRateLimitScopes(t *testing.T) {
 	previousRefreshNum := common.AuthRefreshRateLimitNum
 	previousRefreshDuration := common.AuthRefreshRateLimitDuration
 	previousGlobalAPIEnabled := common.GlobalApiRateLimitEnable
+	previousGlobalAPINum := common.GlobalApiRateLimitNum
+	previousGlobalAPIDuration := common.GlobalApiRateLimitDuration
 	t.Cleanup(func() {
 		common.RedisEnabled = previousRedisEnabled
 		common.RDB = previousRedisClient
@@ -39,6 +41,8 @@ func TestAuthenticationRoutesUseIndependentRateLimitScopes(t *testing.T) {
 		common.AuthRefreshRateLimitNum = previousRefreshNum
 		common.AuthRefreshRateLimitDuration = previousRefreshDuration
 		common.GlobalApiRateLimitEnable = previousGlobalAPIEnabled
+		common.GlobalApiRateLimitNum = previousGlobalAPINum
+		common.GlobalApiRateLimitDuration = previousGlobalAPIDuration
 	})
 	common.RedisEnabled = true
 	common.RDB = redisClient
@@ -47,7 +51,9 @@ func TestAuthenticationRoutesUseIndependentRateLimitScopes(t *testing.T) {
 	common.CriticalRateLimitDuration = 60
 	common.AuthRefreshRateLimitNum = 1
 	common.AuthRefreshRateLimitDuration = 60
-	common.GlobalApiRateLimitEnable = false
+	common.GlobalApiRateLimitEnable = true
+	common.GlobalApiRateLimitNum = 1
+	common.GlobalApiRateLimitDuration = 60
 
 	engine := gin.New()
 	require.NoError(t, engine.SetTrustedProxies(nil))
@@ -66,6 +72,10 @@ func TestAuthenticationRoutesUseIndependentRateLimitScopes(t *testing.T) {
 	loginFirst := request("/api/user/login")
 	assert.NotEqual(t, http.StatusTooManyRequests, loginFirst.Code)
 	assert.Equal(t, http.StatusTooManyRequests, request("/api/user/login").Code)
+	loginCount, err := redisServer.Get("rateLimit:v2:ip:CT:auth-login:192.0.2.80")
+	require.NoError(t, err)
+	assert.Equal(t, "2", loginCount)
+	assert.False(t, redisServer.Exists("rateLimit:v2:ip:GA:192.0.2.80"))
 
 	registerFirst := request("/api/user/register")
 	assert.NotEqual(t, http.StatusTooManyRequests, registerFirst.Code)
@@ -76,6 +86,10 @@ func TestAuthenticationRoutesUseIndependentRateLimitScopes(t *testing.T) {
 	refreshLimited := request("/api/user/auth/refresh")
 	assert.Equal(t, http.StatusTooManyRequests, refreshLimited.Code)
 	assert.Equal(t, "60", refreshLimited.Header().Get("Retry-After"))
+	refreshCount, err := redisServer.Get("rateLimit:v2:ip:CT:auth-refresh:192.0.2.80")
+	require.NoError(t, err)
+	assert.Equal(t, "2", refreshCount)
+	assert.True(t, redisServer.Exists("rateLimit:v2:ip:GA:192.0.2.80"))
 
 	assert.True(t, redisServer.Exists("rateLimit:v2:ip:CT:auth-login:192.0.2.80"))
 	assert.True(t, redisServer.Exists("rateLimit:v2:ip:CT:auth-register:192.0.2.80"))

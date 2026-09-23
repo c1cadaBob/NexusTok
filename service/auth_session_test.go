@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +17,10 @@ import (
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 )
 
 func setupAuthSessionTestDB(t *testing.T) *model.User {
@@ -130,6 +134,240 @@ func TestCreateLoginSessionEnforcesActiveLimitAcrossAuthVersions(t *testing.T) {
 	var count int64
 	require.NoError(t, model.DB.Model(&model.UserSession{}).Count(&count).Error)
 	assert.Equal(t, int64(common.DefaultUserSessionActiveLimit), count)
+}
+
+func TestCreateLoginSessionCleansOldUnactivatedSessionsBeforeApplyingActiveLimit(t *testing.T) {
+	useTestSessionSecret(t)
+	user := setupAuthSessionTestDB(t)
+	common.UserSessionActiveLimit = 2
+	common.UserSessionIssuanceLimit = 100
+	now := time.Now().Unix()
+	staleCreatedAt := now - int64(model.InactiveUserSessionCleanupAge/time.Second) - 1
+	rows := []model.UserSession{
+		{
+			SID: "inactive-login-cleanup", UserID: user.Id, Version: 1, UserAuthVersion: user.AuthVersion,
+			Status: model.UserSessionStatusActive, RefreshHash: "hash-stale", LoginMethod: "password",
+			CreatedAt: staleCreatedAt, LastActiveAt: staleCreatedAt, ExpiresAt: now + 3600,
+		},
+		{
+			SID: "active-session-kept", UserID: user.Id, Version: 1, UserAuthVersion: user.AuthVersion,
+			Status: model.UserSessionStatusActive, RefreshHash: "hash-active", LoginMethod: "password",
+			CreatedAt: now - 60, LastActiveAt: now - 30, ExpiresAt: now + 3600,
+		},
+	}
+	require.NoError(t, model.DB.Create(&rows).Error)
+
+	_, err := CreateLoginSession(user.Id, "password", "127.0.0.1", "test-agent")
+	require.NoError(t, err)
+
+	var stale model.UserSession
+	require.NoError(t, model.DB.First(&stale, "sid = ?", "inactive-login-cleanup").Error)
+	assert.Equal(t, model.UserSessionStatusRevoked, stale.Status)
+	assert.Equal(t, "inactive_login_cleanup", stale.RevokedReason)
+	assert.NotZero(t, stale.RevokedAt)
+
+	var kept model.UserSession
+	require.NoError(t, model.DB.First(&kept, "sid = ?", "active-session-kept").Error)
+	assert.Equal(t, model.UserSessionStatusActive, kept.Status)
+
+	var activeCount int64
+	require.NoError(t, model.DB.Model(&model.UserSession{}).
+		Where("user_id = ? AND status = ? AND expires_at > ?", user.Id, model.UserSessionStatusActive, now).
+		Count(&activeCount).Error)
+	assert.Equal(t, int64(2), activeCount)
+}
+
+func TestCreateLoginSessionDoesNotCleanRecentlyCreatedUnactivatedSession(t *testing.T) {
+	useTestSessionSecret(t)
+	user := setupAuthSessionTestDB(t)
+	common.UserSessionActiveLimit = 1
+	common.UserSessionIssuanceLimit = 100
+	now := time.Now().Unix()
+	require.NoError(t, model.DB.Create(&model.UserSession{
+		SID: "recent-unactivated", UserID: user.Id, Version: 1, UserAuthVersion: user.AuthVersion,
+		Status: model.UserSessionStatusActive, RefreshHash: "hash-recent", LoginMethod: "password",
+		CreatedAt: now - 60, LastActiveAt: now - 60, ExpiresAt: now + 3600,
+	}).Error)
+
+	_, err := CreateLoginSession(user.Id, "password", "127.0.0.1", "test-agent")
+	assert.ErrorIs(t, err, model.ErrUserSessionLimit)
+
+	var session model.UserSession
+	require.NoError(t, model.DB.First(&session, "sid = ?", "recent-unactivated").Error)
+	assert.Equal(t, model.UserSessionStatusActive, session.Status)
+	assert.Empty(t, session.RevokedReason)
+}
+
+func TestCreateLoginSessionDoesNotCleanPreviouslyActiveSession(t *testing.T) {
+	useTestSessionSecret(t)
+	user := setupAuthSessionTestDB(t)
+	common.UserSessionActiveLimit = 1
+	common.UserSessionIssuanceLimit = 100
+	now := time.Now().Unix()
+	createdAt := now - int64(model.InactiveUserSessionCleanupAge/time.Second) - 1
+	require.NoError(t, model.DB.Create(&model.UserSession{
+		SID: "previously-active", UserID: user.Id, Version: 1, UserAuthVersion: user.AuthVersion,
+		Status: model.UserSessionStatusActive, RefreshHash: "hash-used", LoginMethod: "password",
+		CreatedAt: createdAt, LastActiveAt: createdAt + 1, ExpiresAt: now + 3600,
+	}).Error)
+
+	_, err := CreateLoginSession(user.Id, "password", "127.0.0.1", "test-agent")
+	assert.ErrorIs(t, err, model.ErrUserSessionLimit)
+
+	var session model.UserSession
+	require.NoError(t, model.DB.First(&session, "sid = ?", "previously-active").Error)
+	assert.Equal(t, model.UserSessionStatusActive, session.Status)
+	assert.Empty(t, session.RevokedReason)
+}
+
+func TestCreateLoginSessionReturnsLimitWhenActiveSessionsRemainAfterCleanup(t *testing.T) {
+	useTestSessionSecret(t)
+	user := setupAuthSessionTestDB(t)
+	common.UserSessionActiveLimit = 2
+	common.UserSessionIssuanceLimit = 100
+	now := time.Now().Unix()
+	staleCreatedAt := now - int64(model.InactiveUserSessionCleanupAge/time.Second) - 1
+	rows := []model.UserSession{
+		{
+			SID: "stale-but-not-enough", UserID: user.Id, Version: 1, UserAuthVersion: user.AuthVersion,
+			Status: model.UserSessionStatusActive, RefreshHash: "hash-stale", LoginMethod: "password",
+			CreatedAt: staleCreatedAt, LastActiveAt: staleCreatedAt, ExpiresAt: now + 3600,
+		},
+		{
+			SID: "active-remains-a", UserID: user.Id, Version: 1, UserAuthVersion: user.AuthVersion,
+			Status: model.UserSessionStatusActive, RefreshHash: "hash-a", LoginMethod: "password",
+			CreatedAt: now - 60, LastActiveAt: now - 30, ExpiresAt: now + 3600,
+		},
+		{
+			SID: "active-remains-b", UserID: user.Id, Version: 1, UserAuthVersion: user.AuthVersion,
+			Status: model.UserSessionStatusActive, RefreshHash: "hash-b", LoginMethod: "password",
+			CreatedAt: now - 40, LastActiveAt: now - 20, ExpiresAt: now + 3600,
+		},
+	}
+	require.NoError(t, model.DB.Create(&rows).Error)
+
+	_, err := CreateLoginSession(user.Id, "password", "127.0.0.1", "test-agent")
+	assert.ErrorIs(t, err, model.ErrUserSessionLimit)
+
+	var count int64
+	require.NoError(t, model.DB.Model(&model.UserSession{}).
+		Where("user_id = ?", user.Id).
+		Count(&count).Error)
+	assert.Equal(t, int64(3), count, "rejected login must not create another session")
+}
+
+func TestCreateLoginSessionCleanupDatabaseMatrix(t *testing.T) {
+	tests := []struct {
+		name      string
+		dsn       string
+		dbType    common.DatabaseType
+		dialector func(string) gorm.Dialector
+	}{
+		{
+			name:   "sqlite",
+			dsn:    fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_")),
+			dbType: common.DatabaseTypeSQLite,
+			dialector: func(dsn string) gorm.Dialector {
+				return sqlite.Open(dsn)
+			},
+		},
+		{
+			name:   "mysql",
+			dsn:    strings.TrimSpace(os.Getenv("TEST_AUTH_SESSION_MYSQL_DSN")),
+			dbType: common.DatabaseTypeMySQL,
+			dialector: func(dsn string) gorm.Dialector {
+				return mysql.Open(dsn)
+			},
+		},
+		{
+			name:   "postgres",
+			dsn:    strings.TrimSpace(os.Getenv("TEST_AUTH_SESSION_POSTGRES_DSN")),
+			dbType: common.DatabaseTypePostgreSQL,
+			dialector: func(dsn string) gorm.Dialector {
+				return postgres.New(postgres.Config{
+					DSN:                  dsn,
+					PreferSimpleProtocol: true,
+				})
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if test.dsn == "" {
+				t.Skip("测试数据库 DSN 未配置")
+			}
+			if test.name != "sqlite" {
+				assertScratchDatabaseDSN(t, test.dsn)
+			}
+			prefix := fmt.Sprintf("auth_session_matrix_%d_", time.Now().UnixNano())
+			db, err := gorm.Open(test.dialector(test.dsn), &gorm.Config{
+				NamingStrategy: schema.NamingStrategy{TablePrefix: prefix},
+			})
+			require.NoError(t, err)
+			sqlDB, err := db.DB()
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				_ = db.Migrator().DropTable(&model.AuthFlow{}, &model.UserSession{}, &model.User{})
+				_ = sqlDB.Close()
+			})
+			require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.AuthFlow{}))
+
+			previousDB := model.DB
+			previousMainType := common.MainDatabaseType()
+			previousRedis := common.RedisEnabled
+			previousActiveLimit := common.UserSessionActiveLimit
+			previousIssuanceLimit := common.UserSessionIssuanceLimit
+			previousIssuanceWindow := common.UserSessionIssuanceWindowSeconds
+			model.DB = db
+			common.SetMainDatabaseType(test.dbType)
+			common.RedisEnabled = false
+			common.UserSessionActiveLimit = 2
+			common.UserSessionIssuanceLimit = 100
+			common.UserSessionIssuanceWindowSeconds = 60
+			t.Cleanup(func() {
+				model.DB = previousDB
+				common.SetMainDatabaseType(previousMainType)
+				common.RedisEnabled = previousRedis
+				common.UserSessionActiveLimit = previousActiveLimit
+				common.UserSessionIssuanceLimit = previousIssuanceLimit
+				common.UserSessionIssuanceWindowSeconds = previousIssuanceWindow
+			})
+			useTestSessionSecret(t)
+
+			user := &model.User{
+				Username:    "matrix-" + test.name,
+				Password:    "unused-password-hash",
+				Role:        common.RoleCommonUser,
+				Status:      common.UserStatusEnabled,
+				Group:       "default",
+				AuthVersion: 1,
+			}
+			require.NoError(t, db.Create(user).Error)
+			now := time.Now().Unix()
+			staleCreatedAt := now - int64(model.InactiveUserSessionCleanupAge/time.Second) - 1
+			require.NoError(t, db.Create(&[]model.UserSession{
+				{
+					SID: "matrix-stale-" + test.name, UserID: user.Id, Version: 1, UserAuthVersion: 1,
+					Status: model.UserSessionStatusActive, RefreshHash: "matrix-stale-hash", LoginMethod: "password",
+					CreatedAt: staleCreatedAt, LastActiveAt: staleCreatedAt, ExpiresAt: now + 3600,
+				},
+				{
+					SID: "matrix-active-" + test.name, UserID: user.Id, Version: 1, UserAuthVersion: 1,
+					Status: model.UserSessionStatusActive, RefreshHash: "matrix-active-hash", LoginMethod: "password",
+					CreatedAt: now - 60, LastActiveAt: now - 30, ExpiresAt: now + 3600,
+				},
+			}).Error)
+
+			_, err = CreateLoginSession(user.Id, "password", "127.0.0.1", "matrix-agent")
+			require.NoError(t, err)
+
+			var stale model.UserSession
+			require.NoError(t, db.First(&stale, "sid = ?", "matrix-stale-"+test.name).Error)
+			assert.Equal(t, model.UserSessionStatusRevoked, stale.Status)
+			assert.Equal(t, "inactive_login_cleanup", stale.RevokedReason)
+		})
+	}
 }
 
 func TestCreateLoginSessionEnforcesIssuanceLimitAcrossAllStatuses(t *testing.T) {

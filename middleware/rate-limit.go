@@ -194,7 +194,14 @@ func rateLimitFactory(maxRequestNum int, duration int64, mark string) func(c *gi
 
 func GlobalWebRateLimit() func(c *gin.Context) {
 	if common.GlobalWebRateLimitEnable {
-		return rateLimitFactory(common.GlobalWebRateLimitNum, common.GlobalWebRateLimitDuration, "GW")
+		limiter := rateLimitFactory(common.GlobalWebRateLimitNum, common.GlobalWebRateLimitDuration, "GW")
+		return func(c *gin.Context) {
+			if isStaticWebAssetRequest(c) {
+				c.Next()
+				return
+			}
+			limiter(c)
+		}
 	}
 	return defNext
 }
@@ -205,11 +212,37 @@ func GlobalAPIRateLimit() func(c *gin.Context) {
 	}
 	limiter := rateLimitFactory(common.GlobalApiRateLimitNum, common.GlobalApiRateLimitDuration, "GA")
 	return func(c *gin.Context) {
-		if isVerifiedAdminRequest(c) {
+		if isVerifiedAdminRequest(c) || isGlobalAPIRateLimitExemptRequest(c) {
 			c.Next()
 			return
 		}
 		limiter(c)
+	}
+}
+
+func isStaticWebAssetRequest(c *gin.Context) bool {
+	path := c.Request.URL.Path
+	return strings.HasPrefix(path, "/static/") || strings.HasPrefix(path, "/assets/")
+}
+
+func isGlobalAPIRateLimitExemptRequest(c *gin.Context) bool {
+	switch c.Request.URL.Path {
+	case
+		"/api/setup",
+		"/api/status",
+		"/api/uptime/status",
+		"/api/user/auth/refresh",
+		"/api/user/login",
+		"/api/user/login/encryption-key",
+		"/api/user/login/2fa",
+		"/api/user/login/verify",
+		"/api/user/login/passkey/begin",
+		"/api/user/login/passkey/finish",
+		"/api/user/passkey/login/begin",
+		"/api/user/passkey/login/finish":
+		return true
+	default:
+		return false
 	}
 }
 

@@ -53,6 +53,7 @@ func CreateUserSessionFromLoginFlow(token string, session *UserSession, validate
 		return ErrUserSessionInvalid
 	}
 	cacheDeadline := userSessionCacheDeadline()
+	var revoked []UserSession
 	_, err := ConsumeAuthFlowWithAction(token, AuthFlowMatch{
 		Purpose: AuthFlowPurposeLoginVerification, UserId: session.UserID,
 	}, func(tx *gorm.DB, flow *AuthFlow) error {
@@ -66,24 +67,12 @@ func CreateUserSessionFromLoginFlow(token string, session *UserSession, validate
 		if err := validate(flow, state); err != nil {
 			return err
 		}
-		now := time.Now().Unix()
-		var activeCount, issuanceCount int64
-		if err := tx.Model(&UserSession{}).Where("user_id = ? AND status = ? AND expires_at > ?", session.UserID, UserSessionStatusActive, now).Count(&activeCount).Error; err != nil {
-			return err
-		}
-		if activeCount >= int64(common.UserSessionActiveLimit) {
-			return ErrUserSessionLimit
-		}
-		if err := tx.Model(&UserSession{}).Where("user_id = ? AND created_at > ?", session.UserID, now-common.UserSessionIssuanceWindowSeconds).Count(&issuanceCount).Error; err != nil {
-			return err
-		}
-		if issuanceCount >= int64(common.UserSessionIssuanceLimit) {
-			return ErrUserSessionIssuanceLimit
-		}
-		return createUserSessionWithTx(tx, session)
+		revoked, err = createUserSessionWithLimitsTx(tx, session, time.Now().Unix())
+		return err
 	})
 	if err != nil {
 		return err
 	}
+	publishRevokedUserSessionCaches(revoked)
 	return publishCreatedUserSession(session, cacheDeadline)
 }

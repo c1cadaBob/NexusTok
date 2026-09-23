@@ -77,9 +77,11 @@
 
 服务端在所有登录方式的统一 Session 签发出口执行两级账户限制：
 
-- `USER_SESSION_ACTIVE_LIMIT`（默认 `50`）：单用户未过期且状态为 active 的 Session 上限。达到上限时新登录返回 `409 AUTH_SESSION_LIMIT`。
+- `USER_SESSION_ACTIVE_LIMIT`（默认 `5`）：单用户未过期且状态为 active 的 Session 上限。达到上限时新登录返回 `409 AUTH_SESSION_LIMIT`。
 - `USER_SESSION_ISSUANCE_LIMIT`（默认 `100`）和 `USER_SESSION_ISSUANCE_WINDOW_SECONDS`（默认 `86400`）：统计窗口内该用户创建的所有 Session，包含已撤销和旧鉴权版本的记录。达到上限时返回 `429 AUTH_SESSION_ISSUANCE_LIMIT`。
-- 这两次计数与插入不加跨数据库锁；极端并发登录可能出现少量超额，但计数失败会拒绝签发，不会降级放行。
+- 创建 Session 前会在同一数据库事务中锁定对应用户行，串行化该用户的会话上限检查、清理和插入；SQLite 使用其单写者语义完成同样的串行化。计数或写入失败会拒绝签发，不会降级放行。
+
+当账户达到活跃 Session 上限时，登录事务会先撤销同时满足以下条件的旧 Session：创建时间超过 2 小时、从未产生可识别的认证活动（`last_active_at <= created_at`）、仍未过期且状态为 active。撤销原因记录为 `inactive_login_cleanup`，并发布短期 Redis deny tombstone。两小时内创建的 Session，以及 `last_active_at` 已经推进过的 Session，不会被该清理回收。清理后仍达到上限时返回 `409 AUTH_SESSION_LIMIT`；签发窗口达到上限时仍返回 `429 AUTH_SESSION_ISSUANCE_LIMIT`。
 
 升级时已经超过活跃上限的账户不会被自动下线或挤掉旧会话；限制只作用于后续的新 Session 签发。
 
@@ -159,7 +161,9 @@ Gin 默认会信任所有代理提供的客户端 IP 请求头。本项目改为
 
 Gin 只在请求的直连来源属于可信代理时解析客户端 IP 请求头，并从转发链右侧向左寻找首个非可信地址。因此常见 Nginx `$proxy_add_x_forwarded_for` 链中的公网客户端地址会阻止更左侧的伪造前缀生效。默认信任私网的残余风险是：能够从同一私网直接访问应用的其他机器或容器仍可伪造这些请求头；需要消除此风险时应使用 `none` 或配置精确代理地址。
 
-Redis 限流使用原子 Lua 固定窗口，替代旧的近似滑动窗口 List 实现。这是有意的语义变化：窗口边界两侧可分别打满一次，极短时间内通过量最高约为配置值的两倍。例如 `20 次/20 分钟` 在边界可通过约 40 次。Web 和 API 路由的默认全局 IP 限流均为 `10 次/60 秒`，分别由 `GLOBAL_WEB_RATE_LIMIT`、`GLOBAL_WEB_RATE_LIMIT_DURATION` 和 `GLOBAL_API_RATE_LIMIT`、`GLOBAL_API_RATE_LIMIT_DURATION` 覆盖。已通过后端验证的启用状态管理员和 Root 请求会跳过 API 全局 `GA` IP 桶，因此不会消耗 `rateLimit:v2:ip:GA:<client_ip>`；可豁免的凭据包括有效面板 Access Token、有效面板 PAT，以及旧 billing dashboard 使用的有效管理员 API Token。匿名请求、普通用户请求以及无效、过期、篡改或已撤销的管理员凭据仍受该桶限制。该豁免只适用于全局 API 访问限流，不适用于登录、注册、刷新、会话退出、支付、敏感操作、上传下载、搜索或模型请求等专用安全/业务限流。认证关键请求仍遵循上文的用途分桶规则，不使用这两个全局默认值。帐户级 Session 上限和签发窗口继续控制数据库增长；如未来需要严格抑制边界突发，需单独迁移为 ZSET 滑动窗口。
+Redis 限流使用原子 Lua 固定窗口，替代旧的近似滑动窗口 List 实现。这是有意的语义变化：窗口边界两侧可分别打满一次，极短时间内通过量最高约为配置值的两倍。例如 `20 次/20 分钟` 在边界可通过约 40 次。Web 和 API 路由的默认全局 IP 限流均为 `10 次/60 秒`，分别由 `GLOBAL_WEB_RATE_LIMIT`、`GLOBAL_WEB_RATE_LIMIT_DURATION` 和 `GLOBAL_API_RATE_LIMIT`、`GLOBAL_API_RATE_LIMIT_DURATION` 覆盖。已通过后端验证的启用状态管理员和 Root 请求会跳过 API 全局 `GA` IP 桶，因此不会消耗 `rateLimit:v2:ip:GA:<client_ip>`；可豁免的凭据包括有效面板 Access Token、有效面板 PAT，以及旧 billing dashboard 使用的有效管理员 API Token。匿名请求、普通用户请求以及无效、过期、篡改或已撤销的管理员凭据仍受该桶限制。管理员凭据豁免只适用于全局 API 访问限流，不适用于登录、注册、刷新、会话退出、支付、敏感操作、上传下载、搜索或模型请求等专用安全/业务限流；这些认证关键请求仍遵循上文的用途分桶规则，不使用这两个全局默认值。帐户级 Session 上限和签发窗口继续控制数据库增长；如未来需要严格抑制边界突发，需单独迁移为 ZSET 滑动窗口。
+
+登录、刷新、登录状态和初始化公开接口不会消耗全局 `GA` 桶，但仍受登录或刷新专用的 `CT:auth-login`、`CT:auth-refresh` 等用途桶保护。当前豁免包括 `/api/setup`、`/api/status`、`/api/uptime/status`、`/api/user/login`、`/api/user/login/encryption-key`、`/api/user/login/2fa`、登录验证/Passkey 登录流程和 `/api/user/auth/refresh`；注册、找回密码、OAuth 及其他普通匿名 API 不在该全局豁免范围内。Web `/static/` 和 `/assets/` 下的静态资源不会消耗 `GW`，而页面请求仍受 Web 全局限流保护，避免静态资源失败掩盖真正的页面限流。
 
 用户级模型成功请求限流仍使用原有 Redis List 近似滑动窗口，但列表时间戳统一写为 UTC。滚动升级期间，旧节点写入的本地时间字符串和新节点写入的 UTC 字符串无法从格式上区分，可能在一个模型限流窗口内临时误放行或误拒绝。所有节点升级完成并经过一个完整窗口后会自然收敛；本次升级不会切换 Key 或主动删除现有列表。
 

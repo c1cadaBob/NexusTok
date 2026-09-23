@@ -23,6 +23,12 @@ const (
 	userSessionRevokeBatchSize  = 500
 	userSessionCleanupScanLimit = 1000
 	userSessionCleanupBatchSize = 500
+
+	// InactiveUserSessionCleanupAge is intentionally fixed: a session that has
+	// never advanced beyond its creation timestamp for this long is treated as
+	// an abandoned login attempt when the account reaches its active-session
+	// limit.
+	InactiveUserSessionCleanupAge = 2 * time.Hour
 )
 
 var (
@@ -138,6 +144,28 @@ func CreateUserSession(session *UserSession) error {
 	return publishCreatedUserSession(session, cacheDeadline)
 }
 
+// CreateUserSessionWithLimits creates a login session while serializing the
+// per-user capacity check with other session issuances. It also revokes stale
+// sessions that were created but never used, so abandoned login attempts do
+// not permanently consume the active-session allowance.
+func CreateUserSessionWithLimits(session *UserSession) error {
+	if session == nil {
+		return ErrUserSessionInvalid
+	}
+	cacheDeadline := userSessionCacheDeadline()
+	var revoked []UserSession
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var createErr error
+		revoked, createErr = createUserSessionWithLimitsTx(tx, session, time.Now().Unix())
+		return createErr
+	})
+	if err != nil {
+		return err
+	}
+	publishRevokedUserSessionCaches(revoked)
+	return publishCreatedUserSession(session, cacheDeadline)
+}
+
 func createUserSessionWithTx(tx *gorm.DB, session *UserSession) error {
 	now := time.Now().Unix()
 	if session == nil || session.SID == "" || session.UserID <= 0 || session.UserAuthVersion <= 0 || session.RefreshHash == "" || session.ExpiresAt <= now {
@@ -161,6 +189,79 @@ func createUserSessionWithTx(tx *gorm.DB, session *UserSession) error {
 	return tx.Create(session).Error
 }
 
+func createUserSessionWithLimitsTx(tx *gorm.DB, session *UserSession, now int64) ([]UserSession, error) {
+	if session == nil || session.UserID <= 0 || now <= 0 {
+		return nil, ErrUserSessionInvalid
+	}
+
+	var user User
+	if err := lockForUpdate(tx).Select("id").Where("id = ?", session.UserID).First(&user).Error; err != nil {
+		return nil, err
+	}
+
+	var issuanceCount int64
+	if err := tx.Model(&UserSession{}).
+		Where("user_id = ? AND created_at > ?", session.UserID, now-common.UserSessionIssuanceWindowSeconds).
+		Count(&issuanceCount).Error; err != nil {
+		return nil, err
+	}
+	if issuanceCount >= int64(common.UserSessionIssuanceLimit) {
+		return nil, ErrUserSessionIssuanceLimit
+	}
+
+	cleanupBefore := now - int64(InactiveUserSessionCleanupAge/time.Second)
+	var staleSessions []UserSession
+	if err := lockForUpdate(tx).
+		Where(
+			"user_id = ? AND status = ? AND revoked_at = ? AND expires_at > ? AND created_at <= ? AND last_active_at <= created_at",
+			session.UserID,
+			UserSessionStatusActive,
+			0,
+			now,
+			cleanupBefore,
+		).
+		Order("created_at ASC").
+		Order("sid ASC").
+		Find(&staleSessions).Error; err != nil {
+		return nil, err
+	}
+	if len(staleSessions) > 0 {
+		sids := make([]string, 0, len(staleSessions))
+		for i := range staleSessions {
+			sids = append(sids, staleSessions[i].SID)
+		}
+		result := tx.Model(&UserSession{}).
+			Where("sid IN ? AND status = ? AND revoked_at = ?", sids, UserSessionStatusActive, 0).
+			Updates(map[string]any{
+				"status":         UserSessionStatusRevoked,
+				"revoked_at":     now,
+				"revoked_reason": "inactive_login_cleanup",
+			})
+		if result.Error != nil {
+			return nil, result.Error
+		}
+		for i := range staleSessions {
+			staleSessions[i].Status = UserSessionStatusRevoked
+			staleSessions[i].RevokedAt = now
+			staleSessions[i].RevokedReason = "inactive_login_cleanup"
+		}
+	}
+
+	var activeCount int64
+	if err := tx.Model(&UserSession{}).
+		Where("user_id = ? AND status = ? AND expires_at > ?", session.UserID, UserSessionStatusActive, now).
+		Count(&activeCount).Error; err != nil {
+		return nil, err
+	}
+	if activeCount >= int64(common.UserSessionActiveLimit) {
+		return nil, ErrUserSessionLimit
+	}
+	if err := createUserSessionWithTx(tx, session); err != nil {
+		return nil, err
+	}
+	return staleSessions, nil
+}
+
 func publishCreatedUserSession(session *UserSession, cacheDeadline time.Time) error {
 	if err := writeUserSessionCache(session.cacheEntry(), cacheDeadline); err != nil {
 		if errors.Is(err, errUserSessionCacheObservationStale) {
@@ -172,6 +273,14 @@ func publishCreatedUserSession(session *UserSession, cacheDeadline time.Time) er
 		common.SysLog("failed to populate newly created user session cache: " + err.Error())
 	}
 	return nil
+}
+
+func publishRevokedUserSessionCaches(sessions []UserSession) {
+	for i := range sessions {
+		if err := writeUserSessionCache(sessions[i].cacheEntry(), time.Time{}); err != nil {
+			common.SysLog("failed to publish inactive user session cleanup tombstone: " + err.Error())
+		}
+	}
 }
 
 func CountActiveUserSessions(userID int, now int64) (int64, error) {

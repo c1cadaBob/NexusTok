@@ -21,6 +21,7 @@ import (
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 )
 
 func TestRealPlatformSiteAdaptersReadOnly(t *testing.T) {
@@ -1267,8 +1268,8 @@ func TestPersistPlatformSiteSnapshotRebuildsAbilitiesAndAutoDisablesUnavailableK
 }
 
 func TestPersistPlatformSiteSnapshotUsedQuotaDatabaseMatrix(t *testing.T) {
-	// TEST_UPSTREAM_SITE_MYSQL_DSN and TEST_UPSTREAM_SITE_POSTGRES_DSN must
-	// point to isolated scratch databases because this test drops its tables.
+	// MySQL/PostgreSQL DSN must identify an isolated scratch database. The
+	// matrix uses a unique table prefix and must never touch the hot database.
 	for _, dialect := range []struct {
 		name string
 		dsn  string
@@ -1299,26 +1300,36 @@ func TestPersistPlatformSiteSnapshotUsedQuotaDatabaseMatrix(t *testing.T) {
 			if dialect.dsn == "" {
 				t.Skip("测试数据库 DSN 未配置")
 			}
-			db, err := gorm.Open(dialect.open(dialect.dsn), &gorm.Config{})
+			if dialect.name != "sqlite" {
+				assertScratchDatabaseDSN(t, dialect.dsn)
+			}
+			prefix := fmt.Sprintf("upstream_site_matrix_%d_", time.Now().UnixNano())
+			db, err := gorm.Open(dialect.open(dialect.dsn), &gorm.Config{
+				NamingStrategy: schema.NamingStrategy{TablePrefix: prefix},
+			})
 			require.NoError(t, err)
 			sqlDB, err := db.DB()
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
-			if dialect.name != "sqlite" {
-				require.NoError(t, db.Exec("DROP TABLE IF EXISTS upstream_key_abilities").Error)
-				require.NoError(t, db.Exec("DROP TABLE IF EXISTS upstream_keys").Error)
-				require.NoError(t, db.Exec("DROP TABLE IF EXISTS platform_site_accounts").Error)
-				require.NoError(t, db.Exec("DROP TABLE IF EXISTS abilities").Error)
-				require.NoError(t, db.Exec("DROP TABLE IF EXISTS channels").Error)
-			}
+			markerTable := prefix + "test_guard"
+			require.NoError(t, db.Table(markerTable).AutoMigrate(&upstreamSiteScratchMarker{}))
+			require.NoError(t, db.Table(markerTable).Create(&upstreamSiteScratchMarker{
+				Marker: "upstream-site-matrix",
+			}).Error)
+			var markerCount int64
+			require.NoError(t, db.Table(markerTable).
+				Where("marker = ?", "upstream-site-matrix").
+				Count(&markerCount).Error)
+			require.Equal(t, int64(1), markerCount)
 			t.Cleanup(func() {
-				if dialect.name != "sqlite" {
-					require.NoError(t, db.Exec("DROP TABLE IF EXISTS upstream_key_abilities").Error)
-					require.NoError(t, db.Exec("DROP TABLE IF EXISTS upstream_keys").Error)
-					require.NoError(t, db.Exec("DROP TABLE IF EXISTS platform_site_accounts").Error)
-					require.NoError(t, db.Exec("DROP TABLE IF EXISTS abilities").Error)
-					require.NoError(t, db.Exec("DROP TABLE IF EXISTS channels").Error)
-				}
+				_ = db.Migrator().DropTable(
+					&model.UpstreamKeyAbility{},
+					&model.UpstreamKey{},
+					&model.PlatformSiteAccount{},
+					&model.Ability{},
+					&model.Channel{},
+				)
+				_ = db.Migrator().DropTable(markerTable)
 			})
 			require.NoError(t, db.AutoMigrate(
 				&model.Channel{},
@@ -1413,6 +1424,54 @@ func TestPersistPlatformSiteSnapshotUsedQuotaDatabaseMatrix(t *testing.T) {
 			assert.Zero(t, savedChannel.UsedQuota)
 		})
 	}
+}
+
+type upstreamSiteScratchMarker struct {
+	ID     uint   `gorm:"primaryKey"`
+	Marker string `gorm:"type:varchar(64);not null;uniqueIndex"`
+}
+
+func assertScratchDatabaseDSN(t *testing.T, dsn string) {
+	t.Helper()
+	databaseName := strings.ToLower(upstreamSiteDSNDatabaseName(dsn))
+	if databaseName == "nexustok" {
+		t.Fatalf("拒绝使用运行库 DSN：数据库名称为 nexustok")
+	}
+	if !strings.Contains(databaseName, "test") && !strings.Contains(databaseName, "scratch") {
+		t.Fatalf("拒绝使用未标记的测试 DSN：数据库标识必须包含 test 或 scratch")
+	}
+}
+
+func upstreamSiteDSNDatabaseName(dsn string) string {
+	dsn = strings.TrimSpace(dsn)
+	if strings.Contains(dsn, "://") {
+		if parsed, err := url.Parse(dsn); err == nil {
+			if database := parsed.Query().Get("dbname"); database != "" {
+				return database
+			}
+			if database := parsed.Query().Get("database"); database != "" {
+				return database
+			}
+			return strings.Trim(parsed.Path, "/")
+		}
+	}
+	if separator := strings.LastIndex(dsn, ")/"); separator >= 0 {
+		database := dsn[separator+2:]
+		if query := strings.IndexByte(database, '?'); query >= 0 {
+			database = database[:query]
+		}
+		return database
+	}
+	for _, field := range strings.FieldsFunc(dsn, func(r rune) bool {
+		return r == ' ' || r == ','
+	}) {
+		for _, key := range []string{"dbname=", "database="} {
+			if database, ok := strings.CutPrefix(field, key); ok {
+				return database
+			}
+		}
+	}
+	return dsn
 }
 
 func TestPersistPlatformSiteSnapshotPreservesManualRatioAndWeightOverrides(t *testing.T) {
