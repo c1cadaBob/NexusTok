@@ -111,6 +111,9 @@ func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *Platfo
 		"quota_used",
 		"usedQuota",
 		"total_used",
+		"totalUsedQuota",
+		"total_actual_cost",
+		"totalActualCost",
 	)
 	snapshot := PlatformSiteSnapshot{
 		Balance:      normalizeNewAPIQuota(firstFloat(self, "quota", "balance", "money", "credit"), quotaPerUnit),
@@ -143,6 +146,8 @@ func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *Platfo
 			"used",
 			"quota_used",
 			"usedQuota",
+			"total_used",
+			"totalUsedQuota",
 		)
 		item := UpstreamKeySnapshot{
 			ExternalID:               externalID,
@@ -217,6 +222,17 @@ func (adapter *Sub2APIAdapter) Authenticate(ctx context.Context, baseURL string,
 	if modelBaseURL, ok := discoverSub2APIModelBaseURL(ctx, session); ok {
 		session.ModelBaseURL = modelBaseURL
 	}
+	if managementBaseURL, modelBaseURL, ok := discoverSub2APIManagementBaseURL(
+		ctx,
+		session,
+	); ok {
+		session.BaseURL = managementBaseURL
+		session.ManagementBaseURL = managementBaseURL
+		setSub2APIBrowserHeaders(session)
+		session.ModelBaseURL = modelBaseURL
+	} else {
+		session.ManagementBaseURL = session.BaseURL
+	}
 	switch platformSiteCredentialAuthType(credential) {
 	case model.UpstreamAuthPassword:
 		payload, requestErr := loginSub2APIWithPassword(ctx, session, credential)
@@ -289,12 +305,16 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 		"used",
 		"usedQuota",
 		"total_used",
+		"totalUsedQuota",
+		"total_actual_cost",
+		"totalActualCost",
 	)
 	snapshot := PlatformSiteSnapshot{
-		Balance:      firstFloat(me, "balance", "quota", "credit"),
-		UsedQuota:    usedQuota,
-		UsedQuotaSet: usedQuotaSet,
-		RelayBaseURL: strings.TrimRight(strings.TrimSpace(session.ModelBaseURL), "/"),
+		Balance:           firstFloat(me, "balance", "quota", "credit"),
+		UsedQuota:         usedQuota,
+		UsedQuotaSet:      usedQuotaSet,
+		ManagementBaseURL: strings.TrimRight(strings.TrimSpace(session.ManagementBaseURL), "/"),
+		RelayBaseURL:      strings.TrimRight(strings.TrimSpace(session.ModelBaseURL), "/"),
 	}
 	if payload, requestErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/user/profile", nil, nil); requestErr == nil {
 		profile := firstRecord(payload)
@@ -308,6 +328,9 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 			"used",
 			"usedQuota",
 			"total_used",
+			"totalUsedQuota",
+			"total_actual_cost",
+			"totalActualCost",
 		); profileUsedQuotaSet {
 			snapshot.UsedQuota = profileUsedQuota
 			snapshot.UsedQuotaSet = true
@@ -318,14 +341,28 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 		if used, usedSet := firstOptionalInt64(
 			usage,
 			"total_actual_cost",
+			"totalActualCost",
 			"total_cost",
-			"today_actual_cost",
+			"totalCost",
+			"total_used",
+			"totalUsedQuota",
 			"used_quota",
 			"quota_used",
 			"used",
 		); usedSet {
 			snapshot.UsedQuota = used
 			snapshot.UsedQuotaSet = true
+		} else if !snapshot.UsedQuotaSet {
+			if used, usedSet := firstOptionalInt64(
+				usage,
+				"today_actual_cost",
+				"todayActualCost",
+				"today_cost",
+				"todayCost",
+			); usedSet {
+				snapshot.UsedQuota = used
+				snapshot.UsedQuotaSet = true
+			}
 		}
 	}
 	rates := map[string]float64{}
@@ -1163,6 +1200,8 @@ func fetchSub2APIKeys(ctx context.Context, session *PlatformSiteSession, rates m
 				"used_quota",
 				"used",
 				"usedQuota",
+				"total_used",
+				"totalUsedQuota",
 			)
 			keySnapshot := UpstreamKeySnapshot{
 				ExternalID:               externalID,
@@ -1277,6 +1316,8 @@ func fetchSub2APIAdminKeys(ctx context.Context, session *PlatformSiteSession, ra
 				"used_quota",
 				"used",
 				"usedQuota",
+				"total_used",
+				"totalUsedQuota",
 			)
 			keySnapshot := UpstreamKeySnapshot{
 				ExternalID:               id,
@@ -1394,17 +1435,68 @@ func discoverSub2APIModelBaseURL(ctx context.Context, session *PlatformSiteSessi
 	if session == nil || session.Client == nil || strings.TrimSpace(session.BaseURL) == "" {
 		return "", false
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, session.BaseURL, nil)
+	normalized, ok := discoverSub2APIPageModelBaseURL(ctx, session.Client, session.BaseURL)
+	if !ok {
+		return "", false
+	}
+	if !relatedPlatformSiteBaseURL(session.BaseURL, normalized) {
+		return "", false
+	}
+	return normalized, true
+}
+
+func discoverSub2APIManagementBaseURL(
+	ctx context.Context,
+	session *PlatformSiteSession,
+) (string, string, bool) {
+	if session == nil || session.Client == nil {
+		return "", "", false
+	}
+	originalBaseURL, err := normalizePlatformSiteURL(session.BaseURL)
+	if err != nil {
+		return "", "", false
+	}
+	managementBaseURL, ok := sub2APIManagementBaseURLCandidate(originalBaseURL)
+	if !ok {
+		return "", "", false
+	}
+	anonymousClient := *session.Client
+	anonymousClient.Jar = nil
+	modelBaseURL, ok := discoverSub2APIPageModelBaseURL(
+		ctx,
+		&anonymousClient,
+		managementBaseURL,
+	)
+	if !ok || !samePlatformSiteOrigin(originalBaseURL, modelBaseURL) {
+		return "", "", false
+	}
+	return managementBaseURL, modelBaseURL, true
+}
+
+func discoverSub2APIPageModelBaseURL(
+	ctx context.Context,
+	client *http.Client,
+	pageBaseURL string,
+) (string, bool) {
+	if client == nil || strings.TrimSpace(pageBaseURL) == "" {
+		return "", false
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, pageBaseURL, nil)
 	if err != nil {
 		return "", false
 	}
 	request.Header.Set("Accept", "text/html,application/xhtml+xml")
-	response, err := session.Client.Do(request)
+	response, err := client.Do(request)
 	if err != nil {
 		return "", false
 	}
 	defer response.Body.Close()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return "", false
+	}
+	contentType := strings.ToLower(response.Header.Get("Content-Type"))
+	if !strings.Contains(contentType, "text/html") &&
+		!strings.Contains(contentType, "application/xhtml+xml") {
 		return "", false
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, upstreamSiteResponseLimit+1))
@@ -1420,7 +1512,7 @@ func discoverSub2APIModelBaseURL(ctx context.Context, session *PlatformSiteSessi
 		candidate = decoded
 	}
 	if parsedCandidate, err := url.Parse(candidate); err == nil && !parsedCandidate.IsAbs() {
-		baseURL, baseErr := url.Parse(session.BaseURL)
+		baseURL, baseErr := url.Parse(pageBaseURL)
 		if baseErr != nil {
 			return "", false
 		}
@@ -1430,10 +1522,69 @@ func discoverSub2APIModelBaseURL(ctx context.Context, session *PlatformSiteSessi
 	if err != nil || validatePlatformSiteURL(normalized) != nil {
 		return "", false
 	}
-	if !relatedPlatformSiteBaseURL(session.BaseURL, normalized) {
+	return normalized, true
+}
+
+func sub2APIManagementBaseURLCandidate(raw string) (string, bool) {
+	normalized, err := normalizePlatformSiteURL(raw)
+	if err != nil {
 		return "", false
 	}
-	return normalized, true
+	parsed, err := url.Parse(normalized)
+	if err != nil {
+		return "", false
+	}
+	host := normalizePlatformHostname(parsed.Hostname())
+	firstLabel, remainder, found := strings.Cut(host, ".")
+	if !found || firstLabel != "api" || remainder == "" {
+		return "", false
+	}
+	port := parsed.Port()
+	parsed.Host = remainder
+	if port != "" {
+		parsed.Host += ":" + port
+	}
+	parsed.Path = ""
+	parsed.RawPath = ""
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	candidate := strings.TrimRight(parsed.String(), "/")
+	if validatePlatformSiteURL(candidate) != nil {
+		return "", false
+	}
+	return candidate, true
+}
+
+func samePlatformSiteOrigin(left string, right string) bool {
+	leftNormalized, leftErr := normalizePlatformSiteURL(left)
+	rightNormalized, rightErr := normalizePlatformSiteURL(right)
+	if leftErr != nil || rightErr != nil {
+		return false
+	}
+	leftURL, leftErr := url.Parse(leftNormalized)
+	rightURL, rightErr := url.Parse(rightNormalized)
+	if leftErr != nil || rightErr != nil {
+		return false
+	}
+	if !strings.EqualFold(leftURL.Scheme, rightURL.Scheme) ||
+		!strings.EqualFold(leftURL.Hostname(), rightURL.Hostname()) {
+		return false
+	}
+	return platformSiteEffectivePort(leftURL) == platformSiteEffectivePort(rightURL)
+}
+
+func platformSiteEffectivePort(value *url.URL) string {
+	if port := value.Port(); port != "" {
+		return port
+	}
+	switch strings.ToLower(value.Scheme) {
+	case "https":
+		return "443"
+	case "http":
+		return "80"
+	default:
+		return ""
+	}
 }
 
 func relatedPlatformSiteBaseURL(left string, right string) bool {

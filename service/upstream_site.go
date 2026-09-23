@@ -48,11 +48,12 @@ const (
 )
 
 type PlatformSiteSession struct {
-	BaseURL          string
-	ModelBaseURL     string
-	Client           *http.Client
-	Headers          http.Header
-	CredentialUpdate *model.PlatformSiteCredential
+	BaseURL           string
+	ModelBaseURL      string
+	ManagementBaseURL string
+	Client            *http.Client
+	Headers           http.Header
+	CredentialUpdate  *model.PlatformSiteCredential
 }
 
 type PlatformSiteAdapter interface {
@@ -81,12 +82,25 @@ type UpstreamKeySnapshot struct {
 }
 
 type PlatformSiteSnapshot struct {
-	Balance      float64
-	UsedQuota    int64
-	UsedQuotaSet bool
-	Models       []string
-	Keys         []UpstreamKeySnapshot
-	RelayBaseURL string
+	Balance           float64
+	UsedQuota         int64
+	UsedQuotaSet      bool
+	Models            []string
+	Keys              []UpstreamKeySnapshot
+	ManagementBaseURL string
+	RelayBaseURL      string
+}
+
+type platformSiteHTTPStatusError struct {
+	statusCode int
+}
+
+func (err *platformSiteHTTPStatusError) Error() string {
+	return fmt.Sprintf("%s: HTTP %d", ErrPlatformSiteHTTPStatus, err.statusCode)
+}
+
+func (err *platformSiteHTTPStatusError) Unwrap() error {
+	return ErrPlatformSiteHTTPStatus
 }
 
 type platformSiteStageError struct {
@@ -288,7 +302,7 @@ func platformSiteRequest(
 		return nil, errors.New("平台站点响应体超过限制")
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("%w: HTTP %d", ErrPlatformSiteHTTPStatus, response.StatusCode)
+		return nil, &platformSiteHTTPStatusError{statusCode: response.StatusCode}
 	}
 	if len(strings.TrimSpace(string(data))) == 0 {
 		return map[string]any{}, nil
@@ -401,7 +415,24 @@ func firstInt64(record map[string]any, keys ...string) int64 {
 
 func firstOptionalInt64(record map[string]any, keys ...string) (int64, bool) {
 	for _, key := range keys {
-		if _, exists := record[key]; !exists {
+		value, exists := record[key]
+		if !exists {
+			continue
+		}
+		if value == nil {
+			continue
+		}
+		switch typed := value.(type) {
+		case float64:
+			if math.IsNaN(typed) || math.IsInf(typed, 0) {
+				continue
+			}
+		case int, int64:
+		case string:
+			if _, err := strconv.ParseFloat(strings.TrimSpace(typed), 64); err != nil {
+				continue
+			}
+		default:
 			continue
 		}
 		return firstInt64(record, key), true
@@ -600,6 +631,9 @@ func SafePlatformSiteError(err error) string {
 	case errors.Is(err, ErrSub2APILoginRequest):
 		return "Sub2API 登录请求失败"
 	case errors.Is(err, ErrSub2APILoginHTTPStatus):
+		if statusCode, ok := platformSiteHTTPStatusCode(err); ok {
+			return fmt.Sprintf("Sub2API 登录 HTTP 状态失败（HTTP %d）", statusCode)
+		}
 		return "Sub2API 登录 HTTP 状态失败"
 	case errors.Is(err, ErrSub2APILoginResponse):
 		return "Sub2API 登录响应格式错误"
@@ -623,6 +657,14 @@ func SafePlatformSiteError(err error) string {
 	default:
 		return "上游平台同步失败" + stage
 	}
+}
+
+func platformSiteHTTPStatusCode(err error) (int, bool) {
+	var statusErr *platformSiteHTTPStatusError
+	if !errors.As(err, &statusErr) || statusErr.statusCode <= 0 {
+		return 0, false
+	}
+	return statusErr.statusCode, true
 }
 
 func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteAccount, snapshot PlatformSiteSnapshot) error {
@@ -691,6 +733,7 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 						ChannelID:             account.ChannelID,
 						ExternalID:            item.ExternalID,
 						Name:                  item.Name,
+						UsedQuota:             item.UsedQuota,
 						SourceConversionRatio: &sourceRatio,
 						ConversionRatio:       effectiveRatio,
 						Weight:                weight,
@@ -725,6 +768,9 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 					"missing_since": 0,
 					"models_synced": false,
 					"name":          item.Name,
+				}
+				if item.UsedQuotaSet {
+					updates["used_quota"] = item.UsedQuota
 				}
 				if item.Secret != "" {
 					ciphertext, encryptErr := model.EncryptPlatformSiteCredential(
@@ -897,6 +943,10 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 			"balance":    snapshot.Balance,
 			"used_quota": usedQuota,
 		}
+		managementBaseURL := strings.TrimRight(strings.TrimSpace(snapshot.ManagementBaseURL), "/")
+		if managementBaseURL != "" && account.Platform == model.PlatformSub2API {
+			accountUpdates["base_url"] = managementBaseURL
+		}
 		relayBaseURL := strings.TrimRight(strings.TrimSpace(snapshot.RelayBaseURL), "/")
 		if relayBaseURL == "" && account.Platform == model.PlatformSub2API {
 			relayBaseURL = strings.TrimRight(strings.TrimSpace(account.RelayBaseURL), "/")
@@ -925,7 +975,7 @@ func sumUpstreamKeyUsedQuota(keys []UpstreamKeySnapshot) (int64, error) {
 	const maxInt64 = int64(^uint64(0) >> 1)
 	total := int64(0)
 	for _, key := range keys {
-		if !key.UsedQuotaSet && key.UsedQuota == 0 {
+		if !key.UsedQuotaSet {
 			continue
 		}
 		if total > maxInt64-key.UsedQuota {

@@ -252,7 +252,8 @@ test('平台站点子表移除内部卡片容器样式并保留表格底色', ()
   const table = actionHeader.closest('table')
   const tableContainer = table?.parentElement
 
-  expect(table).toHaveClass('bg-background', 'w-max', 'min-w-full')
+  expect(table).toHaveClass('bg-background', 'w-max', 'min-w-0')
+  expect(table).not.toHaveClass('min-w-full')
   expect(tableContainer).toHaveClass(
     '!overflow-visible',
     '!rounded-none',
@@ -296,7 +297,8 @@ test('平台站点子表根区域不再写入固定宽度', () => {
   )
   expect(subTableRoot).not.toHaveClass('sticky', 'left-0')
   expect(subTableRoot).not.toHaveAttribute('style')
-  expect(actionHeader.closest('table')).toHaveClass('w-max', 'min-w-full')
+  expect(actionHeader.closest('table')).toHaveClass('w-max', 'min-w-0')
+  expect(actionHeader.closest('table')).not.toHaveClass('min-w-full')
 })
 
 test('平台站点子表不显示多选和批量启停控件', () => {

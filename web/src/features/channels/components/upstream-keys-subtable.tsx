@@ -1135,7 +1135,7 @@ export function UpstreamKeysSubTable(props: UpstreamKeysSubTableProps) {
     <div className='border-border bg-muted/20 relative z-20 w-full max-w-none min-w-0 overflow-visible border-y px-3 py-3'>
       <StaticDataTable
         className='relative min-w-0 !overflow-visible !rounded-none !border-0 !bg-transparent'
-        tableClassName='bg-background w-max min-w-full table-fixed'
+        tableClassName='bg-background w-max min-w-0 table-fixed'
         tableProps={{ withContainer: false }}
         data={keys}
         columns={columns}

@@ -638,7 +638,7 @@ func TestSub2APIAdapterUsesProfileUsageGroupAliasesAndModelAliases(t *testing.T)
 		case "/api/v1/user/profile":
 			_, _ = writer.Write([]byte(`{"code":0,"data":{"balance":6.5}}`))
 		case "/api/v1/usage/dashboard/stats":
-			_, _ = writer.Write([]byte(`{"code":0,"data":{"total_actual_cost":2}}`))
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"totalActualCost":"2"}}`))
 		case "/api/v1/groups/available":
 			_, _ = writer.Write([]byte(`{"code":0,"data":[{"id":"group-1","name":"default","rate_multiplier":0.25}]}`))
 		case "/api/v1/groups/rates":
@@ -669,6 +669,8 @@ func TestSub2APIAdapterUsesProfileUsageGroupAliasesAndModelAliases(t *testing.T)
 	assert.Equal(t, 0.25, snapshot.Keys[0].SourceConversionRatio)
 	assert.Equal(t, []string{"gpt-4o", "gemini-2.5-pro"}, snapshot.Keys[0].Models)
 	assert.True(t, snapshot.Keys[0].ModelsSynced)
+	assert.Equal(t, int64(2), snapshot.Keys[0].UsedQuota)
+	assert.True(t, snapshot.Keys[0].UsedQuotaSet)
 }
 
 func TestSub2APIAdapterDiscoversRelayModelsAndTreatsZeroQuotaAsUnlimited(t *testing.T) {
@@ -764,6 +766,148 @@ func TestSub2APIAdapterResolvesRelativeRelayURLFromPageConfig(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.Equal(t, "https://example.com/v1", session.ModelBaseURL)
+}
+
+func TestSub2APIAdapterDiscoversManagementURLFromStrictAPISubdomain(t *testing.T) {
+	var candidateLoginRequests int
+	client := &http.Client{
+		Transport: platformSiteRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+			switch {
+			case request.URL.Host == "api.example.com" &&
+				request.Method == http.MethodGet &&
+				(request.URL.Path == "" || request.URL.Path == "/"):
+				return platformSiteJSONResponse(http.StatusNotFound, `{"code":404}`), nil
+			case request.URL.Host == "example.com" &&
+				request.Method == http.MethodGet &&
+				(request.URL.Path == "" || request.URL.Path == "/"):
+				assert.Empty(t, request.Header.Get("Authorization"))
+				assert.Empty(t, request.Header.Get("Cookie"))
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"text/html; charset=utf-8"}},
+					Body: io.NopCloser(strings.NewReader(
+						`<script>window.__APP_CONFIG__={"api_base_url":"https://api.example.com/v1"}</script>`,
+					)),
+				}, nil
+			case request.URL.Host == "example.com" &&
+				request.Method == http.MethodPost &&
+				request.URL.Path == "/api/v1/auth/login":
+				candidateLoginRequests++
+				assert.Empty(t, request.Header.Get("Cookie"))
+				return platformSiteJSONResponse(
+					http.StatusOK,
+					`{"code":0,"data":{"access_token":"sub2api-session"}}`,
+				), nil
+			case request.URL.Host == "example.com" &&
+				request.Method == http.MethodGet &&
+				request.URL.Path == "/api/v1/auth/me":
+				assert.Equal(t, "Bearer sub2api-session", request.Header.Get("Authorization"))
+				return platformSiteJSONResponse(http.StatusOK, `{"code":0,"data":{"balance":3}}`), nil
+			default:
+				return platformSiteJSONResponse(http.StatusNotFound, `{"code":404}`), nil
+			}
+		}),
+	}
+
+	session, err := NewSub2APIAdapter(client).Authenticate(
+		context.Background(),
+		"https://api.example.com",
+		model.PlatformSiteCredential{
+			AuthType: model.UpstreamAuthPassword,
+			Username: "operator@example.com",
+			Password: "synthetic-password",
+		},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "https://example.com", session.BaseURL)
+	assert.Equal(t, "https://example.com", session.ManagementBaseURL)
+	assert.Equal(t, "https://api.example.com/v1", session.ModelBaseURL)
+	assert.Equal(t, 1, candidateLoginRequests)
+}
+
+func TestSub2APIAdapterDoesNotUseUnverifiedManagementCandidate(t *testing.T) {
+	var candidateLoginRequests int
+	client := &http.Client{
+		Transport: platformSiteRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+			switch {
+			case request.URL.Host == "api.example.com" &&
+				request.Method == http.MethodGet &&
+				(request.URL.Path == "" || request.URL.Path == "/"):
+				return platformSiteJSONResponse(http.StatusNotFound, `{"code":404}`), nil
+			case request.URL.Host == "example.com" &&
+				request.Method == http.MethodGet &&
+				(request.URL.Path == "" || request.URL.Path == "/"):
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"text/html"}},
+					Body: io.NopCloser(strings.NewReader(
+						`<script>window.__APP_CONFIG__={"api_base_url":"https://other.example.com/v1"}</script>`,
+					)),
+				}, nil
+			case request.URL.Host == "example.com" &&
+				request.Method == http.MethodPost &&
+				request.URL.Path == "/api/v1/auth/login":
+				candidateLoginRequests++
+				return platformSiteJSONResponse(http.StatusUnauthorized, `{"code":401}`), nil
+			case request.URL.Host == "api.example.com" &&
+				request.Method == http.MethodPost &&
+				request.URL.Path == "/api/v1/auth/login":
+				return platformSiteJSONResponse(
+					http.StatusOK,
+					`{"code":0,"data":{"access_token":"sub2api-session"}}`,
+				), nil
+			case request.URL.Host == "api.example.com" &&
+				request.Method == http.MethodGet &&
+				request.URL.Path == "/api/v1/auth/me":
+				return platformSiteJSONResponse(http.StatusOK, `{"code":0,"data":{"balance":3}}`), nil
+			default:
+				return platformSiteJSONResponse(http.StatusNotFound, `{"code":404}`), nil
+			}
+		}),
+	}
+
+	session, err := NewSub2APIAdapter(client).Authenticate(
+		context.Background(),
+		"https://api.example.com",
+		model.PlatformSiteCredential{
+			AuthType: model.UpstreamAuthPassword,
+			Username: "operator@example.com",
+			Password: "synthetic-password",
+		},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "https://api.example.com", session.BaseURL)
+	assert.Equal(t, "https://api.example.com", session.ManagementBaseURL)
+	assert.Zero(t, candidateLoginRequests)
+}
+
+func TestSafePlatformSiteErrorIncludesHTTPStatusWithoutResponseBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodGet && (request.URL.Path == "" || request.URL.Path == "/") {
+			writer.Header().Set("Content-Type", "text/html")
+			writer.WriteHeader(http.StatusNotFound)
+			_, _ = writer.Write([]byte("secret upstream response body"))
+			return
+		}
+		writer.WriteHeader(http.StatusNotFound)
+		_, _ = writer.Write([]byte("secret login response body"))
+	}))
+	defer server.Close()
+
+	_, err := NewSub2APIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType: model.UpstreamAuthPassword,
+			Username: "operator@example.com",
+			Password: "synthetic-password",
+		},
+	)
+	require.Error(t, err)
+	message := SafePlatformSiteError(err)
+	assert.Contains(t, message, "HTTP 404")
+	assert.NotContains(t, message, "secret upstream response body")
+	assert.NotContains(t, message, "secret login response body")
 }
 
 func TestSub2APIAdapterResolvesMaskedKeyFromKeyDetail(t *testing.T) {
@@ -965,6 +1109,63 @@ func TestPersistPlatformSiteSnapshotIsolatesUnavailableKeys(t *testing.T) {
 	require.NoError(t, db.First(&savedChannel, channel.Id).Error)
 	assert.Equal(t, 7.0, savedChannel.Balance)
 	assert.Equal(t, int64(123456), savedChannel.UsedQuota)
+}
+
+func TestPersistPlatformSiteSnapshotSeparatesSub2APIManagementAndRelayURLs(t *testing.T) {
+	previousDB := model.DB
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&model.Channel{},
+		&model.Ability{},
+		&model.PlatformSiteAccount{},
+		&model.UpstreamKey{},
+		&model.UpstreamKeyAbility{},
+	))
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = previousDB
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	channel := &model.Channel{
+		Name:         "Sub2API site",
+		Status:       common.ChannelStatusEnabled,
+		UpstreamKind: model.UpstreamKindPlatformSite,
+	}
+	require.NoError(t, db.Create(channel).Error)
+	account := &model.PlatformSiteAccount{
+		ChannelID:       channel.Id,
+		Platform:        model.PlatformSub2API,
+		BaseURL:         "https://api.example.com",
+		RelayBaseURL:    "https://api.example.com",
+		ConversionRatio: 0.1,
+	}
+	require.NoError(t, db.Create(account).Error)
+
+	require.NoError(t, persistPlatformSiteSnapshot(context.Background(), account, PlatformSiteSnapshot{
+		Balance:           8,
+		UsedQuota:         21,
+		UsedQuotaSet:      true,
+		ManagementBaseURL: "https://example.com",
+		RelayBaseURL:      "https://api.example.com/v1",
+	}))
+
+	var savedAccount model.PlatformSiteAccount
+	require.NoError(t, db.First(&savedAccount, account.ID).Error)
+	assert.Equal(t, "https://example.com", savedAccount.BaseURL)
+	assert.Equal(t, "https://api.example.com/v1", savedAccount.RelayBaseURL)
+	assert.Equal(t, int64(21), savedAccount.UsedQuota)
+
+	var savedChannel model.Channel
+	require.NoError(t, db.First(&savedChannel, channel.Id).Error)
+	require.NotNil(t, savedChannel.BaseURL)
+	assert.Equal(t, "https://api.example.com", *savedChannel.BaseURL)
+	assert.Equal(t, int64(21), savedChannel.UsedQuota)
 }
 
 func TestPersistPlatformSiteCredentialStoresOnlyEncryptedRotatedValues(t *testing.T) {
