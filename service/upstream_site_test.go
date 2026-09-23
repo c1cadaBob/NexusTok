@@ -618,7 +618,7 @@ func TestSub2APIAdapterAdminKeyReadsNestedCredentialAndPagination(t *testing.T) 
 	snapshot, err := adapter.FetchSnapshot(context.Background(), session)
 	require.NoError(t, err)
 	assert.Equal(t, float64(4), snapshot.Balance)
-	assert.Equal(t, int64(1), snapshot.UsedQuota)
+	assert.Equal(t, int64(500000), snapshot.UsedQuota)
 	assert.True(t, snapshot.UsedQuotaSet)
 	require.Len(t, snapshot.Keys, 1)
 	assert.Equal(t, "sk-sub2api", snapshot.Keys[0].Secret)
@@ -662,15 +662,135 @@ func TestSub2APIAdapterUsesProfileUsageGroupAliasesAndModelAliases(t *testing.T)
 	snapshot, err := adapter.FetchSnapshot(context.Background(), session)
 	require.NoError(t, err)
 	assert.Equal(t, 6.5, snapshot.Balance)
-	assert.Equal(t, int64(2), snapshot.UsedQuota)
+	assert.Equal(t, int64(1000000), snapshot.UsedQuota)
 	assert.True(t, snapshot.UsedQuotaSet)
 	require.Len(t, snapshot.Keys, 1)
 	assert.Equal(t, "default", snapshot.Keys[0].Group)
 	assert.Equal(t, 0.25, snapshot.Keys[0].SourceConversionRatio)
 	assert.Equal(t, []string{"gpt-4o", "gemini-2.5-pro"}, snapshot.Keys[0].Models)
 	assert.True(t, snapshot.Keys[0].ModelsSynced)
-	assert.Equal(t, int64(2), snapshot.Keys[0].UsedQuota)
+	assert.Equal(t, int64(1000000), snapshot.Keys[0].UsedQuota)
 	assert.True(t, snapshot.Keys[0].UsedQuotaSet)
+	require.NotNil(t, snapshot.Keys[0].RemainQuota)
+	assert.Equal(t, int64(3500000), *snapshot.Keys[0].RemainQuota)
+}
+
+func TestSub2APIAdapterUsesAccountQuotaPriorityAndKeyFallback(t *testing.T) {
+	previousQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 500000
+	t.Cleanup(func() {
+		common.QuotaPerUnit = previousQuotaPerUnit
+	})
+
+	testCases := []struct {
+		name             string
+		me               string
+		profile          string
+		usage            string
+		keys             string
+		wantUsedQuota    int64
+		wantUsedQuotaSet bool
+	}{
+		{
+			name:             "current user takes priority",
+			me:               `{"used_quota":"6"}`,
+			profile:          `{"used_quota":"2"}`,
+			usage:            `{"total_actual_cost":"3","today_actual_cost":"4"}`,
+			wantUsedQuota:    3000000,
+			wantUsedQuotaSet: true,
+		},
+		{
+			name:             "profile takes priority over dashboard",
+			me:               `{}`,
+			profile:          `{"used_quota":"2.5"}`,
+			usage:            `{"total_actual_cost":"3","today_actual_cost":"4"}`,
+			wantUsedQuota:    1250000,
+			wantUsedQuotaSet: true,
+		},
+		{
+			name:             "cumulative dashboard value takes priority over daily value",
+			me:               `{}`,
+			profile:          `{}`,
+			usage:            `{"total_actual_cost":"3.25","today_actual_cost":"4"}`,
+			wantUsedQuota:    1625000,
+			wantUsedQuotaSet: true,
+		},
+		{
+			name:             "zero account value is preserved",
+			me:               `{"used_quota":0}`,
+			profile:          `{"used_quota":"2"}`,
+			usage:            `{"total_actual_cost":"3"}`,
+			wantUsedQuota:    0,
+			wantUsedQuotaSet: true,
+		},
+		{
+			name:    "missing account values leave key aggregation to persistence",
+			me:      `{}`,
+			profile: `{}`,
+			usage:   `{}`,
+			keys: `{"items":[
+				{"id":"key-1","name":"one","key":"sk-one","models":["gpt-4o"],"quota":10,"quota_used":"1.5"},
+				{"id":"key-2","name":"two","key":"sk-two","models":["gpt-4o"],"quota":5,"quota_used":2}
+			],"total":2,"page_size":100}`,
+			wantUsedQuota:    0,
+			wantUsedQuotaSet: false,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				writer.Header().Set("Content-Type", "application/json")
+				switch request.URL.Path {
+				case "/api/v1/auth/login":
+					_, _ = writer.Write([]byte(`{"code":0,"data":{"access_token":"sub2api-session"}}`))
+				case "/api/v1/auth/me":
+					_, _ = writer.Write([]byte(`{"code":0,"data":` + testCase.me + `}`))
+				case "/api/v1/user/profile":
+					_, _ = writer.Write([]byte(`{"code":0,"data":` + testCase.profile + `}`))
+				case "/api/v1/usage/dashboard/stats":
+					_, _ = writer.Write([]byte(`{"code":0,"data":` + testCase.usage + `}`))
+				case "/api/v1/groups/available", "/api/v1/groups/rates":
+					_, _ = writer.Write([]byte(`{"code":0,"data":[]}`))
+				case "/api/v1/keys":
+					keys := testCase.keys
+					if keys == "" {
+						keys = `{"items":[{"id":"key-1","name":"one","key":"sk-one","models":["gpt-4o"],"quota":10,"quota_used":"1.5"}],"total":1,"page_size":100}`
+					}
+					_, _ = writer.Write([]byte(`{"code":0,"data":` + keys + `}`))
+				default:
+					http.NotFound(writer, request)
+				}
+			}))
+			t.Cleanup(server.Close)
+
+			session, err := NewSub2APIAdapter(server.Client()).Authenticate(
+				context.Background(),
+				server.URL,
+				model.PlatformSiteCredential{
+					AuthType: model.UpstreamAuthPassword,
+					Username: "operator@example.com",
+					Password: "synthetic-password",
+				},
+			)
+			require.NoError(t, err)
+
+			snapshot, err := NewSub2APIAdapter(server.Client()).FetchSnapshot(context.Background(), session)
+			require.NoError(t, err)
+			assert.Equal(t, testCase.wantUsedQuota, snapshot.UsedQuota)
+			assert.Equal(t, testCase.wantUsedQuotaSet, snapshot.UsedQuotaSet)
+			require.NotEmpty(t, snapshot.Keys)
+			assert.Equal(t, int64(750000), snapshot.Keys[0].UsedQuota)
+			assert.True(t, snapshot.Keys[0].UsedQuotaSet)
+			require.NotNil(t, snapshot.Keys[0].RemainQuota)
+			assert.Equal(t, int64(4250000), *snapshot.Keys[0].RemainQuota)
+			if len(snapshot.Keys) > 1 {
+				assert.Equal(t, int64(1000000), snapshot.Keys[1].UsedQuota)
+				require.NotNil(t, snapshot.Keys[1].RemainQuota)
+				assert.Equal(t, int64(1500000), *snapshot.Keys[1].RemainQuota)
+			}
+		})
+	}
 }
 
 func TestSub2APIAdapterDiscoversRelayModelsAndTreatsZeroQuotaAsUnlimited(t *testing.T) {

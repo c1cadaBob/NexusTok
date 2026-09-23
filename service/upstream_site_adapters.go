@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/c1cadaBob/NexusTok/common"
 	"github.com/c1cadaBob/NexusTok/model"
 	"golang.org/x/net/publicsuffix"
 )
@@ -23,6 +24,18 @@ import (
 const defaultNewAPIQuotaPerUnit = 500000
 
 var sub2APIAppConfigAPIBaseURLPattern = regexp.MustCompile(`(?i)["']api_base_url["']\s*:\s*["']([^"']+)["']`)
+
+func sub2APIQuotaToInternal(value float64) int64 {
+	return int64(common.QuotaRound(value * common.QuotaPerUnit))
+}
+
+func firstSub2APIQuota(record map[string]any, keys ...string) (int64, bool) {
+	value, ok := firstOptionalFloat(record, keys...)
+	if !ok {
+		return 0, false
+	}
+	return sub2APIQuotaToInternal(value), true
+}
 
 type NewAPIAdapter struct {
 	client *http.Client
@@ -298,7 +311,7 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 		return PlatformSiteSnapshot{}, wrapPlatformSiteStage("Sub2API 当前用户", err)
 	}
 	me := firstNestedRecord(mePayload, "user", "account", "profile")
-	usedQuota, usedQuotaSet := firstOptionalInt64(
+	usedQuota, usedQuotaSet := firstSub2APIQuota(
 		me,
 		"used_quota",
 		"quota_used",
@@ -321,39 +334,41 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 		if balance := firstFloat(profile, "balance", "quota", "credit"); balance > 0 {
 			snapshot.Balance = balance
 		}
-		if profileUsedQuota, profileUsedQuotaSet := firstOptionalInt64(
-			profile,
-			"used_quota",
-			"quota_used",
-			"used",
-			"usedQuota",
-			"total_used",
-			"totalUsedQuota",
-			"total_actual_cost",
-			"totalActualCost",
-		); profileUsedQuotaSet {
-			snapshot.UsedQuota = profileUsedQuota
-			snapshot.UsedQuotaSet = true
+		if !snapshot.UsedQuotaSet {
+			if profileUsedQuota, profileUsedQuotaSet := firstSub2APIQuota(
+				profile,
+				"used_quota",
+				"quota_used",
+				"used",
+				"usedQuota",
+				"total_used",
+				"totalUsedQuota",
+				"total_actual_cost",
+				"totalActualCost",
+			); profileUsedQuotaSet {
+				snapshot.UsedQuota = profileUsedQuota
+				snapshot.UsedQuotaSet = true
+			}
 		}
 	}
-	if payload, requestErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/usage/dashboard/stats", nil, nil); requestErr == nil {
-		usage := firstRecord(payload)
-		if used, usedSet := firstOptionalInt64(
-			usage,
-			"total_actual_cost",
-			"totalActualCost",
-			"total_cost",
-			"totalCost",
-			"total_used",
-			"totalUsedQuota",
-			"used_quota",
-			"quota_used",
-			"used",
-		); usedSet {
-			snapshot.UsedQuota = used
-			snapshot.UsedQuotaSet = true
-		} else if !snapshot.UsedQuotaSet {
-			if used, usedSet := firstOptionalInt64(
+	if !snapshot.UsedQuotaSet {
+		if payload, requestErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/usage/dashboard/stats", nil, nil); requestErr == nil {
+			usage := firstRecord(payload)
+			if used, usedSet := firstSub2APIQuota(
+				usage,
+				"total_actual_cost",
+				"totalActualCost",
+				"total_cost",
+				"totalCost",
+				"total_used",
+				"totalUsedQuota",
+				"used_quota",
+				"quota_used",
+				"used",
+			); usedSet {
+				snapshot.UsedQuota = used
+				snapshot.UsedQuotaSet = true
+			} else if used, usedSet := firstSub2APIQuota(
 				usage,
 				"today_actual_cost",
 				"todayActualCost",
@@ -1194,7 +1209,7 @@ func fetchSub2APIKeys(ctx context.Context, session *PlatformSiteSession, rates m
 				ratio = firstGroupRate(rates, groupID, groupName)
 			}
 			itemModels := modelsFromRecord(item)
-			keyUsedQuota, keyUsedQuotaSet := firstOptionalInt64(
+			keyUsedQuota, keyUsedQuotaSet := firstSub2APIQuota(
 				item,
 				"quota_used",
 				"used_quota",
@@ -1310,7 +1325,7 @@ func fetchSub2APIAdminKeys(ctx context.Context, session *PlatformSiteSession, ra
 				ratio = firstGroupRate(rates, groupID, groupName)
 			}
 			itemModels := modelsFromRecord(item)
-			keyUsedQuota, keyUsedQuotaSet := firstOptionalInt64(
+			keyUsedQuota, keyUsedQuotaSet := firstSub2APIQuota(
 				item,
 				"quota_used",
 				"used_quota",
@@ -1384,18 +1399,34 @@ func sub2APIRemainQuota(record map[string]any) *int64 {
 		return nil
 	}
 	if hasAnyField(record, "quota") {
-		quota := firstFloat(record, "quota")
+		quota, quotaSet := firstOptionalFloat(record, "quota")
+		if !quotaSet {
+			return nil
+		}
 		if quota <= 0 {
 			return nil
 		}
-		used := firstFloat(record, "quota_used", "used_quota", "used")
+		used := firstFloat(
+			record,
+			"quota_used",
+			"used_quota",
+			"used",
+			"usedQuota",
+			"total_used",
+			"totalUsedQuota",
+		)
 		remain := quota - used
 		if remain < 0 {
 			remain = 0
 		}
-		return optionalInt64FromFloat(remain)
+		converted := sub2APIQuotaToInternal(remain)
+		return &converted
 	}
-	return optionalInt64(record, "remain_quota", "remaining_quota")
+	if remain, ok := firstOptionalFloat(record, "remain_quota", "remaining_quota"); ok {
+		converted := sub2APIQuotaToInternal(remain)
+		return &converted
+	}
+	return nil
 }
 
 func modelEndpointPaths(baseURL string) []string {
@@ -1437,6 +1468,9 @@ func discoverSub2APIModelBaseURL(ctx context.Context, session *PlatformSiteSessi
 	}
 	normalized, ok := discoverSub2APIPageModelBaseURL(ctx, session.Client, session.BaseURL)
 	if !ok {
+		return "", false
+	}
+	if validatePlatformSiteURL(normalized) != nil {
 		return "", false
 	}
 	if !relatedPlatformSiteBaseURL(session.BaseURL, normalized) {
@@ -1519,7 +1553,7 @@ func discoverSub2APIPageModelBaseURL(
 		candidate = baseURL.ResolveReference(parsedCandidate).String()
 	}
 	normalized, err := normalizePlatformSiteURL(candidate)
-	if err != nil || validatePlatformSiteURL(normalized) != nil {
+	if err != nil {
 		return "", false
 	}
 	return normalized, true

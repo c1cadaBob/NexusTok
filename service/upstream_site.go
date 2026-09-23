@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -380,28 +381,75 @@ func firstString(record map[string]any, keys ...string) string {
 
 func firstFloat(record map[string]any, keys ...string) float64 {
 	for _, key := range keys {
-		switch value := record[key].(type) {
-		case float64:
+		if value, ok := upstreamFloatValue(record[key]); ok {
 			return value
-		case int:
-			return float64(value)
-		case int64:
-			return float64(value)
-		case string:
-			parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
-			if err == nil {
-				return parsed
-			}
 		}
 	}
 	return 0
 }
 
-func firstInt64(record map[string]any, keys ...string) int64 {
-	value := firstFloat(record, keys...)
-	if math.IsNaN(value) || math.IsInf(value, 0) {
-		return 0
+func upstreamFloatValue(value any) (float64, bool) {
+	var parsed float64
+	switch typed := value.(type) {
+	case float64:
+		parsed = typed
+	case float32:
+		parsed = float64(typed)
+	case int:
+		parsed = float64(typed)
+	case int8:
+		parsed = float64(typed)
+	case int16:
+		parsed = float64(typed)
+	case int32:
+		parsed = float64(typed)
+	case int64:
+		parsed = float64(typed)
+	case uint:
+		parsed = float64(typed)
+	case uint8:
+		parsed = float64(typed)
+	case uint16:
+		parsed = float64(typed)
+	case uint32:
+		parsed = float64(typed)
+	case uint64:
+		parsed = float64(typed)
+	case json.Number:
+		value, err := typed.Float64()
+		if err != nil {
+			return 0, false
+		}
+		parsed = value
+	case string:
+		value, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
+		if err != nil {
+			return 0, false
+		}
+		parsed = value
+	default:
+		return 0, false
 	}
+	if math.IsNaN(parsed) || math.IsInf(parsed, 0) {
+		return 0, false
+	}
+	return parsed, true
+}
+
+func firstOptionalFloat(record map[string]any, keys ...string) (float64, bool) {
+	for _, key := range keys {
+		value, exists := record[key]
+		if !exists || value == nil {
+			continue
+		}
+		if parsed, ok := upstreamFloatValue(value); ok {
+			return parsed, true
+		}
+	}
+	return 0, false
+}
+
+func upstreamInt64Value(value float64) int64 {
 	const maxInt64 = int64(^uint64(0) >> 1)
 	const minInt64 = -maxInt64 - 1
 	if value >= float64(maxInt64) {
@@ -413,31 +461,17 @@ func firstInt64(record map[string]any, keys ...string) int64 {
 	return int64(value)
 }
 
+func firstInt64(record map[string]any, keys ...string) int64 {
+	value := firstFloat(record, keys...)
+	return upstreamInt64Value(value)
+}
+
 func firstOptionalInt64(record map[string]any, keys ...string) (int64, bool) {
-	for _, key := range keys {
-		value, exists := record[key]
-		if !exists {
-			continue
-		}
-		if value == nil {
-			continue
-		}
-		switch typed := value.(type) {
-		case float64:
-			if math.IsNaN(typed) || math.IsInf(typed, 0) {
-				continue
-			}
-		case int, int64:
-		case string:
-			if _, err := strconv.ParseFloat(strings.TrimSpace(typed), 64); err != nil {
-				continue
-			}
-		default:
-			continue
-		}
-		return firstInt64(record, key), true
+	value, ok := firstOptionalFloat(record, keys...)
+	if !ok {
+		return 0, false
 	}
-	return 0, false
+	return upstreamInt64Value(value), true
 }
 
 func firstTime(record map[string]any, keys ...string) *time.Time {
