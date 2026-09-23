@@ -181,12 +181,8 @@ func validatePlatformSiteURL(raw string) error {
 	if err != nil {
 		return err
 	}
-	parsed, _ := url.Parse(normalized)
-	if parsed.Scheme != "https" && !common.GetEnvOrDefaultBool("NEXUSTOK_ALLOW_HTTP_UPSTREAM_SITES", false) {
-		return errors.New("平台站点默认必须使用 HTTPS")
-	}
 	protection := &common.SSRFProtection{
-		AllowPrivateIp:         false,
+		AllowPrivateIp:         true,
 		DomainFilterMode:       false,
 		IpFilterMode:           false,
 		ApplyIPFilterForDomain: true,
@@ -205,26 +201,25 @@ func newPlatformSiteHTTPClient() (*http.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	client := GetSSRFProtectedHTTPClient()
-	if client == nil {
-		client = GetHttpClient()
+	transport := http.DefaultTransport
+	if defaultTransport, ok := http.DefaultTransport.(*http.Transport); ok && defaultTransport != nil {
+		transport = defaultTransport.Clone()
 	}
-	if client == nil {
-		client = &http.Client{}
+	client := &http.Client{
+		Transport: transport,
+		Jar:       jar,
+		Timeout:   upstreamSiteRequestTimeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return errors.New("平台站点重定向次数超过限制")
+			}
+			if err := validatePlatformSiteURL(req.URL.String()); err != nil {
+				return fmt.Errorf("平台站点重定向被拒绝: %w", err)
+			}
+			return nil
+		},
 	}
-	clone := *client
-	clone.Jar = jar
-	clone.Timeout = upstreamSiteRequestTimeout
-	clone.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 5 {
-			return errors.New("平台站点重定向次数超过限制")
-		}
-		if err := validatePlatformSiteURL(req.URL.String()); err != nil {
-			return fmt.Errorf("平台站点重定向被拒绝: %w", err)
-		}
-		return nil
-	}
-	return &clone, nil
+	return client, nil
 }
 
 func newPlatformSiteSession(baseURL string, headers http.Header) (*PlatformSiteSession, error) {

@@ -1,6 +1,9 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
+import { useMutation, useQuery } from '@tanstack/react-query'
+import { ExternalLink, Loader2, RefreshCw, ShieldCheck } from 'lucide-react'
 import { useFormContext, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
 import {
   FormControl,
@@ -11,6 +14,7 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import { Button } from '@/components/ui/button'
 import {
   Select,
   SelectContent,
@@ -20,6 +24,10 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 
+import {
+  getPlatformSiteCaptureStatus,
+  startPlatformSiteCapture,
+} from '../../api'
 import { CHANNEL_TYPE_NEW_API, CHANNEL_TYPE_SUB2_API } from '../../constants'
 import type { ChannelFormValues } from '../../lib'
 import type { UpstreamSiteStatus } from '../../types'
@@ -27,7 +35,9 @@ import type { UpstreamSiteStatus } from '../../types'
 type PlatformSiteFieldsProps = {
   disabled: boolean
   isEditing: boolean
+  channelId?: number
   syncStatus?: UpstreamSiteStatus
+  onCaptureCompleted?: (captureID: string) => void
 }
 
 const RATIO_COMPARE_EPSILON = 0.0000001
@@ -66,6 +76,14 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
     control: form.control,
     name: 'platform_site_auth_type',
   })
+  const baseURL = useWatch({
+    control: form.control,
+    name: 'base_url',
+  })
+  const captureID = useWatch({
+    control: form.control,
+    name: 'platform_site_capture_id',
+  })
   const watchedRechargeAmount = useWatch({
     control: form.control,
     name: 'platform_site_recharge_amount',
@@ -90,6 +108,73 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
       ? normalizePlatformRatio(rechargeAmount / creditedAmount)
       : undefined
   const ratioIsOverridden = watchedRatioIsOverridden === true
+  const completedCaptureRef = useRef('')
+
+  const captureStatusQuery = useQuery({
+    queryKey: ['platform-site-capture-status', captureID],
+    queryFn: () => getPlatformSiteCaptureStatus(captureID || ''),
+    enabled: Boolean(captureID),
+    refetchInterval: (query) => {
+      const status = query.state.data?.data?.status
+      return status === 'completed' || status === 'failed' ? false : 2000
+    },
+  })
+
+  const captureMutation = useMutation({
+    mutationFn: () => {
+      if (
+        authType !== 'access_token' &&
+        authType !== 'admin_key' &&
+        authType !== 'cookie'
+      ) {
+        throw new Error(t('Select a script-based authentication method first.'))
+      }
+      return startPlatformSiteCapture({
+        platform,
+        base_url: baseURL || '',
+        auth_type: authType,
+        channel_id: props.channelId,
+      })
+    },
+    onSuccess: (response) => {
+      if (!response.success || !response.data) {
+        toast.error(response.message || t('Failed to create capture session'))
+        return
+      }
+      form.setValue('platform_site_capture_id', response.data.capture_id, {
+        shouldDirty: true,
+        shouldValidate: true,
+      })
+      completedCaptureRef.current = ''
+      const opened = window.open(
+        response.data.handoff_url,
+        '_blank',
+        'noopener,noreferrer'
+      )
+      if (!opened) {
+        toast.error(t('Browser blocked the upstream capture tab.'))
+      }
+      toast.success(t('Capture session created'))
+    },
+    onError: (error: unknown) => {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : t('Failed to create capture session')
+      )
+    },
+  })
+
+  const captureStatus = captureStatusQuery.data?.data
+  const onCaptureCompleted = props.onCaptureCompleted
+
+  useEffect(() => {
+    if (!captureStatus || captureStatus.status !== 'completed') return
+    if (completedCaptureRef.current === captureStatus.capture_id) return
+    completedCaptureRef.current = captureStatus.capture_id
+    toast.success(t('Upstream login state captured'))
+    onCaptureCompleted?.(captureStatus.capture_id)
+  }, [captureStatus, onCaptureCompleted, t])
 
   useEffect(() => {
     if (ratioIsOverridden || previewRatio === undefined) {
@@ -209,6 +294,8 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
                   if (value !== 'cookie') {
                     form.setValue('platform_site_cookie', '')
                   }
+                  form.setValue('platform_site_capture_id', '')
+                  completedCaptureRef.current = ''
                 }}
                 items={[
                   { value: 'password', label: t('Username and password') },
@@ -250,7 +337,7 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
             </FormControl>
             <FormDescription>
               {t(
-                'HTTPS is required by default. Private and local addresses are blocked.'
+                'HTTP and HTTPS are supported, including private and local addresses.'
               )}
             </FormDescription>
             <FormMessage />
@@ -293,52 +380,109 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
         </div>
       )}
 
-      {authType === 'access_token' && (
-        <FormField
-          control={form.control}
-          name='platform_site_access_token'
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>{t('Access token')}</FormLabel>
-              <FormControl>
-                <Input type='password' autoComplete='off' {...field} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
+      {authType !== 'password' && (
+        <div className='border-border/60 bg-background grid gap-3 rounded-md border p-3'>
+          <div className='flex flex-wrap items-center gap-2'>
+            <ShieldCheck className='size-4' aria-hidden='true' />
+            <span className='text-sm font-medium'>
+              {t('Browser login state capture')}
+            </span>
+            {captureStatus?.status === 'completed' && (
+              <span className='text-muted-foreground text-xs'>
+                {t('Captured')}
+              </span>
+            )}
+          </div>
+          <p className='text-muted-foreground text-xs'>
+            {t(
+              'Open the upstream site and let the Capture Helper collect the selected authentication method. Tokens, cookies, and Admin Keys are never entered here.'
+            )}
+          </p>
+          <div className='flex flex-wrap gap-2'>
+            <Button
+              type='button'
+              size='sm'
+              onClick={() => captureMutation.mutate()}
+              disabled={
+                props.disabled ||
+                captureMutation.isPending ||
+                !(baseURL || '').trim()
+              }
+            >
+              {captureMutation.isPending ? (
+                <Loader2 className='size-4 animate-spin' aria-hidden='true' />
+              ) : (
+                <ShieldCheck className='size-4' aria-hidden='true' />
+              )}
+              {t('Capture upstream login state')}
+            </Button>
+            {captureStatus?.helper_install_url && (
+              <Button
+                type='button'
+                variant='outline'
+                size='sm'
+                onClick={() =>
+                  window.open(
+                    captureStatus.helper_install_url,
+                    '_blank',
+                    'noopener,noreferrer'
+                  )
+                }
+              >
+                <ExternalLink className='size-4' aria-hidden='true' />
+                {t('Install Capture Helper')}
+              </Button>
+            )}
+            {captureID && captureStatus?.status !== 'completed' && (
+              <Button
+                type='button'
+                variant='ghost'
+                size='sm'
+                onClick={() => void captureStatusQuery.refetch()}
+                disabled={captureStatusQuery.isFetching}
+              >
+                <RefreshCw
+                  className='size-4'
+                  aria-hidden='true'
+                />
+                {t('Refresh capture status')}
+              </Button>
+            )}
+          </div>
+          {captureStatus?.status === 'failed' && (
+            <p className='text-destructive text-xs'>
+              {captureStatus.message || t('Upstream login state capture failed')}
+            </p>
           )}
-        />
-      )}
-
-      {authType === 'admin_key' && (
-        <FormField
-          control={form.control}
-          name='platform_site_admin_key'
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>{t('Admin Key')}</FormLabel>
-              <FormControl>
-                <Input type='password' autoComplete='off' {...field} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
+          {captureStatus?.summary && (
+            <div className='text-muted-foreground grid gap-1 text-xs'>
+              <span>
+                {t('Authentication method')}: {captureStatus.summary.auth_type}
+              </span>
+              {captureStatus.summary.access_token_masked && (
+                <span>
+                  {t('Access token')}: {captureStatus.summary.access_token_masked}
+                </span>
+              )}
+              {captureStatus.summary.refresh_token_present && (
+                <span>{t('Refresh token captured')}</span>
+              )}
+              {captureStatus.summary.admin_key_present && (
+                <span>{t('Admin Key captured')}</span>
+              )}
+              {captureStatus.summary.cookie_present && (
+                <span>{t('Cookie captured')}</span>
+              )}
+              {captureStatus.summary.token_expires_at && (
+                <span>
+                  {t('Token expires')}: {new Date(
+                    captureStatus.summary.token_expires_at * 1000
+                  ).toLocaleString()}
+                </span>
+              )}
+            </div>
           )}
-        />
-      )}
-
-      {authType === 'cookie' && (
-        <FormField
-          control={form.control}
-          name='platform_site_cookie'
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>{t('Cookie')}</FormLabel>
-              <FormControl>
-                <Input type='password' autoComplete='off' {...field} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
+        </div>
       )}
 
       <div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-4'>

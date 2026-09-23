@@ -814,6 +814,19 @@ func AddChannel(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	var platformSiteCaptureID string
+	if addChannelRequest.PlatformSite != nil {
+		var captureErr error
+		platformSiteCaptureID, captureErr = applyPlatformSiteCapture(
+			c.GetInt("id"),
+			0,
+			addChannelRequest.PlatformSite,
+		)
+		if captureErr != nil {
+			common.ApiError(c, captureErr)
+			return
+		}
+	}
 
 	if addChannelRequest.Channel != nil && addChannelRequest.Channel.UpstreamKind == "" {
 		addChannelRequest.Channel.UpstreamKind = model.UpstreamKindKeyChannel
@@ -847,6 +860,9 @@ func AddChannel(c *gin.Context) {
 			return
 		}
 		baseURL := strings.TrimRight(strings.TrimSpace(addChannelRequest.PlatformSite.BaseURL), "/")
+		if relayBaseURL := strings.TrimRight(strings.TrimSpace(addChannelRequest.PlatformSite.RelayBaseURL), "/"); relayBaseURL != "" {
+			baseURL = relayBaseURL
+		}
 		addChannelRequest.Channel.BaseURL = &baseURL
 		addChannelRequest.Channel.Key = ""
 		addChannelRequest.Channel.Models = ""
@@ -954,6 +970,11 @@ func AddChannel(c *gin.Context) {
 			_ = channel.Delete()
 			common.ApiError(c, err)
 			return
+		}
+		if platformSiteCaptureID != "" {
+			if consumeErr := service.ConsumePlatformSiteCapture(c.GetInt("id"), platformSiteCaptureID, channel.Id); consumeErr != nil {
+				common.SysError("平台站点采集会话消费失败: " + consumeErr.Error())
+			}
 		}
 		_, _, _ = service.EnqueueUpstreamSiteSync(channel.Id)
 		recordManageAudit(c, "channel.upstream_site_create", map[string]any{
@@ -1259,6 +1280,19 @@ func UpdateChannel(c *gin.Context) {
 	if channel.UpstreamKind == model.UpstreamKindPlatformSite && channel.Type == 0 {
 		channel.Type = originChannel.Type
 	}
+	var platformSiteCaptureID string
+	if channel.PlatformSite != nil {
+		var captureErr error
+		platformSiteCaptureID, captureErr = applyPlatformSiteCapture(
+			c.GetInt("id"),
+			channel.Id,
+			channel.PlatformSite,
+		)
+		if captureErr != nil {
+			common.ApiError(c, captureErr)
+			return
+		}
+	}
 
 	if channel.Type == constant.ChannelTypeTaskPlugin &&
 		!authz.Can(c.GetInt("id"), c.GetInt("role"), authz.TaskPluginBind) {
@@ -1297,8 +1331,12 @@ func UpdateChannel(c *gin.Context) {
 			channel.BaseURL = &baseURL
 			var account model.PlatformSiteAccount
 			if err := model.DB.Where("channel_id = ?", channel.Id).First(&account).Error; err == nil &&
+				strings.TrimSpace(channel.PlatformSite.RelayBaseURL) == "" &&
 				strings.TrimSpace(account.RelayBaseURL) != "" {
 				relayBaseURL := model.NormalizeSub2APIRelayBaseURL(account.RelayBaseURL)
+				channel.BaseURL = &relayBaseURL
+			}
+			if relayBaseURL := model.NormalizeSub2APIRelayBaseURL(channel.PlatformSite.RelayBaseURL); relayBaseURL != "" {
 				channel.BaseURL = &relayBaseURL
 			}
 			channel.Key = ""
@@ -1451,6 +1489,11 @@ func UpdateChannel(c *gin.Context) {
 		if err := savePlatformSiteAccount(channel.Id, channel.PlatformSite, &existingAccount); err != nil {
 			common.ApiError(c, err)
 			return
+		}
+		if platformSiteCaptureID != "" {
+			if consumeErr := service.ConsumePlatformSiteCapture(c.GetInt("id"), platformSiteCaptureID, channel.Id); consumeErr != nil {
+				common.SysError("平台站点采集会话消费失败: " + consumeErr.Error())
+			}
 		}
 		_, _, _ = service.EnqueueUpstreamSiteSync(channel.Id)
 		recordManageAudit(c, "channel.upstream_site_update", map[string]any{

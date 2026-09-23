@@ -17,6 +17,25 @@ type permissionRoute struct {
 }
 
 func registerChannelRoutes(apiRouter *gin.RouterGroup) {
+	apiRouter.POST(
+		"/channel/platform-site/capture-session/:captureID/complete",
+		middleware.CriticalRateLimit(),
+		middleware.DisableCache(),
+		controller.CompletePlatformSiteCapture,
+	)
+	apiRouter.GET(
+		"/channel/platform-site/capture-session/:captureID/userscript.user.js",
+		middleware.CriticalRateLimit(),
+		middleware.DisableCache(),
+		controller.GetPlatformSiteCaptureUserscript,
+	)
+	apiRouter.GET(
+		"/channel/platform-site/capture-helper.user.js",
+		middleware.CriticalRateLimit(),
+		middleware.DisableCache(),
+		controller.GetPlatformSiteCaptureHelper,
+	)
+
 	channelRoute := apiRouter.Group("/channel")
 	channelRoute.Use(middleware.AdminAuth())
 
@@ -45,6 +64,8 @@ var channelPermissionRoutes = []permissionRoute{
 	{method: http.MethodGet, path: "/:id", permission: authz.ChannelRead, handler: controller.GetChannel},
 	{method: http.MethodGet, path: "/:id/upstream-sync", permission: authz.ChannelRead, handler: controller.GetUpstreamSiteStatus},
 	{method: http.MethodGet, path: "/:id/upstream-keys", permission: authz.ChannelRead, handler: controller.GetUpstreamKeys},
+	{method: http.MethodPost, path: "/platform-site/capture-session/start", permission: authz.ChannelSensitiveWrite, handler: controller.StartPlatformSiteCapture},
+	{method: http.MethodGet, path: "/platform-site/capture-session/:captureID", permission: authz.ChannelSensitiveWrite, handler: controller.GetPlatformSiteCaptureStatus},
 	{method: http.MethodPatch, path: "/:id/upstream-keys/:keyId", permission: authz.ChannelWrite, handler: controller.PatchUpstreamKey},
 	{method: http.MethodPost, path: "/:id/upstream-keys/batch-status", permission: authz.ChannelOperate, handler: controller.BatchUpdateUpstreamKeyStatus},
 	{method: http.MethodPost, path: "/:id/upstream-sync", permission: authz.ChannelOperate, handler: controller.SyncUpstreamSiteNow},

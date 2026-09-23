@@ -216,6 +216,31 @@ describe('New API channel', () => {
     expect(result.success).toBe(true)
   })
 
+  test('sends only capture_id for non-password platform authentication', () => {
+    const payload = transformFormDataToCreatePayload({
+      ...CHANNEL_FORM_DEFAULT_VALUES,
+      name: 'Captured platform site',
+      type: CHANNEL_TYPE_SUB2_API,
+      upstream_kind: 'platform_site',
+      platform_site_platform: 'sub2api',
+      platform_site_auth_type: 'access_token',
+      platform_site_capture_id: 'capture-123',
+      platform_site_access_token: 'should-not-be-sent',
+      base_url: 'http://127.0.0.1:8080',
+      models: 'gpt-4o',
+      platform_site_recharge_amount: 1,
+      platform_site_credited_amount: 1,
+    })
+
+    expect(payload.platform_site).toMatchObject({
+      auth_type: 'access_token',
+      capture_id: 'capture-123',
+    })
+    expect(payload.platform_site?.access_token).toBeUndefined()
+    expect(payload.platform_site?.admin_key).toBeUndefined()
+    expect(payload.platform_site?.cookie).toBeUndefined()
+  })
+
   test('rejects mismatched platform site channel type and platform', () => {
     const result = channelFormSchema.safeParse({
       ...CHANNEL_FORM_DEFAULT_VALUES,

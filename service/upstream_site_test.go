@@ -90,6 +90,337 @@ func TestRealPlatformSiteAdaptersReadOnly(t *testing.T) {
 	}
 }
 
+func TestValidatePlatformSiteURLAllowsHTTPAndPrivateTargets(t *testing.T) {
+	for _, rawURL := range []string{
+		"http://127.0.0.1",
+		"http://localhost",
+		"http://10.0.0.1:8080",
+		"http://[::1]:8080",
+	} {
+		t.Run(rawURL, func(t *testing.T) {
+			require.NoError(t, validatePlatformSiteURL(rawURL))
+		})
+	}
+}
+
+func TestPlatformSiteHTTPClientAllowsPrivateHTTPWithoutGlobalSSRFClient(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"success":true}`))
+	}))
+	defer server.Close()
+
+	client, err := newPlatformSiteHTTPClient()
+	require.NoError(t, err)
+	response, err := client.Get(server.URL)
+	require.NoError(t, err)
+	defer response.Body.Close()
+	require.Equal(t, http.StatusOK, response.StatusCode)
+}
+
+func TestPlatformSiteCaptureSessionBindsUserAndConsumesAfterSave(t *testing.T) {
+	start, err := StartPlatformSiteCaptureSession(7, PlatformSiteCaptureStartRequest{
+		Platform: model.PlatformSub2API,
+		BaseURL:  "http://127.0.0.1:8080",
+		AuthType: model.UpstreamAuthAccessToken,
+	}, "http://127.0.0.1:3003")
+	require.NoError(t, err)
+	require.NotEmpty(t, start.CaptureID)
+	require.Contains(t, start.UserscriptURL, "install_token=")
+	require.Contains(t, start.HandoffURL, platformSiteCaptureHandoffParam+"=")
+	require.Equal(t, "http://127.0.0.1:8080", start.Origin)
+
+	record, found, err := platformSiteCaptureCache.Get(start.CaptureID)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.NotEmpty(t, record.Secret)
+
+	_, err = CompletePlatformSiteCaptureSession(start.CaptureID, PlatformSiteCaptureCompleteRequest{
+		CaptureSecret: record.Secret,
+		Platform:      model.PlatformSub2API,
+		AuthType:      model.UpstreamAuthAccessToken,
+		Origin:        "http://127.0.0.1:8080",
+		AccessToken:   "sub2-access-token",
+		RefreshToken:  "sub2-refresh-token",
+		ExpiresIn:     3600,
+		AuthUser:      map[string]any{"id": 17},
+	})
+	require.NoError(t, err)
+
+	status, err := GetPlatformSiteCaptureStatus(7, start.CaptureID, "http://127.0.0.1:3003")
+	require.NoError(t, err)
+	require.Equal(t, platformSiteCaptureStatusComplete, status.Status)
+	require.NotNil(t, status.Summary)
+	require.Equal(t, "sub...ken", status.Summary.AccessTokenMasked)
+	require.True(t, status.Summary.RefreshTokenPresent)
+	require.Greater(t, status.Summary.TokenExpiresAt, common.GetTimestamp())
+
+	resolved, err := ResolvePlatformSiteCapture(
+		7,
+		start.CaptureID,
+		0,
+		model.PlatformSub2API,
+		model.UpstreamAuthAccessToken,
+	)
+	require.NoError(t, err)
+	require.Equal(t, "sub2-access-token", resolved.Credential.AccessToken)
+	require.Equal(t, "sub2-refresh-token", resolved.Credential.RefreshToken)
+
+	require.NoError(t, ConsumePlatformSiteCapture(7, start.CaptureID, 0))
+	_, err = ResolvePlatformSiteCapture(
+		7,
+		start.CaptureID,
+		0,
+		model.PlatformSub2API,
+		model.UpstreamAuthAccessToken,
+	)
+	require.Error(t, err)
+}
+
+func TestPlatformSiteCaptureSessionRejectsAuthTypeDowngradeAndCrossUserAccess(t *testing.T) {
+	start, err := StartPlatformSiteCaptureSession(8, PlatformSiteCaptureStartRequest{
+		Platform:  model.PlatformNewAPI,
+		BaseURL:   "http://localhost:8081",
+		AuthType:  model.UpstreamAuthAdminKey,
+		ChannelID: 42,
+	}, "http://localhost:3003")
+	require.NoError(t, err)
+	record, found, err := platformSiteCaptureCache.Get(start.CaptureID)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	_, err = GetPlatformSiteCaptureStatus(9, start.CaptureID, "http://localhost:3003")
+	require.Error(t, err)
+
+	_, err = CompletePlatformSiteCaptureSession(start.CaptureID, PlatformSiteCaptureCompleteRequest{
+		CaptureSecret: record.Secret,
+		Platform:      model.PlatformNewAPI,
+		AuthType:      model.UpstreamAuthAdminKey,
+		Origin:        "http://localhost:8081",
+		AccessToken:   "ordinary-access-token",
+	})
+	require.Error(t, err)
+
+	_, err = CompletePlatformSiteCaptureSession(start.CaptureID, PlatformSiteCaptureCompleteRequest{
+		CaptureSecret: record.Secret,
+		Platform:      model.PlatformNewAPI,
+		AuthType:      model.UpstreamAuthAdminKey,
+		Origin:        "http://localhost:8081",
+		AdminKey:      "admin-key",
+	})
+	require.NoError(t, err)
+
+	resolved, err := ResolvePlatformSiteCapture(
+		8,
+		start.CaptureID,
+		42,
+		model.PlatformNewAPI,
+		model.UpstreamAuthAdminKey,
+	)
+	require.NoError(t, err)
+	require.Equal(t, "admin-key", resolved.Credential.AdminKey)
+
+	_, err = CompletePlatformSiteCaptureSession(start.CaptureID, PlatformSiteCaptureCompleteRequest{
+		CaptureSecret: record.Secret,
+		Origin:        "http://localhost:8081",
+		AdminKey:      "another-admin-key",
+	})
+	require.Error(t, err)
+}
+
+func TestPlatformSiteCaptureSessionRejectsMixedCredentialTypes(t *testing.T) {
+	tests := []struct {
+		name       string
+		authType   string
+		credential PlatformSiteCaptureCompleteRequest
+	}{
+		{
+			name:     "access token with admin key",
+			authType: model.UpstreamAuthAccessToken,
+			credential: PlatformSiteCaptureCompleteRequest{
+				AccessToken: "access-token",
+				AdminKey:    "admin-key",
+			},
+		},
+		{
+			name:     "access token with cookie",
+			authType: model.UpstreamAuthAccessToken,
+			credential: PlatformSiteCaptureCompleteRequest{
+				AccessToken: "access-token",
+				Cookie:      "session=secret",
+			},
+		},
+		{
+			name:     "admin key with refresh token",
+			authType: model.UpstreamAuthAdminKey,
+			credential: PlatformSiteCaptureCompleteRequest{
+				AdminKey:     "admin-key",
+				RefreshToken: "refresh-token",
+			},
+		},
+		{
+			name:     "cookie with refresh token",
+			authType: model.UpstreamAuthCookie,
+			credential: PlatformSiteCaptureCompleteRequest{
+				Cookie:       "session=secret",
+				RefreshToken: "refresh-token",
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			start, err := StartPlatformSiteCaptureSession(11, PlatformSiteCaptureStartRequest{
+				Platform: model.PlatformNewAPI,
+				BaseURL:  "http://127.0.0.1:8083",
+				AuthType: test.authType,
+			}, "http://127.0.0.1:3003")
+			require.NoError(t, err)
+			record, found, err := platformSiteCaptureCache.Get(start.CaptureID)
+			require.NoError(t, err)
+			require.True(t, found)
+
+			request := test.credential
+			request.CaptureSecret = record.Secret
+			request.Platform = model.PlatformNewAPI
+			request.AuthType = test.authType
+			request.Origin = "http://127.0.0.1:8083"
+			_, err = CompletePlatformSiteCaptureSession(start.CaptureID, request)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "采集结果不是")
+		})
+	}
+}
+
+func TestPlatformSiteCaptureRejectsInvalidAndUnrelatedURLs(t *testing.T) {
+	t.Run("invalid URL is not silently ignored", func(t *testing.T) {
+		start, err := StartPlatformSiteCaptureSession(12, PlatformSiteCaptureStartRequest{
+			Platform: model.PlatformNewAPI,
+			BaseURL:  "http://127.0.0.1:8084",
+			AuthType: model.UpstreamAuthAccessToken,
+		}, "http://127.0.0.1:3003")
+		require.NoError(t, err)
+		record, found, err := platformSiteCaptureCache.Get(start.CaptureID)
+		require.NoError(t, err)
+		require.True(t, found)
+
+		_, err = CompletePlatformSiteCaptureSession(start.CaptureID, PlatformSiteCaptureCompleteRequest{
+			CaptureSecret:     record.Secret,
+			Platform:          model.PlatformNewAPI,
+			AuthType:          model.UpstreamAuthAccessToken,
+			Origin:            record.Origin,
+			ManagementBaseURL: "://invalid",
+			AccessToken:       "access-token",
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "地址格式错误")
+	})
+
+	t.Run("unrelated URL is rejected", func(t *testing.T) {
+		start, err := StartPlatformSiteCaptureSession(12, PlatformSiteCaptureStartRequest{
+			Platform: model.PlatformNewAPI,
+			BaseURL:  "http://127.0.0.1:8085",
+			AuthType: model.UpstreamAuthAccessToken,
+		}, "http://127.0.0.1:3003")
+		require.NoError(t, err)
+		record, found, err := platformSiteCaptureCache.Get(start.CaptureID)
+		require.NoError(t, err)
+		require.True(t, found)
+
+		_, err = CompletePlatformSiteCaptureSession(start.CaptureID, PlatformSiteCaptureCompleteRequest{
+			CaptureSecret: record.Secret,
+			Platform:      model.PlatformNewAPI,
+			AuthType:      model.UpstreamAuthAccessToken,
+			Origin:        record.Origin,
+			RelayBaseURL:  "http://127.0.0.1:8086",
+			AccessToken:   "access-token",
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "不属于目标站点")
+	})
+}
+
+func TestCaptureRelatedPlatformURLRequiresStrictOriginRelationship(t *testing.T) {
+	tests := []struct {
+		name      string
+		baseURL   string
+		candidate string
+		want      bool
+	}{
+		{
+			name:      "api host can map to adjacent management host",
+			baseURL:   "https://api.github.com",
+			candidate: "https://github.com",
+			want:      true,
+		},
+		{
+			name:      "different port is rejected",
+			baseURL:   "https://api.example.com:8443",
+			candidate: "https://example.com:443",
+			want:      false,
+		},
+		{
+			name:      "different scheme is rejected",
+			baseURL:   "https://api.example.com",
+			candidate: "http://example.com",
+			want:      false,
+		},
+		{
+			name:      "unrelated subdomain is rejected",
+			baseURL:   "https://console.example.com",
+			candidate: "https://api.example.com",
+			want:      false,
+		},
+		{
+			name:      "private hosts do not use api host heuristics",
+			baseURL:   "http://api.127.0.0.1",
+			candidate: "http://127.0.0.1",
+			want:      false,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			assert.Equal(t, testCase.want, captureRelatedPlatformURL(
+				testCase.baseURL,
+				testCase.candidate,
+			))
+		})
+	}
+}
+
+func TestPlatformSiteCaptureUserscriptsReadExplicitBrowserFieldsOnly(t *testing.T) {
+	start, err := StartPlatformSiteCaptureSession(10, PlatformSiteCaptureStartRequest{
+		Platform: model.PlatformSub2API,
+		BaseURL:  "http://127.0.0.1:8082",
+		AuthType: model.UpstreamAuthCookie,
+	}, "https://nexus.example.com")
+	require.NoError(t, err)
+	record, found, err := platformSiteCaptureCache.Get(start.CaptureID)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	script, err := RenderPlatformSiteCaptureUserscript(
+		start.CaptureID,
+		record.InstallToken,
+		"https://nexus.example.com",
+	)
+	require.NoError(t, err)
+	require.Contains(t, script, "document.cookie")
+	require.Contains(t, script, "x-api-key")
+	require.Contains(t, script, "/api/v1/auth/refresh")
+	require.Contains(t, script, "api_base_url")
+	require.Contains(t, script, "readStructured")
+	require.Contains(t, script, "userIDFromToken")
+	require.NotContains(t, script, record.Secret)
+
+	helper, err := RenderPlatformSiteCaptureHelper("https://nexus.example.com")
+	require.NoError(t, err)
+	require.Contains(t, helper, "@match        http://*/*")
+	require.Contains(t, helper, "@match        https://*/*")
+	require.NotContains(t, helper, record.Secret)
+}
+
 type platformSiteRoundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn platformSiteRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {

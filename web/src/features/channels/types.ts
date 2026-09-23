@@ -433,10 +433,14 @@ export type UpstreamAuthType =
 export interface PlatformSiteInput {
   platform: 'newapi' | 'sub2api'
   base_url: string
+  relay_base_url?: string
   auth_type: UpstreamAuthType
+  capture_id?: string
   username?: string
   password?: string
+  user_id?: string
   access_token?: string
+  refresh_token?: string
   admin_key?: string
   cookie?: string
   recharge_amount: number
@@ -505,6 +509,69 @@ export interface UpstreamSiteStatusResponse {
   success: boolean
   message?: string
   data?: UpstreamSiteStatus
+}
+
+export interface PlatformSiteCaptureStartRequest {
+  platform: 'newapi' | 'sub2api'
+  base_url: string
+  auth_type: Exclude<UpstreamAuthType, 'password'>
+  channel_id?: number
+}
+
+export interface PlatformSiteCaptureSummary {
+  platform: string
+  auth_type: Exclude<UpstreamAuthType, 'password'>
+  base_url: string
+  management_base_url?: string
+  relay_base_url?: string
+  api_base_url?: string
+  origin: string
+  access_token_masked?: string
+  refresh_token_present?: boolean
+  admin_key_present?: boolean
+  cookie_present?: boolean
+  user_id?: string
+  username?: string
+  email?: string
+  token_expires_at?: number
+  captured_at?: number
+}
+
+export interface PlatformSiteCaptureStartResponse {
+  success: boolean
+  message?: string
+  data?: {
+    capture_id: string
+    expires_at: number
+    platform: string
+    base_url: string
+    auth_type: Exclude<UpstreamAuthType, 'password'>
+    origin: string
+    userscript_url: string
+    helper_install_url: string
+    handoff_url: string
+    login_url: string
+  }
+}
+
+export interface PlatformSiteCaptureStatusResponse {
+  success: boolean
+  message?: string
+  data?: {
+    capture_id: string
+    status: 'pending' | 'completed' | 'failed'
+    message?: string
+    expires_at: number
+    platform: string
+    base_url: string
+    auth_type: Exclude<UpstreamAuthType, 'password'>
+    origin: string
+    userscript_url?: string
+    helper_install_url?: string
+    handoff_url?: string
+    login_url?: string
+    summary?: PlatformSiteCaptureSummary
+  }
 }
 
 export interface UpstreamKeysResponse {

@@ -38,6 +38,56 @@ func newAdvancedCustomModelListChannel(baseURL string, key string, upstreamPath 
 	return channel
 }
 
+func TestExternalRequestBaseURLRejectsUntrustedForwardedHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	require.NoError(t, router.SetTrustedProxies([]string{"127.0.0.1/32"}))
+	router.GET("/", func(c *gin.Context) {
+		c.String(http.StatusOK, externalRequestBaseURL(c))
+	})
+
+	t.Run("untrusted peer cannot replace request host", func(t *testing.T) {
+		request := httptest.NewRequest(http.MethodGet, "http://internal.example/", nil)
+		request.RemoteAddr = "198.51.100.20:12345"
+		request.Header.Set("X-Forwarded-Proto", "https")
+		request.Header.Set("X-Forwarded-Host", "attacker.example")
+		recorder := httptest.NewRecorder()
+
+		router.ServeHTTP(recorder, request)
+
+		require.Equal(t, http.StatusOK, recorder.Code)
+		assert.Equal(t, "http://internal.example", recorder.Body.String())
+	})
+
+	t.Run("trusted proxy may provide a valid external origin", func(t *testing.T) {
+		request := httptest.NewRequest(http.MethodGet, "http://internal.example/", nil)
+		request.RemoteAddr = "127.0.0.1:12345"
+		request.Header.Set("X-Forwarded-For", "203.0.113.10")
+		request.Header.Set("X-Forwarded-Proto", "https")
+		request.Header.Set("X-Forwarded-Host", "nexus.example:8443")
+		recorder := httptest.NewRecorder()
+
+		router.ServeHTTP(recorder, request)
+
+		require.Equal(t, http.StatusOK, recorder.Code)
+		assert.Equal(t, "https://nexus.example:8443", recorder.Body.String())
+	})
+
+	t.Run("invalid forwarded values fall back to request origin", func(t *testing.T) {
+		request := httptest.NewRequest(http.MethodGet, "http://internal.example/", nil)
+		request.RemoteAddr = "127.0.0.1:12345"
+		request.Header.Set("X-Forwarded-For", "203.0.113.10")
+		request.Header.Set("X-Forwarded-Proto", "javascript")
+		request.Header.Set("X-Forwarded-Host", "user@attacker.example")
+		recorder := httptest.NewRecorder()
+
+		router.ServeHTTP(recorder, request)
+
+		require.Equal(t, http.StatusOK, recorder.Code)
+		assert.Equal(t, "http://internal.example", recorder.Body.String())
+	})
+}
+
 func TestParseOpenAIModelIDsStrictResponseContract(t *testing.T) {
 	tests := []struct {
 		name      string

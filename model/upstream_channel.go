@@ -59,6 +59,7 @@ type PlatformSiteCredential struct {
 	AuthType       string `json:"auth_type,omitempty"`
 	Username       string `json:"username,omitempty"`
 	Password       string `json:"password,omitempty"`
+	UserID         string `json:"user_id,omitempty"`
 	AccessToken    string `json:"access_token,omitempty"`
 	RefreshToken   string `json:"refresh_token,omitempty"`
 	TokenExpiresAt int64  `json:"token_expires_at,omitempty"`
@@ -131,6 +132,7 @@ func (credential PlatformSiteCredential) Fingerprint() string {
 		credential.AuthType,
 		credential.Username,
 		credential.Password,
+		credential.UserID,
 		credential.AccessToken,
 		credential.RefreshToken,
 		strconv.FormatInt(credential.TokenExpiresAt, 10),

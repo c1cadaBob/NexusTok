@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -23,13 +24,16 @@ import (
 type PlatformSiteInput struct {
 	Platform        string   `json:"platform"`
 	BaseURL         string   `json:"base_url"`
+	RelayBaseURL    string   `json:"relay_base_url,omitempty"`
 	AuthType        string   `json:"auth_type"`
 	Username        string   `json:"username"`
 	Password        string   `json:"password"`
+	UserID          string   `json:"user_id,omitempty"`
 	AccessToken     string   `json:"access_token"`
-	RefreshToken    string   `json:"refresh_token"`
+	RefreshToken    string   `json:"refresh_token,omitempty"`
 	AdminKey        string   `json:"admin_key"`
 	Cookie          string   `json:"cookie"`
+	CaptureID       string   `json:"capture_id,omitempty"`
 	RechargeAmount  *float64 `json:"recharge_amount"`
 	CreditedAmount  *float64 `json:"credited_amount"`
 	ConversionRatio *float64 `json:"conversion_ratio"`
@@ -128,10 +132,16 @@ func validatePlatformSiteInput(input *PlatformSiteInput, existing *model.Platfor
 	if err := service.ValidatePlatformSiteURLForAdmin(input.BaseURL); err != nil {
 		return model.PlatformSiteCredential{}, 0, err
 	}
+	if strings.TrimSpace(input.RelayBaseURL) != "" {
+		if err := service.ValidatePlatformSiteURLForAdmin(input.RelayBaseURL); err != nil {
+			return model.PlatformSiteCredential{}, 0, err
+		}
+	}
 	credential := model.PlatformSiteCredential{
 		AuthType:     input.AuthType,
 		Username:     strings.TrimSpace(input.Username),
 		Password:     input.Password,
+		UserID:       strings.TrimSpace(input.UserID),
 		AccessToken:  strings.TrimSpace(input.AccessToken),
 		RefreshToken: strings.TrimSpace(input.RefreshToken),
 		AdminKey:     strings.TrimSpace(input.AdminKey),
@@ -144,6 +154,7 @@ func validatePlatformSiteInput(input *PlatformSiteInput, existing *model.Platfor
 		}
 		credential.AccessToken = ""
 		credential.RefreshToken = ""
+		credential.UserID = ""
 		credential.TokenExpiresAt = 0
 		credential.AdminKey = ""
 		credential.Cookie = ""
@@ -161,6 +172,7 @@ func validatePlatformSiteInput(input *PlatformSiteInput, existing *model.Platfor
 		}
 		credential.Username = ""
 		credential.Password = ""
+		credential.UserID = ""
 		credential.AccessToken = ""
 		credential.RefreshToken = ""
 		credential.TokenExpiresAt = 0
@@ -171,6 +183,7 @@ func validatePlatformSiteInput(input *PlatformSiteInput, existing *model.Platfor
 		}
 		credential.Username = ""
 		credential.Password = ""
+		credential.UserID = ""
 		credential.AccessToken = ""
 		credential.RefreshToken = ""
 		credential.TokenExpiresAt = 0
@@ -215,6 +228,9 @@ func savePlatformSiteAccount(channelID int, input *PlatformSiteInput, existing *
 		if strings.TrimSpace(merged.BaseURL) == "" {
 			merged.BaseURL = existing.BaseURL
 		}
+		if strings.TrimSpace(merged.RelayBaseURL) == "" {
+			merged.RelayBaseURL = existing.RelayBaseURL
+		}
 		if strings.TrimSpace(merged.AuthType) == "" {
 			merged.AuthType = existing.AuthType
 		}
@@ -254,6 +270,9 @@ func savePlatformSiteAccount(channelID int, input *PlatformSiteInput, existing *
 					if merged.RefreshToken == "" {
 						merged.RefreshToken = credential.RefreshToken
 					}
+					if merged.UserID == "" {
+						merged.UserID = credential.UserID
+					}
 				case model.UpstreamAuthAdminKey:
 					if merged.AdminKey == "" {
 						merged.AdminKey = credential.AdminKey
@@ -279,6 +298,7 @@ func savePlatformSiteAccount(channelID int, input *PlatformSiteInput, existing *
 		account.ChannelID = channelID
 		account.Platform = strings.ToLower(strings.TrimSpace(input.Platform))
 		account.BaseURL = strings.TrimRight(strings.TrimSpace(input.BaseURL), "/")
+		account.RelayBaseURL = strings.TrimRight(strings.TrimSpace(input.RelayBaseURL), "/")
 		account.AuthType = input.AuthType
 		if existing != nil {
 			account.SyncStatus = model.UpstreamSiteSyncIdle
@@ -313,7 +333,9 @@ func savePlatformSiteAccount(channelID int, input *PlatformSiteInput, existing *
 }
 
 func hasCredentialInput(input *PlatformSiteInput) bool {
-	return input != nil && (input.Username != "" || input.Password != "" || input.AccessToken != "" || input.RefreshToken != "" || input.AdminKey != "" || input.Cookie != "")
+	return input != nil && (input.Username != "" || input.Password != "" || input.UserID != "" ||
+		input.AccessToken != "" || input.RefreshToken != "" ||
+		input.AdminKey != "" || input.Cookie != "")
 }
 
 func hasPlatformSiteCredentialForAuthType(input *PlatformSiteInput) bool {
@@ -332,6 +354,50 @@ func hasPlatformSiteCredentialForAuthType(input *PlatformSiteInput) bool {
 	default:
 		return false
 	}
+}
+
+func applyPlatformSiteCapture(userID, channelID int, input *PlatformSiteInput) (string, error) {
+	if input == nil {
+		return "", nil
+	}
+	captureID := strings.TrimSpace(input.CaptureID)
+	if captureID == "" {
+		return "", nil
+	}
+	if input.Username != "" || input.Password != "" || input.UserID != "" ||
+		input.AccessToken != "" || input.RefreshToken != "" ||
+		input.AdminKey != "" || input.Cookie != "" {
+		return "", errors.New("采集会话不能与手动凭据同时提交")
+	}
+	resolution, err := service.ResolvePlatformSiteCapture(
+		userID,
+		captureID,
+		channelID,
+		input.Platform,
+		input.AuthType,
+	)
+	if err != nil {
+		return "", err
+	}
+	input.Platform = strings.ToLower(strings.TrimSpace(input.Platform))
+	if input.Platform == "" {
+		input.Platform = resolution.Platform
+	}
+	input.AuthType = resolution.Credential.AuthType
+	input.Username = resolution.Credential.Username
+	input.Password = resolution.Credential.Password
+	input.UserID = resolution.Credential.UserID
+	input.AccessToken = resolution.Credential.AccessToken
+	input.RefreshToken = resolution.Credential.RefreshToken
+	input.AdminKey = resolution.Credential.AdminKey
+	input.Cookie = resolution.Credential.Cookie
+	if resolution.ManagementBaseURL != "" {
+		input.BaseURL = resolution.ManagementBaseURL
+	}
+	if resolution.RelayBaseURL != "" {
+		input.RelayBaseURL = resolution.RelayBaseURL
+	}
+	return captureID, nil
 }
 
 func redactBaseURL(raw string) string {
@@ -842,4 +908,122 @@ func ensurePlatformSiteChannel(channel *model.Channel, input *PlatformSiteInput)
 		}
 	}
 	return nil
+}
+
+func StartPlatformSiteCapture(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 32<<10)
+	var request service.PlatformSiteCaptureStartRequest
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		common.ApiErrorMsg(c, "无效的采集请求")
+		return
+	}
+	result, err := service.StartPlatformSiteCaptureSession(
+		c.GetInt("id"),
+		request,
+		externalRequestBaseURL(c),
+	)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, result)
+}
+
+func GetPlatformSiteCaptureStatus(c *gin.Context) {
+	result, err := service.GetPlatformSiteCaptureStatus(
+		c.GetInt("id"),
+		c.Param("captureID"),
+		externalRequestBaseURL(c),
+	)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, result)
+}
+
+func GetPlatformSiteCaptureUserscript(c *gin.Context) {
+	script, err := service.RenderPlatformSiteCaptureUserscript(
+		c.Param("captureID"),
+		c.Query("install_token"),
+		externalRequestBaseURL(c),
+	)
+	if err != nil {
+		c.Header("Cache-Control", "no-store")
+		c.String(http.StatusForbidden, "capture script unavailable")
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	c.Header("Content-Type", "application/javascript; charset=utf-8")
+	c.String(http.StatusOK, script)
+}
+
+func GetPlatformSiteCaptureHelper(c *gin.Context) {
+	script, err := service.RenderPlatformSiteCaptureHelper(externalRequestBaseURL(c))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	c.Header("Content-Type", "application/javascript; charset=utf-8")
+	c.String(http.StatusOK, script)
+}
+
+func CompletePlatformSiteCapture(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 256<<10)
+	var request service.PlatformSiteCaptureCompleteRequest
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		common.ApiErrorMsg(c, "无效的采集回调")
+		return
+	}
+	result, err := service.CompletePlatformSiteCaptureSession(c.Param("captureID"), request)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, result)
+}
+
+func externalRequestBaseURL(c *gin.Context) string {
+	scheme := "http"
+	host := ""
+	if c.Request != nil {
+		host = strings.TrimSpace(c.Request.Host)
+		if c.Request.TLS != nil {
+			scheme = "https"
+		}
+	}
+
+	// 只有 Gin 已经根据可信代理配置解析出不同的客户端地址时，才采用
+	// X-Forwarded-*。否则这些请求头可能来自普通客户端，不能用来拼接
+	// Capture 回调地址。
+	if c.Request != nil && c.RemoteIP() != "" && c.ClientIP() != c.RemoteIP() {
+		forwardedScheme := strings.TrimSpace(strings.Split(c.GetHeader("X-Forwarded-Proto"), ",")[0])
+		forwardedHost := strings.TrimSpace(strings.Split(c.GetHeader("X-Forwarded-Host"), ",")[0])
+		if isSafeExternalRequestScheme(forwardedScheme) &&
+			isSafeExternalRequestHost(forwardedHost) {
+			scheme = strings.ToLower(forwardedScheme)
+			host = forwardedHost
+		}
+	}
+	if !isSafeExternalRequestScheme(scheme) || !isSafeExternalRequestHost(host) {
+		return ""
+	}
+	return strings.ToLower(scheme) + "://" + host
+}
+
+func isSafeExternalRequestScheme(value string) bool {
+	return value == "http" || value == "https"
+}
+
+func isSafeExternalRequestHost(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.ContainsAny(value, "/?#") {
+		return false
+	}
+	parsed, err := url.Parse("//" + value)
+	if err != nil || parsed.Host == "" || parsed.User != nil {
+		return false
+	}
+	return parsed.Host == value
 }

@@ -2337,7 +2337,18 @@ export function ChannelMutateDrawer({
                             <PlatformSiteFields
                               disabled={sensitiveLocked}
                               isEditing={isEditing}
+                              channelId={currentRow?.id}
                               syncStatus={upstreamSiteData?.data}
+                              onCaptureCompleted={
+                                isEditing
+                                  ? () => {
+                                      void form.handleSubmit(
+                                        onSubmit,
+                                        onInvalid
+                                      )()
+                                    }
+                                  : undefined
+                              }
                             />
                           </div>
                         )}

@@ -18,6 +18,11 @@
 
 平台站点的同步结果只服务于管理员配置、后端可用性过滤和上游路由。普通用户不能看到真实上游平台、密钥、余额来源或当前请求使用的具体密钥。
 
+平台站点地址支持 `http://` 和 `https://`，也支持 `localhost`、回环地址、
+RFC1918 私有 IPv4、私有 IPv6 以及内网 DNS 名称。该放宽只作用于平台站点专用
+同步客户端；普通下载、Webhook、视频代理和其他用户可控 URL 仍使用全局 SSRF
+策略。平台同步客户端保留超时、响应大小、重定向次数和每次重定向校验。
+
 ## 2. 已确定的业务规则
 
 ### 2.1 优先级与权重
@@ -259,6 +264,19 @@ Sub2API 首期协议范围：
 
 适配器不能绕过验证码、交互式二次验证或站点风控。密码登录无法完成时返回可识别的认证状态，管理员可以切换为 Cookie 或令牌认证。
 
+平台站点表单保留四种认证方式：`password`、`access_token`、`admin_key` 和
+`cookie`。账号密码认证由管理员手动输入用户名和密码；其他三种认证通过短期
+Capture Session 和目标站浏览器脚本采集。采集会话绑定管理员、目标 Origin、平台、
+认证类型和可选渠道，默认有效期 10 分钟，完成保存后消费，结果只在短期缓存中
+传递，最终仍使用现有整体加密字段保存。
+
+浏览器脚本只读取明确命名的 Access Token、Refresh Token、Admin Key、Cookie 和
+用户对象。Sub2API 的 `auth_token`/`refresh_token` 会在临近过期且存在刷新令牌时
+尝试刷新，并用 `/api/v1/auth/me` 或兼容接口确认登录态；NewAPI 会读取数字用户
+ID，用于需要兼容用户请求头的派生站点。Admin Key 或 HttpOnly Cookie 无法被脚本
+读取时直接失败，不手动补填、不把 Access Token 降级成其他认证方式，也不保存
+混合认证结果。前端只提交 `capture_id`，不提交原始令牌、Cookie 或 Admin Key。
+
 Sub2API 管理地址和转发地址分离处理：账号、分组和密钥接口始终使用
 `base_url` 指向的管理站地址；页面配置中的 `api_base_url` 用于发现 OpenAI
 兼容转发地址。`api_base_url` 可以是绝对 URL，也可以是相对路径。相对路径会按
@@ -271,6 +289,10 @@ Sub2API 管理地址和转发地址分离处理：账号、分组和密钥接口
 `api_base_url` 明确指向原始 `api.` 地址时，系统才会自动将候选地址纠正为管理地址；
 否则保留原地址，不向未经验证的候选地址发送凭据。成功纠正后，`base_url` 保存管理
 地址，`relay_base_url` 和父渠道 `base_url` 保存原始转发地址。
+
+管理地址纠正的候选探测始终使用不带 Authorization、Cookie 或用户凭据的匿名请求。
+只有候选站点返回 `2xx` HTML/XHTML，且页面配置中的 `api_base_url` 明确回指原始
+API 地址的同协议、同主机和同端口来源时，才允许切换；验证失败时保留原地址。
 
 `PlatformSiteCredential.auth_type` 是非敏感的认证方式标识，保存后固定使用该分支：
 
@@ -422,10 +444,16 @@ POST  /api/channel/:id/upstream-keys/batch-status
 
 - 站点地址；
 - 认证方式；
-- 用户名、密码、访问令牌、Admin Key 或 Cookie；
+- 账号密码认证下的用户名和密码；访问令牌、Admin Key 和 Cookie 通过浏览器脚本采集；
 - 充值金额和到账金额；
 - 转换倍率预览；
 - 手动同步和同步状态。
+
+点击脚本采集入口后，管理端创建短期会话并打开目标站；Capture Helper 或一次性
+userscript 在目标站页面内采集登录态并通过一次性 secret 回传。状态查询只返回
+认证类型、管理/转发地址、掩码 Access Token、Refresh Token/Admin Key/Cookie
+是否存在和令牌过期时间，不返回原始敏感值。已有渠道采集完成后自动保存，新渠道
+创建时携带 `capture_id`，只有保存成功后才消费会话。
 
 列表使用父行和子行：
 

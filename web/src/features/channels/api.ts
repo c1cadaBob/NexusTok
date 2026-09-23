@@ -41,6 +41,9 @@ import type {
   SearchChannelsResponse,
   TagOperationParams,
   PlatformSiteInput,
+  PlatformSiteCaptureStartRequest,
+  PlatformSiteCaptureStartResponse,
+  PlatformSiteCaptureStatusResponse,
   UpstreamKey,
   UpstreamKeysResponse,
   UpstreamSiteStatusResponse,
@@ -185,6 +188,26 @@ export async function syncUpstreamSite(
     `/api/channel/${id}/upstream-sync`,
     undefined,
     channelActionConfig()
+  )
+  return res.data
+}
+
+export async function startPlatformSiteCapture(
+  data: PlatformSiteCaptureStartRequest
+): Promise<PlatformSiteCaptureStartResponse> {
+  const res = await api.post(
+    '/api/channel/platform-site/capture-session/start',
+    data,
+    channelActionConfig()
+  )
+  return res.data
+}
+
+export async function getPlatformSiteCaptureStatus(
+  captureID: string
+): Promise<PlatformSiteCaptureStatusResponse> {
+  const res = await api.get(
+    `/api/channel/platform-site/capture-session/${encodeURIComponent(captureID)}`
   )
   return res.data
 }

@@ -85,6 +85,7 @@ func (adapter *NewAPIAdapter) Authenticate(ctx context.Context, baseURL string, 
 			}
 		} else if credential.AccessToken != "" {
 			headers.Set("Authorization", bearerToken(credential.AccessToken))
+			setNewAPICompatUserHeaders(headers, credential.UserID)
 		} else {
 			return nil, wrapPlatformSiteStage("NewAPI 认证", fmt.Errorf("%w: 缺少访问令牌", ErrPlatformSiteAuth))
 		}
@@ -100,6 +101,7 @@ func (adapter *NewAPIAdapter) Authenticate(ctx context.Context, baseURL string, 
 			return nil, wrapPlatformSiteStage("NewAPI 认证", fmt.Errorf("%w: 缺少 Cookie", ErrPlatformSiteAuth))
 		}
 		headers.Set("Cookie", credential.Cookie)
+		setNewAPICompatUserHeaders(headers, credential.UserID)
 	default:
 		return nil, wrapPlatformSiteStage("NewAPI 认证", fmt.Errorf("%w: 认证方式不受支持", ErrPlatformSiteAuth))
 	}
@@ -317,8 +319,11 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 		"quota_used",
 		"used",
 		"usedQuota",
+		"quotaUsed",
 		"total_used",
+		"total_used_quota",
 		"totalUsedQuota",
+		"totalUsed",
 		"total_actual_cost",
 		"totalActualCost",
 	)
@@ -330,7 +335,7 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 		RelayBaseURL:      strings.TrimRight(strings.TrimSpace(session.ModelBaseURL), "/"),
 	}
 	if payload, requestErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/user/profile", nil, nil); requestErr == nil {
-		profile := firstRecord(payload)
+		profile := firstNestedRecord(payload, "profile", "user", "account")
 		if balance := firstFloat(profile, "balance", "quota", "credit"); balance > 0 {
 			snapshot.Balance = balance
 		}
@@ -341,8 +346,11 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 				"quota_used",
 				"used",
 				"usedQuota",
+				"quotaUsed",
 				"total_used",
+				"total_used_quota",
 				"totalUsedQuota",
+				"totalUsed",
 				"total_actual_cost",
 				"totalActualCost",
 			); profileUsedQuotaSet {
@@ -353,7 +361,7 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 	}
 	if !snapshot.UsedQuotaSet {
 		if payload, requestErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/usage/dashboard/stats", nil, nil); requestErr == nil {
-			usage := firstRecord(payload)
+			usage := firstNestedRecord(payload, "stats", "usage", "dashboard")
 			if used, usedSet := firstSub2APIQuota(
 				usage,
 				"total_actual_cost",
@@ -361,9 +369,12 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 				"total_cost",
 				"totalCost",
 				"total_used",
+				"total_used_quota",
 				"totalUsedQuota",
+				"totalUsed",
 				"used_quota",
 				"quota_used",
+				"quotaUsed",
 				"used",
 			); usedSet {
 				snapshot.UsedQuota = used
@@ -1215,8 +1226,11 @@ func fetchSub2APIKeys(ctx context.Context, session *PlatformSiteSession, rates m
 				"used_quota",
 				"used",
 				"usedQuota",
+				"quotaUsed",
 				"total_used",
+				"total_used_quota",
 				"totalUsedQuota",
+				"totalUsed",
 			)
 			keySnapshot := UpstreamKeySnapshot{
 				ExternalID:               externalID,
@@ -1331,8 +1345,11 @@ func fetchSub2APIAdminKeys(ctx context.Context, session *PlatformSiteSession, ra
 				"used_quota",
 				"used",
 				"usedQuota",
+				"quotaUsed",
 				"total_used",
+				"total_used_quota",
 				"totalUsedQuota",
+				"totalUsed",
 			)
 			keySnapshot := UpstreamKeySnapshot{
 				ExternalID:               id,
@@ -1412,8 +1429,11 @@ func sub2APIRemainQuota(record map[string]any) *int64 {
 			"used_quota",
 			"used",
 			"usedQuota",
+			"quotaUsed",
 			"total_used",
+			"total_used_quota",
 			"totalUsedQuota",
+			"totalUsed",
 		)
 		remain := quota - used
 		if remain < 0 {
@@ -1422,7 +1442,13 @@ func sub2APIRemainQuota(record map[string]any) *int64 {
 		converted := sub2APIQuotaToInternal(remain)
 		return &converted
 	}
-	if remain, ok := firstOptionalFloat(record, "remain_quota", "remaining_quota"); ok {
+	if remain, ok := firstOptionalFloat(
+		record,
+		"remain_quota",
+		"remaining_quota",
+		"remainQuota",
+		"remainingQuota",
+	); ok {
 		converted := sub2APIQuotaToInternal(remain)
 		return &converted
 	}

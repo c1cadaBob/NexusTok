@@ -321,6 +321,18 @@ GET /api/channel/search?model=<model>&sort_by=model_ratio&sort_order=asc
 
 平台站点的余额和已使用额度以平台同步接口返回的 `balance`、`used_quota` 为准，同时保存到 `PlatformSiteAccount` 和父渠道；执行同步渠道或更新余额时会一起刷新这两个字段。`used_quota` 明确返回 `0` 时仍视为有效上游结果；仅当上游没有返回账号级已用额度时，才将本次同步中明确返回的子密钥已用额度求和作为回退值。管理端状态查询返回后优先展示同步结果，不使用本地请求日志或本地累计值替代。Sub2API 如果使用 `api.` 转发地址，只有同协议、同端口的去 `api.` 候选管理站页面明确回指原始 API 地址时才会自动纠正管理地址；失败时保留原配置并不发送凭据。
 
+平台站点可以使用 `http://`、`localhost`、回环地址、私有 IPv4/IPv6 和内网 DNS
+地址。私有地址和 HTTP 仅由平台站点专用同步客户端放行，其他用户可控 URL 仍受
+全局 SSRF 规则约束。Sub2API 的管理地址与转发地址分开保存：管理接口使用
+`PlatformSiteAccount.base_url`，页面配置发现的 OpenAI 兼容地址使用
+`relay_base_url`，父渠道基础地址使用实际转发地址并避免重复 `/v1`。
+
+平台站点的 `password` 认证继续手动输入用户名和密码；`access_token`、`admin_key`
+和 `cookie` 通过短期、管理员绑定、Origin 精确匹配、一次性消费的浏览器 Capture
+Session 采集。采集不到 Admin Key 或 HttpOnly Cookie 时失败，不允许手动补填或
+静默降级认证类型；前端表单只提交 `capture_id`，凭据最终仍整体加密保存。同步
+失败继续保留最近一次成功快照。
+
 标签模式以标签内最小倍率作为标签排序值，按标签分页并返回该页标签下的全部渠道。没有有效倍率的标签排在最后。
 
 前端最低倍率列、渠道卡片和标签聚合优先使用后端计算的 `model_ratio`。指定模型不存在时显示 `-`，不把渠道的其他模型倍率误显示为指定模型倍率。

@@ -52,6 +52,7 @@ vi.mock('@/features/channels/api', async () => {
 
 type PlatformSiteFormProps = {
   isEditing?: boolean
+  authType?: ChannelFormValues['platform_site_auth_type']
   onSubmit?: (values: ChannelFormValues) => void
 }
 
@@ -90,20 +91,24 @@ function PlatformSiteForm(props: PlatformSiteFormProps) {
       upstream_kind: 'platform_site',
       base_url: 'https://upstream.example',
       models: 'gpt-4o',
-      platform_site_auth_type: 'password',
+      platform_site_auth_type: props.authType ?? 'password',
     },
   })
 
   return (
-    <Form {...form}>
-      <form onSubmit={form.handleSubmit((values) => props.onSubmit?.(values))}>
-        <PlatformSiteFields
-          disabled={false}
-          isEditing={props.isEditing === true}
-        />
-        <button type='submit'>Save</button>
-      </form>
-    </Form>
+    <QueryClientProvider client={queryClient}>
+      <Form {...form}>
+        <form
+          onSubmit={form.handleSubmit((values) => props.onSubmit?.(values))}
+        >
+          <PlatformSiteFields
+            disabled={false}
+            isEditing={props.isEditing === true}
+          />
+          <button type='submit'>Save</button>
+        </form>
+      </Form>
+    </QueryClientProvider>
   )
 }
 
@@ -349,4 +354,17 @@ test('提交时仅在手动覆盖后发送平台转换倍率', async () => {
   })
   payload = transformFormDataToCreatePayload(onSubmit.mock.calls[0][0])
   expect(payload.platform_site?.conversion_ratio).toBe(0.25)
+})
+
+test('非密码认证显示脚本采集入口且不显示手动凭据输入框', () => {
+  render(<PlatformSiteForm authType='access_token' />)
+
+  expect(screen.getByText('Browser login state capture')).toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: 'Capture upstream login state' })
+  ).toBeInTheDocument()
+  expect(screen.queryByLabelText('Access token')).not.toBeInTheDocument()
+  expect(screen.queryByLabelText('Admin Key')).not.toBeInTheDocument()
+  expect(screen.queryByLabelText('Cookie')).not.toBeInTheDocument()
+  expect(screen.queryByLabelText('Username')).not.toBeInTheDocument()
 })

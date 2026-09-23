@@ -222,6 +222,7 @@ export const channelFormSchema = z
     platform_site_auth_type: z
       .enum(['password', 'access_token', 'admin_key', 'cookie'])
       .default('password'),
+    platform_site_capture_id: z.string().optional(),
     platform_site_username: z.string().optional(),
     platform_site_password: z.string().optional(),
     platform_site_access_token: z.string().optional(),
@@ -473,6 +474,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   key_weight_override: undefined,
   platform_site_platform: 'newapi',
   platform_site_auth_type: 'password',
+  platform_site_capture_id: '',
   platform_site_username: '',
   platform_site_password: '',
   platform_site_access_token: '',
@@ -643,6 +645,7 @@ export function transformChannelToFormDefaults(
     platform_site_platform:
       channel.type === CHANNEL_TYPE_SUB2_API ? 'sub2api' : 'newapi',
     platform_site_auth_type: 'password',
+    platform_site_capture_id: '',
     platform_site_username: '',
     platform_site_password: '',
     platform_site_access_token: '',
@@ -873,6 +876,28 @@ function normalizeBaseUrl(value: string | undefined): string {
     .replace(/\/+$/, '')
 }
 
+function buildPlatformSitePayload(
+  formData: ChannelFormValues
+): PlatformSiteInput {
+  const payload: PlatformSiteInput = {
+    platform: formData.platform_site_platform,
+    base_url: normalizeBaseUrl(formData.base_url),
+    auth_type: formData.platform_site_auth_type,
+    recharge_amount: formData.platform_site_recharge_amount,
+    credited_amount: formData.platform_site_credited_amount,
+    conversion_ratio: formData.platform_site_conversion_ratio_override
+      ? formData.platform_site_conversion_ratio
+      : undefined,
+  }
+  if (formData.platform_site_auth_type === 'password') {
+    payload.username = formData.platform_site_username
+    payload.password = formData.platform_site_password
+  } else {
+    payload.capture_id = formData.platform_site_capture_id?.trim() || undefined
+  }
+  return payload
+}
+
 /**
  * Transform form data to API payload for creating channel
  */
@@ -940,21 +965,7 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
     channel,
   }
   if (formData.upstream_kind === 'platform_site') {
-    payload.platform_site = {
-      platform: formData.platform_site_platform,
-      base_url: normalizeBaseUrl(formData.base_url),
-      auth_type: formData.platform_site_auth_type,
-      username: formData.platform_site_username,
-      password: formData.platform_site_password,
-      access_token: formData.platform_site_access_token,
-      admin_key: formData.platform_site_admin_key,
-      cookie: formData.platform_site_cookie,
-      recharge_amount: formData.platform_site_recharge_amount,
-      credited_amount: formData.platform_site_credited_amount,
-      conversion_ratio: formData.platform_site_conversion_ratio_override
-        ? formData.platform_site_conversion_ratio
-        : undefined,
-    }
+    payload.platform_site = buildPlatformSitePayload(formData)
   }
   return payload
 }
@@ -1023,21 +1034,7 @@ export function transformFormDataToUpdatePayload(
   payload.upstream_kind = formData.upstream_kind
 
   if (formData.upstream_kind === 'platform_site') {
-    payload.platform_site = {
-      platform: formData.platform_site_platform,
-      base_url: normalizeBaseUrl(formData.base_url),
-      auth_type: formData.platform_site_auth_type,
-      username: formData.platform_site_username,
-      password: formData.platform_site_password,
-      access_token: formData.platform_site_access_token,
-      admin_key: formData.platform_site_admin_key,
-      cookie: formData.platform_site_cookie,
-      recharge_amount: formData.platform_site_recharge_amount,
-      credited_amount: formData.platform_site_credited_amount,
-      conversion_ratio: formData.platform_site_conversion_ratio_override
-        ? formData.platform_site_conversion_ratio
-        : undefined,
-    }
+    payload.platform_site = buildPlatformSitePayload(formData)
   }
 
   return payload
