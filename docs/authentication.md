@@ -2,6 +2,8 @@
 
 面板鉴权采用短期 Access Token、HttpOnly Refresh Cookie 与服务端登录会话控制面的组合。面板请求不再依赖 Gin session，也不再要求 `New-Api-User` 请求头。
 
+完整的请求限流、模型限流、并发保护和可配置项说明见[限流与并发保护](./rate-limiting.md)。
+
 ## 鉴权模型
 
 - Access Token 是有效期 15 分钟的 JWT，只保存在浏览器内存中，通过 `Authorization: Bearer <token>` 发送。
