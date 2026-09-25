@@ -272,13 +272,19 @@ Sub2API 密码登录和后续管理接口要求上游返回 JSON。登录请求�
 不会把网页内容当成模型响应或凭据。管理员同步状态和系统日志会记录安全诊断摘要：
 HTTP 状态码、脱敏后的最终协议/主机/路径、Content-Type、是否发生重定向，以及
 `html`、`plain_text`、`invalid_json` 或 `empty` 等响应类别。查询参数、响应体、密码、
-Cookie、Access Token、Refresh Token 和 Admin Key 不会写入诊断。
+Cookie、Access Token、Refresh Token 和 Admin Key 不会写入诊断。非 2xx JSON 响应只
+提取受限的 `code`、`reason` 等安全诊断字段，不保存完整响应体。
 
 因此“Sub2API 登录响应格式错误”通常表示管理端 URL 命中了网页登录页、Cloudflare/
 WAF/Turnstile 验证页、反向代理文本错误，或登录 API 路径发生变化，不是下游模型
 输出格式错误。处理顺序是检查管理端 URL、反向代理和 API 路径；如果需要交互验证，
 使用已有平台站点浏览器采集能力获取 Access Token 或 Cookie。后台同步不尝试绕过
-验证码、Turnstile、Cloudflare 或其他上游安全策略。
+验证码、Turnstile、Cloudflare 或其他上游安全策略。当前渠道 2 的实际上游行为是
+`/api/v1/auth/login` 可能返回 `HTTP 400` 和
+`reason=TURNSTILE_VERIFICATION_FAILED`。该错误属于交互验证失败，系统会立即停止
+备用登录路径，并在同步状态中提示需要完成上游验证；不会再让 `/auth/login` 返回的
+HTML 网页覆盖真实原因。只有返回 `404`、`405` 或明确的路由不存在错误时，才会继续
+尝试 `/api/auth/login` 和 `/auth/login` 兼容路径。
 
 适配器不能绕过验证码、交互式二次验证或站点风控。密码登录无法完成时返回可识别的认证状态，管理员可以切换为 Cookie 或令牌认证。
 
@@ -601,3 +607,4 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
 | 2026-09-25 | 补充架构索引与元信息 | 已有平台站点详细设计没有统一事实基线和架构入口 | 增加事实基线、代码来源、架构分工和变更记录；保留同步、倍率、权重和兼容性细节 | NewAPI、Sub2API、平台账号、上游密钥和路由 | `model/upstream_channel.go`、`model/routing_key.go`、`service/upstream_site.go` 静态核对 |
 | 2026-09-25 | 缺陷修复 | Sub2API `2xx` 非 JSON 登录响应只显示笼统格式错误；平台子密钥 Routing Key 关系缺少运行时一致性说明 | 记录 HTML/纯文本/非法 JSON 的安全诊断字段和可操作排障方向；补充平台子密钥 Routing Key 自愈规则 | Sub2API 同步、管理员排障、平台子密钥路由和渠道测试 | `service/upstream_site.go`、`model/routing_key.go`、服务/模型回归测试 |
 | 2026-09-25 | 缺陷修复 | `password` 模式每次同步重新登录，登录态未稳定保留；令牌更新依赖完整快照成功 | 同时保留账号密码和上次登录凭据，按缓存访问令牌、刷新令牌、账号密码顺序恢复；认证更新在快照前立即持久化 | 平台站点认证、同步重试、浏览器采集触发条件和上游登录风控 | `controller/upstream_channel.go`、`service/upstream_site_adapters.go`、`service/upstream_site.go`；服务/控制器回归测试 |
+| 2026-09-25 | 缺陷修复 | 渠道 2 `/api/v1/auth/login` 返回 Turnstile JSON 错误后仍继续尝试备用路径，最终只显示“响应格式错误” | 保留 `TURNSTILE_VERIFICATION_FAILED` 等安全原因；仅在路由不存在时尝试备用路径，并引导浏览器采集而不绕过验证 | 渠道 2 账号密码同步、Sub2API 错误诊断、后台快照保留 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`；真实上游无凭据只读探测 |

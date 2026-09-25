@@ -366,6 +366,9 @@ GET /api/channel/search?model=<model>&sort_by=model_ratio&sort_order=asc
 `access_token` 模式刷新失败不会读取账号密码。认证期间产生的令牌更新在快照同步前
 立即加密保存，快照失败不会丢失令牌轮换结果。该凭据生命周期只决定平台站点同步能否
 建立会话，不改变 `key_id`、`upstream_key_id`、Routing Key 或子密钥候选的语义。
+平台站点同步认证失败时保留最近一次成功快照和已有子密钥路由能力；如果 Sub2API
+登录接口返回明确的 Turnstile/验证码交互验证错误，后台不会清除这些快照，也不会
+继续用网页登录页错误覆盖真实原因。只有登录 API 路由不存在时才尝试备用路径。
 
 标签模式以标签内最小倍率作为标签排序值，按标签分页并返回该页标签下的全部渠道。没有有效倍率的标签排在最后。
 
@@ -451,3 +454,4 @@ GET /api/channel/search?model=<model>&sort_by=model_ratio&sort_order=asc
 | 2026-09-25 | 补充架构索引与元信息 | 已有密钥调度详细规则没有统一事实基线和架构入口 | 增加事实基线、代码来源、架构分工和变更记录；保留统一 `key_id`、候选和日志细节 | Routing Key、平台站点、模型获取、测试和管理员日志 | `model/upstream_routing.go`、`model/routing_key.go`、`middleware/distributor.go` 静态核对 |
 | 2026-09-25 | 缺陷修复 | 平台子密钥可能引用其他渠道或错误来源的 Routing Key；显式旧 `key_id` 失败时返回裸 `record not found` | 统一校验 `channel_id`、`source`、`source_ref_id` 并在启动/读取/路由时自愈；可恢复的旧 `key_id` 先修复再测试，不可恢复时返回明确失效提示 | 平台站点路由、密钥列表、模型获取、自动测试和指定密钥测试 | `model/routing_key.go`、`model/main.go`、`controller/channel-test.go`、模型回归测试 |
 | 2026-09-25 | 缺陷修复 | 平台站点同步每次优先账号密码登录，令牌轮换结果可能在快照失败后丢失 | 账号密码与登录态并存并按缓存优先恢复；认证更新在快照前保存，保持 `key_id` 与 `upstream_key_id` 语义不变 | 平台站点同步、子密钥快照、路由候选和管理员测试 | `service/upstream_site_adapters.go`、`service/upstream_site.go`、`controller/upstream_channel.go`；服务/控制器测试 |
+| 2026-09-25 | 缺陷修复 | 渠道 2 的 Turnstile 登录错误会被后续 HTML 路径覆盖，失败时难以判断是否应继续测试或重新采集 | 交互验证错误立即停止路径切换并保留现有快照；仅路由不存在时继续兼容路径，`key_id`/`upstream_key_id` 语义不变 | 平台站点密钥同步、可路由子密钥保留、管理员测试和错误排障 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go` |

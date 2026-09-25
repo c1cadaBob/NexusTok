@@ -33,6 +33,7 @@
 | DEV-012 | Sub2API 登录非 JSON 响应诊断 | 登录接口返回 JSON，非 JSON 响应应能区分网页、验证页、代理文本或非法 JSON | 原先只返回“Sub2API 登录响应格式错误”，没有 HTTP 状态、最终 URL、Content-Type、重定向或响应类别 | 平台站点同步失败排障；无法直接判断管理地址、WAF/验证页或反向代理问题 | 已实现 | `service/upstream_site.go:platformSiteRequest`、`SafePlatformSiteError`、`service/upstream_site_test.go` | 2026-09-25 | 继续禁止记录完整响应体和认证信息；若上游协议变化，补充专用适配器测试 |
 | DEV-013 | 平台站点双凭据保存 | `password` 模式应同时保留账号密码和上次成功登录凭据，页面编辑不应清空登录态 | 保存密码模式配置时曾清空 `AccessToken`、`RefreshToken`、`UserID` 和过期时间，导致下一次同步只能重新登录或重新采集 | 平台站点编辑、后台同步、Sub2API/NewAPI 登录频率和上游风控 | 已实现 | `controller/upstream_channel.go`、`model/upstream_channel.go`、`controller/channel_upstream_update_test.go` | 2026-09-25 | 修改凭据保存或认证方式时继续验证字段合并、模式切换清理和加密存储 |
 | DEV-014 | 认证凭据更新时机 | 登录或刷新得到的令牌应在认证成功后立即保存，即使后续快照请求失败也应保留轮换结果 | 认证产生的 `CredentialUpdate` 曾在完整余额、模型和子密钥快照成功后才写回，快照失败会丢失新令牌并造成重复登录 | 平台站点同步重试、令牌轮换、上游登录限制和后台错误恢复 | 已实现 | `service/upstream_site.go:syncPlatformSite`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go` | 2026-09-25 | 保持凭据更新与快照写库分阶段；凭据写回失败必须单独报告且不得泄露敏感值 |
+| DEV-015 | 渠道 2 Sub2API 账号密码登录 | 上游登录接口返回明确的 JSON 认证/交互验证原因时，系统应保留真实失败原因并避免无意义的备用路径覆盖 | `/api/v1/auth/login` 返回 `TURNSTILE_VERIFICATION_FAILED` 后，旧逻辑仍尝试 `/api/auth/login`、`/auth/login`，最终 HTML 响应覆盖原始原因并显示为格式错误 | 渠道 2 账号密码同步、连续失败诊断、后台重试和浏览器采集决策 | 已实现 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`；渠道 2 `/api/v1/auth/login` 只读探测 | 2026-09-25 | 不绕过 Turnstile/CAPTCHA/WAF；仅在路由不存在时继续兼容路径，交互验证时使用浏览器采集 Access Token/Cookie |
 
 ## 3. 待核查项目
 
@@ -59,3 +60,4 @@
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 登记路由显式未实现、Adaptor 局部未实现、AIProxyLibrary 工厂缺口和 Responses 入口差异，并区分待核查项 | Relay 路由、Adaptor 工厂、插件协议和后续维护流程 | `router/relay-router.go`、`common/api_type.go`、`relay/relay_adaptor.go`、`relay/channel/` 静态核对 |
 | 2026-09-25 | 缺陷修复 | 平台子密钥可能跨渠道引用 Routing Key；Sub2API 非 JSON 登录响应只有笼统错误 | 新增关系一致性自愈、显式旧 `key_id` 兼容和安全响应诊断；原两项缺口标记为已实现并保留证据路径 | 平台站点同步、路由、模型获取、渠道测试和管理员排障 | 模型/服务回归测试、`git diff --check`、SQLite 兼容迁移验证 |
 | 2026-09-25 | 缺陷修复 | `password` 模式未稳定保留上次登录凭据，且认证令牌更新依赖完整快照成功 | 同时保留账号密码和登录态，优先复用、刷新并在失效后自动密码恢复；认证成功后在快照前立即持久化令牌 | 平台站点保存、NewAPI/Sub2API 同步、后台任务重试和上游登录限制 | `controller/upstream_channel.go`、`service/upstream_site_adapters.go`、`service/upstream_site.go`；服务/控制器测试 |
+| 2026-09-25 | 缺陷修复 | 渠道 2 首个 JSON Turnstile 错误会被后续 HTML 登录页覆盖，界面只显示响应格式错误 | 保留结构化交互验证错误，仅在路径不存在时尝试兼容路径，并保留安全诊断；已有登录态和最近成功快照不被清除 | 渠道 2 账号密码同步、Sub2API 错误展示、后台任务重试和路由可用性 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`；服务回归测试和真实上游只读探测 |

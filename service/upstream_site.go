@@ -41,6 +41,7 @@ var (
 	ErrSub2APILoginHTTPStatus  = errors.New("sub2api login http status failed")
 	ErrSub2APILoginResponse    = errors.New("sub2api login response format failed")
 	ErrSub2APILoginToken       = errors.New("sub2api login token missing")
+	ErrSub2APILoginInteractive = errors.New("sub2api login requires interactive verification")
 	ErrSub2APICurrentUser      = errors.New("sub2api current user request failed")
 )
 
@@ -48,6 +49,10 @@ const (
 	upstreamKeySyncErrorSecretUnavailable = "credential_unavailable"
 	upstreamKeySyncErrorModelsUnavailable = "models_unavailable"
 	upstreamKeySyncErrorInvalidData       = "invalid_data"
+
+	platformSiteErrorCategoryAuthentication = "authentication"
+	platformSiteErrorCategoryInteractive    = "interactive_verification"
+	platformSiteErrorCategoryRouteMissing   = "route_missing"
 )
 
 type PlatformSiteSession struct {
@@ -95,12 +100,15 @@ type PlatformSiteSnapshot struct {
 }
 
 type platformSiteResponseDiagnostics struct {
-	statusCode   int
-	initialURL   string
-	finalURL     string
-	contentType  string
-	redirected   bool
-	responseType string
+	statusCode    int
+	initialURL    string
+	finalURL      string
+	contentType   string
+	redirected    bool
+	responseType  string
+	errorCode     string
+	errorReason   string
+	errorCategory string
 }
 
 type platformSiteHTTPStatusError struct {
@@ -129,6 +137,33 @@ func (err *platformSiteResponseError) Error() string {
 
 func (err *platformSiteResponseError) Unwrap() error {
 	return ErrPlatformSiteResponse
+}
+
+type platformSiteBusinessError struct {
+	diagnostics platformSiteResponseDiagnostics
+	code        string
+	reason      string
+	category    string
+}
+
+func (err *platformSiteBusinessError) Error() string {
+	if err == nil {
+		return ""
+	}
+	parts := []string{ErrPlatformSiteAuth.Error()}
+	if err.category != "" {
+		parts = append(parts, err.category)
+	}
+	if err.reason != "" {
+		parts = append(parts, err.reason)
+	} else if err.code != "" {
+		parts = append(parts, err.code)
+	}
+	return strings.Join(parts, ": ")
+}
+
+func (err *platformSiteBusinessError) Unwrap() error {
+	return ErrPlatformSiteAuth
 }
 
 type platformSiteStageError struct {
@@ -327,6 +362,10 @@ func platformSiteRequest(
 	diagnostics := platformSiteResponseDiagnosticsFor(target, response)
 	diagnostics.responseType = platformSiteResponseType(response.Header.Get("Content-Type"), data)
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		if payload, unmarshalErr := unmarshalPlatformSiteJSON(data); unmarshalErr == nil {
+			diagnostics.errorCode, diagnostics.errorReason, diagnostics.errorCategory =
+				platformSiteErrorMetadata(payload)
+		}
 		return nil, &platformSiteHTTPStatusError{
 			statusCode:  response.StatusCode,
 			diagnostics: diagnostics,
@@ -341,17 +380,121 @@ func platformSiteRequest(
 	}
 	if object, ok := payload.(map[string]any); ok {
 		if success, exists := object["success"].(bool); exists && !success {
-			return nil, fmt.Errorf("%w: %s", ErrPlatformSiteAuth, firstString(object, "message", "error"))
+			code, reason, category := platformSiteErrorMetadata(object)
+			diagnostics.errorCode = code
+			diagnostics.errorReason = reason
+			diagnostics.errorCategory = category
+			return nil, &platformSiteBusinessError{
+				diagnostics: diagnostics,
+				code:        code,
+				reason:      reason,
+				category:    category,
+			}
 		}
 		if code := firstFloat(object, "code"); code != 0 && code != 200 {
-			return nil, fmt.Errorf("%w: %s", ErrPlatformSiteAuth, firstString(object, "message", "error"))
+			errorCode, reason, category := platformSiteErrorMetadata(object)
+			diagnostics.errorCode = errorCode
+			diagnostics.errorReason = reason
+			diagnostics.errorCategory = category
+			return nil, &platformSiteBusinessError{
+				diagnostics: diagnostics,
+				code:        errorCode,
+				reason:      reason,
+				category:    category,
+			}
 		}
 		if code := firstString(object, "code"); code != "" &&
 			code != "0" && code != "200" && !strings.EqualFold(code, "success") {
-			return nil, fmt.Errorf("%w: %s", ErrPlatformSiteAuth, firstString(object, "message", "error"))
+			errorCode, reason, category := platformSiteErrorMetadata(object)
+			diagnostics.errorCode = errorCode
+			diagnostics.errorReason = reason
+			diagnostics.errorCategory = category
+			return nil, &platformSiteBusinessError{
+				diagnostics: diagnostics,
+				code:        errorCode,
+				reason:      reason,
+				category:    category,
+			}
 		}
 	}
 	return payload, nil
+}
+
+func unmarshalPlatformSiteJSON(data []byte) (any, error) {
+	var payload any
+	if err := common.Unmarshal(data, &payload); err != nil {
+		return nil, err
+	}
+	return payload, nil
+}
+
+func platformSiteErrorMetadata(payload any) (code, reason, category string) {
+	record, ok := payload.(map[string]any)
+	if !ok {
+		return "", "", ""
+	}
+	code = sanitizePlatformSiteDiagnosticToken(firstString(
+		record,
+		"code",
+		"error_code",
+		"errorCode",
+		"status",
+	))
+	reason = sanitizePlatformSiteDiagnosticToken(firstString(
+		record,
+		"reason",
+		"error_reason",
+		"errorReason",
+	))
+	message := firstString(record, "message", "error")
+	category = classifyPlatformSiteErrorCategory(code, reason, message)
+	return code, reason, category
+}
+
+func classifyPlatformSiteErrorCategory(code, reason, message string) string {
+	combined := strings.ToLower(strings.Join([]string{code, reason, message}, " "))
+	switch {
+	case strings.Contains(combined, "turnstile"),
+		strings.Contains(combined, "captcha"),
+		strings.Contains(combined, "challenge"),
+		strings.Contains(combined, "verification_required"),
+		strings.Contains(combined, "requires_verification"),
+		strings.Contains(combined, "verify_required"):
+		return platformSiteErrorCategoryInteractive
+	case code == "401",
+		code == "403",
+		strings.Contains(combined, "invalid_credentials"),
+		strings.Contains(combined, "invalid_password"),
+		strings.Contains(combined, "authentication_failed"),
+		strings.Contains(combined, "unauthorized"),
+		strings.Contains(combined, "login_failed"):
+		return platformSiteErrorCategoryAuthentication
+	case code == "404",
+		code == "405",
+		strings.Contains(combined, "route_not_found"),
+		strings.Contains(combined, "endpoint_not_found"),
+		strings.Contains(combined, "method_not_allowed"):
+		return platformSiteErrorCategoryRouteMissing
+	default:
+		return ""
+	}
+}
+
+func sanitizePlatformSiteDiagnosticToken(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 96 {
+		return ""
+	}
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') ||
+			(char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') ||
+			char == '_' || char == '-' || char == '.' {
+			continue
+		}
+		return ""
+	}
+	return value
 }
 
 func unwrapPlatformData(payload any) any {
@@ -691,6 +834,14 @@ func SafePlatformSiteError(err error) string {
 	switch {
 	case errors.Is(err, ErrPlatformSiteCredential):
 		return "平台凭据无法解密，请重新保存平台凭据"
+	case errors.Is(err, ErrSub2APILoginInteractive):
+		label := "上游交互验证"
+		if platformSiteErrorContains(err, "turnstile") {
+			label = "Turnstile 交互验证"
+		}
+		return "Sub2API 登录需要" + label +
+			platformSiteResponseDiagnosticSuffix(err) +
+			"。后台不会自动绕过验证码或安全验证，请先在上游站点完成验证，或使用浏览器采集 Access Token/Cookie"
 	case errors.Is(err, ErrSub2APILoginRequest):
 		return "Sub2API 登录请求失败"
 	case errors.Is(err, ErrSub2APILoginHTTPStatus):
@@ -730,10 +881,32 @@ func SafePlatformSiteError(err error) string {
 
 func platformSiteHTTPStatusCode(err error) (int, bool) {
 	var statusErr *platformSiteHTTPStatusError
-	if !errors.As(err, &statusErr) || statusErr.statusCode <= 0 {
-		return 0, false
+	if errors.As(err, &statusErr) && statusErr.statusCode > 0 {
+		return statusErr.statusCode, true
 	}
-	return statusErr.statusCode, true
+	var businessErr *platformSiteBusinessError
+	if errors.As(err, &businessErr) && businessErr.diagnostics.statusCode > 0 {
+		return businessErr.diagnostics.statusCode, true
+	}
+	return 0, false
+}
+
+func platformSiteErrorContains(err error, value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return false
+	}
+	var statusErr *platformSiteHTTPStatusError
+	if errors.As(err, &statusErr) {
+		return strings.Contains(strings.ToLower(statusErr.diagnostics.errorCode), value) ||
+			strings.Contains(strings.ToLower(statusErr.diagnostics.errorReason), value)
+	}
+	var businessErr *platformSiteBusinessError
+	if errors.As(err, &businessErr) {
+		return strings.Contains(strings.ToLower(businessErr.code), value) ||
+			strings.Contains(strings.ToLower(businessErr.reason), value)
+	}
+	return false
 }
 
 func platformSiteResponseDiagnosticsFor(initialURL string, response *http.Response) platformSiteResponseDiagnostics {
@@ -818,7 +991,7 @@ func platformSiteResponseType(contentType string, data []byte) string {
 }
 
 func (diagnostics platformSiteResponseDiagnostics) summary() string {
-	parts := make([]string, 0, 5)
+	parts := make([]string, 0, 7)
 	if diagnostics.responseType != "" {
 		parts = append(parts, "响应类型："+diagnostics.responseType)
 	}
@@ -838,6 +1011,11 @@ func (diagnostics platformSiteResponseDiagnostics) summary() string {
 			parts = append(parts, "未发生重定向")
 		}
 	}
+	if diagnostics.errorReason != "" {
+		parts = append(parts, "错误原因："+diagnostics.errorReason)
+	} else if diagnostics.errorCode != "" {
+		parts = append(parts, "错误码："+diagnostics.errorCode)
+	}
 	return strings.Join(parts, "，")
 }
 
@@ -852,6 +1030,12 @@ func platformSiteResponseDiagnosticSuffix(err error) string {
 	var statusErr *platformSiteHTTPStatusError
 	if errors.As(err, &statusErr) {
 		if summary := statusErr.diagnostics.summary(); summary != "" {
+			return "（" + summary + "）"
+		}
+	}
+	var businessErr *platformSiteBusinessError
+	if errors.As(err, &businessErr) {
+		if summary := businessErr.diagnostics.summary(); summary != "" {
 			return "（" + summary + "）"
 		}
 	}

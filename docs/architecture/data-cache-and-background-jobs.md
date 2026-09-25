@@ -107,7 +107,11 @@ Redis 由 `common.InitRedisClient` 初始化，未配置 `REDIS_CONN_STRING` 时
 失败请求覆盖；账号只更新失败状态、连续失败次数和脱敏错误摘要。Sub2API 的非 JSON
 响应摘要可能包含 HTTP 状态、脱敏 URL、Content-Type、重定向状态和响应类别，但不包含
 响应体、密码、Cookie 或令牌。管理员需要检查站点管理地址、反向代理/API 路径，或通过
-已有浏览器采集能力改用 Access Token/Cookie；后台同步不会绕过验证页面。
+已有浏览器采集能力改用 Access Token/Cookie；后台同步不会绕过验证页面。若 Sub2API
+登录接口返回 `TURNSTILE_VERIFICATION_FAILED` 等明确的交互验证原因，系统会保留该
+JSON 原因，不再让后续网页登录页 HTML 覆盖错误；只有登录路由确认不存在时才尝试
+备用路径。只要数据库中已有的 Access Token 或 Refresh Token 仍可用，后台同步会继续
+复用缓存登录态，不会因为密码登录暂时需要交互验证而清除最近一次成功快照。
 
 ## 8. 当前限制和实际偏差
 
@@ -127,3 +131,4 @@ Redis 由 `common.InitRedisClient` 初始化，未配置 `REDIS_CONN_STRING` 时
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 建立数据库选择、缓存生命周期、系统任务 Runner 和后台任务入口说明 | `model/`、`common/`、`service/system_task.go`、`main.go` | 数据库初始化、Redis、Runner 和启动注册代码静态核对 |
 | 2026-09-25 | 缺陷修复 | 启动迁移只处理空 `routing_key_id`；平台同步非 JSON 登录响应无法区分网页、验证页和代理文本 | 启动及访问路径校验并修复全部平台子密钥 Routing Key 关系；同步失败保留成功快照并写入安全响应诊断摘要 | Routing Key 一致性、平台站点同步、缓存刷新、管理员排障 | `model/main.go`、`model/routing_key.go`、`service/upstream_site.go`、模型/服务回归测试 |
 | 2026-09-25 | 缺陷修复 | 平台站点认证令牌只在完整快照成功后保存，快照失败会丢失令牌轮换结果 | 认证与快照分阶段处理，令牌更新在快照前立即持久化；快照失败保留最新登录态和旧成功快照 | 平台站点同步、数据库回源和后台任务重试 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`TestSyncPlatformSitePersistsRotatedCredentialBeforeSnapshot` |
+| 2026-09-25 | 缺陷修复 | Sub2API 明确的 Turnstile JSON 错误会被备用登录路径的 HTML 响应覆盖，缓存快照诊断不准确 | 按错误类别决定是否切换登录路径；交互验证错误立即停止并安全展示，缓存登录态和最近成功快照继续保留 | 渠道 2 同步任务、登录失败重试、缓存快照和管理员排障 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go` |

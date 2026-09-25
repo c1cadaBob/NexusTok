@@ -60,7 +60,9 @@ NewAPI 使用 `/api/user/self` 等当前用户接口和 `/api/user/auth/refresh`
 账号密码、令牌、Cookie 和 Admin Key 只存在加密凭据字段或运行时请求头中，不写入
 同步状态、系统日志、接口响应或诊断摘要。需要验证码、Turnstile、Cloudflare/WAF
 或其它交互验证时，后台不尝试绕过；只有缓存登录态无法自动恢复时才需要浏览器采集
-Access Token 或 Cookie。
+Access Token 或 Cookie。对于 Sub2API，密码登录路径收到明确的 Turnstile、验证码或
+其它交互验证错误时，适配器会保留该结构化错误并停止切换备用登录路径；只有确认登录
+路由不存在时才继续尝试兼容路径。这样网页 HTML 不会覆盖真实的 JSON 验证原因。
 
 ## 3. 面板登录与 Session 生命周期
 
@@ -130,3 +132,4 @@ Token 限制不是前端 UI 的提示，而是在服务端分发和预扣/扣减
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 建立凭据分层、Session 生命周期、授权和 Redis 拓扑说明 | `middleware/`、`service/auth*`、`model/user_session.go`、`oauth/` | `docs/authentication.md`、`model/user_session.go`、`service/auth_session.go` 静态核对 |
 | 2026-09-25 | 缺陷修复 | 平台站点密码模式保存时可能清空登录态，且同步每次优先重新登录；认证成功后的令牌更新依赖快照同步成功 | 密码与登录态双凭据并存，优先复用访问令牌、再刷新、最后回退账号密码；认证产生的令牌在快照前立即持久化 | NewAPI/Sub2API 平台站点同步、账号密码恢复、令牌轮换和敏感信息保护 | `controller/upstream_channel.go`、`service/upstream_site_adapters.go`、`service/upstream_site.go`；服务和控制器回归测试 |
+| 2026-09-25 | 缺陷修复 | Sub2API 首个登录接口返回 Turnstile JSON 错误后仍继续尝试备用路径，最终网页响应覆盖真实原因 | 明确交互验证错误立即停止备用路径切换，仅在路由不存在时继续兼容探测，并保留脱敏状态、地址、响应类型和错误原因 | 渠道 2 账号密码同步、交互验证提示、凭据保护和平台登录风控 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`；Sub2API 只读探测 |

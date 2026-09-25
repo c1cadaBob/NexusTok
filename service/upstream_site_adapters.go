@@ -525,7 +525,20 @@ func loginSub2APIWithPassword(ctx context.Context, session *PlatformSiteSession,
 			if err == nil {
 				return payload, nil
 			}
-			lastErr = classifySub2APILoginError(err)
+			classifiedErr := classifySub2APILoginError(err)
+			lastErr = classifiedErr
+			if errors.Is(classifiedErr, ErrSub2APILoginInteractive) ||
+				errors.Is(classifiedErr, ErrSub2APILoginResponse) {
+				return nil, classifiedErr
+			}
+			if sub2APILoginShouldTryNextPath(classifiedErr) {
+				break
+			}
+			// 同一路径仍允许尝试兼容的请求体字段；完成后不再用其他
+			// 登录路径覆盖明确的认证或业务错误。
+		}
+		if !sub2APILoginShouldTryNextPath(lastErr) {
+			return nil, lastErr
 		}
 	}
 	if lastErr == nil {
@@ -538,6 +551,12 @@ func classifySub2APILoginError(err error) error {
 	if err == nil {
 		return nil
 	}
+	if platformSiteErrorCategoryOf(err) == platformSiteErrorCategoryInteractive {
+		return errors.Join(
+			ErrSub2APILoginInteractive,
+			fmt.Errorf("%w: %w", ErrSub2APILoginHTTPStatus, err),
+		)
+	}
 	if errors.Is(err, ErrPlatformSiteHTTPStatus) {
 		return fmt.Errorf("%w: %w", ErrSub2APILoginHTTPStatus, err)
 	}
@@ -548,6 +567,36 @@ func classifySub2APILoginError(err error) error {
 		return fmt.Errorf("%w: %w", ErrSub2APILoginHTTPStatus, err)
 	}
 	return fmt.Errorf("%w: %w", ErrSub2APILoginRequest, err)
+}
+
+func sub2APILoginShouldTryNextPath(err error) bool {
+	if err == nil {
+		return false
+	}
+	if platformSiteErrorCategoryOf(err) == platformSiteErrorCategoryRouteMissing {
+		return true
+	}
+	var statusErr *platformSiteHTTPStatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.statusCode == http.StatusNotFound ||
+			statusErr.statusCode == http.StatusMethodNotAllowed
+	}
+	return false
+}
+
+func platformSiteErrorCategoryOf(err error) string {
+	if err == nil {
+		return ""
+	}
+	var statusErr *platformSiteHTTPStatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.diagnostics.errorCategory
+	}
+	var businessErr *platformSiteBusinessError
+	if errors.As(err, &businessErr) {
+		return businessErr.category
+	}
+	return ""
 }
 
 func setSub2APIBrowserHeaders(session *PlatformSiteSession) {

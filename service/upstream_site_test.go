@@ -1742,14 +1742,14 @@ func TestSub2APILoginResponseDiagnosticsClassifyNonJSONResponses(t *testing.T) {
 			require.ErrorAs(t, err, &responseErr)
 			assert.Equal(t, testCase.responseType, responseErr.diagnostics.responseType)
 			assert.Equal(t, http.StatusOK, responseErr.diagnostics.statusCode)
-			assert.Equal(t, server.URL+"/auth/login", responseErr.diagnostics.finalURL)
+			assert.Equal(t, server.URL+"/api/v1/auth/login", responseErr.diagnostics.finalURL)
 			assert.False(t, responseErr.diagnostics.redirected)
 
 			message := SafePlatformSiteError(err)
 			assert.Contains(t, message, "HTTP 200")
 			assert.Contains(t, message, testCase.responseType)
 			assert.Contains(t, message, testCase.expectedMediaType)
-			assert.Contains(t, message, server.URL+"/auth/login")
+			assert.Contains(t, message, server.URL+"/api/v1/auth/login")
 			assert.Contains(t, message, "未发生重定向")
 			assert.NotContains(t, message, "SECRET_RESPONSE_BODY")
 			assert.NotContains(t, message, "synthetic-password")
@@ -1801,8 +1801,10 @@ func TestSub2APILoginResponseDiagnosticsTracksRedirectWithoutQuery(t *testing.T)
 }
 
 func TestSub2APILoginJSONAuthErrorKeepsHTTPClassification(t *testing.T) {
+	requestedPaths := make([]string, 0, 3)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method == http.MethodPost {
+			requestedPaths = append(requestedPaths, request.URL.Path)
 			writer.Header().Set("Content-Type", "application/json")
 			writer.WriteHeader(http.StatusUnauthorized)
 			_, _ = writer.Write([]byte(`{"code":401,"message":"invalid credentials SECRET_RESPONSE_BODY"}`))
@@ -1824,9 +1826,103 @@ func TestSub2APILoginJSONAuthErrorKeepsHTTPClassification(t *testing.T) {
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrSub2APILoginHTTPStatus)
 	assert.NotErrorIs(t, err, ErrSub2APILoginResponse)
+	assert.NotEmpty(t, requestedPaths)
+	for _, path := range requestedPaths {
+		assert.Equal(t, "/api/v1/auth/login", path)
+	}
 	message := SafePlatformSiteError(err)
 	assert.Contains(t, message, "HTTP 401")
 	assert.NotContains(t, message, "SECRET_RESPONSE_BODY")
+	assert.NotContains(t, message, "synthetic-password")
+}
+
+func TestSub2APILoginInteractiveErrorStopsFallbackPaths(t *testing.T) {
+	requestedPaths := make([]string, 0, 3)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost {
+			http.NotFound(writer, request)
+			return
+		}
+		requestedPaths = append(requestedPaths, request.URL.Path)
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusBadRequest)
+		_, _ = writer.Write([]byte(`{
+			"code": 400,
+			"message": "turnstile verification failed",
+			"reason": "TURNSTILE_VERIFICATION_FAILED",
+			"debug": "SECRET_RESPONSE_BODY synthetic-password session-cookie synthetic-access-token"
+		}`))
+	}))
+	defer server.Close()
+
+	_, err := NewSub2APIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType: model.UpstreamAuthPassword,
+			Username: "operator@example.com",
+			Password: "synthetic-password",
+		},
+	)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrSub2APILoginInteractive)
+	require.ErrorIs(t, err, ErrSub2APILoginHTTPStatus)
+	assert.NotErrorIs(t, err, ErrSub2APILoginResponse)
+	assert.Equal(t, []string{"/api/v1/auth/login"}, requestedPaths)
+
+	message := SafePlatformSiteError(err)
+	assert.Contains(t, message, "Turnstile")
+	assert.Contains(t, message, "HTTP 400")
+	assert.Contains(t, message, "TURNSTILE_VERIFICATION_FAILED")
+	assert.Contains(t, message, "后台不会自动绕过")
+	assert.NotContains(t, message, "SECRET_RESPONSE_BODY")
+	assert.NotContains(t, message, "synthetic-password")
+	assert.NotContains(t, message, "session-cookie")
+	assert.NotContains(t, message, "synthetic-access-token")
+}
+
+func TestSub2APILoginTriesNextPathOnlyWhenRouteIsMissing(t *testing.T) {
+	requestedPaths := make([]string, 0, 3)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost {
+			http.NotFound(writer, request)
+			return
+		}
+		requestedPaths = append(requestedPaths, request.URL.Path)
+		switch request.URL.Path {
+		case "/api/v1/auth/login", "/api/auth/login":
+			writer.Header().Set("Content-Type", "application/json")
+			writer.WriteHeader(http.StatusNotFound)
+			_, _ = writer.Write([]byte(`{"code":404,"reason":"ROUTE_NOT_FOUND"}`))
+		case "/auth/login":
+			writer.Header().Set("Content-Type", "text/html")
+			writer.WriteHeader(http.StatusOK)
+			_, _ = writer.Write([]byte("<html>login page</html>"))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	_, err := NewSub2APIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType: model.UpstreamAuthPassword,
+			Username: "operator@example.com",
+			Password: "synthetic-password",
+		},
+	)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrSub2APILoginResponse)
+	assert.Equal(t, []string{
+		"/api/v1/auth/login",
+		"/api/auth/login",
+		"/auth/login",
+	}, requestedPaths)
+	message := SafePlatformSiteError(err)
+	assert.Contains(t, message, "响应类型：html")
+	assert.Contains(t, message, "HTTP 200")
 	assert.NotContains(t, message, "synthetic-password")
 }
 
