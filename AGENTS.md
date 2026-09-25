@@ -183,6 +183,18 @@ Inside `relaykit/`, use `kitutil.*` from `relaykit/relayconvert/kitutil/json.go`
 - 已有实现能够满足需求时不得重复创建；需要差异化行为时，优先通过扩展现有实现或组合既有能力完成。
 - 只有在确认现有能力无法满足需求时才新增实现，并在提交说明或代码评审说明中简要记录复用评估结果和新增实现的必要性。
 
+**功能原理文档同步维护：**
+
+- 修改任何已有功能前，必须先检索 [`docs/architecture/README.md`](docs/architecture/README.md) 和对应的架构/详细文档，确认当前代码事实、接口入口和已知偏差。
+- 修改路由、鉴权、权限、渠道、密钥、模型获取、请求转换、计费、额度、任务、插件、缓存、数据库、日志、配置或前端用户流程后，必须在同一功能变更中同步更新所有受影响的架构文档和专项详细文档。
+- 新增渠道、Endpoint、Relay Format、配置项、数据库模型、后台任务、插件协议或公共业务规则时，必须同时更新对应功能说明和 [`docs/architecture/provider-capability-matrix.md`](docs/architecture/provider-capability-matrix.md)；不适用时须在变更说明中明确原因。
+- 若代码行为与既有文档不一致，必须在同一功能变更中校正文档，并在 [`docs/architecture/implementation-deviations.md`](docs/architecture/implementation-deviations.md) 新增、更新或关闭对应偏差记录。
+- 文档以当前实际代码为准，明确区分“已实现”“未实现”“设计目标”“待核查”；不得根据渠道名称、外部说明或单个 Adaptor 方法推断完整供应商能力。
+- 每次文档更新必须写入实际变更日期，并用“变更前/变更后”记录具体行为差异，不得只写笼统的“更新说明”。
+- 文档更新必须与对应代码变更处于同一个功能提交中。仅文档变更也须按可独立验收子功能暂存、检查，并纳入中文 commit。
+- 提交前必须核对接口参数、路由挂载位置、中间件顺序、候选过滤条件、优先级/权重、失败回退、管理员可见字段、计费来源和日志字段，确保文档与实现一致。
+- 只修改文档而不修改运行代码时，也必须静态核对链接、路径、代码入口、能力矩阵覆盖和偏差记录；无需因文档修改运行完整业务测试矩阵。
+
 **Protected project information:** The following project-related information is strictly protected and MUST NOT be modified, deleted, replaced, or removed under any circumstances:
 
 **Issues:** When opening a GitHub issue, first refuse out-of-scope requests listed in `.agents/github/ISSUE.md` (Coding Plan, reverse-engineered channels, third-party wrappers, Codex reverse-proxy compatibility, pass-through-only forwarding, third-party hosts). Tell the user and do not file. Then search https://docs.nexustok.ai/ , https://deepwiki.com/c1cadaBob/NexusTok , the README, and the code. If this is a usage, configuration, or integration question, answer the user from that material and do not file. Otherwise fill `.agents/github/ISSUE.md` as the entire body. If actual behavior, impact, frequency, evidence that the problem is in NexusTok, or the applicable relay/billing/frontend/deployment items are missing, ask the user those questions and wait. Do not invent them. Do not tell the user to confirm a template. Do not use GitHub issue forms.

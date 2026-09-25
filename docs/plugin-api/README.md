@@ -1,5 +1,10 @@
 # Task plugin API v1
 
+> 文档状态：代码事实基线
+> 事实基线日期：2026-09-25
+> 主要代码来源：`pkg/jsplugin/`、`plugins/tasks/`、`controller/plugin_protocol.go`、`router/task-plugin-protocol-router.go`、`model/task_plugin.go`
+> 关联架构文档：[`../architecture/tasks-and-plugins.md`](../architecture/tasks-and-plugins.md)、[`../architecture/billing-and-quota.md`](../architecture/billing-and-quota.md)、[`../architecture/provider-capability-matrix.md`](../architecture/provider-capability-matrix.md)
+
 Task plugins are single-file synchronous ECMAScript modules. The plugin contract
 is currently unreleased; [`v1.schema.json`](./v1.schema.json) and
 [`v1.d.ts`](./v1.d.ts) are the authoritative v1 contract.
@@ -140,3 +145,13 @@ untrusted plugins merely because they compile.
 Usage hooks may return facts such as seconds, resolution, or upstream units, but
 must never calculate prices or attempt quota settlement. The host owns all
 pricing and clamps billing conversions.
+
+## 与架构文档的关系
+
+本文和[`v1.md`](./v1.md)、Schema、TypeScript 声明共同保留插件 Manifest、协议、字段和安全边界等详细契约；架构文档说明插件在任务提交、轮询、Responses、Artifact、计费和版本 pinning 中的整体位置。修改契约时必须在同一次功能提交中同步这些文件。
+
+## 变更记录
+
+| 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
+| --- | --- | --- | --- | --- | --- |
+| 2026-09-25 | 补充架构索引与元信息 | 已有插件契约没有统一事实基线和架构入口 | 增加事实基线、代码来源、架构分工和变更记录；保留现有英文契约 | Sobek 插件、任务协议、Artifact、计费和版本发布 | `pkg/jsplugin/`、`router/task-plugin-protocol-router.go`、`model/task_plugin.go` 静态核对 |

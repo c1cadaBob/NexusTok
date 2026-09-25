@@ -1,5 +1,10 @@
 # 限流与并发保护
 
+> 文档状态：代码事实基线
+> 事实基线日期：2026-09-25
+> 主要代码来源：`middleware/rate-limit.go`、`middleware/model-rate-limit.go`、`middleware/task_artifact_access.go`、`controller/plugin_protocol_limiter.go`、`model/user_session.go`
+> 关联架构文档：[`docs/architecture/authentication-and-authorization.md`](architecture/authentication-and-authorization.md)、[`docs/architecture/data-cache-and-background-jobs.md`](architecture/data-cache-and-background-jobs.md)、[`docs/architecture/system-overview.md`](architecture/system-overview.md)
+
 本文按当前代码实现整理 NexusTok 的请求限流、模型请求限流、会话限制、并发 admission、业务发送限制和请求体大小保护。
 
 这些机制并不都是“每分钟允许多少次请求”：
@@ -623,3 +628,13 @@ Redis Key 前缀、内存清理周期以及令牌桶内部参数属于实现细�
 - `controller/plugin_protocol_limiter.go`：任务插件协议并发。
 - `model/user_session.go`、`service/auth_session.go`：登录 Session 上限和签发窗口。
 - `middleware/gzip.go`、`middleware/request_body_limit.go`：请求体大小保护。
+
+## 与架构文档的关系
+
+本文保留各限流桶、默认值、配置项、响应码和生效路由的详细契约；架构文档只说明限流在鉴权、Relay、任务、缓存和多节点链路中的位置。增加或调整限流策略时，必须同步本文、对应架构文档和变更偏差登记。
+
+## 变更记录
+
+| 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
+| --- | --- | --- | --- | --- | --- |
+| 2026-09-25 | 补充架构索引与元信息 | 已有限流详细规则没有统一事实基线和架构入口 | 增加事实基线、代码来源、架构分工和变更记录；保留原有桶、配置和默认值 | Web/API/用户/模型/任务/Session/请求体保护 | `middleware/`、`controller/plugin_protocol_limiter.go`、`model/user_session.go` 静态核对 |

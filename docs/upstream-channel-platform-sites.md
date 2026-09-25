@@ -1,5 +1,10 @@
 # 上游渠道与平台站点设计
 
+> 文档状态：代码事实基线
+> 事实基线日期：2026-09-25
+> 主要代码来源：`model/upstream_channel.go`、`model/routing_key.go`、`service/upstream_site.go`、`controller/upstream_channel.go`、`controller/channel-test.go`
+> 关联架构文档：[`docs/architecture/relay-routing-and-conversion.md`](architecture/relay-routing-and-conversion.md)、[`docs/architecture/provider-capability-matrix.md`](architecture/provider-capability-matrix.md)、[`docs/architecture/data-cache-and-background-jobs.md`](architecture/data-cache-and-background-jobs.md)
+
 ## 1. 目标与范围
 
 现有渠道统一称为上游渠道。上游渠道分为两类：
@@ -557,5 +562,15 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
   - NewAPI 保存后通过余额刷新触发完整只读同步，历史 `credential_unavailable` 子密钥恢复为真实可解密子密钥，子密钥模型能力、倍率和权重刷新成功，站点倍率为 `0.1`，自动权重示例包含 `1900`；
   - Sub2API 保存后通过余额刷新触发完整只读同步，余额刷新成功，子密钥恢复为可路由状态，站点倍率为 `1`，存在倍率为 `1` 的不可路由模型能力缺失子密钥展示为权重 `1000`；
   - 测试弹窗默认使用自动路由，并且模型列表来自可路由子密钥的真实模型能力；NewAPI 测试请求已路由到上游但因上游账号余额不足返回脱敏的上游错误，Sub2API 测试请求已路由到上游但目标模型返回上游临时不可用错误；
-  - 余额刷新按钮具备加载禁用状态，刷新成功后列表、父渠道状态和子密钥状态同步更新；
-  - 桌面端和移动端均无白屏，Chrome 控制台无 error，未观察到保存前请求风暴。
+- 余额刷新按钮具备加载禁用状态，刷新成功后列表、父渠道状态和子密钥状态同步更新；
+- 桌面端和移动端均无白屏，Chrome 控制台无 error，未观察到保存前请求风暴。
+
+## 与架构文档的关系
+
+本文保留平台站点、账号同步、子密钥字段、倍率/权重公式、权限、SSRF 和测试验收等详细规则；架构文档描述平台站点如何进入渠道过滤、Routing Key 和 Relay 转发。新增平台类型或调整同步/路由语义时，必须同时更新本文、能力矩阵和偏差表。
+
+## 变更记录
+
+| 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
+| --- | --- | --- | --- | --- | --- |
+| 2026-09-25 | 补充架构索引与元信息 | 已有平台站点详细设计没有统一事实基线和架构入口 | 增加事实基线、代码来源、架构分工和变更记录；保留同步、倍率、权重和兼容性细节 | NewAPI、Sub2API、平台账号、上游密钥和路由 | `model/upstream_channel.go`、`model/routing_key.go`、`service/upstream_site.go` 静态核对 |

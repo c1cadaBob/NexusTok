@@ -1,5 +1,10 @@
 # 密钥调度策略与日志可观测性
 
+> 文档状态：代码事实基线
+> 事实基线日期：2026-09-25
+> 主要代码来源：`model/routing_key.go`、`model/upstream_routing.go`、`middleware/distributor.go`、`service/channel_select.go`、`controller/channel-test.go`、`model/channel_cache.go`
+> 关联架构文档：[`docs/architecture/relay-routing-and-conversion.md`](architecture/relay-routing-and-conversion.md)、[`docs/architecture/provider-capability-matrix.md`](architecture/provider-capability-matrix.md)、[`docs/architecture/implementation-deviations.md`](architecture/implementation-deviations.md)
+
 本文档整理 NexusTok 当前密钥调度策略、迁移前历史行为、统一 `key_id` 后的候选选择、重试切换、固定渠道/显式密钥测试、模型获取与管理员密钥配置，以及使用日志中密钥诊断字段的可见性。
 
 本文档是密钥调用方式和调度规则的同步基准。凡是相关代码行为发生变化，都必须在同一个功能提交中更新本文档，并核对接口参数、候选过滤条件、回退行为和管理员可见字段。
@@ -405,3 +410,13 @@ GET /api/channel/search?model=<model>&sort_by=model_ratio&sort_order=asc
 - 管理员日志中会记录本次测试使用的 `key_id` 和调度诊断字段。
 
 普通 API 请求的余额不足预扣失败仍保持不写错误日志。
+
+## 与架构文档的关系
+
+本文是密钥身份、候选过滤、优先级/权重、平台站点子密钥、模型获取和日志可观测字段的详细同步基准；架构文档只描述这些规则在完整 Relay 链路中的位置。任何路由或日志行为变更都必须先更新本文，再更新架构文档和偏差登记。
+
+## 变更记录
+
+| 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
+| --- | --- | --- | --- | --- | --- |
+| 2026-09-25 | 补充架构索引与元信息 | 已有密钥调度详细规则没有统一事实基线和架构入口 | 增加事实基线、代码来源、架构分工和变更记录；保留统一 `key_id`、候选和日志细节 | Routing Key、平台站点、模型获取、测试和管理员日志 | `model/upstream_routing.go`、`model/routing_key.go`、`middleware/distributor.go` 静态核对 |

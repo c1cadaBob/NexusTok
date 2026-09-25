@@ -1,5 +1,10 @@
 # 用户鉴权与登录会话
 
+> 文档状态：代码事实基线
+> 事实基线日期：2026-09-25
+> 主要代码来源：`middleware/`、`service/auth_session.go`、`model/user_session.go`、`controller/`、`oauth/`
+> 关联架构文档：[`docs/architecture/authentication-and-authorization.md`](architecture/authentication-and-authorization.md)、[`docs/architecture/system-overview.md`](architecture/system-overview.md)
+
 面板鉴权采用短期 Access Token、HttpOnly Refresh Cookie 与服务端登录会话控制面的组合。面板请求不再依赖 Gin session，也不再要求 `New-Api-User` 请求头。
 
 完整的请求限流、模型限流、并发保护和可配置项说明见[限流与并发保护](./rate-limiting.md)。
@@ -204,3 +209,13 @@ Proof 同时绑定用户、登录会话、用户鉴权版本、会话版本和 s
 - Redis 限流从近似滑动窗口改为原子固定窗口，存在明确的边界双倍突发语义。
 - 用户级模型成功请求限流的 UTC 时间戳在滚动升级期间存在一个窗口的混合格式过渡，期间可能临时误放行或误拒绝。
 - 自建客户端应按新的 AuthBundle、`flow_token` 和 Security Proof 契约升级；PAT 客户端可直接移除 `New-Api-User`。
+
+## 与架构文档的关系
+
+本文保留鉴权接口、Cookie、AuthFlow、Session、Security Proof 和升级注意事项等详细契约；架构原理、凭据分层、Redis 拓扑和跨模块数据流见[`docs/architecture/authentication-and-authorization.md`](architecture/authentication-and-authorization.md)。两者出现行为差异时，必须以当前代码重新核对，并在架构偏差表中登记。
+
+## 变更记录
+
+| 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
+| --- | --- | --- | --- | --- | --- |
+| 2026-09-25 | 补充架构索引与元信息 | 已有详细鉴权契约没有统一事实基线和架构入口 | 增加事实基线、代码来源、架构分工和变更记录；保留原有详细规则 | 面板登录、Session、AuthFlow、Security Proof、Redis 拓扑 | `middleware/`、`service/auth_session.go`、`model/user_session.go` 静态核对 |
