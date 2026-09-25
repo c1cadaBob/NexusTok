@@ -1,12 +1,14 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"math"
+	"mime"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -92,8 +94,18 @@ type PlatformSiteSnapshot struct {
 	RelayBaseURL      string
 }
 
+type platformSiteResponseDiagnostics struct {
+	statusCode   int
+	initialURL   string
+	finalURL     string
+	contentType  string
+	redirected   bool
+	responseType string
+}
+
 type platformSiteHTTPStatusError struct {
-	statusCode int
+	statusCode  int
+	diagnostics platformSiteResponseDiagnostics
 }
 
 func (err *platformSiteHTTPStatusError) Error() string {
@@ -102,6 +114,21 @@ func (err *platformSiteHTTPStatusError) Error() string {
 
 func (err *platformSiteHTTPStatusError) Unwrap() error {
 	return ErrPlatformSiteHTTPStatus
+}
+
+type platformSiteResponseError struct {
+	diagnostics platformSiteResponseDiagnostics
+}
+
+func (err *platformSiteResponseError) Error() string {
+	if err == nil {
+		return ""
+	}
+	return fmt.Sprintf("%s: %s", ErrPlatformSiteResponse, err.diagnostics.summary())
+}
+
+func (err *platformSiteResponseError) Unwrap() error {
+	return ErrPlatformSiteResponse
 }
 
 type platformSiteStageError struct {
@@ -297,15 +324,20 @@ func platformSiteRequest(
 	if len(data) > upstreamSiteResponseLimit {
 		return nil, errors.New("平台站点响应体超过限制")
 	}
+	diagnostics := platformSiteResponseDiagnosticsFor(target, response)
+	diagnostics.responseType = platformSiteResponseType(response.Header.Get("Content-Type"), data)
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return nil, &platformSiteHTTPStatusError{statusCode: response.StatusCode}
+		return nil, &platformSiteHTTPStatusError{
+			statusCode:  response.StatusCode,
+			diagnostics: diagnostics,
+		}
 	}
-	if len(strings.TrimSpace(string(data))) == 0 {
+	if len(bytes.TrimSpace(data)) == 0 {
 		return map[string]any{}, nil
 	}
 	var payload any
 	if err := common.Unmarshal(data, &payload); err != nil {
-		return nil, fmt.Errorf("%w: JSON", ErrPlatformSiteResponse)
+		return nil, &platformSiteResponseError{diagnostics: diagnostics}
 	}
 	if object, ok := payload.(map[string]any); ok {
 		if success, exists := object["success"].(bool); exists && !success {
@@ -661,11 +693,17 @@ func SafePlatformSiteError(err error) string {
 		return "Sub2API 登录请求失败"
 	case errors.Is(err, ErrSub2APILoginHTTPStatus):
 		if statusCode, ok := platformSiteHTTPStatusCode(err); ok {
-			return fmt.Sprintf("Sub2API 登录 HTTP 状态失败（HTTP %d）", statusCode)
+			return fmt.Sprintf(
+				"Sub2API 登录 HTTP 状态失败（HTTP %d%s）",
+				statusCode,
+				platformSiteResponseDiagnosticSuffix(err),
+			)
 		}
 		return "Sub2API 登录 HTTP 状态失败"
 	case errors.Is(err, ErrSub2APILoginResponse):
-		return "Sub2API 登录响应格式错误"
+		return "Sub2API 登录响应格式错误" +
+			platformSiteResponseDiagnosticSuffix(err) +
+			"。请检查管理端 URL、反向代理和登录 API 路径；如站点需要交互验证，请使用浏览器采集 Access Token 或 Cookie"
 	case errors.Is(err, ErrSub2APILoginToken):
 		return "Sub2API 登录未返回访问令牌"
 	case errors.Is(err, ErrSub2APICurrentUser):
@@ -694,6 +732,128 @@ func platformSiteHTTPStatusCode(err error) (int, bool) {
 		return 0, false
 	}
 	return statusErr.statusCode, true
+}
+
+func platformSiteResponseDiagnosticsFor(initialURL string, response *http.Response) platformSiteResponseDiagnostics {
+	diagnostics := platformSiteResponseDiagnostics{
+		initialURL: sanitizePlatformSiteURL(initialURL),
+	}
+	if response != nil {
+		diagnostics.statusCode = response.StatusCode
+		diagnostics.contentType = safePlatformSiteContentType(response.Header.Get("Content-Type"))
+		diagnostics.finalURL = diagnostics.initialURL
+		if response.Request != nil && response.Request.URL != nil {
+			diagnostics.finalURL = sanitizePlatformSiteURL(response.Request.URL.String())
+			diagnostics.redirected = response.Request.URL.String() != initialURL
+		}
+	}
+	return diagnostics
+}
+
+func sanitizePlatformSiteURL(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
+}
+
+func safePlatformSiteContentType(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	mediaType, _, err := mime.ParseMediaType(raw)
+	if err != nil {
+		mediaType = strings.TrimSpace(strings.SplitN(raw, ";", 2)[0])
+	}
+	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
+	if mediaType == "" {
+		return ""
+	}
+	if len(mediaType) > 128 {
+		return mediaType[:128]
+	}
+	return mediaType
+}
+
+func platformSiteResponseType(contentType string, data []byte) string {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 {
+		return "empty"
+	}
+	mediaType := safePlatformSiteContentType(contentType)
+	if mediaType == "text/html" || mediaType == "application/xhtml+xml" ||
+		strings.HasPrefix(mediaType, "text/html") {
+		return "html"
+	}
+	sample := trimmed
+	if len(sample) > 512 {
+		sample = sample[:512]
+	}
+	lowerSample := bytes.ToLower(sample)
+	for _, prefix := range [][]byte{
+		[]byte("<!doctype html"),
+		[]byte("<html"),
+		[]byte("<head"),
+		[]byte("<body"),
+	} {
+		if bytes.HasPrefix(lowerSample, prefix) {
+			return "html"
+		}
+	}
+	if strings.HasPrefix(mediaType, "text/plain") {
+		return "plain_text"
+	}
+	var payload any
+	if err := common.Unmarshal(trimmed, &payload); err == nil {
+		return "json"
+	}
+	return "invalid_json"
+}
+
+func (diagnostics platformSiteResponseDiagnostics) summary() string {
+	parts := make([]string, 0, 5)
+	if diagnostics.responseType != "" {
+		parts = append(parts, "响应类型："+diagnostics.responseType)
+	}
+	if diagnostics.statusCode > 0 {
+		parts = append(parts, fmt.Sprintf("HTTP %d", diagnostics.statusCode))
+	}
+	if diagnostics.contentType != "" {
+		parts = append(parts, "Content-Type："+diagnostics.contentType)
+	}
+	if diagnostics.finalURL != "" {
+		parts = append(parts, "地址："+diagnostics.finalURL)
+	}
+	if diagnostics.initialURL != "" && diagnostics.finalURL != "" {
+		if diagnostics.redirected {
+			parts = append(parts, "发生重定向")
+		} else {
+			parts = append(parts, "未发生重定向")
+		}
+	}
+	return strings.Join(parts, "，")
+}
+
+func platformSiteResponseDiagnosticSuffix(err error) string {
+	var responseErr *platformSiteResponseError
+	if errors.As(err, &responseErr) {
+		if summary := responseErr.diagnostics.summary(); summary != "" {
+			return "（" + summary + "）"
+		}
+		return ""
+	}
+	var statusErr *platformSiteHTTPStatusError
+	if errors.As(err, &statusErr) {
+		if summary := statusErr.diagnostics.summary(); summary != "" {
+			return "（" + summary + "）"
+		}
+	}
+	return ""
 }
 
 func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteAccount, snapshot PlatformSiteSnapshot) error {

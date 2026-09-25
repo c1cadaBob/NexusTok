@@ -194,6 +194,9 @@ Inside `relaykit/`, use `kitutil.*` from `relaykit/relayconvert/kitutil/json.go`
 - 文档更新必须与对应代码变更处于同一个功能提交中。仅文档变更也须按可独立验收子功能暂存、检查，并纳入中文 commit。
 - 提交前必须核对接口参数、路由挂载位置、中间件顺序、候选过滤条件、优先级/权重、失败回退、管理员可见字段、计费来源和日志字段，确保文档与实现一致。
 - 只修改文档而不修改运行代码时，也必须静态核对链接、路径、代码入口、能力矩阵覆盖和偏差记录；无需因文档修改运行完整业务测试矩阵。
+- 修改平台子密钥、`routing_keys`、`upstream_keys.routing_key_id`、`channel_id`、`source` 或 `source_ref_id` 关系时，必须同步核对启动迁移、密钥列表、自动路由、模型获取和显式 `key_id` 测试路径；数据关系修复只能更新当前记录，不得无依据删除其他渠道的历史 Routing Key。
+- 修改平台站点登录、响应解析、重定向或同步失败处理时，必须同步核对 `last_sync_error`、系统日志和管理员可见错误；诊断只能记录 HTTP 状态、脱敏 URL、Content-Type、重定向状态和响应类别，不得记录完整响应体、密码、Cookie、令牌或 Admin Key。
+- 遇到 `2xx` 非 JSON 平台响应时，文档必须明确区分网页、验证页、反向代理文本和非法 JSON，并保留原有认证/HTTP/响应错误分类；不得通过后台代码绕过 CAPTCHA、Turnstile、Cloudflare、WAF 或其他上游交互验证。
 
 **Protected project information:** The following project-related information is strictly protected and MUST NOT be modified, deleted, replaced, or removed under any circumstances:
 

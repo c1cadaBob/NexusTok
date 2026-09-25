@@ -60,6 +60,25 @@ Auto Group 的跨分组重试在 `service/channel_select.go`；渠道排序、�
 
 统一 `routing_keys.id` 是稳定的 `key_id`；普通密钥和平台站点子密钥的详细规则、迁移兼容和管理员可见字段以[`key-routing-strategy.md`](../key-routing-strategy.md)和[`upstream-channel-platform-sites.md`](../upstream-channel-platform-sites.md)为准。没有证据时不能把渠道名称推断为可用模型集合。
 
+平台站点需要区分两个 ID：
+
+- `key_id`：全局 `routing_keys.id`，用于路由、日志、模型获取和渠道测试；
+- `upstream_key_id`：`upstream_keys.id`，只表示平台站点子密钥记录本身。
+
+平台子密钥的 `upstream_keys.routing_key_id` 只有在以下关系同时成立时才有效：
+`routing_keys.id` 等于该字段、`routing_keys.channel_id` 等于
+`upstream_keys.channel_id`、`source` 为 `platform_site`，并且
+`source_ref_id` 等于 `upstream_keys.id`。启动迁移、平台子密钥列表、自动路由和按
+子密钥查询都会校验并修复这组关系；修复时只更新当前子密钥，不删除旧的其他渠道
+Routing Key。
+
+自动路由直接从当前渠道的 `upstream_keys` 展开候选，因此历史上可能在错误
+`routing_key_id` 存在时仍能成功。显式 `key_id` 测试则按“全局 Routing Key +
+当前渠道”严格查询。当前子密钥仍引用旧 ID 时，显式测试会先依据这条当前渠道的
+引用关系自愈，再使用新 `key_id` 继续；无法从当前渠道子密钥关系恢复时，返回
+“所选密钥已失效，请刷新密钥列表后重新选择”，不会把其他渠道的 Routing Key 直接
+挪到当前渠道。接口参数含义和成功响应格式保持不变。
+
 渠道亲和会根据请求 Header、Body、模型或操作设置抽取 key，缓存到渠道亲和索引，并在候选过滤后尝试命中。Codex 等运行时 Header 覆盖和参数覆盖会记录到 `RelayInfo` 的诊断字段，普通用户日志不会自动获得管理员专用信息。
 
 ## 5. DTO、映射和转换
@@ -94,6 +113,10 @@ Relay 层通常按以下阶段处理请求：
 - `ChannelType2APIType` 对没有专门映射的渠道通常回退 OpenAI API 类型，但 Task Plugin 明确不回退；这只说明默认 Adaptor 路径，不说明每个 Relay Format 都可用。
 - 某些 Adaptor 的单个转换方法显式返回 `not implemented`，只能记录为具体方法能力缺口，不能推出整个供应商不可用。
 - 传统 Midjourney、视频、音乐和新 Task Plugin 的任务能力由 Task Plugin/任务平台映射决定，和普通同步聊天 Adaptor 是不同入口。
+- 平台站点同步依赖上游登录接口返回 JSON。若管理地址命中网页、Cloudflare/WAF
+  验证页或反向代理文本，Sub2API 会保持“登录响应格式错误”分类，并在管理员同步
+  状态和系统日志中增加 HTTP 状态、脱敏后的最终 URL、Content-Type、是否重定向及
+  `html`/`plain_text`/`invalid_json` 等响应类别；完整响应体和认证信息不会保存。
 
 ## 9. 维护时需要同步的关联模块
 
@@ -104,3 +127,4 @@ Relay 层通常按以下阶段处理请求：
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 建立入口、分发、密钥选择、转换、流式和 Usage 的实现说明 | `router/`、`middleware/distributor.go`、`model/*routing*`、`relay/`、`relaykit/` | 路由、Adaptor 注册、流式列表和路由选择代码静态核对 |
+| 2026-09-25 | 缺陷修复 | 平台子密钥的 `routing_key_id` 可能跨渠道或来源不匹配；Sub2API 非 JSON 登录响应只有笼统错误 | 路由相关入口统一校验并自愈平台子密钥 Routing Key；显式旧 `key_id` 可在当前子密钥引用仍存在时恢复；非 JSON 响应记录安全诊断摘要 | 平台站点自动路由、显式密钥测试、模型获取、Sub2API 同步状态和日志 | `model/routing_key.go`、`model/main.go`、`model/upstream_routing.go`、`service/upstream_site.go` 及对应回归测试 |

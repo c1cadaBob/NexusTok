@@ -885,6 +885,47 @@ func TestUpstreamChannelDatabaseCompatibility(t *testing.T) {
 			require.NoError(t, migrateRoutingKeys())
 			require.NoError(t, db.First(&routedPlatformKey, key.ID).Error)
 			assert.Equal(t, platformRoutingKeyID, routedPlatformKey.RoutingKeyID)
+
+			repairChannel := &Channel{
+				Name:         "repair-foreign-site",
+				Group:        "default",
+				Status:       common.ChannelStatusEnabled,
+				UpstreamKind: UpstreamKindPlatformSite,
+			}
+			require.NoError(t, db.Create(repairChannel).Error)
+			corruptKey := &UpstreamKey{
+				ChannelID:        channel.Id,
+				ExternalID:       "external-cross-channel",
+				RoutingKeyID:     0,
+				SecretCiphertext: secret,
+				Models:           "gpt-4o-mini",
+				ModelsSynced:     true,
+				Status:           UpstreamKeyStatusEnabled,
+			}
+			require.NoError(t, db.Create(corruptKey).Error)
+			foreignRoutingKey := &RoutingKey{
+				ChannelID:   repairChannel.Id,
+				Source:      RoutingKeySourcePlatformSite,
+				SourceRefID: corruptKey.ID,
+			}
+			require.NoError(t, db.Create(foreignRoutingKey).Error)
+			require.NoError(t, db.Model(corruptKey).
+				Update("routing_key_id", foreignRoutingKey.ID).Error)
+			require.NoError(t, migrateRoutingKeys())
+			require.NoError(t, migrateRoutingKeys())
+
+			var repairedCrossChannelKey UpstreamKey
+			require.NoError(t, db.First(&repairedCrossChannelKey, corruptKey.ID).Error)
+			assert.NotEqual(t, foreignRoutingKey.ID, repairedCrossChannelKey.RoutingKeyID)
+			var repairedCrossChannelRoutingKey RoutingKey
+			require.NoError(t, db.First(&repairedCrossChannelRoutingKey, repairedCrossChannelKey.RoutingKeyID).Error)
+			assert.Equal(t, channel.Id, repairedCrossChannelRoutingKey.ChannelID)
+			assert.Equal(t, RoutingKeySourcePlatformSite, repairedCrossChannelRoutingKey.Source)
+			assert.Equal(t, corruptKey.ID, repairedCrossChannelRoutingKey.SourceRefID)
+			var preservedForeignRoutingKey RoutingKey
+			require.NoError(t, db.First(&preservedForeignRoutingKey, foreignRoutingKey.ID).Error)
+			assert.Equal(t, repairChannel.Id, preservedForeignRoutingKey.ChannelID)
+
 			require.NoError(t, UpdateUpstreamKeyLastUsed(key.ID, 1_800_000_000))
 			var keyWithLastUsed UpstreamKey
 			require.NoError(t, db.First(&keyWithLastUsed, key.ID).Error)
@@ -1089,6 +1130,179 @@ func TestGetRoutableUpstreamKeyByIDLoadsSecretAndFiltersModels(t *testing.T) {
 
 	_, err = GetRoutableUpstreamKeyByID(channel.Id+1, key.ID, "default", "gpt-allowed", time.Now())
 	require.Error(t, err)
+}
+
+func TestEnsureRoutingKeyForUpstreamKeyRepairsInvalidRelationships(t *testing.T) {
+	previousDB := DB
+	previousSecret := common.CryptoSecret
+	common.CryptoSecret = "routing-key-repair-test-secret"
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&Channel{},
+		&RoutingKey{},
+		&RoutingKeyHealth{},
+		&PlatformSiteAccount{},
+		&UpstreamKey{},
+		&UpstreamKeyAbility{},
+	))
+	DB = db
+	t.Cleanup(func() {
+		DB = previousDB
+		common.CryptoSecret = previousSecret
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	channel := &Channel{
+		Id:           731,
+		Name:         "repair-target",
+		Status:       common.ChannelStatusEnabled,
+		UpstreamKind: UpstreamKindPlatformSite,
+		Group:        "default",
+	}
+	foreignChannel := &Channel{
+		Id:           732,
+		Name:         "repair-foreign",
+		Status:       common.ChannelStatusEnabled,
+		UpstreamKind: UpstreamKindPlatformSite,
+		Group:        "default",
+	}
+	require.NoError(t, db.Create(channel).Error)
+	require.NoError(t, db.Create(foreignChannel).Error)
+	require.NoError(t, db.Create(&PlatformSiteAccount{
+		ChannelID:  channel.Id,
+		Platform:   PlatformNewAPI,
+		SyncStatus: UpstreamSiteSyncSuccess,
+	}).Error)
+	secret, err := EncryptPlatformSiteCredential(PlatformSiteCredential{AccessToken: "routing-key-repair-token"})
+	require.NoError(t, err)
+
+	foreignRoutingKey := &RoutingKey{
+		ChannelID:   foreignChannel.Id,
+		Source:      RoutingKeySourcePlatformSite,
+		SourceRefID: 999999,
+	}
+	require.NoError(t, db.Create(foreignRoutingKey).Error)
+	wrongSource := &RoutingKey{
+		ChannelID:   channel.Id,
+		Source:      RoutingKeySourceKeyChannel,
+		SourceRefID: 0,
+	}
+	require.NoError(t, db.Create(wrongSource).Error)
+	wrongReference := &RoutingKey{
+		ChannelID:   channel.Id,
+		Source:      RoutingKeySourcePlatformSite,
+		SourceRefID: 999998,
+	}
+	require.NoError(t, db.Create(wrongReference).Error)
+
+	tests := []struct {
+		name              string
+		initialRoutingKey uint
+		wantReused        uint
+	}{
+		{name: "zero id", initialRoutingKey: 0},
+		{name: "missing id", initialRoutingKey: 999997},
+		{name: "other channel", initialRoutingKey: foreignRoutingKey.ID},
+		{name: "wrong source", initialRoutingKey: wrongSource.ID},
+		{name: "wrong source reference", initialRoutingKey: wrongReference.ID},
+	}
+	for index, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			key := &UpstreamKey{
+				ChannelID:        channel.Id,
+				ExternalID:       fmt.Sprintf("repair-%d", index),
+				RoutingKeyID:     testCase.initialRoutingKey,
+				SecretCiphertext: secret,
+				Models:           "gpt-repair",
+				ModelsSynced:     true,
+				Status:           UpstreamKeyStatusEnabled,
+			}
+			require.NoError(t, db.Create(key).Error)
+
+			require.NoError(t, EnsureRoutingKeyForUpstreamKey(db, key))
+
+			var repaired RoutingKey
+			require.NoError(t, db.First(&repaired, key.RoutingKeyID).Error)
+			assert.Equal(t, channel.Id, repaired.ChannelID)
+			assert.Equal(t, RoutingKeySourcePlatformSite, repaired.Source)
+			assert.Equal(t, key.ID, repaired.SourceRefID)
+			assert.NotEqual(t, testCase.initialRoutingKey, key.RoutingKeyID)
+		})
+	}
+
+	validKey := &UpstreamKey{
+		ChannelID:        channel.Id,
+		ExternalID:       "repair-valid",
+		SecretCiphertext: secret,
+		Models:           "gpt-repair",
+		ModelsSynced:     true,
+		Status:           UpstreamKeyStatusEnabled,
+	}
+	require.NoError(t, db.Create(validKey).Error)
+	validRoutingKey := &RoutingKey{
+		ChannelID:   channel.Id,
+		Source:      RoutingKeySourcePlatformSite,
+		SourceRefID: validKey.ID,
+	}
+	require.NoError(t, db.Create(validRoutingKey).Error)
+	require.NoError(t, db.Model(validKey).Update("routing_key_id", validRoutingKey.ID).Error)
+	validKey.RoutingKeyID = validRoutingKey.ID
+	require.NoError(t, EnsureRoutingKeyForUpstreamKey(db, validKey))
+	assert.Equal(t, validRoutingKey.ID, validKey.RoutingKeyID)
+
+	legacyKey := &UpstreamKey{
+		ChannelID:        channel.Id,
+		ExternalID:       "repair-legacy-selection",
+		RoutingKeyID:     foreignRoutingKey.ID,
+		SecretCiphertext: secret,
+		Models:           "gpt-legacy",
+		ModelsSynced:     true,
+		Status:           UpstreamKeyStatusEnabled,
+	}
+	require.NoError(t, db.Create(legacyKey).Error)
+	selection, err := GetRoutableKeyByID(channel, foreignRoutingKey.ID, "default", "gpt-legacy")
+	require.NoError(t, err)
+	assert.Equal(t, legacyKey.ID, selection.UpstreamKeyID)
+	assert.NotEqual(t, foreignRoutingKey.ID, selection.KeyID)
+
+	var repairedLegacy UpstreamKey
+	require.NoError(t, db.First(&repairedLegacy, legacyKey.ID).Error)
+	assert.Equal(t, selection.KeyID, repairedLegacy.RoutingKeyID)
+	var repairedLegacyRoutingKey RoutingKey
+	require.NoError(t, db.First(&repairedLegacyRoutingKey, selection.KeyID).Error)
+	assert.Equal(t, channel.Id, repairedLegacyRoutingKey.ChannelID)
+	assert.Equal(t, RoutingKeySourcePlatformSite, repairedLegacyRoutingKey.Source)
+	assert.Equal(t, legacyKey.ID, repairedLegacyRoutingKey.SourceRefID)
+
+	wrongSourceKey := &UpstreamKey{
+		ChannelID:        channel.Id,
+		ExternalID:       "repair-wrong-source-selection",
+		RoutingKeyID:     wrongSource.ID,
+		SecretCiphertext: secret,
+		Models:           "gpt-wrong-source",
+		ModelsSynced:     true,
+		Status:           UpstreamKeyStatusEnabled,
+	}
+	require.NoError(t, db.Create(wrongSourceKey).Error)
+	wrongSourceSelection, err := GetRoutableKeyByID(channel, wrongSource.ID, "default", "gpt-wrong-source")
+	require.NoError(t, err)
+	assert.Equal(t, wrongSourceKey.ID, wrongSourceSelection.UpstreamKeyID)
+	assert.NotEqual(t, wrongSource.ID, wrongSourceSelection.KeyID)
+
+	routedChannel := SelectRoutableUpstreamKey(channel, "default", "gpt-legacy")
+	require.NotNil(t, routedChannel)
+	require.NotNil(t, routedChannel.SelectedUpstreamKey)
+	assert.Equal(t, legacyKey.ID, routedChannel.SelectedUpstreamKey.ID)
+
+	var preservedForeign RoutingKey
+	require.NoError(t, db.First(&preservedForeign, foreignRoutingKey.ID).Error)
+	assert.Equal(t, foreignChannel.Id, preservedForeign.ChannelID)
+	assert.Equal(t, uint(999999), preservedForeign.SourceRefID)
 }
 
 func TestGetActivePlatformSiteChannelsReusesLastSuccessfulSnapshot(t *testing.T) {

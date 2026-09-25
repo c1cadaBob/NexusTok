@@ -30,6 +30,12 @@ NexusTok 将主业务数据库、日志数据库、Redis 和进程内缓存分�
 
 GORM 模型位于 `model/`。Master 启动时执行 AutoMigrate 和兼容迁移；SQLite 使用 `ADD COLUMN` 等可用路径，PostgreSQL 使用双引号保留字，MySQL/SQLite 使用反引号。涉及模型、索引、约束、Scanner/Valuer、日志库或锁的变更必须验证三种主数据库和适用的日志库。
 
+启动迁移中的 `migrateRoutingKeys` 会遍历全部平台站点 `upstream_keys`，不再只处理
+`routing_key_id = 0` 的记录。它校验渠道、来源和 `source_ref_id` 三元关系，发现
+历史跨渠道引用、来源错误、目标不存在或引用错误时，在事务内为当前子密钥复用或创建
+正确的 `platform_site` Routing Key，并更新 `upstream_keys.routing_key_id`。旧的
+Routing Key 不做删除，以避免误删其他渠道仍在使用的历史记录。迁移重复执行保持幂等。
+
 ## 3. Redis 与内存缓存
 
 Redis 由 `common.InitRedisClient` 初始化，未配置 `REDIS_CONN_STRING` 时关闭。`SYNC_FREQUENCY` 控制多种缓存/同步周期，默认和非法值回退为 60 秒。Redis 可用于：
@@ -53,6 +59,7 @@ Redis 由 `common.InitRedisClient` 初始化，未配置 `REDIS_CONN_STRING` 时
 | 限流状态 | Redis 或进程内计数器 | 固定窗口、令牌桶、并发计数 | 时间窗口、请求结束、进程重启 |
 | 任务状态 | `Task`/`SystemTask` | 任务私有数据、插件生成和数据库租约 | CAS、终态写入、锁续租/过期 |
 | 授权策略 | Casbin/数据库策略 | `service/authz` 内存模型 | 周期性策略同步和进程重载 |
+| 平台子密钥 Routing Key 关系 | `upstream_keys`、`routing_keys` | 渠道缓存和路由候选 | 启动迁移、子密钥读取、自动路由和显式选择时一致性校验 |
 
 ## 5. 系统任务 Runner
 
@@ -88,6 +95,13 @@ Redis 由 `common.InitRedisClient` 初始化，未配置 `REDIS_CONN_STRING` 时
 
 主数据库共享保证了用户、渠道、任务和系统任务租约的一致性；Redis 共享保证了依赖 Redis 的缓存/限流共享。没有共享 Redis 时，内存缓存、限流和部分 Session 观察会出现节点局部语义。
 
+平台站点同步失败时，`PlatformSiteAccount.last_sync_at` 和已有
+`upstream_keys` 快照不会被失败请求覆盖；如果失败发生在登录响应解析阶段，账号只更新
+失败状态、连续失败次数和脱敏错误摘要。Sub2API 的非 JSON 响应摘要可能包含 HTTP
+状态、脱敏 URL、Content-Type、重定向状态和响应类别，但不包含响应体、密码、Cookie
+或令牌。管理员需要检查站点管理地址、反向代理/API 路径，或通过已有浏览器采集能力
+改用 Access Token/Cookie；后台同步不会绕过验证页面。
+
 ## 8. 当前限制和实际偏差
 
 - 数据库迁移只有 Master 负责，Slave 启动成功不等于已完成迁移。
@@ -104,3 +118,4 @@ Redis 由 `common.InitRedisClient` 初始化，未配置 `REDIS_CONN_STRING` 时
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 建立数据库选择、缓存生命周期、系统任务 Runner 和后台任务入口说明 | `model/`、`common/`、`service/system_task.go`、`main.go` | 数据库初始化、Redis、Runner 和启动注册代码静态核对 |
+| 2026-09-25 | 缺陷修复 | 启动迁移只处理空 `routing_key_id`；平台同步非 JSON 登录响应无法区分网页、验证页和代理文本 | 启动及访问路径校验并修复全部平台子密钥 Routing Key 关系；同步失败保留成功快照并写入安全响应诊断摘要 | Routing Key 一致性、平台站点同步、缓存刷新、管理员排障 | `model/main.go`、`model/routing_key.go`、`service/upstream_site.go`、模型/服务回归测试 |

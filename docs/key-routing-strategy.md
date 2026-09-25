@@ -72,6 +72,21 @@
 - 已有密钥重新同步时保留原 `routing_key_id`；
 - 缺失或恢复的密钥不丢失身份，除非该来源记录被删除。
 
+平台站点子密钥的 Routing Key 关系必须同时满足：
+
+```text
+upstream_keys.routing_key_id = routing_keys.id
+upstream_keys.channel_id = routing_keys.channel_id
+routing_keys.source = "platform_site"
+routing_keys.source_ref_id = upstream_keys.id
+```
+
+启动迁移和运行时读取都会校验这组关系。`routing_key_id` 为零、目标不存在、
+目标属于其他渠道、来源不是 `platform_site` 或 `source_ref_id` 不匹配时，系统优先
+查找当前渠道和当前 `upstream_keys.id` 的正确 Routing Key，找不到则创建并更新
+当前子密钥。旧的错误 Routing Key 不删除。这样既能修复历史跨渠道引用，也不会把
+仍被其他记录使用的 Routing Key 误删。
+
 ## 3. 迁移规则
 
 数据库迁移会在表结构自动迁移后执行：
@@ -219,6 +234,13 @@ effective_priority = channel_priority * 100 + key_priority
   - 密钥凭据可解密。
 
 校验通过后，测试请求一定携带该密钥的真实凭据，并在日志 `admin_info.key_id` 中记录同一个 ID。校验失败时会返回明确错误，不会静默回退自动路由。
+
+为了兼容历史数据，平台站点显式测试遇到旧的全局 `key_id` 时，会检查当前渠道
+是否仍有 `upstream_keys.routing_key_id` 指向该 ID。如果有，先修复该子密钥的
+Routing Key 关系，再用修复后的全局 `key_id` 测试；如果无法从当前渠道关系推断
+目标子密钥，则返回“所选密钥已失效，请刷新密钥列表后重新选择”，不返回裸的
+数据库 `record not found`。`upstream_key_id` 仍只表示 `upstream_keys.id`，不会与
+`key_id` 互换。
 
 平台站点前端测试弹窗仍可用“自动路由”入口；当从具体子密钥操作入口打开时，前端发送全局 `key_id`，后端按显式密钥测试。
 
@@ -420,3 +442,4 @@ GET /api/channel/search?model=<model>&sort_by=model_ratio&sort_order=asc
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 补充架构索引与元信息 | 已有密钥调度详细规则没有统一事实基线和架构入口 | 增加事实基线、代码来源、架构分工和变更记录；保留统一 `key_id`、候选和日志细节 | Routing Key、平台站点、模型获取、测试和管理员日志 | `model/upstream_routing.go`、`model/routing_key.go`、`middleware/distributor.go` 静态核对 |
+| 2026-09-25 | 缺陷修复 | 平台子密钥可能引用其他渠道或错误来源的 Routing Key；显式旧 `key_id` 失败时返回裸 `record not found` | 统一校验 `channel_id`、`source`、`source_ref_id` 并在启动/读取/路由时自愈；可恢复的旧 `key_id` 先修复再测试，不可恢复时返回明确失效提示 | 平台站点路由、密钥列表、模型获取、自动测试和指定密钥测试 | `model/routing_key.go`、`model/main.go`、`controller/channel-test.go`、模型回归测试 |

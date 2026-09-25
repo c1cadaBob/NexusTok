@@ -267,6 +267,19 @@ Sub2API 首期协议范围：
 - `/api/v1/admin/accounts/data`
 - `/v1/models`
 
+Sub2API 密码登录和后续管理接口要求上游返回 JSON。登录请求收到 `2xx` 但
+响应体是 HTML、纯文本或非法 JSON 时，代码仍归类为 `ErrSub2APILoginResponse`，
+不会把网页内容当成模型响应或凭据。管理员同步状态和系统日志会记录安全诊断摘要：
+HTTP 状态码、脱敏后的最终协议/主机/路径、Content-Type、是否发生重定向，以及
+`html`、`plain_text`、`invalid_json` 或 `empty` 等响应类别。查询参数、响应体、密码、
+Cookie、Access Token、Refresh Token 和 Admin Key 不会写入诊断。
+
+因此“Sub2API 登录响应格式错误”通常表示管理端 URL 命中了网页登录页、Cloudflare/
+WAF/Turnstile 验证页、反向代理文本错误，或登录 API 路径发生变化，不是下游模型
+输出格式错误。处理顺序是检查管理端 URL、反向代理和 API 路径；如果需要交互验证，
+使用已有平台站点浏览器采集能力获取 Access Token 或 Cookie。后台同步不尝试绕过
+验证码、Turnstile、Cloudflare 或其他上游安全策略。
+
 适配器不能绕过验证码、交互式二次验证或站点风控。密码登录无法完成时返回可识别的认证状态，管理员可以切换为 Cookie 或令牌认证。
 
 平台站点表单提供两种认证方式：`password` 和 `auto`（自动配置）。账号密码认证
@@ -574,3 +587,4 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 补充架构索引与元信息 | 已有平台站点详细设计没有统一事实基线和架构入口 | 增加事实基线、代码来源、架构分工和变更记录；保留同步、倍率、权重和兼容性细节 | NewAPI、Sub2API、平台账号、上游密钥和路由 | `model/upstream_channel.go`、`model/routing_key.go`、`service/upstream_site.go` 静态核对 |
+| 2026-09-25 | 缺陷修复 | Sub2API `2xx` 非 JSON 登录响应只显示笼统格式错误；平台子密钥 Routing Key 关系缺少运行时一致性说明 | 记录 HTML/纯文本/非法 JSON 的安全诊断字段和可操作排障方向；补充平台子密钥 Routing Key 自愈规则 | Sub2API 同步、管理员排障、平台子密钥路由和渠道测试 | `service/upstream_site.go`、`model/routing_key.go`、服务/模型回归测试 |

@@ -479,10 +479,8 @@ func GetRoutableUpstreamKeyByID(channelID int, keyID uint, group, modelName stri
 	if err := DB.Where("id = ? AND channel_id = ?", keyID, channelID).First(&key).Error; err != nil {
 		return nil, err
 	}
-	if key.RoutingKeyID == 0 {
-		if err := EnsureRoutingKeyForUpstreamKey(nil, &key); err != nil {
-			return nil, err
-		}
+	if err := EnsureRoutingKeyForUpstreamKey(nil, &key); err != nil {
+		return nil, err
 	}
 	if !key.IsRoutable(now) {
 		return nil, errors.New("upstream key is not routable")

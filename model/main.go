@@ -568,8 +568,11 @@ func migrateUpstreamKeyModelSyncDefaults() error {
 func migrateRoutingKeys() error {
 	const migrationKey = "migration.routing_keys.v1"
 	return DB.Transaction(func(tx *gorm.DB) error {
+		platformChannelIDs := tx.Model(&Channel{}).
+			Select("id").
+			Where("upstream_kind = ?", UpstreamKindPlatformSite)
 		var platformKeys []UpstreamKey
-		if err := tx.Where("routing_key_id = ? OR routing_key_id IS NULL", 0).Find(&platformKeys).Error; err != nil {
+		if err := tx.Where("channel_id IN (?)", platformChannelIDs).Find(&platformKeys).Error; err != nil {
 			return err
 		}
 		for index := range platformKeys {

@@ -1465,6 +1465,153 @@ func TestSafePlatformSiteErrorIncludesHTTPStatusWithoutResponseBody(t *testing.T
 	assert.NotContains(t, message, "secret login response body")
 }
 
+func TestSub2APILoginResponseDiagnosticsClassifyNonJSONResponses(t *testing.T) {
+	tests := []struct {
+		name              string
+		contentType       string
+		expectedMediaType string
+		body              string
+		responseType      string
+	}{
+		{
+			name:              "html",
+			contentType:       "text/html; charset=utf-8",
+			expectedMediaType: "text/html",
+			body:              "<!doctype html><html><body>SECRET_RESPONSE_BODY synthetic-password session-cookie synthetic-access-token</body></html>",
+			responseType:      "html",
+		},
+		{
+			name:              "plain text",
+			contentType:       "text/plain; charset=utf-8",
+			expectedMediaType: "text/plain",
+			body:              "SECRET_RESPONSE_BODY synthetic-password session-cookie synthetic-access-token",
+			responseType:      "plain_text",
+		},
+		{
+			name:              "invalid json",
+			contentType:       "application/json",
+			expectedMediaType: "application/json",
+			body:              "SECRET_RESPONSE_BODY synthetic-password session-cookie synthetic-access-token",
+			responseType:      "invalid_json",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if request.Method == http.MethodPost {
+					writer.Header().Set("Content-Type", testCase.contentType)
+					writer.WriteHeader(http.StatusOK)
+					_, _ = writer.Write([]byte(testCase.body))
+					return
+				}
+				writer.WriteHeader(http.StatusNotFound)
+			}))
+			defer server.Close()
+
+			_, err := NewSub2APIAdapter(server.Client()).Authenticate(
+				context.Background(),
+				server.URL,
+				model.PlatformSiteCredential{
+					AuthType: model.UpstreamAuthPassword,
+					Username: "operator@example.com",
+					Password: "synthetic-password",
+				},
+			)
+			require.Error(t, err)
+			require.ErrorIs(t, err, ErrSub2APILoginResponse)
+			var responseErr *platformSiteResponseError
+			require.ErrorAs(t, err, &responseErr)
+			assert.Equal(t, testCase.responseType, responseErr.diagnostics.responseType)
+			assert.Equal(t, http.StatusOK, responseErr.diagnostics.statusCode)
+			assert.Equal(t, server.URL+"/auth/login", responseErr.diagnostics.finalURL)
+			assert.False(t, responseErr.diagnostics.redirected)
+
+			message := SafePlatformSiteError(err)
+			assert.Contains(t, message, "HTTP 200")
+			assert.Contains(t, message, testCase.responseType)
+			assert.Contains(t, message, testCase.expectedMediaType)
+			assert.Contains(t, message, server.URL+"/auth/login")
+			assert.Contains(t, message, "未发生重定向")
+			assert.NotContains(t, message, "SECRET_RESPONSE_BODY")
+			assert.NotContains(t, message, "synthetic-password")
+			assert.NotContains(t, message, "session-cookie")
+			assert.NotContains(t, message, "synthetic-access-token")
+		})
+	}
+}
+
+func TestSub2APILoginResponseDiagnosticsTracksRedirectWithoutQuery(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodPost:
+			writer.Header().Set("Location", "/challenge?token=SECRET_REDIRECT_TOKEN")
+			writer.WriteHeader(http.StatusFound)
+		case request.URL.Path == "/challenge":
+			writer.Header().Set("Content-Type", "text/html")
+			_, _ = writer.Write([]byte("<html>verification page</html>"))
+		default:
+			writer.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	client, err := newPlatformSiteHTTPClient()
+	require.NoError(t, err)
+	_, err = NewSub2APIAdapter(client).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType: model.UpstreamAuthPassword,
+			Username: "operator@example.com",
+			Password: "synthetic-password",
+		},
+	)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrSub2APILoginResponse)
+	var responseErr *platformSiteResponseError
+	require.ErrorAs(t, err, &responseErr)
+	assert.Equal(t, "html", responseErr.diagnostics.responseType)
+	assert.True(t, responseErr.diagnostics.redirected)
+	assert.Equal(t, server.URL+"/challenge", responseErr.diagnostics.finalURL)
+
+	message := SafePlatformSiteError(err)
+	assert.Contains(t, message, "发生重定向")
+	assert.Contains(t, message, server.URL+"/challenge")
+	assert.NotContains(t, message, "SECRET_REDIRECT_TOKEN")
+	assert.NotContains(t, message, "synthetic-password")
+}
+
+func TestSub2APILoginJSONAuthErrorKeepsHTTPClassification(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodPost {
+			writer.Header().Set("Content-Type", "application/json")
+			writer.WriteHeader(http.StatusUnauthorized)
+			_, _ = writer.Write([]byte(`{"code":401,"message":"invalid credentials SECRET_RESPONSE_BODY"}`))
+			return
+		}
+		writer.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	_, err := NewSub2APIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType: model.UpstreamAuthPassword,
+			Username: "operator@example.com",
+			Password: "synthetic-password",
+		},
+	)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrSub2APILoginHTTPStatus)
+	assert.NotErrorIs(t, err, ErrSub2APILoginResponse)
+	message := SafePlatformSiteError(err)
+	assert.Contains(t, message, "HTTP 401")
+	assert.NotContains(t, message, "SECRET_RESPONSE_BODY")
+	assert.NotContains(t, message, "synthetic-password")
+}
+
 func TestSub2APIAdapterResolvesMaskedKeyFromKeyDetail(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")

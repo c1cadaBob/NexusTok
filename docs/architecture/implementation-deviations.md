@@ -29,6 +29,8 @@
 | DEV-008 | PaLM Adaptor | API 类型/渠道名称可能使调用方认为支持完整 Gemini/PaLM Relay | `palm.Adaptor` 的 Gemini、Audio、Image、Embedding、Responses 转换方法直接返回 `not implemented` | 具体这些 Relay Format 不可用，OpenAI 路径需按方法另行判断 | 已确认偏差 | `relay/channel/palm/adaptor.go` | 2026-09-25 | 按具体方法补实现或在渠道能力 UI 中细分显示 |
 | DEV-009 | Replicate Adaptor | Replicate 渠道名称可能被理解为可接收通用 Chat/Embedding/Audio 请求 | `replicate.Adaptor` 明确只实现特定路径；OpenAI、Rerank、Embedding、Audio、Responses、Claude、Gemini 转换方法返回未实现 | 不能把 Replicate 渠道当作通用 OpenAI/Claude/Gemini 渠道 | 已确认偏差 | `relay/channel/replicate/adaptor.go` | 2026-09-25 | 能力矩阵按具体 Endpoint 展示，路由前增加必要能力判断 |
 | DEV-010 | 多个 Adaptor 的局部方法 | Adaptor 接口完整不代表所有方法都支持 | 多个 `relay/channel/*/adaptor.go` 对不适用 Format 直接返回 `not implemented` | 某些渠道的 Image、Audio、Embedding、Responses、Rerank 或 Gemini 能力是局部缺失 | 已确认偏差 | 具体 Adaptor 文件；矩阵列出代表性证据 | 2026-09-25 | 新增/修改 Format 时同步矩阵和具体偏差，避免按渠道总称下结论 |
+| DEV-011 | 平台子密钥 Routing Key 关系 | 每条平台子密钥应使用当前渠道、`platform_site` 来源且 `source_ref_id` 指向自身的全局 Routing Key | 历史数据中可能出现跨渠道、来源错误、目标不存在或 `source_ref_id` 不匹配；显式 `key_id` 查询此前会直接得到 `record not found`，自动路由却可能继续使用子密钥内容 | 平台站点密钥列表、自动路由、模型获取、渠道 1 这类指定密钥测试 | 已实现 | 修复入口：`model/routing_key.go`、`model/main.go`、`model/upstream_channel.go`、`model/upstream_routing.go`；回归：`model/upstream_channel_test.go` | 2026-09-25 | 保持启动和访问时自愈，后续新增平台密钥关系字段时同步校验与三数据库验证 |
+| DEV-012 | Sub2API 登录非 JSON 响应诊断 | 登录接口返回 JSON，非 JSON 响应应能区分网页、验证页、代理文本或非法 JSON | 原先只返回“Sub2API 登录响应格式错误”，没有 HTTP 状态、最终 URL、Content-Type、重定向或响应类别 | 平台站点同步失败排障；无法直接判断管理地址、WAF/验证页或反向代理问题 | 已实现 | `service/upstream_site.go:platformSiteRequest`、`SafePlatformSiteError`、`service/upstream_site_test.go` | 2026-09-25 | 继续禁止记录完整响应体和认证信息；若上游协议变化，补充专用适配器测试 |
 
 ## 3. 待核查项目
 
@@ -53,3 +55,4 @@
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 登记路由显式未实现、Adaptor 局部未实现、AIProxyLibrary 工厂缺口和 Responses 入口差异，并区分待核查项 | Relay 路由、Adaptor 工厂、插件协议和后续维护流程 | `router/relay-router.go`、`common/api_type.go`、`relay/relay_adaptor.go`、`relay/channel/` 静态核对 |
+| 2026-09-25 | 缺陷修复 | 平台子密钥可能跨渠道引用 Routing Key；Sub2API 非 JSON 登录响应只有笼统错误 | 新增关系一致性自愈、显式旧 `key_id` 兼容和安全响应诊断；原两项缺口标记为已实现并保留证据路径 | 平台站点同步、路由、模型获取、渠道测试和管理员排障 | 模型/服务回归测试、`git diff --check`、SQLite 兼容迁移验证 |
