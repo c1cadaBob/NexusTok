@@ -3768,6 +3768,7 @@
     "Open Source": "Open source",
     "Open the io.net console API Keys page": "Ouvrir la page Clés API de la console io.net",
     "Open the upstream site and let the Capture Helper choose the best available authentication method. Tokens, cookies, and Admin Keys are never entered here.": "Ouvrez le site amont et laissez l’assistant choisir la meilleure méthode d’authentification disponible. Les jetons, cookies et Admin Keys ne sont jamais saisis ici.",
+    "Open the upstream site and let the Capture Helper collect an Access Token and Refresh Token for this password credential. The username and password remain saved for recovery.": "Ouvrez le site amont et laissez Capture Helper collecter un Access Token et un Refresh Token pour cet identifiant par mot de passe. Le nom d’utilisateur et le mot de passe restent enregistrés pour la récupération.",
     "Open the upstream site and let the Capture Helper collect the selected authentication method. Tokens, cookies, and Admin Keys are never entered here.": "Ouvrez le site amont et laissez Capture Helper collecter la méthode choisie. Les jetons, cookies et Admin Keys ne sont jamais saisis ici.",
     "Open theme settings": "Ouvrir les paramètres du thème",
     "Open upstream capture page": "Ouvrir la page de capture amont",

@@ -3768,6 +3768,7 @@
     "Open Source": "Mã nguồn mở",
     "Open the io.net console API Keys page": "Mở trang Khóa API của console io.net",
     "Open the upstream site and let the Capture Helper choose the best available authentication method. Tokens, cookies, and Admin Keys are never entered here.": "Mở trang upstream và để Capture Helper chọn phương thức xác thực khả dụng tốt nhất. Token, cookie và Admin Key không bao giờ được nhập tại đây.",
+    "Open the upstream site and let the Capture Helper collect an Access Token and Refresh Token for this password credential. The username and password remain saved for recovery.": "Mở trang upstream và để Capture Helper thu thập Access Token cùng Refresh Token cho thông tin đăng nhập bằng mật khẩu này. Tên người dùng và mật khẩu vẫn được lưu để khôi phục.",
     "Open the upstream site and let the Capture Helper collect the selected authentication method. Tokens, cookies, and Admin Keys are never entered here.": "Mở trang upstream và để Capture Helper thu thập phương thức xác thực đã chọn. Không nhập thủ công token, cookie hoặc Admin Key tại đây.",
     "Open theme settings": "Mở cài đặt giao diện",
     "Open upstream capture page": "Mở trang thu thập upstream",

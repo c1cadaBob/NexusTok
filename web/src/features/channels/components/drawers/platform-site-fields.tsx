@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { ExternalLink, Loader2, RefreshCw, ShieldCheck } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 import { useFormContext, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { Button } from '@/components/ui/button'
 import {
   FormControl,
   FormDescription,
@@ -14,7 +15,6 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
-import { Button } from '@/components/ui/button'
 import {
   Select,
   SelectContent,
@@ -158,6 +158,14 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
       ? normalizePlatformRatio(rechargeAmount / creditedAmount)
       : undefined
   const ratioIsOverridden = watchedRatioIsOverridden === true
+  const isPasswordAuth = authType === 'password'
+  const captureDescription = isPasswordAuth
+    ? t(
+        'Open the upstream site and let the Capture Helper collect an Access Token and Refresh Token for this password credential. The username and password remain saved for recovery.'
+      )
+    : t(
+        'Open the upstream site and let the Capture Helper choose the best available authentication method. Tokens, cookies, and Admin Keys are never entered here.'
+      )
   const completedCaptureRef = useRef('')
   const pendingCaptureWindowRef = useRef<Window | null>(null)
   const activeCaptureWindowRef = useRef<Window | null>(null)
@@ -177,6 +185,7 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
   const captureMutation = useMutation({
     mutationFn: () => {
       if (
+        authType !== 'password' &&
         authType !== 'auto' &&
         authType !== 'access_token' &&
         authType !== 'admin_key' &&
@@ -252,7 +261,11 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
   }, [captureStatus, onCaptureCompleted, t])
 
   function handleStartCapture() {
-    if (props.disabled || captureMutation.isPending || !(baseURL || '').trim()) {
+    if (
+      props.disabled ||
+      captureMutation.isPending ||
+      !(baseURL || '').trim()
+    ) {
       return
     }
     try {
@@ -507,122 +520,119 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
         </div>
       )}
 
-      {authType !== 'password' && (
-        <div className='border-border/60 bg-background grid gap-3 rounded-md border p-3'>
-          <div className='flex flex-wrap items-center gap-2'>
-            <ShieldCheck className='size-4' aria-hidden='true' />
-            <span className='text-sm font-medium'>
-              {t('Browser login state capture')}
+      <div className='border-border/60 bg-background grid gap-3 rounded-md border p-3'>
+        <div className='flex flex-wrap items-center gap-2'>
+          <ShieldCheck className='size-4' aria-hidden='true' />
+          <span className='text-sm font-medium'>
+            {t('Browser login state capture')}
+          </span>
+          {captureStatus?.status === 'completed' && (
+            <span className='text-muted-foreground text-xs'>
+              {t('Captured')}
             </span>
-            {captureStatus?.status === 'completed' && (
-              <span className='text-muted-foreground text-xs'>
-                {t('Captured')}
-              </span>
+          )}
+        </div>
+        <p className='text-muted-foreground text-xs'>{captureDescription}</p>
+        <div className='flex flex-wrap gap-2'>
+          <Button
+            type='button'
+            size='sm'
+            onClick={handleStartCapture}
+            disabled={
+              props.disabled ||
+              captureMutation.isPending ||
+              !(baseURL || '').trim()
+            }
+          >
+            {captureMutation.isPending ? (
+              <Loader2
+                data-icon='inline-start'
+                className='animate-spin'
+                aria-hidden='true'
+              />
+            ) : (
+              <ShieldCheck data-icon='inline-start' aria-hidden='true' />
             )}
-          </div>
-          <p className='text-muted-foreground text-xs'>
-            {t(
-              'Open the upstream site and let the Capture Helper choose the best available authentication method. Tokens, cookies, and Admin Keys are never entered here.'
-            )}
-          </p>
-          <div className='flex flex-wrap gap-2'>
-            <Button
-              type='button'
-              size='sm'
-              onClick={handleStartCapture}
-              disabled={
-                props.disabled ||
-                captureMutation.isPending ||
-                !(baseURL || '').trim()
-              }
-            >
-              {captureMutation.isPending ? (
-                <Loader2 className='size-4 animate-spin' aria-hidden='true' />
-              ) : (
-                <ShieldCheck className='size-4' aria-hidden='true' />
-              )}
-              {t('Capture upstream login state')}
-            </Button>
-            {showHandoffFallback && (handoffURL || captureStatus?.handoff_url) && (
+            {t('Capture upstream login state')}
+          </Button>
+          {showHandoffFallback &&
+            (handoffURL || captureStatus?.handoff_url) && (
               <Button
                 type='button'
                 variant='outline'
                 size='sm'
                 onClick={handleOpenHandoff}
               >
-                <ExternalLink className='size-4' aria-hidden='true' />
+                <ExternalLink data-icon='inline-start' aria-hidden='true' />
                 {t('Open upstream capture page')}
               </Button>
             )}
-            {captureStatus?.helper_install_url && (
-              <Button
-                type='button'
-                variant='outline'
-                size='sm'
-                onClick={() =>
-                  window.open(
-                    captureStatus.helper_install_url,
-                    '_blank',
-                    'noopener,noreferrer'
-                  )
-                }
-              >
-                <ExternalLink className='size-4' aria-hidden='true' />
-                {t('Install Capture Helper')}
-              </Button>
-            )}
-            {captureID && captureStatus?.status !== 'completed' && (
-              <Button
-                type='button'
-                variant='ghost'
-                size='sm'
-                onClick={() => void captureStatusQuery.refetch()}
-                disabled={captureStatusQuery.isFetching}
-              >
-                <RefreshCw
-                  className='size-4'
-                  aria-hidden='true'
-                />
-                {t('Refresh capture status')}
-              </Button>
-            )}
-          </div>
-          {captureStatus?.status === 'failed' && (
-            <p className='text-destructive text-xs'>
-              {captureStatus.message || t('Upstream login state capture failed')}
-            </p>
+          {captureStatus?.helper_install_url && (
+            <Button
+              type='button'
+              variant='outline'
+              size='sm'
+              onClick={() =>
+                window.open(
+                  captureStatus.helper_install_url,
+                  '_blank',
+                  'noopener,noreferrer'
+                )
+              }
+            >
+              <ExternalLink data-icon='inline-start' aria-hidden='true' />
+              {t('Install Capture Helper')}
+            </Button>
           )}
-          {captureStatus?.summary && (
-            <div className='text-muted-foreground grid gap-1 text-xs'>
-              <span>
-                {t('Authentication method')}:{' '}
-                {formatPlatformAuthType(captureStatus.summary.auth_type, t)}
-              </span>
-              {captureStatus.summary.access_token_masked && (
-                <span>
-                  {t('Access token')}: {captureStatus.summary.access_token_masked}
-                </span>
-              )}
-              {captureStatus.summary.refresh_token_present && (
-                <span>{t('Refresh token captured')}</span>
-              )}
-              {captureStatus.summary.admin_key_present && (
-                <span>{t('Admin Key captured')}</span>
-              )}
-              {captureStatus.summary.cookie_present && (
-                <span>{t('Cookie captured')}</span>
-              )}
-              {captureStatus.summary.token_expires_at && (
-                <span>
-                  {t('Token expires')}: {new Date(
-                    captureStatus.summary.token_expires_at * 1000
-                  ).toLocaleString()}
-                </span>
-              )}
-            </div>
+          {captureID && captureStatus?.status !== 'completed' && (
+            <Button
+              type='button'
+              variant='ghost'
+              size='sm'
+              onClick={() => void captureStatusQuery.refetch()}
+              disabled={captureStatusQuery.isFetching}
+            >
+              <RefreshCw data-icon='inline-start' aria-hidden='true' />
+              {t('Refresh capture status')}
+            </Button>
           )}
         </div>
-      )}
+        {captureStatus?.status === 'failed' && (
+          <p className='text-destructive text-xs'>
+            {captureStatus.message || t('Upstream login state capture failed')}
+          </p>
+        )}
+        {captureStatus?.summary && (
+          <div className='text-muted-foreground grid gap-1 text-xs'>
+            <span>
+              {t('Authentication method')}:{' '}
+              {formatPlatformAuthType(captureStatus.summary.auth_type, t)}
+            </span>
+            {captureStatus.summary.access_token_masked && (
+              <span>
+                {t('Access token')}: {captureStatus.summary.access_token_masked}
+              </span>
+            )}
+            {captureStatus.summary.refresh_token_present && (
+              <span>{t('Refresh token captured')}</span>
+            )}
+            {captureStatus.summary.admin_key_present && (
+              <span>{t('Admin Key captured')}</span>
+            )}
+            {captureStatus.summary.cookie_present && (
+              <span>{t('Cookie captured')}</span>
+            )}
+            {captureStatus.summary.token_expires_at && (
+              <span>
+                {t('Token expires')}:{' '}
+                {new Date(
+                  captureStatus.summary.token_expires_at * 1000
+                ).toLocaleString()}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
 
       <div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-4'>
         <FormField

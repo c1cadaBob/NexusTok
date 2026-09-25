@@ -429,9 +429,7 @@ export type UpstreamAuthType =
   | 'access_token'
   | 'admin_key'
   | 'cookie'
-export type PlatformSiteCaptureAuthType =
-  | 'auto'
-  | Exclude<UpstreamAuthType, 'password'>
+export type PlatformSiteCaptureAuthType = 'auto' | UpstreamAuthType
 
 export interface PlatformSiteInput {
   platform: 'newapi' | 'sub2api'

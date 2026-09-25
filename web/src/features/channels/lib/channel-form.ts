@@ -892,6 +892,7 @@ function buildPlatformSitePayload(
   if (formData.platform_site_auth_type === 'password') {
     payload.username = formData.platform_site_username
     payload.password = formData.platform_site_password
+    payload.capture_id = formData.platform_site_capture_id?.trim() || undefined
   } else {
     payload.capture_id = formData.platform_site_capture_id?.trim() || undefined
   }
@@ -923,8 +924,7 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
     conversion_ratio: formData.conversion_ratio,
     key_weight_override: formData.key_weight_override ?? null,
     openai_organization: formData.openai_organization || null,
-    models:
-      formData.upstream_kind === 'platform_site' ? '' : formData.models,
+    models: formData.upstream_kind === 'platform_site' ? '' : formData.models,
     group: formatGroups(formData.group),
     model_mapping: formData.model_mapping || null,
     priority: formData.priority || null,
@@ -990,8 +990,7 @@ export function transformFormDataToUpdatePayload(
     conversion_ratio: formData.conversion_ratio,
     key_weight_override: formData.key_weight_override ?? null,
     openai_organization: formData.openai_organization || null,
-    models:
-      formData.upstream_kind === 'platform_site' ? '' : formData.models,
+    models: formData.upstream_kind === 'platform_site' ? '' : formData.models,
     group: formatGroups(formData.group),
     model_mapping: formData.model_mapping || null,
     priority: formData.priority ?? 0,

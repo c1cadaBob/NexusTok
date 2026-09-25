@@ -3768,6 +3768,7 @@
     "Open Source": "オープンソース",
     "Open the io.net console API Keys page": "io.netコンソールAPIキーページを開く",
     "Open the upstream site and let the Capture Helper choose the best available authentication method. Tokens, cookies, and Admin Keys are never entered here.": "上流サイトを開き、取得ヘルパーに最適な認証方法を自動選択させます。トークン、Cookie、Admin Key をここで入力する必要はありません。",
+    "Open the upstream site and let the Capture Helper collect an Access Token and Refresh Token for this password credential. The username and password remain saved for recovery.": "上流サイトを開き、Capture Helper でこのパスワード認証情報用の Access Token と Refresh Token を取得します。ユーザー名とパスワードは復旧用として保存されたままです。",
     "Open the upstream site and let the Capture Helper collect the selected authentication method. Tokens, cookies, and Admin Keys are never entered here.": "上流サイトを開き、Capture Helper に選択した認証方式を取得させます。ここでトークン、Cookie、Admin Key を手入力することはありません。",
     "Open theme settings": "テーマ設定を開く",
     "Open upstream capture page": "上流取得ページを開く",

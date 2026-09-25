@@ -282,6 +282,50 @@ func TestPlatformSiteCaptureSessionAutoFailsWithoutReadableCredential(t *testing
 	assert.Equal(t, "自动配置未采集到可用登录态", status.Message)
 }
 
+func TestPlatformSiteCaptureSessionForPasswordStoresOnlyCachedAccessToken(t *testing.T) {
+	start, err := StartPlatformSiteCaptureSession(19, PlatformSiteCaptureStartRequest{
+		Platform:  model.PlatformSub2API,
+		BaseURL:   "http://127.0.0.1:8183",
+		AuthType:  model.UpstreamAuthPassword,
+		ChannelID: 77,
+	}, "http://127.0.0.1:3003")
+	require.NoError(t, err)
+	record, found, err := platformSiteCaptureCache.Get(start.CaptureID)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, model.UpstreamAuthPassword, record.AuthType)
+
+	status, err := CompletePlatformSiteCaptureSession(start.CaptureID, PlatformSiteCaptureCompleteRequest{
+		CaptureSecret: record.Secret,
+		Platform:      model.PlatformSub2API,
+		AuthType:      model.UpstreamAuthAccessToken,
+		Origin:        record.Origin,
+		AccessToken:   "captured-access",
+		RefreshToken:  "captured-refresh",
+		ExpiresIn:     3600,
+		AuthUser:      map[string]any{"id": 29},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, status.Summary)
+	assert.Equal(t, model.UpstreamAuthPassword, status.AuthType)
+	assert.Equal(t, model.UpstreamAuthAccessToken, status.Summary.AuthType)
+	assert.True(t, status.Summary.RefreshTokenPresent)
+
+	resolved, err := ResolvePlatformSiteCapture(
+		19,
+		start.CaptureID,
+		77,
+		model.PlatformSub2API,
+		model.UpstreamAuthPassword,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, model.UpstreamAuthAccessToken, resolved.Credential.AuthType)
+	assert.Equal(t, "captured-access", resolved.Credential.AccessToken)
+	assert.Equal(t, "captured-refresh", resolved.Credential.RefreshToken)
+	assert.Empty(t, resolved.Credential.AdminKey)
+	assert.Empty(t, resolved.Credential.Cookie)
+}
+
 func TestPlatformSiteCaptureSessionRejectsAuthTypeDowngradeAndCrossUserAccess(t *testing.T) {
 	start, err := StartPlatformSiteCaptureSession(8, PlatformSiteCaptureStartRequest{
 		Platform:  model.PlatformNewAPI,

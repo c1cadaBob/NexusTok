@@ -99,6 +99,24 @@ beforeEach(() => {
       login_url: 'https://upstream.example',
     },
   })
+  vi.mocked(channelsApi.getPlatformSiteCaptureStatus).mockResolvedValue({
+    success: true,
+    data: {
+      capture_id: 'capture-123',
+      status: 'pending',
+      expires_at: Math.floor(Date.now() / 1000) + 600,
+      platform: 'newapi',
+      base_url: 'https://upstream.example',
+      auth_type: 'auto',
+      origin: 'https://upstream.example',
+      userscript_url:
+        'https://nexustok.example/api/channel/platform-site/capture-session/capture-123/userscript.user.js',
+      helper_install_url:
+        'https://nexustok.example/api/channel/platform-site/capture-helper.user.js',
+      handoff_url: 'https://upstream.example/?nexustok_capture=payload',
+      login_url: 'https://upstream.example',
+    },
+  })
 })
 
 function PlatformSiteForm(props: PlatformSiteFormProps) {
@@ -450,5 +468,52 @@ test('预开窗口被拦截时保留会话并提供手动打开按钮', async ()
     'https://upstream.example/?nexustok_capture=payload',
     '_blank'
   )
+  openSpy.mockRestore()
+})
+
+test('账号密码模式显示采集入口并提交缓存登录态 capture_id', async () => {
+  const user = userEvent.setup()
+  const onSubmit = vi.fn()
+  const pendingWindow = {
+    closed: false,
+    focus: vi.fn(),
+    location: { href: '' },
+    opener: null,
+  } as unknown as Window
+  const openSpy = vi
+    .spyOn(window, 'open')
+    .mockReturnValueOnce(pendingWindow)
+    .mockReturnValueOnce(pendingWindow)
+
+  render(<PlatformSiteForm authType='password' onSubmit={onSubmit} />)
+
+  expect(screen.getByText('Browser login state capture')).toBeInTheDocument()
+  expect(screen.getByLabelText('Username')).toBeInTheDocument()
+  expect(screen.getByLabelText('Password')).toBeInTheDocument()
+
+  await user.click(
+    screen.getByRole('button', { name: 'Capture upstream login state' })
+  )
+
+  await waitFor(() => {
+    expect(channelsApi.startPlatformSiteCapture).toHaveBeenCalledWith(
+      expect.objectContaining({
+        auth_type: 'password',
+      })
+    )
+  })
+  expect(pendingWindow.location.href).toBe(
+    'https://upstream.example/?nexustok_capture=payload'
+  )
+
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+  await waitFor(() => {
+    expect(onSubmit).toHaveBeenCalledOnce()
+  })
+  const payload = transformFormDataToCreatePayload(onSubmit.mock.calls[0][0])
+  expect(payload.platform_site).toMatchObject({
+    auth_type: 'password',
+    capture_id: 'capture-123',
+  })
   openSpy.mockRestore()
 })

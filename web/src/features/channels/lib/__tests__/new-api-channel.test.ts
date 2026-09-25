@@ -241,6 +241,34 @@ describe('New API channel', () => {
     expect(payload.platform_site?.cookie).toBeUndefined()
   })
 
+  test('keeps password credential while sending optional capture_id', () => {
+    const payload = transformFormDataToCreatePayload({
+      ...CHANNEL_FORM_DEFAULT_VALUES,
+      name: 'Password platform site with cached login',
+      type: CHANNEL_TYPE_SUB2_API,
+      upstream_kind: 'platform_site',
+      platform_site_platform: 'sub2api',
+      platform_site_auth_type: 'password',
+      platform_site_username: 'synthetic-user',
+      platform_site_password: 'synthetic-password',
+      platform_site_capture_id: 'capture-password-123',
+      base_url: 'http://127.0.0.1:8080',
+      models: 'gpt-4o',
+      platform_site_recharge_amount: 1,
+      platform_site_credited_amount: 1,
+    })
+
+    expect(payload.platform_site).toMatchObject({
+      auth_type: 'password',
+      username: 'synthetic-user',
+      password: 'synthetic-password',
+      capture_id: 'capture-password-123',
+    })
+    expect(payload.platform_site?.access_token).toBeUndefined()
+    expect(payload.platform_site?.admin_key).toBeUndefined()
+    expect(payload.platform_site?.cookie).toBeUndefined()
+  })
+
   test('rejects mismatched platform site channel type and platform', () => {
     const result = channelFormSchema.safeParse({
       ...CHANNEL_FORM_DEFAULT_VALUES,

@@ -169,7 +169,7 @@ func StartPlatformSiteCaptureSession(
 		return nil, errorsForCapture("平台站点类型不受支持")
 	}
 	if !isPlatformSiteCaptureAuthType(authType) {
-		return nil, errorsForCapture("仅支持自动配置、Access Token、Admin Key 和 Cookie 采集")
+		return nil, errorsForCapture("仅支持自动配置、账号密码缓存登录态、Access Token、Admin Key 和 Cookie 采集")
 	}
 	baseURL, err := normalizePlatformSiteURL(request.BaseURL)
 	if err != nil {
@@ -271,7 +271,9 @@ func CompletePlatformSiteCaptureSession(
 		return nil, errorsForCapture("采集平台与会话不匹配")
 	}
 	if authType := strings.ToLower(strings.TrimSpace(request.AuthType)); authType != "" && authType != record.AuthType {
-		if record.AuthType != PlatformSiteCaptureAuthAuto ||
+		if record.AuthType == model.UpstreamAuthPassword && authType == model.UpstreamAuthAccessToken {
+			// 密码模式只允许浏览器采集结果提供缓存登录态，不切换认证方式。
+		} else if record.AuthType != PlatformSiteCaptureAuthAuto ||
 			(authType != PlatformSiteCaptureAuthAuto && !isPlatformSiteScriptAuthType(authType)) {
 			return nil, errorsForCapture("采集认证方式与会话不匹配")
 		}
@@ -343,6 +345,7 @@ func ResolvePlatformSiteCapture(
 	}
 	if normalized := strings.ToLower(strings.TrimSpace(authType)); normalized != "" && normalized != record.AuthType {
 		if normalized != PlatformSiteCaptureAuthAuto &&
+			!(normalized == model.UpstreamAuthPassword && record.AuthType == model.UpstreamAuthPassword) &&
 			!(record.AuthType == PlatformSiteCaptureAuthAuto && normalized == record.Credential.AuthType) {
 			return PlatformSiteCaptureResolution{}, errorsForCapture("采集认证方式与渠道不匹配")
 		}
@@ -484,7 +487,9 @@ func buildPlatformSiteCaptureResolution(
 	}
 	authType := record.AuthType
 	strictAuthType := authType != PlatformSiteCaptureAuthAuto
-	if authType == PlatformSiteCaptureAuthAuto {
+	if authType == model.UpstreamAuthPassword {
+		authType = model.UpstreamAuthAccessToken
+	} else if authType == PlatformSiteCaptureAuthAuto {
 		authType = selectPlatformSiteCaptureAuthType(request)
 		if authType == "" {
 			return PlatformSiteCaptureResolution{}, nil, errorsForCapture("自动配置未采集到可用登录态")
@@ -573,7 +578,9 @@ func isPlatformSiteScriptAuthType(authType string) bool {
 
 func isPlatformSiteCaptureAuthType(authType string) bool {
 	authType = strings.ToLower(strings.TrimSpace(authType))
-	return authType == PlatformSiteCaptureAuthAuto || isPlatformSiteScriptAuthType(authType)
+	return authType == PlatformSiteCaptureAuthAuto ||
+		authType == model.UpstreamAuthPassword ||
+		isPlatformSiteScriptAuthType(authType)
 }
 
 func selectPlatformSiteCaptureAuthType(request PlatformSiteCaptureCompleteRequest) string {
@@ -1317,6 +1324,9 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
       }
       if (!selected) throw new Error('automatic capture failed');
       Object.assign(result, selected);
+    } else if (authType === 'password') {
+      result.auth_type = 'access_token';
+      await fillSelectedCredential(result, platform, 'access_token');
     } else if (authType === 'access_token' || authType === 'admin_key' || authType === 'cookie') {
       await fillSelectedCredential(result, platform, authType);
     } else {

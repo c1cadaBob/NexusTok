@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -735,6 +736,113 @@ func TestSavePlatformSiteAccountPreservesPasswordAndCachedLoginCredential(t *tes
 	assert.Equal(t, oldCredential.AccessToken, credential.AccessToken)
 	assert.Equal(t, oldCredential.RefreshToken, credential.RefreshToken)
 	assert.Equal(t, oldCredential.TokenExpiresAt, credential.TokenExpiresAt)
+
+	newExpiresAt := common.GetTimestamp() + 7200
+	err = savePlatformSiteAccount(channel.Id, &PlatformSiteInput{
+		Platform:       model.PlatformSub2API,
+		BaseURL:        "https://example.com",
+		AuthType:       model.UpstreamAuthPassword,
+		CaptureID:      "completed-capture",
+		AccessToken:    "captured-access",
+		RefreshToken:   "captured-refresh",
+		UserID:         "99",
+		TokenExpiresAt: newExpiresAt,
+	}, &saved)
+	require.NoError(t, err)
+
+	require.NoError(t, db.First(&saved, account.ID).Error)
+	credential, err = model.DecryptPlatformSiteCredential(saved.CredentialCiphertext)
+	require.NoError(t, err)
+	assert.Equal(t, "new-user", credential.Username)
+	assert.Equal(t, "new-password", credential.Password)
+	assert.Equal(t, "99", credential.UserID)
+	assert.Equal(t, "captured-access", credential.AccessToken)
+	assert.Equal(t, "captured-refresh", credential.RefreshToken)
+	assert.Equal(t, newExpiresAt, credential.TokenExpiresAt)
+}
+
+func TestPasswordPlatformSiteCaptureMergesCachedLoginCredential(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.PlatformSiteAccount{}))
+
+	previousSecret := common.CryptoSecret
+	common.CryptoSecret = "platform-site-password-capture-test-secret"
+	t.Cleanup(func() {
+		common.CryptoSecret = previousSecret
+	})
+
+	channel := &model.Channel{
+		Name:         "Sub2API password capture site",
+		Type:         constant.ChannelTypeSub2API,
+		UpstreamKind: model.UpstreamKindPlatformSite,
+		Status:       common.ChannelStatusEnabled,
+	}
+	require.NoError(t, db.Create(channel).Error)
+
+	start, err := service.StartPlatformSiteCaptureSession(7, service.PlatformSiteCaptureStartRequest{
+		Platform:  model.PlatformSub2API,
+		BaseURL:   "http://127.0.0.1:8188",
+		AuthType:  model.UpstreamAuthPassword,
+		ChannelID: channel.Id,
+	}, "http://127.0.0.1:3003")
+	require.NoError(t, err)
+
+	captureURL, err := url.Parse(start.HandoffURL)
+	require.NoError(t, err)
+	encodedPayload := captureURL.Query().Get("nexustok_capture")
+	require.NotEmpty(t, encodedPayload)
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(encodedPayload)
+	require.NoError(t, err)
+	var handoff struct {
+		CaptureSecret string `json:"capture_secret"`
+	}
+	require.NoError(t, common.Unmarshal(payloadBytes, &handoff))
+	require.NotEmpty(t, handoff.CaptureSecret)
+
+	_, err = service.CompletePlatformSiteCaptureSession(start.CaptureID, service.PlatformSiteCaptureCompleteRequest{
+		CaptureSecret: handoff.CaptureSecret,
+		Platform:      model.PlatformSub2API,
+		AuthType:      model.UpstreamAuthAccessToken,
+		Origin:        "http://127.0.0.1:8188",
+		AccessToken:   "captured-access",
+		RefreshToken:  "captured-refresh",
+		ExpiresIn:     3600,
+		AuthUser:      map[string]any{"id": 31},
+	})
+	require.NoError(t, err)
+
+	input := &PlatformSiteInput{
+		Platform:  model.PlatformSub2API,
+		BaseURL:   "http://127.0.0.1:8188",
+		AuthType:  model.UpstreamAuthPassword,
+		Username:  "site-user",
+		Password:  "site-password",
+		CaptureID: start.CaptureID,
+	}
+	appliedCaptureID, err := applyPlatformSiteCapture(7, channel.Id, input)
+	require.NoError(t, err)
+	assert.Equal(t, start.CaptureID, appliedCaptureID)
+	assert.Equal(t, model.UpstreamAuthPassword, input.AuthType)
+	assert.Equal(t, "site-user", input.Username)
+	assert.Equal(t, "site-password", input.Password)
+	assert.Equal(t, "captured-access", input.AccessToken)
+	assert.Equal(t, "captured-refresh", input.RefreshToken)
+	assert.Equal(t, "31", input.UserID)
+
+	require.NoError(t, savePlatformSiteAccount(channel.Id, input, nil))
+
+	var saved model.PlatformSiteAccount
+	require.NoError(t, db.Where("channel_id = ?", channel.Id).First(&saved).Error)
+	assert.Equal(t, model.UpstreamAuthPassword, saved.AuthType)
+	credential, err := model.DecryptPlatformSiteCredential(saved.CredentialCiphertext)
+	require.NoError(t, err)
+	assert.Equal(t, model.UpstreamAuthPassword, credential.AuthType)
+	assert.Equal(t, "site-user", credential.Username)
+	assert.Equal(t, "site-password", credential.Password)
+	assert.Equal(t, "captured-access", credential.AccessToken)
+	assert.Equal(t, "captured-refresh", credential.RefreshToken)
+	assert.Equal(t, "31", credential.UserID)
+	assert.Greater(t, credential.TokenExpiresAt, common.GetTimestamp())
 }
 
 func TestSavePlatformSiteAccountKeepsExistingCredentialForAutomaticEdit(t *testing.T) {

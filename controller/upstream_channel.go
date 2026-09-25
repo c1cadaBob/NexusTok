@@ -262,22 +262,26 @@ func savePlatformSiteAccount(channelID int, input *PlatformSiteInput, existing *
 				}
 				switch strings.ToLower(strings.TrimSpace(merged.AuthType)) {
 				case model.UpstreamAuthPassword:
+					updatedCachedLogin := strings.TrimSpace(merged.CaptureID) != "" &&
+						strings.TrimSpace(merged.AccessToken) != ""
 					if strings.TrimSpace(merged.Username) == "" {
 						merged.Username = credential.Username
 					}
 					if merged.Password == "" {
 						merged.Password = credential.Password
 					}
-					if merged.AccessToken == "" {
-						merged.AccessToken = credential.AccessToken
+					if !updatedCachedLogin {
+						if merged.AccessToken == "" {
+							merged.AccessToken = credential.AccessToken
+						}
+						if merged.RefreshToken == "" {
+							merged.RefreshToken = credential.RefreshToken
+						}
+						if merged.UserID == "" {
+							merged.UserID = credential.UserID
+						}
+						merged.TokenExpiresAt = credential.TokenExpiresAt
 					}
-					if merged.RefreshToken == "" {
-						merged.RefreshToken = credential.RefreshToken
-					}
-					if merged.UserID == "" {
-						merged.UserID = credential.UserID
-					}
-					merged.TokenExpiresAt = credential.TokenExpiresAt
 				case model.UpstreamAuthAccessToken:
 					if merged.AccessToken == "" {
 						merged.AccessToken = credential.AccessToken
@@ -380,7 +384,13 @@ func applyPlatformSiteCapture(userID, channelID int, input *PlatformSiteInput) (
 	if captureID == "" {
 		return "", nil
 	}
-	if input.Username != "" || input.Password != "" || input.UserID != "" ||
+	authType := strings.ToLower(strings.TrimSpace(input.AuthType))
+	if authType == model.UpstreamAuthPassword {
+		if input.UserID != "" || input.AccessToken != "" || input.RefreshToken != "" ||
+			input.AdminKey != "" || input.Cookie != "" {
+			return "", errors.New("账号密码模式的采集会话只能与用户名和密码同时提交")
+		}
+	} else if input.Username != "" || input.Password != "" || input.UserID != "" ||
 		input.AccessToken != "" || input.RefreshToken != "" ||
 		input.AdminKey != "" || input.Cookie != "" {
 		return "", errors.New("采集会话不能与手动凭据同时提交")
@@ -398,6 +408,23 @@ func applyPlatformSiteCapture(userID, channelID int, input *PlatformSiteInput) (
 	input.Platform = strings.ToLower(strings.TrimSpace(input.Platform))
 	if input.Platform == "" {
 		input.Platform = resolution.Platform
+	}
+	if authType == model.UpstreamAuthPassword {
+		if resolution.Credential.AuthType != model.UpstreamAuthAccessToken {
+			return "", errors.New("账号密码模式只能合并 Access Token 采集结果")
+		}
+		input.AuthType = model.UpstreamAuthPassword
+		input.UserID = resolution.Credential.UserID
+		input.AccessToken = resolution.Credential.AccessToken
+		input.RefreshToken = resolution.Credential.RefreshToken
+		input.TokenExpiresAt = resolution.Credential.TokenExpiresAt
+		if resolution.ManagementBaseURL != "" {
+			input.BaseURL = resolution.ManagementBaseURL
+		}
+		if resolution.RelayBaseURL != "" {
+			input.RelayBaseURL = resolution.RelayBaseURL
+		}
+		return captureID, nil
 	}
 	input.AuthType = resolution.Credential.AuthType
 	input.Username = resolution.Credential.Username

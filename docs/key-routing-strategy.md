@@ -354,18 +354,23 @@ GET /api/channel/search?model=<model>&sort_by=model_ratio&sort_order=asc
 `PlatformSiteAccount.base_url`，页面配置发现的 OpenAI 兼容地址使用
 `relay_base_url`，父渠道基础地址使用实际转发地址并避免重复 `/v1`。
 
-平台站点的 `password` 认证继续手动输入用户名和密码；其他认证统一通过“自动配置”
-入口和短期、管理员绑定、Origin 精确匹配、一次性消费的浏览器 Capture Session
-采集。采集过程中按 Access Token/Refresh Token、Admin Key、Cookie 的顺序自动选择；
-采集不到任何可用凭据时失败，不允许手动补填或静默改变认证类型。前端表单只提交
-`capture_id`，凭据最终仍整体加密保存。同步失败继续保留最近一次成功快照。
+平台站点的 `password` 认证继续手动输入用户名和密码；密码模式也可以提交
+`capture_id`，用于把浏览器采集到的 Access Token/Refresh Token 合并为该密码凭据的
+缓存登录态，认证方式仍保持 `password`，不接受 Admin Key 或 Cookie 混入。其他认证
+统一通过“自动配置”入口和短期、管理员绑定、Origin 精确匹配、一次性消费的浏览器
+Capture Session 采集。自动配置过程中按 Access Token/Refresh Token、Admin Key、
+Cookie 的顺序自动选择；采集不到任何可用凭据时失败，不允许手动补填或静默改变认证
+类型。前端表单只提交 `capture_id`，凭据最终仍整体加密保存。同步失败继续保留最近
+一次成功快照。
 
 平台站点账号同步使用双凭据模型：`password` 模式保留账号密码作为最终恢复凭据，
 同时保留 `AccessToken`、`RefreshToken`、`TokenExpiresAt` 和 `UserID` 作为日常登录态。
-同步优先验证缓存访问令牌，失效后尝试刷新令牌，两个登录态都失效时才使用账号密码；
-`access_token` 模式刷新失败不会读取账号密码。认证期间产生的令牌更新在快照同步前
-立即加密保存，快照失败不会丢失令牌轮换结果。该凭据生命周期只决定平台站点同步能否
-建立会话，不改变 `key_id`、`upstream_key_id`、Routing Key 或子密钥候选的语义。
+这些登录态可以来自后台账号密码登录、刷新令牌轮换，或密码模式下明确提交的浏览器
+`capture_id`。同步优先验证缓存访问令牌，失效后尝试刷新令牌，两个登录态都失效时
+才使用账号密码；`access_token` 模式刷新失败不会读取账号密码。认证期间产生的令牌
+更新在快照同步前立即加密保存，快照失败不会丢失令牌轮换结果。该凭据生命周期只决定
+平台站点同步能否建立会话，不改变 `key_id`、`upstream_key_id`、Routing Key 或子密钥
+候选的语义。
 平台站点同步认证失败时保留最近一次成功快照和已有子密钥路由能力；如果 Sub2API
 登录接口返回明确的 Turnstile/验证码交互验证错误，后台不会清除这些快照，也不会
 继续用网页登录页错误覆盖真实原因。只有登录 API 路由不存在时才尝试备用路径。
@@ -455,3 +460,4 @@ GET /api/channel/search?model=<model>&sort_by=model_ratio&sort_order=asc
 | 2026-09-25 | 缺陷修复 | 平台子密钥可能引用其他渠道或错误来源的 Routing Key；显式旧 `key_id` 失败时返回裸 `record not found` | 统一校验 `channel_id`、`source`、`source_ref_id` 并在启动/读取/路由时自愈；可恢复的旧 `key_id` 先修复再测试，不可恢复时返回明确失效提示 | 平台站点路由、密钥列表、模型获取、自动测试和指定密钥测试 | `model/routing_key.go`、`model/main.go`、`controller/channel-test.go`、模型回归测试 |
 | 2026-09-25 | 缺陷修复 | 平台站点同步每次优先账号密码登录，令牌轮换结果可能在快照失败后丢失 | 账号密码与登录态并存并按缓存优先恢复；认证更新在快照前保存，保持 `key_id` 与 `upstream_key_id` 语义不变 | 平台站点同步、子密钥快照、路由候选和管理员测试 | `service/upstream_site_adapters.go`、`service/upstream_site.go`、`controller/upstream_channel.go`；服务/控制器测试 |
 | 2026-09-25 | 缺陷修复 | 渠道 2 的 Turnstile 登录错误会被后续 HTML 路径覆盖，失败时难以判断是否应继续测试或重新采集 | 交互验证错误立即停止路径切换并保留现有快照；仅路由不存在时继续兼容路径，`key_id`/`upstream_key_id` 语义不变 | 平台站点密钥同步、可路由子密钥保留、管理员测试和错误排障 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go` |
+| 2026-09-25 | 功能优化 | 密码模式无法把一次浏览器验证后的登录态并入原密码凭据，管理员可能为避开上游验证切换到自动配置认证方式 | 密码模式可携带 `capture_id` 合并 Access Token/Refresh Token 缓存登录态，认证方式、子密钥身份和路由候选语义不变 | 平台站点密码凭据、采集会话、子密钥同步和后续自动恢复 | `controller/upstream_channel.go`、`service/platform_site_capture.go`、`web/src/features/channels/`；前后端回归测试 |

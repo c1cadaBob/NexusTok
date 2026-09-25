@@ -3768,6 +3768,7 @@
     "Open Source": "开源项目",
     "Open the io.net console API Keys page": "打开 io.net 控制台 API 密钥页面",
     "Open the upstream site and let the Capture Helper choose the best available authentication method. Tokens, cookies, and Admin Keys are never entered here.": "打开上游站点，让采集助手自动选择最佳可用认证方式。令牌、Cookie 和 Admin Key 都不需要在这里输入。",
+    "Open the upstream site and let the Capture Helper collect an Access Token and Refresh Token for this password credential. The username and password remain saved for recovery.": "打开上游站点，让采集助手为此账号密码凭据采集 Access Token 和 Refresh Token。用户名和密码仍会作为恢复凭据保存。",
     "Open the upstream site and let the Capture Helper collect the selected authentication method. Tokens, cookies, and Admin Keys are never entered here.": "打开上游站点，让采集助手收集所选认证方式。这里不会手动输入令牌、Cookie 或 Admin Key。",
     "Open theme settings": "打开主题设置",
     "Open upstream capture page": "打开上游采集页",

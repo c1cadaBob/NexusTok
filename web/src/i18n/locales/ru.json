@@ -3768,6 +3768,7 @@
     "Open Source": "Открытый исходный код",
     "Open the io.net console API Keys page": "Открыть страницу ключей API консоли io.net",
     "Open the upstream site and let the Capture Helper choose the best available authentication method. Tokens, cookies, and Admin Keys are never entered here.": "Откройте вышестоящий сайт, и помощник захвата выберет лучший доступный способ аутентификации. Токены, cookie и Admin Key здесь не вводятся.",
+    "Open the upstream site and let the Capture Helper collect an Access Token and Refresh Token for this password credential. The username and password remain saved for recovery.": "Откройте вышестоящий сайт и позвольте Capture Helper получить Access Token и Refresh Token для этих учетных данных с паролем. Имя пользователя и пароль останутся сохраненными для восстановления.",
     "Open the upstream site and let the Capture Helper collect the selected authentication method. Tokens, cookies, and Admin Keys are never entered here.": "Откройте вышестоящий сайт и позвольте Capture Helper получить выбранный способ аутентификации. Токены, cookie и Admin Key здесь не вводятся.",
     "Open theme settings": "Открыть настройки темы",
     "Open upstream capture page": "Открыть страницу захвата",

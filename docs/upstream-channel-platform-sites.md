@@ -289,11 +289,14 @@ HTML 网页覆盖真实原因。只有返回 `404`、`405` 或明确的路由不
 适配器不能绕过验证码、交互式二次验证或站点风控。密码登录无法完成时返回可识别的认证状态，管理员可以切换为 Cookie 或令牌认证。
 
 平台站点表单提供两种认证方式：`password` 和 `auto`（自动配置）。账号密码认证
-由管理员手动输入用户名和密码；自动配置通过短期 Capture Session 和目标站浏览器
-脚本自动判断并采集 Access Token、Admin Key 或 Cookie。采集会话绑定管理员、目标
-Origin、平台、认证类型和可选渠道，默认有效期 10 分钟，完成保存后消费，结果只在
-短期缓存中传递，最终仍使用现有整体加密字段保存。`auto` 只存在于表单和采集会话
-期间，成功后按实际采集结果持久化为 `access_token`、`admin_key` 或 `cookie`。
+由管理员手动输入用户名和密码，也可以附带一次短期 Capture Session，将浏览器里
+已经完成交互验证后产生的 Access Token/Refresh Token 合并为该密码凭据的缓存登录态；
+此路径不会把认证方式改写为 `access_token`，也不会接受 Admin Key 或 Cookie 混入
+密码模式。自动配置通过短期 Capture Session 和目标站浏览器脚本自动判断并采集
+Access Token、Admin Key 或 Cookie。采集会话绑定管理员、目标 Origin、平台、认证
+类型和可选渠道，默认有效期 10 分钟，完成保存后消费，结果只在短期缓存中传递，
+最终仍使用现有整体加密字段保存。`auto` 只存在于表单和采集会话期间，成功后按实际
+采集结果持久化为 `access_token`、`admin_key` 或 `cookie`。
 
 浏览器脚本只读取明确命名的 Access Token、Refresh Token、Admin Key、Cookie 和
 用户对象。Sub2API 的 `auth_token`/`refresh_token` 会在临近过期且存在刷新令牌时
@@ -304,9 +307,10 @@ ID，用于需要兼容用户请求头的派生站点。Admin Key 或 HttpOnly C
 另一种认证方式，也不保存混合认证结果。前端只提交 `capture_id`，不提交原始令牌、
 Cookie 或 Admin Key。
 
-浏览器采集不是账号密码模式的正常同步步骤。只有平台没有可用缓存登录态、账号密码
-登录需要二次验证/验证码，或管理员明确切换到令牌/Cookie 认证时，才需要使用采集
-能力；后台不绕过上游交互验证。
+浏览器采集不是后台自动登录步骤。只有平台没有可用缓存登录态、账号密码登录需要
+二次验证/验证码，或管理员明确切换到令牌/Cookie 认证时，才需要使用采集能力。
+在 `password` 模式下，采集结果只补充缓存访问令牌和刷新令牌，后续同步仍按
+Access Token、Refresh Token、账号密码的顺序恢复；后台不绕过上游交互验证。
 
 Sub2API 管理地址和转发地址分离处理：账号、分组和密钥接口始终使用
 `base_url` 指向的管理站地址；页面配置中的 `api_base_url` 用于发现 OpenAI
@@ -338,7 +342,9 @@ API 地址的同协议、同主机和同端口来源时，才允许切换；验�
 顺序是：未明确过期的访问令牌先验证，失败后尝试刷新令牌，只有两者都不可用时才
 使用账号密码登录。登录成功后仍保留账号密码，并保存新的访问令牌、刷新令牌、过期
 时间和用户 ID；登录响应没有新的刷新令牌时清除旧刷新令牌。编辑页面没有提交令牌
-字段时，不会用空值覆盖已有登录态；明确切换到其它认证方式时，仍只保留该认证方式
+字段时，不会用空值覆盖已有登录态；如果提交了密码模式的 `capture_id`，后端只把
+该采集会话中的 Access Token、Refresh Token、过期时间和用户 ID 合并进当前密码
+凭据，保留用户名和密码作为恢复凭据。明确切换到其它认证方式时，仍只保留该认证方式
 需要的字段。
 
 NewAPI 和 Sub2API 都通过 `PlatformSiteSession.CredentialUpdate` 表示认证期间产生的
@@ -608,3 +614,4 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
 | 2026-09-25 | 缺陷修复 | Sub2API `2xx` 非 JSON 登录响应只显示笼统格式错误；平台子密钥 Routing Key 关系缺少运行时一致性说明 | 记录 HTML/纯文本/非法 JSON 的安全诊断字段和可操作排障方向；补充平台子密钥 Routing Key 自愈规则 | Sub2API 同步、管理员排障、平台子密钥路由和渠道测试 | `service/upstream_site.go`、`model/routing_key.go`、服务/模型回归测试 |
 | 2026-09-25 | 缺陷修复 | `password` 模式每次同步重新登录，登录态未稳定保留；令牌更新依赖完整快照成功 | 同时保留账号密码和上次登录凭据，按缓存访问令牌、刷新令牌、账号密码顺序恢复；认证更新在快照前立即持久化 | 平台站点认证、同步重试、浏览器采集触发条件和上游登录风控 | `controller/upstream_channel.go`、`service/upstream_site_adapters.go`、`service/upstream_site.go`；服务/控制器回归测试 |
 | 2026-09-25 | 缺陷修复 | 渠道 2 `/api/v1/auth/login` 返回 Turnstile JSON 错误后仍继续尝试备用路径，最终只显示“响应格式错误” | 保留 `TURNSTILE_VERIFICATION_FAILED` 等安全原因；仅在路由不存在时尝试备用路径，并引导浏览器采集而不绕过验证 | 渠道 2 账号密码同步、Sub2API 错误诊断、后台快照保留 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`；真实上游无凭据只读探测 |
+| 2026-09-25 | 功能优化 | 账号密码模式只能依赖后台密码登录或已有令牌轮换，遇到上游交互验证后需要切换自动配置并改变认证方式 | 账号密码模式可提交 `capture_id`，只合并浏览器采集到的 Access Token/Refresh Token 作为缓存登录态，认证方式仍为 `password` | 平台站点密码凭据、浏览器采集、后续同步恢复和上游验证边界 | `controller/upstream_channel.go`、`service/platform_site_capture.go`、前后端回归测试 |
