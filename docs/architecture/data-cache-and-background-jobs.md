@@ -60,6 +60,7 @@ Redis 由 `common.InitRedisClient` 初始化，未配置 `REDIS_CONN_STRING` 时
 | 任务状态 | `Task`/`SystemTask` | 任务私有数据、插件生成和数据库租约 | CAS、终态写入、锁续租/过期 |
 | 授权策略 | Casbin/数据库策略 | `service/authz` 内存模型 | 周期性策略同步和进程重载 |
 | 平台子密钥 Routing Key 关系 | `upstream_keys`、`routing_keys` | 渠道缓存和路由候选 | 启动迁移、子密钥读取、自动路由和显式选择时一致性校验 |
+| 平台站点登录态 | `platform_site_accounts.credential_ciphertext` | `PlatformSiteSession` 内存会话 | 同步认证时访问令牌复用、刷新或密码恢复；令牌更新立即写回 |
 
 ## 5. 系统任务 Runner
 
@@ -95,12 +96,18 @@ Redis 由 `common.InitRedisClient` 初始化，未配置 `REDIS_CONN_STRING` 时
 
 主数据库共享保证了用户、渠道、任务和系统任务租约的一致性；Redis 共享保证了依赖 Redis 的缓存/限流共享。没有共享 Redis 时，内存缓存、限流和部分 Session 观察会出现节点局部语义。
 
-平台站点同步失败时，`PlatformSiteAccount.last_sync_at` 和已有
-`upstream_keys` 快照不会被失败请求覆盖；如果失败发生在登录响应解析阶段，账号只更新
-失败状态、连续失败次数和脱敏错误摘要。Sub2API 的非 JSON 响应摘要可能包含 HTTP
-状态、脱敏 URL、Content-Type、重定向状态和响应类别，但不包含响应体、密码、Cookie
-或令牌。管理员需要检查站点管理地址、反向代理/API 路径，或通过已有浏览器采集能力
-改用 Access Token/Cookie；后台同步不会绕过验证页面。
+平台站点同步分为认证阶段和快照阶段。认证阶段先解密账号的双凭据，按缓存
+`AccessToken`、`RefreshToken`、密码回退的顺序建立 `PlatformSiteSession`；如果访问令牌
+或刷新令牌发生轮换，`syncPlatformSite` 会在余额、用量、模型和子密钥快照开始前调用
+`persistPlatformSiteCredential` 立即加密写回。这样快照失败不会回滚已经成功保存的新令牌，
+后续同步会从数据库继续使用最新登录态。凭据写回失败会作为独立的“凭据更新”阶段失败
+记录，不能继续假定快照可以安全使用。
+
+快照阶段失败时，`PlatformSiteAccount.last_sync_at` 和已有 `upstream_keys` 快照不会被
+失败请求覆盖；账号只更新失败状态、连续失败次数和脱敏错误摘要。Sub2API 的非 JSON
+响应摘要可能包含 HTTP 状态、脱敏 URL、Content-Type、重定向状态和响应类别，但不包含
+响应体、密码、Cookie 或令牌。管理员需要检查站点管理地址、反向代理/API 路径，或通过
+已有浏览器采集能力改用 Access Token/Cookie；后台同步不会绕过验证页面。
 
 ## 8. 当前限制和实际偏差
 
@@ -119,3 +126,4 @@ Redis 由 `common.InitRedisClient` 初始化，未配置 `REDIS_CONN_STRING` 时
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 建立数据库选择、缓存生命周期、系统任务 Runner 和后台任务入口说明 | `model/`、`common/`、`service/system_task.go`、`main.go` | 数据库初始化、Redis、Runner 和启动注册代码静态核对 |
 | 2026-09-25 | 缺陷修复 | 启动迁移只处理空 `routing_key_id`；平台同步非 JSON 登录响应无法区分网页、验证页和代理文本 | 启动及访问路径校验并修复全部平台子密钥 Routing Key 关系；同步失败保留成功快照并写入安全响应诊断摘要 | Routing Key 一致性、平台站点同步、缓存刷新、管理员排障 | `model/main.go`、`model/routing_key.go`、`service/upstream_site.go`、模型/服务回归测试 |
+| 2026-09-25 | 缺陷修复 | 平台站点认证令牌只在完整快照成功后保存，快照失败会丢失令牌轮换结果 | 认证与快照分阶段处理，令牌更新在快照前立即持久化；快照失败保留最新登录态和旧成功快照 | 平台站点同步、数据库回源和后台任务重试 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`TestSyncPlatformSitePersistsRotatedCredentialBeforeSnapshot` |

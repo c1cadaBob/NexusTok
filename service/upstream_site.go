@@ -615,18 +615,20 @@ func syncPlatformSite(ctx context.Context, channelID int) error {
 			session, authenticateErr := adapter.Authenticate(ctx, account.BaseURL, credential)
 			err = authenticateErr
 			if err == nil {
+				if session.CredentialUpdate != nil {
+					err = persistPlatformSiteCredential(&account, *session.CredentialUpdate)
+					if err != nil {
+						err = wrapPlatformSiteStage("凭据更新", err)
+					}
+				}
+			}
+			if err == nil {
 				var snapshot PlatformSiteSnapshot
 				snapshot, err = adapter.FetchSnapshot(ctx, session)
 				if err == nil {
 					err = persistPlatformSiteSnapshot(ctx, &account, snapshot)
 					if err != nil {
 						err = wrapPlatformSiteStage("同步写库", err)
-					}
-					if err == nil && session.CredentialUpdate != nil {
-						err = persistPlatformSiteCredential(&account, *session.CredentialUpdate)
-						if err != nil {
-							err = wrapPlatformSiteStage("凭据更新", err)
-						}
 					}
 				}
 			}

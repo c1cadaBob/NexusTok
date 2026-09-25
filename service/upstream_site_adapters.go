@@ -60,6 +60,24 @@ func (adapter *NewAPIAdapter) Authenticate(ctx context.Context, baseURL string, 
 	}
 	switch platformSiteCredentialAuthType(credential) {
 	case model.UpstreamAuthPassword:
+		authenticated, authErr := tryCachedPlatformSiteCredential(
+			ctx,
+			session,
+			&credential,
+			"/api/user/auth/refresh",
+			fetchNewAPICurrentUser,
+			func(session *PlatformSiteSession, accessToken string) {
+				session.Headers.Set("Authorization", bearerToken(accessToken))
+				setNewAPICompatUserHeaders(session.Headers, credential.UserID)
+			},
+			clearNewAPIAuthentication,
+		)
+		if authErr != nil {
+			return nil, wrapPlatformSiteStage("NewAPI 认证", authErr)
+		}
+		if authenticated {
+			return session, nil
+		}
 		payload, requestErr := loginNewAPIWithPassword(ctx, session, credential)
 		if requestErr != nil {
 			return nil, wrapPlatformSiteStage("NewAPI 登录", requestErr)
@@ -67,28 +85,39 @@ func (adapter *NewAPIAdapter) Authenticate(ctx context.Context, baseURL string, 
 		if loginRequiresInteractiveVerification(payload) {
 			return nil, fmt.Errorf("%w: 需要完成上游二次验证", ErrPlatformSiteAuth)
 		}
-		if token := findToken(payload); token != "" {
+		credential.AccessToken = findToken(payload)
+		credential.RefreshToken = findRefreshToken(payload)
+		credential.TokenExpiresAt = findTokenExpiresAt(payload)
+		if token := strings.TrimSpace(credential.AccessToken); token != "" {
 			session.Headers.Set("Authorization", bearerToken(token))
 		}
 		if userID := findUserID(payload); userID != "" {
+			credential.UserID = userID
 			setNewAPICompatUserHeaders(session.Headers, userID)
 		}
+		credential.AuthType = model.UpstreamAuthPassword
+		updatedCredential := credential
+		session.CredentialUpdate = &updatedCredential
 	case model.UpstreamAuthAccessToken:
-		if credential.RefreshToken != "" {
-			if err := refreshPlatformSiteSession(
-				ctx,
-				session,
-				"/api/user/auth/refresh",
-				&credential,
-			); err != nil {
-				return nil, wrapPlatformSiteStage("NewAPI 刷新令牌", err)
-			}
-		} else if credential.AccessToken != "" {
-			headers.Set("Authorization", bearerToken(credential.AccessToken))
-			setNewAPICompatUserHeaders(headers, credential.UserID)
-		} else {
+		authenticated, authErr := tryCachedPlatformSiteCredential(
+			ctx,
+			session,
+			&credential,
+			"/api/user/auth/refresh",
+			fetchNewAPICurrentUser,
+			func(session *PlatformSiteSession, accessToken string) {
+				session.Headers.Set("Authorization", bearerToken(accessToken))
+				setNewAPICompatUserHeaders(session.Headers, credential.UserID)
+			},
+			clearNewAPIAuthentication,
+		)
+		if authErr != nil {
+			return nil, wrapPlatformSiteStage("NewAPI 认证", authErr)
+		}
+		if !authenticated {
 			return nil, wrapPlatformSiteStage("NewAPI 认证", fmt.Errorf("%w: 缺少访问令牌", ErrPlatformSiteAuth))
 		}
+		return session, nil
 	case model.UpstreamAuthAdminKey:
 		if credential.AdminKey == "" {
 			return nil, wrapPlatformSiteStage("NewAPI 认证", fmt.Errorf("%w: 缺少 Admin Key", ErrPlatformSiteAuth))
@@ -250,6 +279,25 @@ func (adapter *Sub2APIAdapter) Authenticate(ctx context.Context, baseURL string,
 	}
 	switch platformSiteCredentialAuthType(credential) {
 	case model.UpstreamAuthPassword:
+		authenticated, authErr := tryCachedPlatformSiteCredential(
+			ctx,
+			session,
+			&credential,
+			"/api/v1/auth/refresh",
+			fetchSub2APICurrentUser,
+			func(session *PlatformSiteSession, accessToken string) {
+				session.Headers.Set("Authorization", bearerToken(accessToken))
+			},
+			func(session *PlatformSiteSession) {
+				session.Headers.Del("Authorization")
+			},
+		)
+		if authErr != nil {
+			return nil, wrapPlatformSiteStage("Sub2API 认证", authErr)
+		}
+		if authenticated {
+			return session, nil
+		}
 		payload, requestErr := loginSub2APIWithPassword(ctx, session, credential)
 		if requestErr != nil {
 			return nil, wrapPlatformSiteStage("Sub2API 登录", requestErr)
@@ -259,24 +307,39 @@ func (adapter *Sub2APIAdapter) Authenticate(ctx context.Context, baseURL string,
 		}
 		if token := findToken(payload); token != "" {
 			session.Headers.Set("Authorization", bearerToken(token))
+			credential.AccessToken = token
+			credential.RefreshToken = findRefreshToken(payload)
+			credential.TokenExpiresAt = findTokenExpiresAt(payload)
+			if userID := findUserID(payload); userID != "" {
+				credential.UserID = userID
+			}
+			credential.AuthType = model.UpstreamAuthPassword
+			updatedCredential := credential
+			session.CredentialUpdate = &updatedCredential
 		} else {
 			return nil, wrapPlatformSiteStage("Sub2API 登录未返回访问令牌", ErrSub2APILoginToken)
 		}
 	case model.UpstreamAuthAccessToken:
-		if credential.RefreshToken != "" {
-			if err := refreshPlatformSiteSession(
-				ctx,
-				session,
-				"/api/v1/auth/refresh",
-				&credential,
-			); err != nil {
-				return nil, wrapPlatformSiteStage("Sub2API 刷新令牌", err)
-			}
-		} else if credential.AccessToken != "" {
-			headers.Set("Authorization", bearerToken(credential.AccessToken))
-		} else {
+		authenticated, authErr := tryCachedPlatformSiteCredential(
+			ctx,
+			session,
+			&credential,
+			"/api/v1/auth/refresh",
+			fetchSub2APICurrentUser,
+			func(session *PlatformSiteSession, accessToken string) {
+				session.Headers.Set("Authorization", bearerToken(accessToken))
+			},
+			func(session *PlatformSiteSession) {
+				session.Headers.Del("Authorization")
+			},
+		)
+		if authErr != nil {
+			return nil, wrapPlatformSiteStage("Sub2API 认证", authErr)
+		}
+		if !authenticated {
 			return nil, wrapPlatformSiteStage("Sub2API 认证", fmt.Errorf("%w: 缺少访问令牌", ErrPlatformSiteAuth))
 		}
+		return session, nil
 	case model.UpstreamAuthAdminKey:
 		if credential.AdminKey == "" {
 			return nil, wrapPlatformSiteStage("Sub2API 认证", fmt.Errorf("%w: 缺少 Admin Key", ErrPlatformSiteAuth))
@@ -532,6 +595,60 @@ func fetchSub2APICurrentUser(ctx context.Context, session *PlatformSiteSession) 
 	return nil, errors.Join(ErrSub2APICurrentUser, lastErr)
 }
 
+func tryCachedPlatformSiteCredential(
+	ctx context.Context,
+	session *PlatformSiteSession,
+	credential *model.PlatformSiteCredential,
+	refreshPath string,
+	fetchCurrentUser func(context.Context, *PlatformSiteSession) (any, error),
+	applyAccessToken func(*PlatformSiteSession, string),
+	clearAccessToken func(*PlatformSiteSession),
+) (bool, error) {
+	if credential == nil {
+		return false, nil
+	}
+
+	if accessToken := strings.TrimSpace(credential.AccessToken); accessToken != "" &&
+		(credential.TokenExpiresAt <= 0 || credential.TokenExpiresAt > time.Now().Unix()) {
+		applyAccessToken(session, accessToken)
+		if _, err := fetchCurrentUser(ctx, session); err == nil {
+			return true, nil
+		} else if strings.TrimSpace(credential.RefreshToken) == "" {
+			clearAccessToken(session)
+		}
+	}
+
+	if strings.TrimSpace(credential.RefreshToken) == "" {
+		return false, nil
+	}
+	if err := refreshPlatformSiteSession(ctx, session, refreshPath, credential); err != nil {
+		if platformSiteCredentialAuthenticationRejected(err) {
+			clearAccessToken(session)
+			return false, nil
+		}
+		return false, err
+	}
+	if _, err := fetchCurrentUser(ctx, session); err == nil {
+		return true, nil
+	} else if !platformSiteCredentialAuthenticationRejected(err) {
+		return false, err
+	}
+	clearAccessToken(session)
+	return false, nil
+}
+
+func platformSiteCredentialAuthenticationRejected(err error) bool {
+	if err == nil {
+		return false
+	}
+	var statusErr *platformSiteHTTPStatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.statusCode == http.StatusUnauthorized ||
+			statusErr.statusCode == http.StatusForbidden
+	}
+	return errors.Is(err, ErrPlatformSiteAuth)
+}
+
 func bearerToken(token string) string {
 	return "Bearer " + strings.TrimSpace(token)
 }
@@ -552,7 +669,7 @@ func refreshPlatformSiteSession(
 		"refresh_token": credential.RefreshToken,
 	})
 	if err != nil {
-		return fmt.Errorf("%w: 刷新会话失败", ErrPlatformSiteAuth)
+		return fmt.Errorf("%w: 刷新会话失败: %w", ErrPlatformSiteAuth, err)
 	}
 	accessToken := findToken(payload)
 	refreshToken := findRefreshToken(payload)
@@ -629,6 +746,25 @@ func setNewAPICompatUserHeaders(headers http.Header, userID string) {
 		"neo-api-user",
 	} {
 		headers.Set(name, userID)
+	}
+}
+
+func clearNewAPIAuthentication(session *PlatformSiteSession) {
+	if session == nil {
+		return
+	}
+	session.Headers.Del("Authorization")
+	for _, name := range []string{
+		"New-API-User",
+		"X-ModelFlare-User",
+		"Veloera-User",
+		"X-Api-User",
+		"voapi-user",
+		"User-id",
+		"Rix-Api-User",
+		"neo-api-user",
+	} {
+		session.Headers.Del(name)
 	}
 }
 

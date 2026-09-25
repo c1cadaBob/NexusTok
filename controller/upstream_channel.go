@@ -31,6 +31,7 @@ type PlatformSiteInput struct {
 	UserID          string   `json:"user_id,omitempty"`
 	AccessToken     string   `json:"access_token"`
 	RefreshToken    string   `json:"refresh_token,omitempty"`
+	TokenExpiresAt  int64    `json:"-"`
 	AdminKey        string   `json:"admin_key"`
 	Cookie          string   `json:"cookie"`
 	CaptureID       string   `json:"capture_id,omitempty"`
@@ -141,24 +142,21 @@ func validatePlatformSiteInput(input *PlatformSiteInput, existing *model.Platfor
 		}
 	}
 	credential := model.PlatformSiteCredential{
-		AuthType:     input.AuthType,
-		Username:     strings.TrimSpace(input.Username),
-		Password:     input.Password,
-		UserID:       strings.TrimSpace(input.UserID),
-		AccessToken:  strings.TrimSpace(input.AccessToken),
-		RefreshToken: strings.TrimSpace(input.RefreshToken),
-		AdminKey:     strings.TrimSpace(input.AdminKey),
-		Cookie:       input.Cookie,
+		AuthType:       input.AuthType,
+		Username:       strings.TrimSpace(input.Username),
+		Password:       input.Password,
+		UserID:         strings.TrimSpace(input.UserID),
+		AccessToken:    strings.TrimSpace(input.AccessToken),
+		RefreshToken:   strings.TrimSpace(input.RefreshToken),
+		TokenExpiresAt: input.TokenExpiresAt,
+		AdminKey:       strings.TrimSpace(input.AdminKey),
+		Cookie:         input.Cookie,
 	}
 	switch input.AuthType {
 	case model.UpstreamAuthPassword:
 		if credential.Username == "" || credential.Password == "" {
 			return model.PlatformSiteCredential{}, 0, errors.New("账号密码认证需要用户名和密码")
 		}
-		credential.AccessToken = ""
-		credential.RefreshToken = ""
-		credential.UserID = ""
-		credential.TokenExpiresAt = 0
 		credential.AdminKey = ""
 		credential.Cookie = ""
 	case model.UpstreamAuthAccessToken:
@@ -270,9 +268,20 @@ func savePlatformSiteAccount(channelID int, input *PlatformSiteInput, existing *
 					if merged.Password == "" {
 						merged.Password = credential.Password
 					}
+					if merged.AccessToken == "" {
+						merged.AccessToken = credential.AccessToken
+					}
+					if merged.RefreshToken == "" {
+						merged.RefreshToken = credential.RefreshToken
+					}
+					if merged.UserID == "" {
+						merged.UserID = credential.UserID
+					}
+					merged.TokenExpiresAt = credential.TokenExpiresAt
 				case model.UpstreamAuthAccessToken:
 					if merged.AccessToken == "" {
 						merged.AccessToken = credential.AccessToken
+						merged.TokenExpiresAt = credential.TokenExpiresAt
 					}
 					if merged.RefreshToken == "" {
 						merged.RefreshToken = credential.RefreshToken
@@ -396,6 +405,7 @@ func applyPlatformSiteCapture(userID, channelID int, input *PlatformSiteInput) (
 	input.UserID = resolution.Credential.UserID
 	input.AccessToken = resolution.Credential.AccessToken
 	input.RefreshToken = resolution.Credential.RefreshToken
+	input.TokenExpiresAt = resolution.Credential.TokenExpiresAt
 	input.AdminKey = resolution.Credential.AdminKey
 	input.Cookie = resolution.Credential.Cookie
 	if resolution.ManagementBaseURL != "" {

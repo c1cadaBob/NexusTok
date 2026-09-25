@@ -657,6 +657,86 @@ func TestSavePlatformSiteAccountAllowsCredentialReplacementWhenStoredCiphertextI
 	assert.Empty(t, credential.Password)
 }
 
+func TestSavePlatformSiteAccountPreservesPasswordAndCachedLoginCredential(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.PlatformSiteAccount{}))
+
+	previousSecret := common.CryptoSecret
+	common.CryptoSecret = "platform-site-dual-credential-test-secret"
+	t.Cleanup(func() {
+		common.CryptoSecret = previousSecret
+	})
+
+	channel := &model.Channel{
+		Name:         "Sub2API dual credential site",
+		Type:         constant.ChannelTypeSub2API,
+		UpstreamKind: model.UpstreamKindPlatformSite,
+		Status:       common.ChannelStatusEnabled,
+	}
+	require.NoError(t, db.Create(channel).Error)
+
+	oldCredential := model.PlatformSiteCredential{
+		AuthType:       model.UpstreamAuthPassword,
+		Username:       "old-user",
+		Password:       "old-password",
+		UserID:         "42",
+		AccessToken:    "old-access",
+		RefreshToken:   "old-refresh",
+		TokenExpiresAt: common.GetTimestamp() + 3600,
+	}
+	ciphertext, err := model.EncryptPlatformSiteCredential(oldCredential)
+	require.NoError(t, err)
+	account := &model.PlatformSiteAccount{
+		ChannelID:            channel.Id,
+		Platform:             model.PlatformSub2API,
+		BaseURL:              "https://example.com",
+		AuthType:             model.UpstreamAuthPassword,
+		CredentialCiphertext: ciphertext,
+		CredentialKeyVersion: "v1",
+		RechargeAmount:       1,
+		CreditedAmount:       1,
+		ConversionRatio:      1,
+	}
+	require.NoError(t, db.Create(account).Error)
+
+	err = savePlatformSiteAccount(channel.Id, &PlatformSiteInput{
+		Platform: model.PlatformSub2API,
+		BaseURL:  "https://example.com",
+		AuthType: model.UpstreamAuthPassword,
+		Username: "new-user",
+		Password: "new-password",
+	}, account)
+	require.NoError(t, err)
+
+	var saved model.PlatformSiteAccount
+	require.NoError(t, db.First(&saved, account.ID).Error)
+	credential, err := model.DecryptPlatformSiteCredential(saved.CredentialCiphertext)
+	require.NoError(t, err)
+	assert.Equal(t, model.UpstreamAuthPassword, credential.AuthType)
+	assert.Equal(t, "new-user", credential.Username)
+	assert.Equal(t, "new-password", credential.Password)
+	assert.Equal(t, oldCredential.UserID, credential.UserID)
+	assert.Equal(t, oldCredential.AccessToken, credential.AccessToken)
+	assert.Equal(t, oldCredential.RefreshToken, credential.RefreshToken)
+	assert.Equal(t, oldCredential.TokenExpiresAt, credential.TokenExpiresAt)
+
+	err = savePlatformSiteAccount(channel.Id, &PlatformSiteInput{
+		Platform: model.PlatformSub2API,
+		BaseURL:  "https://example.com",
+		AuthType: model.UpstreamAuthPassword,
+	}, &saved)
+	require.NoError(t, err)
+
+	require.NoError(t, db.First(&saved, account.ID).Error)
+	credential, err = model.DecryptPlatformSiteCredential(saved.CredentialCiphertext)
+	require.NoError(t, err)
+	assert.Equal(t, "new-user", credential.Username)
+	assert.Equal(t, "new-password", credential.Password)
+	assert.Equal(t, oldCredential.AccessToken, credential.AccessToken)
+	assert.Equal(t, oldCredential.RefreshToken, credential.RefreshToken)
+	assert.Equal(t, oldCredential.TokenExpiresAt, credential.TokenExpiresAt)
+}
+
 func TestSavePlatformSiteAccountKeepsExistingCredentialForAutomaticEdit(t *testing.T) {
 	db := setupModelListControllerTestDB(t)
 	require.NoError(t, db.AutoMigrate(&model.PlatformSiteAccount{}))

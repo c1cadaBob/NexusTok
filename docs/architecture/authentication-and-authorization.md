@@ -28,6 +28,40 @@
 
 `SESSION_SECRET` 为 Access Token、Security Proof、Refresh Token 摘要和 AuthFlow 摘要派生不同用途的密钥。多节点必须保持一致；`CRYPTO_SECRET` 影响缓存键摘要和 Artifact Capability，多节点共享 Redis 或任务产物访问时也必须一致。
 
+### 2.1 平台站点双凭据与自动恢复
+
+平台站点的账号密码认证与面板登录不是同一套用户 Session。平台站点在
+`platform_site_accounts.credential_ciphertext` 中加密保存
+`PlatformSiteCredential`，其中账号密码和上一次成功登录得到的登录态是两类并存凭据：
+
+- `Username`/`Password`：登录态全部失效后的最终恢复凭据；
+- `AccessToken`/`RefreshToken`/`TokenExpiresAt`/`UserID`：日常同步优先复用的登录态。
+
+`auth_type=password` 时，编辑保存会保留这两类字段；保存页面没有提交令牌字段时，
+不会用空值覆盖已有登录态。切换到 `access_token`、`admin_key` 或 `cookie` 时仍按
+认证方式清理不属于该模式的字段，避免认证方式漂移。
+
+平台站点同步的认证顺序由
+`service/upstream_site_adapters.go` 的 `tryCachedPlatformSiteCredential` 统一控制：
+
+1. 未明确过期的 `AccessToken` 先调用当前用户接口验证；
+2. 访问令牌失败且存在 `RefreshToken` 时调用平台刷新接口；
+3. 刷新成功后使用新访问令牌再次验证当前用户，并产生 `CredentialUpdate`；
+4. 只有密码模式的访问令牌和刷新令牌都不可用时，才回退账号密码登录；
+5. `access_token` 模式刷新失败直接认证失败，不读取账号密码回退。
+
+NewAPI 使用 `/api/user/self` 等当前用户接口和 `/api/user/auth/refresh`，Sub2API
+使用 `/api/v1/auth/me` 等当前用户接口和 `/api/v1/auth/refresh`。账号密码登录或
+刷新产生的新令牌会写入 `PlatformSiteSession.CredentialUpdate`；宿主
+`syncPlatformSite` 在余额、用量、模型和子密钥快照同步前立即加密写回数据库。因此
+令牌轮换后即使后续快照失败，下次同步仍使用最新令牌。登录响应没有新的
+`RefreshToken` 时会清除旧刷新令牌，避免继续使用已经失效的旧值。
+
+账号密码、令牌、Cookie 和 Admin Key 只存在加密凭据字段或运行时请求头中，不写入
+同步状态、系统日志、接口响应或诊断摘要。需要验证码、Turnstile、Cloudflare/WAF
+或其它交互验证时，后台不尝试绕过；只有缓存登录态无法自动恢复时才需要浏览器采集
+Access Token 或 Cookie。
+
 ## 3. 面板登录与 Session 生命周期
 
 登录、Passkey、OAuth、WeChat、Telegram 和 2FA 成功路径最终都应通过统一 Session 签发出口，生成 `user_sessions` 记录、Access Token 和 Refresh Cookie。Session 数据库状态是最终权威；Redis 保存用户鉴权快照和 Session 快照，缓存未命中或未启用 Redis 时回源数据库。
@@ -83,6 +117,8 @@ Token 限制不是前端 UI 的提示，而是在服务端分发和预扣/扣减
 - 独立 Redis 节点会带来有界陈旧 Session 和节点局部限流；部署说明必须明确拓扑。
 - 已有详细文档描述了大量安全契约，本架构文档不重复定义所有 Cookie 属性和接口字段；两者冲突时应以代码和最新专项契约核对。
 - OAuth、Passkey、TOTP、PAT 和 Security Proof 的端到端组合场景不能由单个入口文件证明；尚未覆盖的组合场景应标记“待核查”，不能据名称推断。
+- 平台站点的账号密码能否自动恢复，仍取决于上游登录接口是否可用以及是否要求交互验证；
+  本地保留双凭据不会绕过上游风控，也不保证所有派生平台都支持相同的刷新协议。
 
 ## 9. 维护时需要同步的关联模块
 
@@ -93,3 +129,4 @@ Token 限制不是前端 UI 的提示，而是在服务端分发和预扣/扣减
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 建立凭据分层、Session 生命周期、授权和 Redis 拓扑说明 | `middleware/`、`service/auth*`、`model/user_session.go`、`oauth/` | `docs/authentication.md`、`model/user_session.go`、`service/auth_session.go` 静态核对 |
+| 2026-09-25 | 缺陷修复 | 平台站点密码模式保存时可能清空登录态，且同步每次优先重新登录；认证成功后的令牌更新依赖快照同步成功 | 密码与登录态双凭据并存，优先复用访问令牌、再刷新、最后回退账号密码；认证产生的令牌在快照前立即持久化 | NewAPI/Sub2API 平台站点同步、账号密码恢复、令牌轮换和敏感信息保护 | `controller/upstream_channel.go`、`service/upstream_site_adapters.go`、`service/upstream_site.go`；服务和控制器回归测试 |

@@ -197,6 +197,9 @@ Inside `relaykit/`, use `kitutil.*` from `relaykit/relayconvert/kitutil/json.go`
 - 修改平台子密钥、`routing_keys`、`upstream_keys.routing_key_id`、`channel_id`、`source` 或 `source_ref_id` 关系时，必须同步核对启动迁移、密钥列表、自动路由、模型获取和显式 `key_id` 测试路径；数据关系修复只能更新当前记录，不得无依据删除其他渠道的历史 Routing Key。
 - 修改平台站点登录、响应解析、重定向或同步失败处理时，必须同步核对 `last_sync_error`、系统日志和管理员可见错误；诊断只能记录 HTTP 状态、脱敏 URL、Content-Type、重定向状态和响应类别，不得记录完整响应体、密码、Cookie、令牌或 Admin Key。
 - 遇到 `2xx` 非 JSON 平台响应时，文档必须明确区分网页、验证页、反向代理文本和非法 JSON，并保留原有认证/HTTP/响应错误分类；不得通过后台代码绕过 CAPTCHA、Turnstile、Cloudflare、WAF 或其他上游交互验证。
+- 修改平台站点凭据或认证流程时，必须验证 `password` 模式是否同时保留账号密码与上次登录凭据、有效 `AccessToken` 是否优先复用、`RefreshToken` 是否正确轮换，以及登录态全部失效后是否能自动回退账号密码。
+- 必须验证认证成功但余额、模型、子密钥或其它快照同步失败时，新的凭据是否已经持久化；凭据写回失败必须作为独立同步阶段报告，不能静默继续使用旧令牌。
+- 必须确认平台站点保存、同步状态、系统日志和管理员错误不会泄露密码、Cookie、AccessToken、RefreshToken、Admin Key 或完整上游响应；必须确认 `access_token` 模式不会回退账号密码。
 
 **Protected project information:** The following project-related information is strictly protected and MUST NOT be modified, deleted, replaced, or removed under any circumstances:
 

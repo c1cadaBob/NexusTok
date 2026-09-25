@@ -298,6 +298,10 @@ ID，用于需要兼容用户请求头的派生站点。Admin Key 或 HttpOnly C
 另一种认证方式，也不保存混合认证结果。前端只提交 `capture_id`，不提交原始令牌、
 Cookie 或 Admin Key。
 
+浏览器采集不是账号密码模式的正常同步步骤。只有平台没有可用缓存登录态、账号密码
+登录需要二次验证/验证码，或管理员明确切换到令牌/Cookie 认证时，才需要使用采集
+能力；后台不绕过上游交互验证。
+
 Sub2API 管理地址和转发地址分离处理：账号、分组和密钥接口始终使用
 `base_url` 指向的管理站地址；页面配置中的 `api_base_url` 用于发现 OpenAI
 兼容转发地址。`api_base_url` 可以是绝对 URL，也可以是相对路径。相对路径会按
@@ -317,17 +321,25 @@ API 地址的同协议、同主机和同端口来源时，才允许切换；验�
 
 `PlatformSiteCredential.auth_type` 是非敏感的认证方式标识，保存后固定使用该分支：
 
-- `password` 每次同步重新使用账号密码登录，登录返回的会话令牌只用于当前同步；
+- `password` 同时保存账号密码和上一次成功登录得到的 `AccessToken`、
+  `RefreshToken`、`TokenExpiresAt`、`UserID`。账号密码只作为登录态全部失效后的恢复
+  凭据，日常同步优先复用缓存登录态；
 - `access_token` 只使用访问令牌和刷新令牌，刷新失败不回退账号密码；
 - `admin_key` 只使用 Admin Key；
 - `cookie` 只使用 Cookie。
 
-账号密码模式不会因为登录响应包含刷新令牌而改写成令牌模式。更新凭据时，
-服务端只保存当前认证方式需要的字段，避免残留字段再次触发认证方式漂移。
+账号密码模式不会因为登录响应包含刷新令牌而改写成令牌模式。账号密码模式的认证
+顺序是：未明确过期的访问令牌先验证，失败后尝试刷新令牌，只有两者都不可用时才
+使用账号密码登录。登录成功后仍保留账号密码，并保存新的访问令牌、刷新令牌、过期
+时间和用户 ID；登录响应没有新的刷新令牌时清除旧刷新令牌。编辑页面没有提交令牌
+字段时，不会用空值覆盖已有登录态；明确切换到其它认证方式时，仍只保留该认证方式
+需要的字段。
 
-只有 `access_token` 模式会把刷新接口返回的新访问令牌、刷新令牌和过期时间写入
-`PlatformSiteSession.CredentialUpdate`。宿主同步流程只在完整快照成功后加密保存这组
-旋转后的凭据；密码模式不会持久化登录响应中的令牌，不把明文密码写入日志或响应。
+NewAPI 和 Sub2API 都通过 `PlatformSiteSession.CredentialUpdate` 表示认证期间产生的
+凭据更新。宿主同步流程在认证成功后、余额/用量/模型/子密钥快照开始前立即加密保存
+更新，因此刷新令牌轮换后即使快照同步失败，下次仍会使用最新令牌，不会反复使用旧令牌
+或要求用户重新采集。凭据写回失败会使本次同步明确失败。密码、Cookie、Access Token、
+Refresh Token 和 Admin Key 不写入日志、同步状态或接口响应。
 
 Sub2API 普通用户接口如果只能返回掩码密钥，不会伪造真实密钥。无法取得真实密钥的新记录会自动禁用；已有密钥保留旧密文并继续按同步状态过滤。
 
@@ -588,3 +600,4 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 补充架构索引与元信息 | 已有平台站点详细设计没有统一事实基线和架构入口 | 增加事实基线、代码来源、架构分工和变更记录；保留同步、倍率、权重和兼容性细节 | NewAPI、Sub2API、平台账号、上游密钥和路由 | `model/upstream_channel.go`、`model/routing_key.go`、`service/upstream_site.go` 静态核对 |
 | 2026-09-25 | 缺陷修复 | Sub2API `2xx` 非 JSON 登录响应只显示笼统格式错误；平台子密钥 Routing Key 关系缺少运行时一致性说明 | 记录 HTML/纯文本/非法 JSON 的安全诊断字段和可操作排障方向；补充平台子密钥 Routing Key 自愈规则 | Sub2API 同步、管理员排障、平台子密钥路由和渠道测试 | `service/upstream_site.go`、`model/routing_key.go`、服务/模型回归测试 |
+| 2026-09-25 | 缺陷修复 | `password` 模式每次同步重新登录，登录态未稳定保留；令牌更新依赖完整快照成功 | 同时保留账号密码和上次登录凭据，按缓存访问令牌、刷新令牌、账号密码顺序恢复；认证更新在快照前立即持久化 | 平台站点认证、同步重试、浏览器采集触发条件和上游登录风控 | `controller/upstream_channel.go`、`service/upstream_site_adapters.go`、`service/upstream_site.go`；服务/控制器回归测试 |

@@ -360,6 +360,13 @@ GET /api/channel/search?model=<model>&sort_by=model_ratio&sort_order=asc
 采集不到任何可用凭据时失败，不允许手动补填或静默改变认证类型。前端表单只提交
 `capture_id`，凭据最终仍整体加密保存。同步失败继续保留最近一次成功快照。
 
+平台站点账号同步使用双凭据模型：`password` 模式保留账号密码作为最终恢复凭据，
+同时保留 `AccessToken`、`RefreshToken`、`TokenExpiresAt` 和 `UserID` 作为日常登录态。
+同步优先验证缓存访问令牌，失效后尝试刷新令牌，两个登录态都失效时才使用账号密码；
+`access_token` 模式刷新失败不会读取账号密码。认证期间产生的令牌更新在快照同步前
+立即加密保存，快照失败不会丢失令牌轮换结果。该凭据生命周期只决定平台站点同步能否
+建立会话，不改变 `key_id`、`upstream_key_id`、Routing Key 或子密钥候选的语义。
+
 标签模式以标签内最小倍率作为标签排序值，按标签分页并返回该页标签下的全部渠道。没有有效倍率的标签排在最后。
 
 前端最低倍率列、渠道卡片和标签聚合优先使用后端计算的 `model_ratio`。指定模型不存在时显示 `-`，不把渠道的其他模型倍率误显示为指定模型倍率。
@@ -443,3 +450,4 @@ GET /api/channel/search?model=<model>&sort_by=model_ratio&sort_order=asc
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 补充架构索引与元信息 | 已有密钥调度详细规则没有统一事实基线和架构入口 | 增加事实基线、代码来源、架构分工和变更记录；保留统一 `key_id`、候选和日志细节 | Routing Key、平台站点、模型获取、测试和管理员日志 | `model/upstream_routing.go`、`model/routing_key.go`、`middleware/distributor.go` 静态核对 |
 | 2026-09-25 | 缺陷修复 | 平台子密钥可能引用其他渠道或错误来源的 Routing Key；显式旧 `key_id` 失败时返回裸 `record not found` | 统一校验 `channel_id`、`source`、`source_ref_id` 并在启动/读取/路由时自愈；可恢复的旧 `key_id` 先修复再测试，不可恢复时返回明确失效提示 | 平台站点路由、密钥列表、模型获取、自动测试和指定密钥测试 | `model/routing_key.go`、`model/main.go`、`controller/channel-test.go`、模型回归测试 |
+| 2026-09-25 | 缺陷修复 | 平台站点同步每次优先账号密码登录，令牌轮换结果可能在快照失败后丢失 | 账号密码与登录态并存并按缓存优先恢复；认证更新在快照前保存，保持 `key_id` 与 `upstream_key_id` 语义不变 | 平台站点同步、子密钥快照、路由候选和管理员测试 | `service/upstream_site_adapters.go`、`service/upstream_site.go`、`controller/upstream_channel.go`；服务/控制器测试 |
