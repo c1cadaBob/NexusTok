@@ -88,6 +88,27 @@ func (adapter *NewAPIAdapter) Authenticate(ctx context.Context, baseURL string, 
 		payload, requestErr := loginNewAPIWithPassword(ctx, session, credential)
 		if requestErr != nil {
 			if platformSiteInteractiveVerificationRequired(requestErr) {
+				if isPlatformSiteOTPRequired(requestErr) {
+					return session, newPlatformSiteVerificationRequired(
+						model.PlatformNewAPI,
+						session,
+						PlatformSitePendingContext{
+							Kind:    "newapi_cookie",
+							Cookies: platformSiteSessionCookies(session),
+						},
+						requestErr,
+					)
+				}
+				if browserErr := authenticateNewAPIWithBrowser(ctx, session, credential); browserErr != nil {
+					return session, browserErr
+				}
+				payload = nil
+			} else {
+				return session, wrapPlatformSiteStage("NewAPI 登录", requestErr)
+			}
+		}
+		if payload != nil && loginRequiresInteractiveVerification(payload) {
+			if isPlatformSiteOTPRequiredPayload(payload) {
 				return session, newPlatformSiteVerificationRequired(
 					model.PlatformNewAPI,
 					session,
@@ -95,36 +116,30 @@ func (adapter *NewAPIAdapter) Authenticate(ctx context.Context, baseURL string, 
 						Kind:    "newapi_cookie",
 						Cookies: platformSiteSessionCookies(session),
 					},
-					requestErr,
+					nil,
 				)
 			}
-			return session, wrapPlatformSiteStage("NewAPI 登录", requestErr)
+			if browserErr := authenticateNewAPIWithBrowser(ctx, session, credential); browserErr != nil {
+				return session, browserErr
+			}
+			payload = nil
 		}
-		if loginRequiresInteractiveVerification(payload) {
-			return session, newPlatformSiteVerificationRequired(
-				model.PlatformNewAPI,
-				session,
-				PlatformSitePendingContext{
-					Kind:    "newapi_cookie",
-					Cookies: platformSiteSessionCookies(session),
-				},
-				nil,
-			)
+		if payload != nil {
+			credential.AccessToken = findToken(payload)
+			credential.RefreshToken = findRefreshToken(payload)
+			credential.TokenExpiresAt = findTokenExpiresAt(payload)
+			if token := strings.TrimSpace(credential.AccessToken); token != "" {
+				session.Headers.Set("Authorization", bearerToken(token))
+			}
+			if userID := findUserID(payload); userID != "" {
+				credential.UserID = userID
+				setNewAPICompatUserHeaders(session.Headers, userID)
+			}
+			credential.Cookie = platformSiteSessionCookie(session)
+			credential.AuthType = model.UpstreamAuthPassword
+			updatedCredential := credential
+			session.CredentialUpdate = &updatedCredential
 		}
-		credential.AccessToken = findToken(payload)
-		credential.RefreshToken = findRefreshToken(payload)
-		credential.TokenExpiresAt = findTokenExpiresAt(payload)
-		if token := strings.TrimSpace(credential.AccessToken); token != "" {
-			session.Headers.Set("Authorization", bearerToken(token))
-		}
-		if userID := findUserID(payload); userID != "" {
-			credential.UserID = userID
-			setNewAPICompatUserHeaders(session.Headers, userID)
-		}
-		credential.Cookie = platformSiteSessionCookie(session)
-		credential.AuthType = model.UpstreamAuthPassword
-		updatedCredential := credential
-		session.CredentialUpdate = &updatedCredential
 	case model.UpstreamAuthAccessToken:
 		authenticated, authErr := tryCachedPlatformSiteCredential(
 			ctx,
@@ -499,30 +514,44 @@ func (adapter *Sub2APIAdapter) Authenticate(ctx context.Context, baseURL string,
 		payload, requestErr := loginSub2APIWithPassword(ctx, session, credential)
 		if requestErr != nil {
 			if platformSiteInteractiveVerificationRequired(requestErr) {
+				if isPlatformSiteOTPRequired(requestErr) {
+					return session, newPlatformSiteVerificationRequired(
+						model.PlatformSub2API,
+						session,
+						PlatformSitePendingContext{
+							Kind:      "sub2api_temp_token",
+							TempToken: temporaryTokenFromError(requestErr),
+						},
+						requestErr,
+					)
+				}
+				if browserErr := authenticateSub2APIWithBrowser(ctx, session, credential); browserErr != nil {
+					return session, errors.Join(browserErr, requestErr)
+				}
+				payload = nil
+			} else {
+				return session, wrapPlatformSiteStage("Sub2API 登录", requestErr)
+			}
+		}
+		if payload != nil && loginRequiresInteractiveVerification(payload) {
+			if isPlatformSiteOTPRequiredPayload(payload) {
 				return session, newPlatformSiteVerificationRequired(
 					model.PlatformSub2API,
 					session,
 					PlatformSitePendingContext{
 						Kind:      "sub2api_temp_token",
-						TempToken: temporaryTokenFromError(requestErr),
+						TempToken: findTemporaryToken(payload),
 					},
-					requestErr,
+					nil,
 				)
 			}
-			return session, wrapPlatformSiteStage("Sub2API 登录", requestErr)
+			if browserErr := authenticateSub2APIWithBrowser(ctx, session, credential); browserErr != nil {
+				return session, browserErr
+			}
+			payload = nil
 		}
-		if loginRequiresInteractiveVerification(payload) {
-			return session, newPlatformSiteVerificationRequired(
-				model.PlatformSub2API,
-				session,
-				PlatformSitePendingContext{
-					Kind:      "sub2api_temp_token",
-					TempToken: findTemporaryToken(payload),
-				},
-				nil,
-			)
-		}
-		if token := findToken(payload); token != "" {
+		if payload != nil && findToken(payload) != "" {
+			token := findToken(payload)
 			session.Headers.Set("Authorization", bearerToken(token))
 			credential.AccessToken = token
 			credential.RefreshToken = findRefreshToken(payload)
@@ -534,7 +563,7 @@ func (adapter *Sub2APIAdapter) Authenticate(ctx context.Context, baseURL string,
 			credential.AuthType = model.UpstreamAuthPassword
 			updatedCredential := credential
 			session.CredentialUpdate = &updatedCredential
-		} else {
+		} else if payload != nil {
 			return session, wrapPlatformSiteStage("Sub2API 登录未返回访问令牌", ErrSub2APILoginToken)
 		}
 	case model.UpstreamAuthAccessToken:
@@ -956,6 +985,148 @@ func loginSub2APIWithPassword(ctx context.Context, session *PlatformSiteSession,
 	return nil, lastErr
 }
 
+func authenticateNewAPIWithBrowser(
+	ctx context.Context,
+	session *PlatformSiteSession,
+	credential model.PlatformSiteCredential,
+) error {
+	result, err := authenticatePlatformSiteInBrowser(
+		ctx,
+		model.PlatformNewAPI,
+		session.BaseURL,
+		credential.Username,
+		credential.Password,
+	)
+	if err != nil {
+		return newPlatformSiteVerificationRequired(
+			model.PlatformNewAPI,
+			session,
+			PlatformSitePendingContext{},
+			err,
+			PlatformSiteVerificationManualCaptcha,
+		)
+	}
+	if result.VerificationType == PlatformSiteVerificationOTPRequired {
+		pending := result.Pending
+		if pending.Kind == "" {
+			pending = PlatformSitePendingContext{
+				Kind:    "newapi_cookie",
+				Cookies: platformSiteSessionCookies(session),
+			}
+		}
+		if len(pending.Cookies) == 0 && result.Cookie != "" {
+			pending.Cookies = platformSiteCookiesFromHeader(result.Cookie)
+		}
+		return newPlatformSiteVerificationRequired(
+			model.PlatformNewAPI,
+			session,
+			pending,
+			ErrPlatformSiteVerification,
+			PlatformSiteVerificationOTPRequired,
+		)
+	}
+	if result.VerificationType == PlatformSiteVerificationInvalidCredential {
+		return errors.Join(ErrPlatformSiteAuth, errors.New("账号密码无效"))
+	}
+	if result.VerificationType == PlatformSiteVerificationManualCaptcha ||
+		result.BrowserAuthStatus != PlatformSiteBrowserAuthSuccess {
+		return newPlatformSiteVerificationRequired(
+			model.PlatformNewAPI,
+			session,
+			PlatformSitePendingContext{},
+			ErrPlatformSiteVerification,
+			PlatformSiteVerificationManualCaptcha,
+		)
+	}
+	mergePlatformSiteBrowserCredential(session, &credential, result)
+	return nil
+}
+
+func authenticateSub2APIWithBrowser(
+	ctx context.Context,
+	session *PlatformSiteSession,
+	credential model.PlatformSiteCredential,
+) error {
+	result, err := authenticatePlatformSiteInBrowser(
+		ctx,
+		model.PlatformSub2API,
+		session.BaseURL,
+		credential.Username,
+		credential.Password,
+	)
+	if err != nil {
+		return newPlatformSiteVerificationRequired(
+			model.PlatformSub2API,
+			session,
+			PlatformSitePendingContext{},
+			err,
+			PlatformSiteVerificationManualCaptcha,
+		)
+	}
+	if result.VerificationType == PlatformSiteVerificationOTPRequired {
+		pending := result.Pending
+		if pending.Kind == "" {
+			pending = PlatformSitePendingContext{
+				Kind:      "sub2api_temp_token",
+				TempToken: result.TempToken,
+			}
+		}
+		return newPlatformSiteVerificationRequired(
+			model.PlatformSub2API,
+			session,
+			pending,
+			ErrPlatformSiteVerification,
+			PlatformSiteVerificationOTPRequired,
+		)
+	}
+	if result.VerificationType == PlatformSiteVerificationInvalidCredential {
+		return errors.Join(ErrPlatformSiteAuth, errors.New("账号密码无效"))
+	}
+	if result.VerificationType == PlatformSiteVerificationManualCaptcha ||
+		result.BrowserAuthStatus != PlatformSiteBrowserAuthSuccess {
+		return newPlatformSiteVerificationRequired(
+			model.PlatformSub2API,
+			session,
+			PlatformSitePendingContext{},
+			ErrPlatformSiteVerification,
+			PlatformSiteVerificationManualCaptcha,
+		)
+	}
+	mergePlatformSiteBrowserCredential(session, &credential, result)
+	return nil
+}
+
+func mergePlatformSiteBrowserCredential(
+	session *PlatformSiteSession,
+	credential *model.PlatformSiteCredential,
+	result *PlatformSiteBrowserAuthResult,
+) {
+	if session == nil || credential == nil || result == nil {
+		return
+	}
+	if strings.TrimSpace(result.AccessToken) != "" {
+		credential.AccessToken = strings.TrimSpace(result.AccessToken)
+		session.Headers.Set("Authorization", bearerToken(credential.AccessToken))
+	}
+	if strings.TrimSpace(result.RefreshToken) != "" {
+		credential.RefreshToken = strings.TrimSpace(result.RefreshToken)
+	}
+	if result.TokenExpiresAt > 0 {
+		credential.TokenExpiresAt = result.TokenExpiresAt
+	}
+	if strings.TrimSpace(result.UserID) != "" {
+		credential.UserID = strings.TrimSpace(result.UserID)
+		setNewAPICompatUserHeaders(session.Headers, credential.UserID)
+	}
+	if strings.TrimSpace(result.Cookie) != "" {
+		credential.Cookie = strings.TrimSpace(result.Cookie)
+		session.Headers.Set("Cookie", credential.Cookie)
+	}
+	credential.AuthType = model.UpstreamAuthPassword
+	updatedCredential := *credential
+	session.CredentialUpdate = &updatedCredential
+}
+
 func classifySub2APILoginError(err error) error {
 	if err == nil {
 		return nil
@@ -1192,20 +1363,8 @@ func platformSiteInteractiveVerificationRequired(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, ErrSub2APILoginInteractive) ||
-		platformSiteErrorCategoryOf(err) == platformSiteErrorCategoryInteractive {
-		return true
-	}
-	diagnostics, ok := platformSiteResponseDiagnosticsOf(err)
-	if !ok || diagnostics.responseType != "html" {
-		return false
-	}
-	if diagnostics.errorCategory == platformSiteErrorCategoryRouteMissing ||
-		diagnostics.statusCode == http.StatusNotFound ||
-		diagnostics.statusCode == http.StatusMethodNotAllowed {
-		return false
-	}
-	return true
+	return errors.Is(err, ErrSub2APILoginInteractive) ||
+		platformSiteErrorCategoryOf(err) == platformSiteErrorCategoryInteractive
 }
 
 func temporaryTokenFromError(err error) string {
@@ -1228,6 +1387,7 @@ func newPlatformSiteVerificationRequired(
 	session *PlatformSiteSession,
 	pending PlatformSitePendingContext,
 	cause error,
+	verificationTypes ...string,
 ) error {
 	if session != nil && pending.Kind == "newapi_cookie" && len(pending.Cookies) == 0 {
 		pending.Cookies = platformSiteSessionCookies(session)
@@ -1239,6 +1399,10 @@ func newPlatformSiteVerificationRequired(
 	if cause == nil {
 		cause = ErrPlatformSiteAuth
 	}
+	verificationType := PlatformSiteVerificationManualCaptcha
+	if len(verificationTypes) > 0 && strings.TrimSpace(verificationTypes[0]) != "" {
+		verificationType = strings.TrimSpace(verificationTypes[0])
+	}
 	if platform == model.PlatformSub2API {
 		cause = errors.Join(
 			cause,
@@ -1247,11 +1411,62 @@ func newPlatformSiteVerificationRequired(
 		)
 	}
 	return &PlatformSiteVerificationRequired{
-		Platform: platform,
-		BaseURL:  baseURL,
-		Pending:  pending,
-		Cause:    cause,
+		Platform:         platform,
+		BaseURL:          baseURL,
+		Pending:          pending,
+		Cause:            cause,
+		VerificationType: verificationType,
 	}
+}
+
+func isPlatformSiteOTPRequired(err error) bool {
+	if err == nil {
+		return false
+	}
+	if verificationCodeRejected(err) {
+		return false
+	}
+	diagnostics, ok := platformSiteResponseDiagnosticsOf(err)
+	if !ok {
+		return false
+	}
+	combined := strings.ToLower(strings.Join([]string{
+		diagnostics.errorCode,
+		diagnostics.errorReason,
+		diagnostics.errorCategory,
+	}, " "))
+	return strings.Contains(combined, "otp") ||
+		strings.Contains(combined, "2fa") ||
+		strings.Contains(combined, "mfa") ||
+		strings.Contains(combined, "two_factor") ||
+		strings.Contains(combined, "verification_code") ||
+		strings.Contains(combined, "temp_token") ||
+		strings.Contains(combined, "flow_token")
+}
+
+func isPlatformSiteOTPRequiredPayload(payload any) bool {
+	if payload == nil {
+		return false
+	}
+	return loginRequiresInteractiveVerification(payload) &&
+		!isGenericPlatformSiteVerificationPayload(payload)
+}
+
+func isGenericPlatformSiteVerificationPayload(payload any) bool {
+	record, ok := payload.(map[string]any)
+	if !ok {
+		return false
+	}
+	combined := strings.ToLower(strings.Join([]string{
+		firstString(record, "code", "error_code", "errorCode", "status"),
+		firstString(record, "reason", "error_reason", "errorReason"),
+		firstString(record, "message", "error"),
+	}, " "))
+	return strings.Contains(combined, "turnstile") ||
+		strings.Contains(combined, "captcha") ||
+		strings.Contains(combined, "cloudflare") ||
+		strings.Contains(combined, "waf") ||
+		strings.Contains(combined, "human")
 }
 
 func verificationCodeRejected(err error) bool {

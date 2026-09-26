@@ -16,18 +16,21 @@ const (
 )
 
 type PlatformSiteSyncStage struct {
-	Status           string `json:"status"`
-	UpdatedAt        int64  `json:"updated_at"`
-	Error            string `json:"error"`
-	HTTPStatus       int    `json:"http_status"`
-	URL              string `json:"url"`
-	ContentType      string `json:"content_type"`
-	Redirected       bool   `json:"redirected"`
-	ResponseCategory string `json:"response_category"`
-	UsedPrevious     bool   `json:"used_previous"`
-	ItemsTotal       int    `json:"items_total"`
-	ItemsSucceeded   int    `json:"items_succeeded"`
-	ItemsFailed      int    `json:"items_failed"`
+	Status            string `json:"status"`
+	UpdatedAt         int64  `json:"updated_at"`
+	Error             string `json:"error"`
+	HTTPStatus        int    `json:"http_status"`
+	URL               string `json:"url"`
+	ContentType       string `json:"content_type"`
+	Redirected        bool   `json:"redirected"`
+	ResponseCategory  string `json:"response_category"`
+	VerificationType  string `json:"verification_type"`
+	BrowserAuthStatus string `json:"browser_auth_status"`
+	DiagnosisCategory string `json:"diagnosis_category"`
+	UsedPrevious      bool   `json:"used_previous"`
+	ItemsTotal        int    `json:"items_total"`
+	ItemsSucceeded    int    `json:"items_succeeded"`
+	ItemsFailed       int    `json:"items_failed"`
 }
 
 type PlatformSiteSyncStages struct {

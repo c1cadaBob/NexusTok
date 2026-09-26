@@ -62,7 +62,7 @@ func main() {
 		return
 	}
 
-	common.SysLog("New API " + common.Version + " started")
+	common.SysLog(common.SystemName + " " + common.Version + " started")
 	if os.Getenv("GIN_MODE") != "debug" {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -377,4 +377,5 @@ func InitResources() error {
 
 	return nil
 }
+
 // 热更新测试注释

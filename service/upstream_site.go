@@ -55,6 +55,23 @@ const (
 	platformSiteErrorCategoryAuthentication = "authentication"
 	platformSiteErrorCategoryInteractive    = "interactive_verification"
 	platformSiteErrorCategoryRouteMissing   = "route_missing"
+	platformSiteErrorCategoryBrowser        = "browser_context_required"
+	platformSiteErrorCategoryWAF            = "waf_blocked"
+)
+
+const (
+	PlatformSiteVerificationBrowserAuthRunning = "browser_auth_running"
+	PlatformSiteVerificationOTPRequired        = "otp_required"
+	PlatformSiteVerificationManualCaptcha      = "manual_captcha_required"
+	PlatformSiteVerificationWAFBlocked         = "waf_blocked"
+	PlatformSiteVerificationInvalidCredential  = "invalid_credential"
+	PlatformSiteVerificationNone               = "none"
+	PlatformSiteBrowserAuthPending             = "pending"
+	PlatformSiteBrowserAuthRunning             = "running"
+	PlatformSiteBrowserAuthSuccess             = "success"
+	PlatformSiteBrowserAuthWaitingUser         = "waiting_user"
+	PlatformSiteBrowserAuthFailed              = "failed"
+	PlatformSiteBrowserAuthExpired             = "expired"
 )
 
 type PlatformSiteSession struct {
@@ -87,10 +104,11 @@ type PlatformSitePendingCookie struct {
 }
 
 type PlatformSiteVerificationRequired struct {
-	Platform string
-	BaseURL  string
-	Pending  PlatformSitePendingContext
-	Cause    error
+	Platform         string
+	BaseURL          string
+	Pending          PlatformSitePendingContext
+	Cause            error
+	VerificationType string
 }
 
 func (err *PlatformSiteVerificationRequired) Error() string {
