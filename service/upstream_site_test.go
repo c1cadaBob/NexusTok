@@ -1691,6 +1691,31 @@ func TestSub2APILoginClassifiesHTMLTurnstileAsInteractiveVerification(t *testing
 	assert.NotContains(t, message, "Cookie")
 }
 
+func TestPlatformSiteRequestClassifiesHTMLForbiddenAsWAF(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+		writer.WriteHeader(http.StatusForbidden)
+		_, _ = writer.Write([]byte("<html><body>request blocked</body></html>"))
+	}))
+	defer server.Close()
+
+	session, err := newPlatformSiteSession(server.URL, nil)
+	require.NoError(t, err)
+
+	_, err = platformSiteRequest(
+		context.Background(),
+		session,
+		http.MethodGet,
+		"/api/user/self",
+		nil,
+		nil,
+	)
+	require.Error(t, err)
+	assert.Equal(t, platformSiteErrorCategoryWAF, platformSiteErrorCategoryOf(err))
+	assert.ErrorIs(t, err, ErrPlatformSiteSecurity)
+	assert.NotContains(t, SafePlatformSiteError(err), "账号或密码错误")
+}
+
 func TestSub2APILoginRejectsInvalidEmailBeforeLoginRequest(t *testing.T) {
 	loginRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

@@ -685,13 +685,13 @@ func classifyPlatformSiteResponseCategory(statusCode int, responseType string, d
 		strings.Contains(combined, "access denied"),
 		strings.Contains(combined, "waf"):
 		return platformSiteErrorCategoryWAF
+	case statusCode == http.StatusNotFound || statusCode == http.StatusMethodNotAllowed:
+		return platformSiteErrorCategoryRouteMissing
+	case responseType == "html" && statusCode >= http.StatusBadRequest:
+		return platformSiteErrorCategoryWAF
 	case statusCode == http.StatusUnauthorized,
 		statusCode == http.StatusForbidden:
 		return platformSiteErrorCategoryAuthentication
-	case statusCode == http.StatusNotFound || statusCode == http.StatusMethodNotAllowed:
-		return platformSiteErrorCategoryRouteMissing
-	case responseType == "html" && statusCode == http.StatusForbidden:
-		return platformSiteErrorCategoryWAF
 	default:
 		return ""
 	}
