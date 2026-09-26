@@ -46,6 +46,27 @@ func registerChannelRoutes(apiRouter *gin.RouterGroup) {
 		middleware.SecureVerificationRequired(),
 		controller.GetChannelKey,
 	)
+	channelRoute.POST(
+		"/platform-site/auth-flow/start",
+		middleware.RequirePermission(authz.ChannelSensitiveWrite),
+		middleware.CriticalRateLimitScope("platform-site-auth-flow"),
+		middleware.DisableCache(),
+		controller.StartPlatformSiteAuthFlow,
+	)
+	channelRoute.POST(
+		"/platform-site/auth-flow/:flowID/verify",
+		middleware.RequirePermission(authz.ChannelSensitiveWrite),
+		middleware.CriticalRateLimitScope("platform-site-auth-flow"),
+		middleware.DisableCache(),
+		controller.VerifyPlatformSiteAuthFlow,
+	)
+	channelRoute.DELETE(
+		"/platform-site/auth-flow/:flowID",
+		middleware.RequirePermission(authz.ChannelSensitiveWrite),
+		middleware.CriticalRateLimitScope("platform-site-auth-flow"),
+		middleware.DisableCache(),
+		controller.CancelPlatformSiteAuthFlow,
+	)
 
 	for _, route := range channelPermissionRoutes {
 		channelRoute.Handle(route.method, route.path,

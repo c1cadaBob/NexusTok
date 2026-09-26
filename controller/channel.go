@@ -815,7 +815,18 @@ func AddChannel(c *gin.Context) {
 		return
 	}
 	var platformSiteCaptureID string
+	var platformSiteAuthFlowID string
 	if addChannelRequest.PlatformSite != nil {
+		var authFlowErr error
+		platformSiteAuthFlowID, authFlowErr = applyPlatformSiteAuthFlow(
+			c.GetInt("id"),
+			0,
+			addChannelRequest.PlatformSite,
+		)
+		if authFlowErr != nil {
+			common.ApiErrorMsg(c, platformSiteAuthFlowErrorMessage(authFlowErr))
+			return
+		}
 		var captureErr error
 		platformSiteCaptureID, captureErr = applyPlatformSiteCapture(
 			c.GetInt("id"),
@@ -974,6 +985,11 @@ func AddChannel(c *gin.Context) {
 		if platformSiteCaptureID != "" {
 			if consumeErr := service.ConsumePlatformSiteCapture(c.GetInt("id"), platformSiteCaptureID, channel.Id); consumeErr != nil {
 				common.SysError("平台站点采集会话消费失败: " + consumeErr.Error())
+			}
+		}
+		if platformSiteAuthFlowID != "" {
+			if consumeErr := service.ConsumePlatformSiteAuthFlow(c.GetInt("id"), platformSiteAuthFlowID, channel.Id); consumeErr != nil {
+				common.SysError("平台站点认证流程消费失败: " + consumeErr.Error())
 			}
 		}
 		_, _, _ = service.EnqueueUpstreamSiteSync(channel.Id)
@@ -1281,7 +1297,18 @@ func UpdateChannel(c *gin.Context) {
 		channel.Type = originChannel.Type
 	}
 	var platformSiteCaptureID string
+	var platformSiteAuthFlowID string
 	if channel.PlatformSite != nil {
+		var authFlowErr error
+		platformSiteAuthFlowID, authFlowErr = applyPlatformSiteAuthFlow(
+			c.GetInt("id"),
+			channel.Id,
+			channel.PlatformSite,
+		)
+		if authFlowErr != nil {
+			common.ApiErrorMsg(c, platformSiteAuthFlowErrorMessage(authFlowErr))
+			return
+		}
 		var captureErr error
 		platformSiteCaptureID, captureErr = applyPlatformSiteCapture(
 			c.GetInt("id"),
@@ -1493,6 +1520,11 @@ func UpdateChannel(c *gin.Context) {
 		if platformSiteCaptureID != "" {
 			if consumeErr := service.ConsumePlatformSiteCapture(c.GetInt("id"), platformSiteCaptureID, channel.Id); consumeErr != nil {
 				common.SysError("平台站点采集会话消费失败: " + consumeErr.Error())
+			}
+		}
+		if platformSiteAuthFlowID != "" {
+			if consumeErr := service.ConsumePlatformSiteAuthFlow(c.GetInt("id"), platformSiteAuthFlowID, channel.Id); consumeErr != nil {
+				common.SysError("平台站点认证流程消费失败: " + consumeErr.Error())
 			}
 		}
 		_, _, _ = service.EnqueueUpstreamSiteSync(channel.Id)

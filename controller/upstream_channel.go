@@ -26,6 +26,7 @@ type PlatformSiteInput struct {
 	BaseURL         string   `json:"base_url"`
 	RelayBaseURL    string   `json:"relay_base_url,omitempty"`
 	AuthType        string   `json:"auth_type"`
+	AuthFlowID      string   `json:"auth_flow_id,omitempty"`
 	Username        string   `json:"username"`
 	Password        string   `json:"password"`
 	UserID          string   `json:"user_id,omitempty"`
@@ -405,6 +406,59 @@ func applyPlatformSiteCapture(userID, channelID int, input *PlatformSiteInput) (
 		input.RelayBaseURL = resolution.RelayBaseURL
 	}
 	return captureID, nil
+}
+
+func applyPlatformSiteAuthFlow(userID, channelID int, input *PlatformSiteInput) (string, error) {
+	if input == nil {
+		return "", nil
+	}
+	flowID := strings.TrimSpace(input.AuthFlowID)
+	if flowID == "" {
+		return "", nil
+	}
+	if strings.TrimSpace(input.CaptureID) != "" || hasCredentialInput(input) {
+		return "", errors.New("认证流程不能与其他平台凭据或采集会话同时提交")
+	}
+	resolution, err := service.ResolvePlatformSiteAuthFlow(
+		userID,
+		flowID,
+		channelID,
+		input.Platform,
+		input.BaseURL,
+	)
+	if err != nil {
+		return "", err
+	}
+	input.Platform = resolution.Platform
+	input.BaseURL = resolution.BaseURL
+	input.AuthType = resolution.Credential.AuthType
+	input.Username = resolution.Credential.Username
+	input.Password = resolution.Credential.Password
+	input.UserID = resolution.Credential.UserID
+	input.AccessToken = resolution.Credential.AccessToken
+	input.RefreshToken = resolution.Credential.RefreshToken
+	input.AdminKey = resolution.Credential.AdminKey
+	input.Cookie = resolution.Credential.Cookie
+	return flowID, nil
+}
+
+func platformSiteAuthFlowErrorMessage(err error) string {
+	switch {
+	case errors.Is(err, service.ErrPlatformSiteAuthFlowExpired):
+		return "认证流程已过期，请重新登录"
+	case errors.Is(err, service.ErrPlatformSiteAuthFlowConsumed):
+		return "认证流程已使用，请重新登录"
+	case errors.Is(err, service.ErrPlatformSiteAuthFlowRateLimited):
+		return "认证流程尝试次数过多，请重新登录"
+	case errors.Is(err, service.ErrPlatformSiteAuthFlowCodeInvalid):
+		return "二次验证码错误"
+	case errors.Is(err, service.ErrPlatformSiteAuth):
+		return "上游平台认证失败"
+	case errors.Is(err, service.ErrPlatformSiteAuthFlowInvalid):
+		return "认证流程无效"
+	default:
+		return "平台站点认证流程处理失败"
+	}
 }
 
 func redactBaseURL(raw string) string {
@@ -989,6 +1043,49 @@ func CompletePlatformSiteCapture(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, result)
+}
+
+func StartPlatformSiteAuthFlow(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 32<<10)
+	var request service.PlatformSiteAuthFlowStartRequest
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		common.ApiErrorMsg(c, "无效的认证请求")
+		return
+	}
+	result, err := service.StartPlatformSiteAuthFlow(c.Request.Context(), c.GetInt("id"), request)
+	if err != nil {
+		common.ApiErrorMsg(c, platformSiteAuthFlowErrorMessage(err))
+		return
+	}
+	common.ApiSuccess(c, result)
+}
+
+func VerifyPlatformSiteAuthFlow(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8<<10)
+	var request service.PlatformSiteAuthFlowVerifyRequest
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		common.ApiErrorMsg(c, "无效的二次验证请求")
+		return
+	}
+	result, err := service.VerifyPlatformSiteAuthFlow(
+		c.Request.Context(),
+		c.GetInt("id"),
+		c.Param("flowID"),
+		request,
+	)
+	if err != nil {
+		common.ApiErrorMsg(c, platformSiteAuthFlowErrorMessage(err))
+		return
+	}
+	common.ApiSuccess(c, result)
+}
+
+func CancelPlatformSiteAuthFlow(c *gin.Context) {
+	if err := service.DeletePlatformSiteAuthFlow(c.GetInt("id"), c.Param("flowID")); err != nil {
+		common.ApiErrorMsg(c, platformSiteAuthFlowErrorMessage(err))
+		return
+	}
+	common.ApiSuccess(c, nil)
 }
 
 func externalRequestBaseURL(c *gin.Context) string {

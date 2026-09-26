@@ -25,6 +25,15 @@ const (
 	UpstreamAuthAdminKey    = "admin_key"
 	UpstreamAuthCookie      = "cookie"
 
+	PlatformSiteAuthStatusAuthenticated              = "authenticated"
+	PlatformSiteAuthStatusTwoFactorRequired          = "two_factor_required"
+	PlatformSiteAuthStatusSecureVerificationRequired = "secure_verification_required"
+	PlatformSiteAuthStatusCredentialsInvalid         = "credentials_invalid"
+	PlatformSiteAuthStatusExpired                    = "expired"
+	PlatformSiteAuthStatusReauthRequired             = "reauth_required"
+	PlatformSiteAuthStatusSessionLimit               = "session_limit"
+	PlatformSiteAuthStatusRateLimited                = "rate_limited"
+
 	UpstreamSiteSyncIdle    = "idle"
 	UpstreamSiteSyncRunning = "running"
 	UpstreamSiteSyncSuccess = "success"
@@ -56,15 +65,22 @@ const (
 )
 
 type PlatformSiteCredential struct {
-	AuthType       string `json:"auth_type,omitempty"`
-	Username       string `json:"username,omitempty"`
-	Password       string `json:"password,omitempty"`
-	UserID         string `json:"user_id,omitempty"`
-	AccessToken    string `json:"access_token,omitempty"`
-	RefreshToken   string `json:"refresh_token,omitempty"`
-	TokenExpiresAt int64  `json:"token_expires_at,omitempty"`
-	AdminKey       string `json:"admin_key,omitempty"`
-	Cookie         string `json:"cookie,omitempty"`
+	AuthType         string `json:"auth_type,omitempty"`
+	Username         string `json:"username,omitempty"`
+	Password         string `json:"password,omitempty"`
+	UserID           string `json:"user_id,omitempty"`
+	AccessToken      string `json:"access_token,omitempty"`
+	RefreshToken     string `json:"refresh_token,omitempty"`
+	TokenExpiresAt   int64  `json:"token_expires_at,omitempty"`
+	TokenType        string `json:"token_type,omitempty"`
+	SessionID        string `json:"session_id,omitempty"`
+	SessionCurrent   bool   `json:"session_current,omitempty"`
+	LastAuthAt       int64  `json:"last_auth_at,omitempty"`
+	RefreshStatus    string `json:"refresh_status,omitempty"`
+	ReauthRequired   bool   `json:"reauth_required,omitempty"`
+	RefreshUncertain bool   `json:"refresh_uncertain,omitempty"`
+	AdminKey         string `json:"admin_key,omitempty"`
+	Cookie           string `json:"cookie,omitempty"`
 }
 
 type PlatformSiteAccount struct {
@@ -88,6 +104,8 @@ type PlatformSiteAccount struct {
 	SyncStatus            string  `json:"sync_status" gorm:"type:varchar(32);index"`
 	LastSyncError         string  `json:"last_sync_error" gorm:"type:text"`
 	ConsecutiveFailures   int     `json:"consecutive_failures"`
+	AuthStatus            string  `json:"auth_status" gorm:"type:varchar(48);index"`
+	AuthStatusReason      string  `json:"auth_status_reason" gorm:"type:text"`
 	DisabledAt            int64   `json:"disabled_at" gorm:"bigint"`
 	DisabledReason        string  `json:"disabled_reason" gorm:"type:varchar(255)"`
 }
@@ -136,6 +154,13 @@ func (credential PlatformSiteCredential) Fingerprint() string {
 		credential.AccessToken,
 		credential.RefreshToken,
 		strconv.FormatInt(credential.TokenExpiresAt, 10),
+		credential.TokenType,
+		credential.SessionID,
+		strconv.FormatBool(credential.SessionCurrent),
+		strconv.FormatInt(credential.LastAuthAt, 10),
+		credential.RefreshStatus,
+		strconv.FormatBool(credential.ReauthRequired),
+		strconv.FormatBool(credential.RefreshUncertain),
 		credential.AdminKey,
 		credential.Cookie,
 	}, "\x00"))
