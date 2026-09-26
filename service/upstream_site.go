@@ -1239,7 +1239,7 @@ func SafePlatformSiteError(err error) string {
 	case errors.Is(err, ErrSub2APILoginInteractive):
 		return "Sub2API 登录需要交互验证" +
 			platformSiteResponseDiagnosticSuffix(err) +
-			"，请先在上游站点完成验证，或使用浏览器采集 Access Token/Cookie"
+			"，请先在上游站点完成验证，或使用浏览器采集登录态"
 	case errors.Is(err, ErrPlatformSiteSecurity):
 		return "上游平台要求完成安全验证" + platformSiteResponseDiagnosticSuffix(err)
 	case errors.Is(err, ErrPlatformSiteTransport):

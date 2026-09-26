@@ -1686,6 +1686,9 @@ func TestSub2APILoginClassifiesHTMLTurnstileAsInteractiveVerification(t *testing
 	assert.Contains(t, message, "HTTP 400")
 	assert.NotContains(t, message, "Turnstile challenge")
 	assert.NotContains(t, message, "synthetic-password")
+	assert.NotContains(t, message, "Access Token")
+	assert.NotContains(t, message, "Refresh Token")
+	assert.NotContains(t, message, "Cookie")
 }
 
 func TestSub2APILoginRejectsInvalidEmailBeforeLoginRequest(t *testing.T) {
