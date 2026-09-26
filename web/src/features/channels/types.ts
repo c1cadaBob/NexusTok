@@ -438,6 +438,7 @@ export interface PlatformSiteInput {
   base_url: string
   relay_base_url?: string
   auth_type: UpstreamAuthType | 'auto'
+  auth_flow_id?: string
   capture_id?: string
   username?: string
   password?: string
@@ -455,7 +456,10 @@ export interface UpstreamSiteStatus {
   channel_id: number
   platform: string
   base_url: string
+  relay_base_url?: string
   auth_type: UpstreamAuthType
+  auth_status?: PlatformSiteAuthStatus
+  auth_status_reason?: string
   recharge_amount: number
   credited_amount: number
   conversion_ratio: number
@@ -476,6 +480,147 @@ export interface UpstreamSiteStatus {
   availability_reason?: string
 }
 
+export type PlatformSiteAuthStatus =
+  | 'authenticated'
+  | 'two_factor_required'
+  | 'secure_verification_required'
+  | 'credentials_invalid'
+  | 'expired'
+  | 'reauth_required'
+  | 'session_limit'
+  | 'rate_limited'
+
+export interface PlatformSiteAuthFlowStartRequest {
+  platform: 'newapi' | 'sub2api'
+  base_url: string
+  auth_type: 'password'
+  username: string
+  password: string
+  channel_id?: number
+}
+
+export interface PlatformSiteAuthFlowVerifyRequest {
+  code: string
+}
+
+export interface PlatformSiteAuthFlowResponse {
+  success: boolean
+  message?: string
+  data?: {
+    flow_id: string
+    status: PlatformSiteAuthStatus
+    expires_at: number
+    platform: string
+    base_url: string
+    channel_id?: number
+    methods?: string[]
+    attempts?: number
+    code_attempts?: number
+    auth_type?: UpstreamAuthType
+    token_type?: string
+    token_expires_at?: number
+    user_id?: string
+    username?: string
+  }
+}
+
+export interface PlatformSiteResourceIdentity {
+  platform_user_id: string
+  username: string
+  email: string
+  display_name: string
+  role: string
+  current_group: string
+  status: string
+  quota_unit: string
+  balance: number
+  used_quota: number
+  current_value_at: number
+  snapshot_value_at: number
+  source_endpoint: string
+  upstream_updated_at: number
+  last_sync_at: number
+}
+
+export interface PlatformSiteResourceGroup {
+  external_id: string
+  name: string
+  ratio: number
+  available: boolean
+  usable: boolean
+  source_endpoint: string
+  upstream_updated_at: number
+  last_sync_at: number
+}
+
+export interface PlatformSiteResourceEndpointCapability {
+  protocol: string
+  http_method: string
+  path: string
+  supported: boolean
+  source_data?: string
+  last_confirmed_at: number
+}
+
+export interface PlatformSiteResourceEndpoint {
+  management_url: string
+  relay_url: string
+  models_url: string
+  pricing_url: string
+  usage_url: string
+  token_url: string
+  admin_url: string
+  openai_url: string
+  claude_url: string
+  gemini_url: string
+  responses_url: string
+  source: string
+  discovery_method: string
+  enabled: boolean
+  last_confirmed_at: number
+  capabilities: PlatformSiteResourceEndpointCapability[]
+}
+
+export interface PlatformSiteResourceSync {
+  resource_type: string
+  status: string
+  attempted_at: number
+  succeeded_at: number
+  source_endpoint: string
+  record_count: number
+  failure_reason?: string
+  partial: boolean
+  requires_security_verification: boolean
+  using_snapshot: boolean
+}
+
+export interface PlatformSiteResources {
+  channel_id: number
+  platform: string
+  management_base_url: string
+  relay_base_url: string
+  balance: number
+  used_quota: number
+  identity?: PlatformSiteResourceIdentity
+  groups: PlatformSiteResourceGroup[]
+  endpoint?: PlatformSiteResourceEndpoint
+  resource_syncs: PlatformSiteResourceSync[]
+  keys: UpstreamKey[]
+  key_count: number
+  routable_key_count: number
+  sync_status: string
+  last_sync_at: number
+  using_last_snapshot: boolean
+  auth_status?: PlatformSiteAuthStatus
+  auth_status_reason?: string
+}
+
+export interface PlatformSiteResourcesResponse {
+  success: boolean
+  message?: string
+  data?: PlatformSiteResources
+}
+
 export interface UpstreamKey {
   id: number
   key_id: number
@@ -493,6 +638,9 @@ export interface UpstreamKey {
   weight: number
   auto_weight: number
   weight_override?: number | null
+  used_quota?: number
+  remain_quota?: number | null
+  expires_at?: string | null
   status: number
   disabled_reason?: string
   last_sync_at: number

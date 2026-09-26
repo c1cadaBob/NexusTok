@@ -375,17 +375,11 @@ test('提交时仅在手动覆盖后发送平台转换倍率', async () => {
   expect(payload.platform_site?.conversion_ratio).toBe(0.25)
 })
 
-test('自动配置显示脚本采集入口且不显示手动凭据输入框', () => {
+test('高级访问令牌认证显示令牌输入框而不是脚本采集入口', () => {
   render(<PlatformSiteForm authType='access_token' />)
 
-  expect(screen.getByText('Browser login state capture')).toBeInTheDocument()
-  expect(screen.getAllByText('Automatic configuration').length).toBeGreaterThan(
-    0
-  )
-  expect(
-    screen.getByRole('button', { name: 'Capture upstream login state' })
-  ).toBeInTheDocument()
-  expect(screen.queryByLabelText('Access token')).not.toBeInTheDocument()
+  expect(screen.queryByText('Browser login state capture')).not.toBeInTheDocument()
+  expect(screen.getByLabelText('Access token')).toBeInTheDocument()
   expect(screen.queryByLabelText('Admin Key')).not.toBeInTheDocument()
   expect(screen.queryByLabelText('Cookie')).not.toBeInTheDocument()
   expect(screen.queryByLabelText('Username')).not.toBeInTheDocument()

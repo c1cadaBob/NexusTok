@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { ExternalLink, Loader2, RefreshCw, ShieldCheck } from 'lucide-react'
+import {
+  ChevronDown,
+  ExternalLink,
+  KeyRound,
+  Loader2,
+  RefreshCw,
+  ShieldCheck,
+} from 'lucide-react'
 import { useFormContext, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -25,8 +32,11 @@ import {
 import { Switch } from '@/components/ui/switch'
 
 import {
+  cancelPlatformSiteAuthFlow,
   getPlatformSiteCaptureStatus,
+  startPlatformSiteAuthFlow,
   startPlatformSiteCapture,
+  verifyPlatformSiteAuthFlow,
 } from '../../api'
 import { CHANNEL_TYPE_NEW_API, CHANNEL_TYPE_SUB2_API } from '../../constants'
 import type { ChannelFormValues } from '../../lib'
@@ -134,6 +144,18 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
     control: form.control,
     name: 'platform_site_capture_id',
   })
+  const authFlowID = useWatch({
+    control: form.control,
+    name: 'platform_site_auth_flow_id',
+  })
+  const username = useWatch({
+    control: form.control,
+    name: 'platform_site_username',
+  })
+  const password = useWatch({
+    control: form.control,
+    name: 'platform_site_password',
+  })
   const watchedRechargeAmount = useWatch({
     control: form.control,
     name: 'platform_site_recharge_amount',
@@ -163,6 +185,16 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
   const activeCaptureWindowRef = useRef<Window | null>(null)
   const [handoffURL, setHandoffURL] = useState('')
   const [showHandoffFallback, setShowHandoffFallback] = useState(false)
+  const [twoFactorCode, setTwoFactorCode] = useState('')
+  const [authFlowStatus, setAuthFlowStatus] = useState<
+    'two_factor_required' | 'authenticated' | undefined
+  >()
+  const [advancedAuthOpen, setAdvancedAuthOpen] = useState(
+    authType === 'access_token' ||
+      authType === 'admin_key' ||
+      authType === 'cookie'
+  )
+  const authFlowRef = useRef('')
 
   const captureStatusQuery = useQuery({
     queryKey: ['platform-site-capture-status', captureID],
@@ -235,6 +267,76 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
         error instanceof Error
           ? error.message
           : t('Failed to create capture session')
+      )
+    },
+  })
+
+  const passwordAuthMutation = useMutation({
+    mutationFn: () =>
+      startPlatformSiteAuthFlow({
+        platform,
+        base_url: baseURL || '',
+        auth_type: 'password',
+        username: form.getValues('platform_site_username') || '',
+        password: form.getValues('platform_site_password') || '',
+        channel_id: props.channelId,
+      }),
+    onSuccess: (response) => {
+      if (!response.success || !response.data) {
+        toast.error(response.message || t('Platform login failed'))
+        return
+      }
+      const flow = response.data
+      form.setValue('platform_site_auth_flow_id', flow.flow_id, {
+        shouldDirty: true,
+        shouldValidate: true,
+      })
+      authFlowRef.current = flow.flow_id
+      setAuthFlowStatus(flow.status === 'two_factor_required' ? flow.status : 'authenticated')
+      form.setValue('platform_site_username', '')
+      form.setValue('platform_site_password', '')
+      if (flow.status === 'two_factor_required') {
+        setTwoFactorCode('')
+        toast.info(t('Enter the upstream two-factor code to continue'))
+        return
+      }
+      toast.success(t('Platform login verified'))
+    },
+    onError: (error: unknown) => {
+      toast.error(
+        error instanceof Error ? error.message : t('Platform login failed')
+      )
+    },
+  })
+
+  const verifyAuthFlowMutation = useMutation({
+    mutationFn: () =>
+      verifyPlatformSiteAuthFlow(authFlowID || '', {
+        code: twoFactorCode.trim(),
+      }),
+    onSuccess: (response) => {
+      if (!response.success || !response.data) {
+        toast.error(response.message || t('Two-factor verification failed'))
+        return
+      }
+      if (response.data.status !== 'authenticated') {
+        toast.error(response.message || t('Two-factor verification failed'))
+        return
+      }
+      form.setValue('platform_site_auth_flow_id', response.data.flow_id, {
+        shouldDirty: true,
+        shouldValidate: true,
+      })
+      authFlowRef.current = response.data.flow_id
+      setAuthFlowStatus('authenticated')
+      setTwoFactorCode('')
+      toast.success(t('Platform login verified'))
+    },
+    onError: (error: unknown) => {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : t('Two-factor verification failed')
       )
     },
   })
@@ -327,12 +429,42 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
       authType === 'admin_key' ||
       authType === 'cookie'
     ) {
-      form.setValue('platform_site_auth_type', 'auto', {
-        shouldDirty: false,
-        shouldValidate: true,
-      })
+      setAdvancedAuthOpen(true)
     }
-  }, [authType, form])
+  }, [authType])
+
+  useEffect(() => {
+    authFlowRef.current = authFlowID || ''
+  }, [authFlowID])
+
+  useEffect(() => {
+    return () => {
+      const flowID = authFlowRef.current
+      if (flowID) {
+        void cancelPlatformSiteAuthFlow(flowID)
+      }
+    }
+  }, [])
+
+  function clearAuthenticationFields() {
+    const previousFlowID = authFlowRef.current
+    if (previousFlowID) {
+      void cancelPlatformSiteAuthFlow(previousFlowID)
+    }
+    authFlowRef.current = ''
+    setAuthFlowStatus(undefined)
+    form.setValue('platform_site_auth_flow_id', '')
+    form.setValue('platform_site_username', '')
+    form.setValue('platform_site_password', '')
+    form.setValue('platform_site_access_token', '')
+    form.setValue('platform_site_admin_key', '')
+    form.setValue('platform_site_cookie', '')
+    form.setValue('platform_site_capture_id', '')
+    setTwoFactorCode('')
+    setHandoffURL('')
+    setShowHandoffFallback(false)
+    completedCaptureRef.current = ''
+  }
 
   return (
     <fieldset
@@ -404,51 +536,67 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
           control={form.control}
           name='platform_site_auth_type'
           render={({ field }) => (
-            <FormItem>
-              <FormLabel>{t('Authentication method')}</FormLabel>
-              <Select
-                value={field.value}
-                onValueChange={(value) => {
-                  field.onChange(value)
-                  if (value !== 'password') {
-                    form.setValue('platform_site_username', '')
-                    form.setValue('platform_site_password', '')
-                  }
-                  if (value !== 'access_token') {
-                    form.setValue('platform_site_access_token', '')
-                  }
-                  if (value !== 'admin_key') {
-                    form.setValue('platform_site_admin_key', '')
-                  }
-                  if (value !== 'cookie') {
-                    form.setValue('platform_site_cookie', '')
-                  }
-                  form.setValue('platform_site_capture_id', '')
-                  setHandoffURL('')
-                  setShowHandoffFallback(false)
-                  completedCaptureRef.current = ''
-                }}
-                items={[
-                  { value: 'password', label: t('Username and password') },
-                  { value: 'auto', label: t('Automatic configuration') },
-                ]}
+            <div className='space-y-2'>
+              <FormItem>
+                <FormLabel>{t('Authentication method')}</FormLabel>
+                <Select
+                  value={field.value}
+                  onValueChange={(value) => {
+                    field.onChange(value)
+                    clearAuthenticationFields()
+                  }}
+                  items={[
+                    { value: 'password', label: t('Username and password') },
+                    { value: 'auto', label: t('Automatic configuration') },
+                    { value: 'access_token', label: t('Access token') },
+                    { value: 'admin_key', label: t('Admin Key') },
+                    { value: 'cookie', label: t('Cookie') },
+                  ]}
+                >
+                  <FormControl>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    <SelectItem value='password'>
+                      {t('Username and password')}
+                    </SelectItem>
+                    <SelectItem value='auto'>
+                      {t('Automatic configuration')}
+                    </SelectItem>
+                    {advancedAuthOpen && (
+                      <>
+                        <SelectItem value='access_token'>
+                          {t('Access token')}
+                        </SelectItem>
+                        <SelectItem value='admin_key'>
+                          {t('Admin Key')}
+                        </SelectItem>
+                        <SelectItem value='cookie'>{t('Cookie')}</SelectItem>
+                      </>
+                    )}
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+              <Button
+                type='button'
+                variant='ghost'
+                size='sm'
+                className='h-auto px-0 text-xs'
+                onClick={() => setAdvancedAuthOpen((open) => !open)}
+                aria-expanded={advancedAuthOpen}
               >
-                <FormControl>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                </FormControl>
-                <SelectContent>
-                  <SelectItem value='password'>
-                    {t('Username and password')}
-                  </SelectItem>
-                  <SelectItem value='auto'>
-                    {t('Automatic configuration')}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-              <FormMessage />
-            </FormItem>
+                <ChevronDown
+                  className={`size-4 transition-transform ${
+                    advancedAuthOpen ? 'rotate-180' : ''
+                  }`}
+                  aria-hidden='true'
+                />
+                {t('Advanced authentication')}
+              </Button>
+            </div>
           )}
         />
       </div>
@@ -472,42 +620,114 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
         )}
       />
 
-      {authType === 'password' && (
-        <div className='grid gap-4 sm:grid-cols-2'>
-          <FormField
-            control={form.control}
-            name='platform_site_username'
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>{t('Username')}</FormLabel>
-                <FormControl>
-                  <Input autoComplete='username' {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
+      {authType === 'password' && !authFlowID && (
+        <div className='space-y-3'>
+          <div className='grid gap-4 sm:grid-cols-2'>
+            <FormField
+              control={form.control}
+              name='platform_site_username'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Username')}</FormLabel>
+                  <FormControl>
+                    <Input autoComplete='username' {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name='platform_site_password'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Password')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      type='password'
+                      autoComplete='new-password'
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
+          <Button
+            type='button'
+            size='sm'
+            onClick={() => passwordAuthMutation.mutate()}
+            disabled={
+              props.disabled ||
+              passwordAuthMutation.isPending ||
+              !(baseURL || '').trim() ||
+              !username?.trim() ||
+              !password
+            }
+          >
+            {passwordAuthMutation.isPending ? (
+              <Loader2 className='size-4 animate-spin' aria-hidden='true' />
+            ) : (
+              <KeyRound className='size-4' aria-hidden='true' />
             )}
-          />
-          <FormField
-            control={form.control}
-            name='platform_site_password'
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>{t('Password')}</FormLabel>
-                <FormControl>
-                  <Input
-                    type='password'
-                    autoComplete='new-password'
-                    {...field}
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+            {t('Sign in to upstream site')}
+          </Button>
         </div>
       )}
 
-      {authType !== 'password' && (
+      {authType === 'password' && authFlowID && (
+        <div className='border-border/60 bg-background grid gap-3 rounded-md border p-3'>
+          <div className='flex items-center gap-2'>
+            <ShieldCheck className='size-4' aria-hidden='true' />
+            <span className='text-sm font-medium'>
+              {authFlowStatus === 'two_factor_required'
+                ? t('Two-factor verification required')
+                : t('Upstream authentication verified')}
+            </span>
+          </div>
+          {authFlowStatus === 'two_factor_required' && (
+            <div className='grid gap-2 sm:max-w-xs'>
+              <FormLabel htmlFor='platform-site-two-factor-code'>
+                {t('Two-factor code')}
+              </FormLabel>
+              <Input
+                id='platform-site-two-factor-code'
+                inputMode='numeric'
+                autoComplete='one-time-code'
+                maxLength={6}
+                value={twoFactorCode}
+                onChange={(event) =>
+                  setTwoFactorCode(
+                    event.target.value.replaceAll(/\D/g, '').slice(0, 6)
+                  )
+                }
+                placeholder={t('Enter the 6-digit code')}
+              />
+              <Button
+                type='button'
+                size='sm'
+                onClick={() => verifyAuthFlowMutation.mutate()}
+                disabled={
+                  props.disabled ||
+                  verifyAuthFlowMutation.isPending ||
+                  twoFactorCode.length !== 6
+                }
+              >
+                {verifyAuthFlowMutation.isPending && (
+                  <Loader2
+                    className='size-4 animate-spin'
+                    aria-hidden='true'
+                  />
+                )}
+                {t('Verify two-factor code')}
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {authType === 'auto' && (
         <div className='border-border/60 bg-background grid gap-3 rounded-md border p-3'>
           <div className='flex flex-wrap items-center gap-2'>
             <ShieldCheck className='size-4' aria-hidden='true' />
@@ -622,6 +842,54 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
             </div>
           )}
         </div>
+      )}
+
+      {authType === 'access_token' && (
+        <FormField
+          control={form.control}
+          name='platform_site_access_token'
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>{t('Access token')}</FormLabel>
+              <FormControl>
+                <Input type='password' autoComplete='off' {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      )}
+
+      {authType === 'admin_key' && (
+        <FormField
+          control={form.control}
+          name='platform_site_admin_key'
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>{t('Admin Key')}</FormLabel>
+              <FormControl>
+                <Input type='password' autoComplete='off' {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      )}
+
+      {authType === 'cookie' && (
+        <FormField
+          control={form.control}
+          name='platform_site_cookie'
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>{t('Cookie')}</FormLabel>
+              <FormControl>
+                <Input type='password' autoComplete='off' {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
       )}
 
       <div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-4'>

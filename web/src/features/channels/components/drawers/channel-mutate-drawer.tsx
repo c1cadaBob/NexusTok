@@ -190,6 +190,7 @@ import {
   nextTaskPluginBaseUrl,
 } from '../../lib/task-plugin-base-url'
 import type { Channel } from '../../types'
+import { PlatformSiteResourcesPanel } from '../platform-site-resources-panel'
 import { ChannelTypeLogo } from '../channel-type-badge'
 import { useChannels } from '../channels-provider'
 import { AdvancedCustomEditorDialog } from '../dialogs/advanced-custom-editor-dialog'
@@ -1298,10 +1299,8 @@ export function ChannelMutateDrawer({
         ...defaults,
         base_url: site?.base_url ?? defaults.base_url,
         platform_site_platform: platformSitePlatform,
-        platform_site_auth_type:
-          site?.auth_type && site.auth_type !== 'password'
-            ? 'auto'
-            : 'password',
+        platform_site_auth_type: site?.auth_type ?? 'password',
+        platform_site_auth_flow_id: '',
         platform_site_recharge_amount: site?.recharge_amount ?? 0,
         platform_site_credited_amount: site?.credited_amount ?? 0,
         platform_site_conversion_ratio: site?.conversion_ratio ?? 1,
@@ -2355,6 +2354,14 @@ export function ChannelMutateDrawer({
                             />
                           </div>
                         )}
+
+                        {isEditing &&
+                          currentUpstreamKind === 'platform_site' &&
+                          channelId && (
+                            <PlatformSiteResourcesPanel
+                              channelId={channelId}
+                            />
+                          )}
 
                         <div
                           className={cn(

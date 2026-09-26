@@ -222,6 +222,7 @@ export const channelFormSchema = z
     platform_site_auth_type: z
       .enum(['password', 'auto', 'access_token', 'admin_key', 'cookie'])
       .default('password'),
+    platform_site_auth_flow_id: z.string().optional(),
     platform_site_capture_id: z.string().optional(),
     platform_site_username: z.string().optional(),
     platform_site_password: z.string().optional(),
@@ -474,6 +475,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   key_weight_override: undefined,
   platform_site_platform: 'newapi',
   platform_site_auth_type: 'password',
+  platform_site_auth_flow_id: '',
   platform_site_capture_id: '',
   platform_site_username: '',
   platform_site_password: '',
@@ -645,6 +647,7 @@ export function transformChannelToFormDefaults(
     platform_site_platform:
       channel.type === CHANNEL_TYPE_SUB2_API ? 'sub2api' : 'newapi',
     platform_site_auth_type: 'password',
+    platform_site_auth_flow_id: '',
     platform_site_capture_id: '',
     platform_site_username: '',
     platform_site_password: '',
@@ -883,6 +886,10 @@ function buildPlatformSitePayload(
     platform: formData.platform_site_platform,
     base_url: normalizeBaseUrl(formData.base_url),
     auth_type: formData.platform_site_auth_type,
+    auth_flow_id:
+      formData.platform_site_auth_type === 'password'
+        ? formData.platform_site_auth_flow_id?.trim() || undefined
+        : undefined,
     recharge_amount: formData.platform_site_recharge_amount,
     credited_amount: formData.platform_site_credited_amount,
     conversion_ratio: formData.platform_site_conversion_ratio_override
@@ -890,10 +897,16 @@ function buildPlatformSitePayload(
       : undefined,
   }
   if (formData.platform_site_auth_type === 'password') {
-    payload.username = formData.platform_site_username
-    payload.password = formData.platform_site_password
-  } else {
+    return payload
+  }
+  if (formData.platform_site_auth_type === 'auto') {
     payload.capture_id = formData.platform_site_capture_id?.trim() || undefined
+  } else if (formData.platform_site_auth_type === 'access_token') {
+    payload.access_token = formData.platform_site_access_token
+  } else if (formData.platform_site_auth_type === 'admin_key') {
+    payload.admin_key = formData.platform_site_admin_key
+  } else if (formData.platform_site_auth_type === 'cookie') {
+    payload.cookie = formData.platform_site_cookie
   }
   return payload
 }

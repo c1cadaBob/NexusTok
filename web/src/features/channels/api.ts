@@ -44,6 +44,10 @@ import type {
   PlatformSiteCaptureStartRequest,
   PlatformSiteCaptureStartResponse,
   PlatformSiteCaptureStatusResponse,
+  PlatformSiteAuthFlowStartRequest,
+  PlatformSiteAuthFlowVerifyRequest,
+  PlatformSiteAuthFlowResponse,
+  PlatformSiteResourcesResponse,
   UpstreamKey,
   UpstreamKeysResponse,
   UpstreamSiteStatusResponse,
@@ -178,6 +182,57 @@ export async function getUpstreamKeys(
   id: number
 ): Promise<UpstreamKeysResponse> {
   const res = await api.get(`/api/channel/${id}/upstream-keys`)
+  return res.data
+}
+
+export async function getPlatformSiteResources(
+  id: number
+): Promise<PlatformSiteResourcesResponse> {
+  const res = await api.get(`/api/channel/${id}/upstream-resources`)
+  return res.data
+}
+
+export async function syncPlatformSiteResources(
+  id: number
+): Promise<PlatformSiteResourcesResponse> {
+  const res = await api.post(
+    `/api/channel/${id}/upstream-resources/sync`,
+    undefined,
+    channelActionConfig()
+  )
+  return res.data
+}
+
+export async function startPlatformSiteAuthFlow(
+  data: PlatformSiteAuthFlowStartRequest
+): Promise<PlatformSiteAuthFlowResponse> {
+  const res = await api.post(
+    '/api/channel/platform-site/auth-flow/start',
+    data,
+    channelActionConfig()
+  )
+  return res.data
+}
+
+export async function verifyPlatformSiteAuthFlow(
+  flowID: string,
+  data: PlatformSiteAuthFlowVerifyRequest
+): Promise<PlatformSiteAuthFlowResponse> {
+  const res = await api.post(
+    `/api/channel/platform-site/auth-flow/${encodeURIComponent(flowID)}/verify`,
+    data,
+    channelActionConfig()
+  )
+  return res.data
+}
+
+export async function cancelPlatformSiteAuthFlow(
+  flowID: string
+): Promise<{ success: boolean; message?: string }> {
+  const res = await api.delete(
+    `/api/channel/platform-site/auth-flow/${encodeURIComponent(flowID)}`,
+    channelActionConfig()
+  )
   return res.data
 }
 

@@ -149,7 +149,7 @@ describe('New API channel', () => {
     expect(payload.platform_site?.conversion_ratio).toBe(1)
   })
 
-  test('keeps the complete password credential in an update payload', () => {
+  test('sends only the one-time authentication flow ID for password updates', () => {
     const result = channelFormSchema.safeParse({
       ...CHANNEL_FORM_DEFAULT_VALUES,
       name: 'Updated Sub2API site',
@@ -157,6 +157,7 @@ describe('New API channel', () => {
       upstream_kind: 'platform_site',
       platform_site_platform: 'sub2api',
       platform_site_auth_type: 'password',
+      platform_site_auth_flow_id: 'flow-123',
       platform_site_username: 'operator@example.com',
       platform_site_password: 'synthetic-password',
       base_url: 'https://upstream.example',
@@ -171,9 +172,10 @@ describe('New API channel', () => {
     expect(payload.platform_site).toMatchObject({
       platform: 'sub2api',
       auth_type: 'password',
-      username: 'operator@example.com',
-      password: 'synthetic-password',
+      auth_flow_id: 'flow-123',
     })
+    expect(payload.platform_site?.username).toBeUndefined()
+    expect(payload.platform_site?.password).toBeUndefined()
   })
 
   test('restricts platform sites to NewAPI and Sub2API channel types', () => {
