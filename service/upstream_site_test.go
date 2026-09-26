@@ -987,6 +987,196 @@ func TestNewAPIAdapterRejectsInteractiveLoginVerification(t *testing.T) {
 	assert.NotContains(t, err.Error(), "flow")
 }
 
+func TestPlatformSiteAuthFlowBindsIdentityAndConsumesAfterNewAPITwoFA(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/user/login":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"require_2fa":true,"flow_token":"upstream-flow"}}`))
+		case "/api/user/login/2fa":
+			body, readErr := io.ReadAll(request.Body)
+			require.NoError(t, readErr)
+			assert.Contains(t, string(body), `"code":"123456"`)
+			assert.Contains(t, string(body), `"flow_token":"upstream-flow"`)
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"access_token":"newapi-access","refresh_token":"newapi-refresh","expires_in":3600,"user":{"id":17}}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	started, err := StartPlatformSiteAuthFlow(context.Background(), 41, PlatformSiteAuthFlowStartRequest{
+		Platform:  model.PlatformNewAPI,
+		BaseURL:   server.URL,
+		AuthType:  model.UpstreamAuthPassword,
+		Username:  "operator",
+		Password:  "synthetic-password",
+		ChannelID: 7,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, PlatformSiteAuthFlowStatusTwoFactorRequired, started.Status)
+	assert.NotEmpty(t, started.FlowID)
+	assert.NotContains(t, started.FlowID, "upstream-flow")
+	assert.NotContains(t, fmt.Sprint(started), "synthetic-password")
+
+	_, err = VerifyPlatformSiteAuthFlow(
+		context.Background(),
+		99,
+		started.FlowID,
+		PlatformSiteAuthFlowVerifyRequest{Code: "123456"},
+	)
+	assert.ErrorIs(t, err, ErrPlatformSiteAuthFlowInvalid)
+
+	_, err = VerifyPlatformSiteAuthFlow(
+		context.Background(),
+		41,
+		started.FlowID,
+		PlatformSiteAuthFlowVerifyRequest{Code: "bad"},
+	)
+	assert.ErrorIs(t, err, ErrPlatformSiteAuthFlowCodeInvalid)
+
+	verified, err := VerifyPlatformSiteAuthFlow(
+		context.Background(),
+		41,
+		started.FlowID,
+		PlatformSiteAuthFlowVerifyRequest{Code: "123456"},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, PlatformSiteAuthFlowStatusAuthenticated, verified.Status)
+	assert.Equal(t, model.UpstreamAuthAccessToken, verified.AuthType)
+	assert.Equal(t, "17", verified.UserID)
+	assert.NotContains(t, fmt.Sprint(verified), "newapi-access")
+	assert.NotContains(t, fmt.Sprint(verified), "newapi-refresh")
+
+	_, err = ResolvePlatformSiteAuthFlow(
+		41,
+		started.FlowID,
+		7,
+		model.PlatformSub2API,
+		server.URL,
+	)
+	assert.ErrorIs(t, err, ErrPlatformSiteAuthFlowInvalid)
+
+	resolution, err := ResolvePlatformSiteAuthFlow(
+		41,
+		started.FlowID,
+		7,
+		model.PlatformNewAPI,
+		server.URL,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "newapi-access", resolution.Credential.AccessToken)
+	assert.Equal(t, "17", resolution.Credential.UserID)
+
+	require.NoError(t, ConsumePlatformSiteAuthFlow(41, started.FlowID, 7))
+	_, err = ResolvePlatformSiteAuthFlow(
+		41,
+		started.FlowID,
+		7,
+		model.PlatformNewAPI,
+		server.URL,
+	)
+	assert.Error(t, err)
+}
+
+func TestSub2APIAuthFlowTwoFAUsesBrowserHeaders(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v1/auth/login":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"requires_2fa":true,"temp_token":"sub2-temp"}}`))
+		case "/api/v1/auth/login/2fa":
+			assert.Equal(t, "http://"+request.Host, request.Header.Get("Origin"))
+			assert.Equal(t, "http://"+request.Host+"/login", request.Header.Get("Referer"))
+			assert.Equal(t, "NexusTok-UpstreamSite/1.0", request.Header.Get("User-Agent"))
+			assert.Equal(t, "XMLHttpRequest", request.Header.Get("X-Requested-With"))
+			body, readErr := io.ReadAll(request.Body)
+			require.NoError(t, readErr)
+			assert.Contains(t, string(body), `"temp_token":"sub2-temp"`)
+			assert.Contains(t, string(body), `"totp_code":"654321"`)
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"access_token":"sub2-access","refresh_token":"sub2-refresh","expires_in":3600,"user":{"id":23}}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	started, err := StartPlatformSiteAuthFlow(context.Background(), 41, PlatformSiteAuthFlowStartRequest{
+		Platform: model.PlatformSub2API,
+		BaseURL:  server.URL,
+		AuthType: model.UpstreamAuthPassword,
+		Username: "operator@example.com",
+		Password: "synthetic-password",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, PlatformSiteAuthFlowStatusTwoFactorRequired, started.Status)
+
+	verified, err := VerifyPlatformSiteAuthFlow(
+		context.Background(),
+		41,
+		started.FlowID,
+		PlatformSiteAuthFlowVerifyRequest{Code: "654321"},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "23", verified.UserID)
+	assert.Equal(t, model.UpstreamAuthAccessToken, verified.AuthType)
+}
+
+func TestNewAPIAdminSnapshotMergesAccountAndChannelModelsAndCapabilities(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/status":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"quota_per_unit":500000}}`))
+		case "/api/user/self":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"id":17,"quota":500000}}`))
+		case "/api/user/models":
+			_, _ = writer.Write([]byte(`{"success":true,"data":["account-model"]}`))
+		case "/api/user/self/groups":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"default":{"ratio":1}}}`))
+		case "/api/pricing":
+			_, _ = writer.Write([]byte(`{"success":true,"data":[],"group_ratio":{"default":1},"supported_endpoint":{"openai":{"path":"/v1/chat/completions","method":"POST"}}}`))
+		case "/api/channel/":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"items":[{"id":9,"models":["channel-list-model"]}]}}`))
+		case "/api/channel/9":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"models":["channel-detail-model"]}}`))
+		case "/api/channel/fetch_models/9":
+			_, _ = writer.Write([]byte(`{"success":true,"data":["channel-fetch-model"]}`))
+		case "/api/token/":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"items":[]}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	session, err := NewNewAPIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType: model.UpstreamAuthAdminKey,
+			AdminKey: "admin-secret",
+		},
+	)
+	require.NoError(t, err)
+
+	snapshot, err := NewNewAPIAdapter(server.Client()).FetchSnapshot(context.Background(), session)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{
+		"account-model",
+		"channel-list-model",
+		"channel-detail-model",
+		"channel-fetch-model",
+	}, snapshot.Models)
+	assert.Contains(t, snapshot.Endpoint.Capabilities, PlatformSiteEndpointCapabilitySnapshot{
+		Protocol:   "admin",
+		HTTPMethod: http.MethodGet,
+		Path:       "/api/channel/fetch_models/{id}",
+		Supported:  true,
+		SourceData: "route",
+	})
+}
+
 func TestSub2APIAdapterRefreshesRotatingSession(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
@@ -1546,6 +1736,11 @@ func TestPersistPlatformSiteSnapshotIsolatesUnavailableKeys(t *testing.T) {
 		&model.Channel{},
 		&model.Ability{},
 		&model.PlatformSiteAccount{},
+		&model.PlatformSiteIdentity{},
+		&model.PlatformSiteGroup{},
+		&model.PlatformSiteEndpoint{},
+		&model.PlatformSiteEndpointCapability{},
+		&model.PlatformSiteResourceSync{},
 		&model.UpstreamKey{},
 		&model.UpstreamKeyAbility{},
 	))
@@ -1625,8 +1820,8 @@ func TestPersistPlatformSiteSnapshotIsolatesUnavailableKeys(t *testing.T) {
 
 	var savedOld model.UpstreamKey
 	require.NoError(t, db.Where("channel_id = ? AND external_id = ?", channel.Id, "old-key").First(&savedOld).Error)
-	assert.Equal(t, model.UpstreamKeyStatusAutoDisabled, savedOld.Status)
-	assert.Equal(t, upstreamKeySyncErrorSecretUnavailable, savedOld.DisabledReason)
+	assert.Equal(t, model.UpstreamKeyStatusEnabled, savedOld.Status)
+	assert.Empty(t, savedOld.DisabledReason)
 	assert.Equal(t, "gpt-4o", savedOld.Models)
 	oldCredential, err := model.DecryptPlatformSiteCredential(savedOld.SecretCiphertext)
 	require.NoError(t, err)
@@ -1635,19 +1830,21 @@ func TestPersistPlatformSiteSnapshotIsolatesUnavailableKeys(t *testing.T) {
 	require.NoError(t, db.Model(&model.UpstreamKeyAbility{}).
 		Where("upstream_key_id = ?", savedOld.ID).
 		Count(&oldAbilityCount).Error)
-	assert.Zero(t, oldAbilityCount)
+	assert.Equal(t, int64(1), oldAbilityCount)
 
 	var newKey model.UpstreamKey
-	require.NoError(t, db.Where("channel_id = ? AND external_id = ?", channel.Id, "new-key").First(&newKey).Error)
-	assert.Equal(t, model.UpstreamKeyStatusAutoDisabled, newKey.Status)
-	assert.Equal(t, upstreamKeySyncErrorSecretUnavailable, newKey.DisabledReason)
-	assert.False(t, newKey.ModelsSynced)
-	assert.Empty(t, newKey.SecretCiphertext)
+	assert.ErrorIs(t, db.Where("channel_id = ? AND external_id = ?", channel.Id, "new-key").First(&newKey).Error, gorm.ErrRecordNotFound)
 	var newAbilityCount int64
 	require.NoError(t, db.Model(&model.UpstreamKeyAbility{}).
-		Where("upstream_key_id = ?", newKey.ID).
+		Where("upstream_key_id = ?", 0).
 		Count(&newAbilityCount).Error)
 	assert.Zero(t, newAbilityCount)
+
+	var keyResourceSync model.PlatformSiteResourceSync
+	require.NoError(t, db.Where("channel_id = ? AND resource_type = ?", channel.Id, model.PlatformSiteResourceKeys).First(&keyResourceSync).Error)
+	assert.Equal(t, model.PlatformSiteResourceStatusPartial, keyResourceSync.Status)
+	assert.True(t, keyResourceSync.Partial)
+	assert.True(t, keyResourceSync.UsingSnapshot)
 
 	var healthyKey model.UpstreamKey
 	require.NoError(t, db.Where("channel_id = ? AND external_id = ?", channel.Id, "healthy-key").First(&healthyKey).Error)
@@ -1675,6 +1872,11 @@ func TestPersistPlatformSiteSnapshotSeparatesSub2APIManagementAndRelayURLs(t *te
 		&model.Channel{},
 		&model.Ability{},
 		&model.PlatformSiteAccount{},
+		&model.PlatformSiteIdentity{},
+		&model.PlatformSiteGroup{},
+		&model.PlatformSiteEndpoint{},
+		&model.PlatformSiteEndpointCapability{},
+		&model.PlatformSiteResourceSync{},
 		&model.UpstreamKey{},
 		&model.UpstreamKeyAbility{},
 	))
@@ -1783,6 +1985,11 @@ func TestSyncPlatformSiteFailurePreservesLastSuccessfulSnapshot(t *testing.T) {
 		&model.Channel{},
 		&model.Ability{},
 		&model.PlatformSiteAccount{},
+		&model.PlatformSiteIdentity{},
+		&model.PlatformSiteGroup{},
+		&model.PlatformSiteEndpoint{},
+		&model.PlatformSiteEndpointCapability{},
+		&model.PlatformSiteResourceSync{},
 		&model.UpstreamKey{},
 		&model.UpstreamKeyAbility{},
 	))
@@ -1983,9 +2190,10 @@ func TestPersistPlatformSiteSnapshotRebuildsAbilitiesAndAutoDisablesUnavailableK
 	assert.True(t, keyAbility.Enabled)
 
 	require.NoError(t, persistPlatformSiteSnapshot(context.Background(), account, PlatformSiteSnapshot{
-		Balance: 5,
-		Models:  []string{"gpt-4o"},
-		Keys:    nil,
+		Balance:      5,
+		Models:       []string{"gpt-4o"},
+		Keys:         nil,
+		KeysComplete: true,
 	}))
 
 	remaining = 100

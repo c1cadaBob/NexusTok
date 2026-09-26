@@ -219,6 +219,7 @@ func VerifyPlatformSiteAuthFlow(ctx context.Context, userID int, flowID string, 
 	}
 	var payload any
 	if record.Platform == model.PlatformSub2API {
+		setSub2APIBrowserHeaders(session)
 		payload, err = verifySub2APILogin2FA(ctx, session, secret.TempToken, code)
 	} else {
 		payload, err = verifyNewAPILogin2FA(ctx, session, secret.FlowToken, code)
@@ -275,6 +276,12 @@ func ResolvePlatformSiteAuthFlow(userID int, flowID string, channelID int, platf
 	}
 	normalizedBaseURL, err := normalizePlatformSiteURL(baseURL)
 	if err != nil || normalizedBaseURL != record.BaseURL {
+		record.Attempts++
+		_ = savePlatformSiteAuthFlowRecord(record)
+		return PlatformSiteAuthFlowResolution{}, ErrPlatformSiteAuthFlowInvalid
+	}
+	origin, err := platformSiteOrigin(normalizedBaseURL)
+	if err != nil || origin != record.Origin {
 		record.Attempts++
 		_ = savePlatformSiteAuthFlowRecord(record)
 		return PlatformSiteAuthFlowResolution{}, ErrPlatformSiteAuthFlowInvalid

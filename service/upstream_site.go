@@ -35,6 +35,9 @@ var (
 	ErrPlatformSiteHTTPStatus  = errors.New("platform site http status failed")
 	ErrPlatformSiteResponse    = errors.New("platform site returned an invalid response")
 	ErrPlatformSiteCredential  = errors.New("platform site credential unavailable")
+	ErrPlatformSiteIdentity    = errors.New("platform site identity mismatch")
+	ErrPlatformSiteAuthBundle  = errors.New("platform site auth bundle invalid")
+	ErrPlatformSiteSecurity    = errors.New("platform site security verification required")
 	ErrSub2APILoginRequest     = errors.New("sub2api login request failed")
 	ErrSub2APILoginHTTPStatus  = errors.New("sub2api login http status failed")
 	ErrSub2APILoginResponse    = errors.New("sub2api login response format failed")
@@ -88,8 +91,75 @@ type PlatformSiteSnapshot struct {
 	UsedQuotaSet      bool
 	Models            []string
 	Keys              []UpstreamKeySnapshot
+	KeysComplete      bool
+	AuthStatus        string
+	AuthStatusReason  string
 	ManagementBaseURL string
 	RelayBaseURL      string
+	Identity          *PlatformSiteIdentitySnapshot
+	Groups            []PlatformSiteGroupSnapshot
+	GroupsLoaded      bool
+	Endpoint          *PlatformSiteEndpointSnapshot
+	ResourceSyncs     []PlatformSiteResourceSyncSnapshot
+}
+
+type PlatformSiteIdentitySnapshot struct {
+	PlatformUserID    string
+	Username          string
+	Email             string
+	DisplayName       string
+	Role              string
+	CurrentGroup      string
+	Status            string
+	QuotaUnit         string
+	UpstreamUpdatedAt int64
+	SourceEndpoint    string
+}
+
+type PlatformSiteGroupSnapshot struct {
+	ExternalID        string
+	Name              string
+	Ratio             float64
+	Available         bool
+	Usable            bool
+	SourceEndpoint    string
+	UpstreamUpdatedAt int64
+}
+
+type PlatformSiteEndpointCapabilitySnapshot struct {
+	Protocol   string
+	HTTPMethod string
+	Path       string
+	Supported  bool
+	SourceData string
+}
+
+type PlatformSiteEndpointSnapshot struct {
+	ManagementURL   string
+	RelayURL        string
+	ModelsURL       string
+	PricingURL      string
+	UsageURL        string
+	TokenURL        string
+	AdminURL        string
+	OpenAIURL       string
+	ClaudeURL       string
+	GeminiURL       string
+	ResponsesURL    string
+	Source          string
+	DiscoveryMethod string
+	Enabled         bool
+	Capabilities    []PlatformSiteEndpointCapabilitySnapshot
+}
+
+type PlatformSiteResourceSyncSnapshot struct {
+	ResourceType                 string
+	Status                       string
+	SourceEndpoint               string
+	RecordCount                  int
+	FailureReason                string
+	Partial                      bool
+	RequiresSecurityVerification bool
 }
 
 type platformSiteHTTPStatusError struct {
@@ -102,6 +172,30 @@ func (err *platformSiteHTTPStatusError) Error() string {
 
 func (err *platformSiteHTTPStatusError) Unwrap() error {
 	return ErrPlatformSiteHTTPStatus
+}
+
+type platformSiteSecurityError struct {
+	code       string
+	statusCode int
+}
+
+func (err *platformSiteSecurityError) Error() string {
+	if err == nil {
+		return ""
+	}
+	return ErrPlatformSiteSecurity.Error()
+}
+
+func (err *platformSiteSecurityError) Unwrap() error {
+	return ErrPlatformSiteSecurity
+}
+
+func platformSiteSecurityErrorCode(err error) string {
+	var securityErr *platformSiteSecurityError
+	if !errors.As(err, &securityErr) {
+		return ""
+	}
+	return securityErr.code
 }
 
 type platformSiteStageError struct {
@@ -297,29 +391,70 @@ func platformSiteRequest(
 	if len(data) > upstreamSiteResponseLimit {
 		return nil, errors.New("平台站点响应体超过限制")
 	}
+	var payload any
+	if len(strings.TrimSpace(string(data))) > 0 {
+		if unmarshalErr := common.Unmarshal(data, &payload); unmarshalErr != nil &&
+			response.StatusCode >= http.StatusOK &&
+			response.StatusCode < http.StatusMultipleChoices {
+			return nil, fmt.Errorf("%w: JSON", ErrPlatformSiteResponse)
+		}
+	}
+	if code := platformSiteSecurityCode(payload, string(data)); code != "" {
+		return nil, &platformSiteSecurityError{
+			code:       code,
+			statusCode: response.StatusCode,
+		}
+	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return nil, &platformSiteHTTPStatusError{statusCode: response.StatusCode}
 	}
 	if len(strings.TrimSpace(string(data))) == 0 {
 		return map[string]any{}, nil
 	}
-	var payload any
-	if err := common.Unmarshal(data, &payload); err != nil {
-		return nil, fmt.Errorf("%w: JSON", ErrPlatformSiteResponse)
-	}
 	if object, ok := payload.(map[string]any); ok {
 		if success, exists := object["success"].(bool); exists && !success {
-			return nil, fmt.Errorf("%w: %s", ErrPlatformSiteAuth, firstString(object, "message", "error"))
+			return nil, ErrPlatformSiteAuth
 		}
 		if code := firstFloat(object, "code"); code != 0 && code != 200 {
-			return nil, fmt.Errorf("%w: %s", ErrPlatformSiteAuth, firstString(object, "message", "error"))
+			return nil, ErrPlatformSiteAuth
 		}
 		if code := firstString(object, "code"); code != "" &&
 			code != "0" && code != "200" && !strings.EqualFold(code, "success") {
-			return nil, fmt.Errorf("%w: %s", ErrPlatformSiteAuth, firstString(object, "message", "error"))
+			return nil, ErrPlatformSiteAuth
 		}
 	}
 	return payload, nil
+}
+
+func platformSiteSecurityCode(payload any, raw string) string {
+	const requiredCode = "STEP_UP_ADMIN_API_KEY_FORBIDDEN"
+	if strings.Contains(raw, requiredCode) {
+		return requiredCode
+	}
+	var findCode func(any) string
+	findCode = func(value any) string {
+		switch typed := value.(type) {
+		case map[string]any:
+			for _, key := range []string{"code", "error_code", "errorCode", "reason"} {
+				if text, ok := typed[key].(string); ok && strings.EqualFold(strings.TrimSpace(text), requiredCode) {
+					return requiredCode
+				}
+			}
+			for _, nested := range typed {
+				if code := findCode(nested); code != "" {
+					return code
+				}
+			}
+		case []any:
+			for _, nested := range typed {
+				if code := findCode(nested); code != "" {
+					return code
+				}
+			}
+		}
+		return ""
+	}
+	return findCode(payload)
 }
 
 func unwrapPlatformData(payload any) any {
@@ -597,6 +732,10 @@ func syncPlatformSite(ctx context.Context, channelID int) error {
 						}
 					}
 				}
+			} else if session != nil && session.CredentialUpdate != nil {
+				if updateErr := persistPlatformSiteCredential(&account, *session.CredentialUpdate); updateErr != nil {
+					err = errors.Join(err, wrapPlatformSiteStage("凭据状态更新", updateErr))
+				}
 			}
 		}
 	}
@@ -657,6 +796,8 @@ func SafePlatformSiteError(err error) string {
 	switch {
 	case errors.Is(err, ErrPlatformSiteCredential):
 		return "平台凭据无法解密，请重新保存平台凭据"
+	case errors.Is(err, ErrPlatformSiteSecurity):
+		return "上游平台要求完成安全验证"
 	case errors.Is(err, ErrSub2APILoginRequest):
 		return "Sub2API 登录请求失败"
 	case errors.Is(err, ErrSub2APILoginHTTPStatus):
@@ -731,101 +872,18 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 			return err
 		}
 		seen := make(map[string]struct{}, len(snapshot.Keys))
+		keysPartial := false
 		for _, item := range snapshot.Keys {
 			if item.ExternalID == "" {
 				return fmt.Errorf("%w: 上游密钥数据不完整", ErrPlatformSiteResponse)
 			}
-			seen[item.ExternalID] = struct{}{}
+			// 密钥详情或模型能力读取失败时，当前轮次没有足够数据覆盖
+			// 既有路由快照。保留旧记录和能力，等待下一次完整同步。
 			if item.SyncError != "" {
-				var existing model.UpstreamKey
-				findErr := tx.Where("channel_id = ? AND external_id = ?", account.ChannelID, item.ExternalID).First(&existing).Error
-				if errors.Is(findErr, gorm.ErrRecordNotFound) {
-					sourceRatio := item.SourceConversionRatio
-					if !item.SourceConversionRatioSet {
-						sourceRatio = item.ConversionRatio
-					}
-					if !isValidConversionRatio(sourceRatio) {
-						sourceRatio = 1
-					}
-					effectiveRatio, ratioErr := model.CalculatePlatformKeyConversionRatio(
-						ratio,
-						sourceRatio,
-					)
-					if ratioErr != nil {
-						return ratioErr
-					}
-					weight, weightErr := model.CalculateUpstreamKeyWeight(effectiveRatio)
-					if weightErr != nil {
-						return weightErr
-					}
-					existing = model.UpstreamKey{
-						ChannelID:             account.ChannelID,
-						ExternalID:            item.ExternalID,
-						Name:                  item.Name,
-						UsedQuota:             item.UsedQuota,
-						SourceConversionRatio: &sourceRatio,
-						ConversionRatio:       effectiveRatio,
-						Weight:                weight,
-						ModelsSynced:          false,
-						Status:                model.UpstreamKeyStatusAutoDisabled,
-						DisabledReason:        upstreamKeySyncErrorReason(item.SyncError),
-						LastSyncAt:            now,
-					}
-					if item.Secret != "" {
-						ciphertext, encryptErr := model.EncryptPlatformSiteCredential(
-							model.PlatformSiteCredential{AccessToken: item.Secret},
-						)
-						if encryptErr != nil {
-							return encryptErr
-						}
-						existing.SecretCiphertext = ciphertext
-						existing.SecretFingerprint = common.GenerateHMAC(item.Secret)
-					}
-					if err := tx.Create(&existing).Error; err != nil {
-						return err
-					}
-					if err := model.EnsureRoutingKeyForUpstreamKey(tx, &existing); err != nil {
-						return err
-					}
-					continue
-				}
-				if findErr != nil {
-					return findErr
-				}
-				updates := map[string]any{
-					"last_sync_at":  now,
-					"missing_since": 0,
-					"models_synced": false,
-					"name":          item.Name,
-				}
-				if item.UsedQuotaSet {
-					updates["used_quota"] = item.UsedQuota
-				}
-				if item.Secret != "" {
-					ciphertext, encryptErr := model.EncryptPlatformSiteCredential(
-						model.PlatformSiteCredential{AccessToken: item.Secret},
-					)
-					if encryptErr != nil {
-						return encryptErr
-					}
-					updates["secret_ciphertext"] = ciphertext
-					updates["secret_fingerprint"] = common.GenerateHMAC(item.Secret)
-				}
-				if existing.Status != model.UpstreamKeyStatusManualDisabled {
-					updates["status"] = model.UpstreamKeyStatusAutoDisabled
-					updates["disabled_reason"] = upstreamKeySyncErrorReason(item.SyncError)
-				}
-				if err := tx.Model(&existing).Updates(updates).Error; err != nil {
-					return err
-				}
-				if err := model.EnsureRoutingKeyForUpstreamKey(tx, &existing); err != nil {
-					return err
-				}
-				if err := tx.Where("upstream_key_id = ?", existing.ID).Delete(&model.UpstreamKeyAbility{}).Error; err != nil {
-					return err
-				}
+				keysPartial = true
 				continue
 			}
+			seen[item.ExternalID] = struct{}{}
 			if item.Secret == "" {
 				return fmt.Errorf("%w: 上游密钥数据不完整", ErrPlatformSiteResponse)
 			}
@@ -941,19 +999,45 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 				return err
 			}
 		}
-		var existingKeys []model.UpstreamKey
-		if err := tx.Where("channel_id = ?", account.ChannelID).Find(&existingKeys).Error; err != nil {
-			return err
-		}
-		for _, key := range existingKeys {
-			if _, exists := seen[key.ExternalID]; !exists {
-				if err := tx.Model(&key).Updates(map[string]any{
-					"status":          model.UpstreamKeyStatusMissing,
-					"disabled_reason": "同步结果中未返回",
-					"missing_since":   now,
-				}).Error; err != nil {
-					return err
+		if snapshot.KeysComplete {
+			var existingKeys []model.UpstreamKey
+			if err := tx.Where("channel_id = ?", account.ChannelID).Find(&existingKeys).Error; err != nil {
+				return err
+			}
+			for _, key := range existingKeys {
+				if _, exists := seen[key.ExternalID]; !exists {
+					if err := tx.Model(&key).Updates(map[string]any{
+						"status":          model.UpstreamKeyStatusMissing,
+						"disabled_reason": "同步结果中未返回",
+						"missing_since":   now,
+					}).Error; err != nil {
+						return err
+					}
 				}
+			}
+		}
+		if keysPartial || !snapshot.KeysComplete {
+			hasKeysResourceSync := false
+			for index := range snapshot.ResourceSyncs {
+				if snapshot.ResourceSyncs[index].ResourceType != model.PlatformSiteResourceKeys {
+					continue
+				}
+				hasKeysResourceSync = true
+				if snapshot.ResourceSyncs[index].Status == model.PlatformSiteResourceStatusSuccess {
+					snapshot.ResourceSyncs[index].Status = model.PlatformSiteResourceStatusPartial
+					snapshot.ResourceSyncs[index].FailureReason = "部分密钥详情或模型能力读取失败，已保留最近成功快照"
+					snapshot.ResourceSyncs[index].Partial = true
+				}
+			}
+			if !hasKeysResourceSync {
+				snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, PlatformSiteResourceSyncSnapshot{
+					ResourceType:   model.PlatformSiteResourceKeys,
+					Status:         model.PlatformSiteResourceStatusPartial,
+					SourceEndpoint: "/api/token/,/api/token/batch/keys",
+					RecordCount:    len(snapshot.Keys),
+					FailureReason:  "部分密钥详情或模型能力读取失败，已保留最近成功快照",
+					Partial:        true,
+				})
 			}
 		}
 		channel.Balance = snapshot.Balance
@@ -971,6 +1055,13 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 		accountUpdates := map[string]any{
 			"balance":    snapshot.Balance,
 			"used_quota": usedQuota,
+		}
+		if snapshot.AuthStatus != "" {
+			accountUpdates["auth_status"] = snapshot.AuthStatus
+			accountUpdates["auth_status_reason"] = snapshot.AuthStatusReason
+		} else {
+			accountUpdates["auth_status"] = model.PlatformSiteAuthStatusAuthenticated
+			accountUpdates["auth_status_reason"] = ""
 		}
 		managementBaseURL := strings.TrimRight(strings.TrimSpace(snapshot.ManagementBaseURL), "/")
 		if managementBaseURL != "" && account.Platform == model.PlatformSub2API {
@@ -993,11 +1084,158 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 		if err := tx.Model(account).Updates(accountUpdates).Error; err != nil {
 			return err
 		}
+		if err := persistPlatformSiteResources(tx, account, snapshot, now); err != nil {
+			return err
+		}
 		if err := tx.Where("channel_id = ?", channel.Id).Delete(&model.Ability{}).Error; err != nil {
 			return err
 		}
 		return nil
 	})
+}
+
+func persistPlatformSiteResources(
+	tx *gorm.DB,
+	account *model.PlatformSiteAccount,
+	snapshot PlatformSiteSnapshot,
+	now int64,
+) error {
+	if tx == nil || account == nil {
+		return errors.New("平台站点资源写入参数无效")
+	}
+	if !tx.Migrator().HasTable(&model.PlatformSiteIdentity{}) {
+		return nil
+	}
+	if snapshot.Identity != nil {
+		identity := *snapshot.Identity
+		var existing model.PlatformSiteIdentity
+		err := tx.Where("channel_id = ?", account.ChannelID).First(&existing).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			existing = model.PlatformSiteIdentity{ChannelID: account.ChannelID}
+		} else if err != nil {
+			return err
+		}
+		existing.PlatformUserID = identity.PlatformUserID
+		existing.Username = identity.Username
+		existing.Email = identity.Email
+		existing.DisplayName = identity.DisplayName
+		existing.Role = identity.Role
+		existing.CurrentGroup = identity.CurrentGroup
+		existing.Status = identity.Status
+		existing.QuotaUnit = identity.QuotaUnit
+		existing.Balance = snapshot.Balance
+		existing.UsedQuota = snapshot.UsedQuota
+		existing.CurrentValueAt = now
+		existing.SnapshotValueAt = now
+		existing.SourceEndpoint = identity.SourceEndpoint
+		existing.UpstreamUpdatedAt = identity.UpstreamUpdatedAt
+		existing.LastSyncAt = now
+		if err := tx.Save(&existing).Error; err != nil {
+			return err
+		}
+	}
+	if snapshot.GroupsLoaded {
+		if err := tx.Where("channel_id = ?", account.ChannelID).Delete(&model.PlatformSiteGroup{}).Error; err != nil {
+			return err
+		}
+		for _, group := range snapshot.Groups {
+			if strings.TrimSpace(group.ExternalID) == "" {
+				return fmt.Errorf("%w: 平台分组缺少外部 ID", ErrPlatformSiteResponse)
+			}
+			if !isValidConversionRatio(group.Ratio) {
+				return fmt.Errorf("%w: 平台分组倍率无效", ErrPlatformSiteResponse)
+			}
+			if err := tx.Create(&model.PlatformSiteGroup{
+				ChannelID:         account.ChannelID,
+				ExternalID:        group.ExternalID,
+				Name:              group.Name,
+				Ratio:             group.Ratio,
+				Available:         group.Available,
+				Usable:            group.Usable,
+				SourceEndpoint:    group.SourceEndpoint,
+				UpstreamUpdatedAt: group.UpstreamUpdatedAt,
+				LastSyncAt:        now,
+			}).Error; err != nil {
+				return err
+			}
+		}
+	}
+	if snapshot.Endpoint != nil {
+		endpoint := snapshot.Endpoint
+		var existing model.PlatformSiteEndpoint
+		err := tx.Where("channel_id = ?", account.ChannelID).First(&existing).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			existing = model.PlatformSiteEndpoint{ChannelID: account.ChannelID}
+		} else if err != nil {
+			return err
+		}
+		existing.ManagementURL = endpoint.ManagementURL
+		existing.RelayURL = endpoint.RelayURL
+		existing.ModelsURL = endpoint.ModelsURL
+		existing.PricingURL = endpoint.PricingURL
+		existing.UsageURL = endpoint.UsageURL
+		existing.TokenURL = endpoint.TokenURL
+		existing.AdminURL = endpoint.AdminURL
+		existing.OpenAIURL = endpoint.OpenAIURL
+		existing.ClaudeURL = endpoint.ClaudeURL
+		existing.GeminiURL = endpoint.GeminiURL
+		existing.ResponsesURL = endpoint.ResponsesURL
+		existing.Source = endpoint.Source
+		existing.DiscoveryMethod = endpoint.DiscoveryMethod
+		existing.Enabled = endpoint.Enabled
+		existing.LastConfirmedAt = now
+		if err := tx.Save(&existing).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("endpoint_id = ?", existing.ID).Delete(&model.PlatformSiteEndpointCapability{}).Error; err != nil {
+			return err
+		}
+		for _, capability := range endpoint.Capabilities {
+			if err := tx.Create(&model.PlatformSiteEndpointCapability{
+				EndpointID:      existing.ID,
+				Protocol:        capability.Protocol,
+				HTTPMethod:      capability.HTTPMethod,
+				Path:            capability.Path,
+				Supported:       capability.Supported,
+				SourceData:      capability.SourceData,
+				LastConfirmedAt: now,
+			}).Error; err != nil {
+				return err
+			}
+		}
+	}
+	for _, resource := range snapshot.ResourceSyncs {
+		var existing model.PlatformSiteResourceSync
+		err := tx.Where(
+			"channel_id = ? AND resource_type = ?",
+			account.ChannelID,
+			resource.ResourceType,
+		).First(&existing).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			existing = model.PlatformSiteResourceSync{
+				ChannelID:    account.ChannelID,
+				ResourceType: resource.ResourceType,
+			}
+		} else if err != nil {
+			return err
+		}
+		existing.Status = resource.Status
+		existing.AttemptedAt = now
+		existing.SourceEndpoint = resource.SourceEndpoint
+		existing.RecordCount = resource.RecordCount
+		existing.FailureReason = resource.FailureReason
+		existing.Partial = resource.Partial
+		existing.RequiresSecurityVerification = resource.RequiresSecurityVerification
+		existing.UsingSnapshot = resource.Status != model.PlatformSiteResourceStatusSuccess
+		if resource.Status == model.PlatformSiteResourceStatusSuccess {
+			existing.SucceededAt = now
+			existing.UsingSnapshot = false
+		}
+		if err := tx.Save(&existing).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func sumUpstreamKeyUsedQuota(keys []UpstreamKeySnapshot) (int64, error) {

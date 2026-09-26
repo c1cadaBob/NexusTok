@@ -661,5 +661,38 @@ func DeleteUpstreamData(tx *gorm.DB, channelIDs []int) error {
 	if !tx.Migrator().HasTable(&PlatformSiteAccount{}) {
 		return nil
 	}
+	if tx.Migrator().HasTable(&PlatformSiteIdentity{}) {
+		if err := tx.Where("channel_id IN ?", channelIDs).Delete(&PlatformSiteIdentity{}).Error; err != nil {
+			return err
+		}
+	}
+	if tx.Migrator().HasTable(&PlatformSiteGroup{}) {
+		if err := tx.Where("channel_id IN ?", channelIDs).Delete(&PlatformSiteGroup{}).Error; err != nil {
+			return err
+		}
+	}
+	if tx.Migrator().HasTable(&PlatformSiteEndpoint{}) {
+		var endpoints []PlatformSiteEndpoint
+		if err := tx.Where("channel_id IN ?", channelIDs).Find(&endpoints).Error; err != nil {
+			return err
+		}
+		endpointIDs := make([]uint, 0, len(endpoints))
+		for _, endpoint := range endpoints {
+			endpointIDs = append(endpointIDs, endpoint.ID)
+		}
+		if len(endpointIDs) > 0 && tx.Migrator().HasTable(&PlatformSiteEndpointCapability{}) {
+			if err := tx.Where("endpoint_id IN ?", endpointIDs).Delete(&PlatformSiteEndpointCapability{}).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Where("channel_id IN ?", channelIDs).Delete(&PlatformSiteEndpoint{}).Error; err != nil {
+			return err
+		}
+	}
+	if tx.Migrator().HasTable(&PlatformSiteResourceSync{}) {
+		if err := tx.Where("channel_id IN ?", channelIDs).Delete(&PlatformSiteResourceSync{}).Error; err != nil {
+			return err
+		}
+	}
 	return tx.Where("channel_id IN ?", channelIDs).Delete(&PlatformSiteAccount{}).Error
 }

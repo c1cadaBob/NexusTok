@@ -44,7 +44,10 @@ type UpstreamSiteStatusResponse struct {
 	ChannelID           int     `json:"channel_id"`
 	Platform            string  `json:"platform"`
 	BaseURL             string  `json:"base_url"`
+	RelayBaseURL        string  `json:"relay_base_url,omitempty"`
 	AuthType            string  `json:"auth_type"`
+	AuthStatus          string  `json:"auth_status,omitempty"`
+	AuthStatusReason    string  `json:"auth_status_reason,omitempty"`
 	RechargeAmount      float64 `json:"recharge_amount"`
 	CreditedAmount      float64 `json:"credited_amount"`
 	ConversionRatio     float64 `json:"conversion_ratio"`
@@ -66,35 +69,129 @@ type UpstreamSiteStatusResponse struct {
 }
 
 type UpstreamKeyResponse struct {
-	ID                      uint      `json:"id"`
-	KeyID                   uint      `json:"key_id"`
-	ChannelID               int       `json:"channel_id"`
-	ExternalID              string    `json:"external_id"`
-	Name                    string    `json:"name"`
-	KeyPreview              string    `json:"key_preview"`
-	Models                  []string  `json:"models"`
-	AllowedModels           *[]string `json:"allowed_models,omitempty"`
-	ModelsSynced            bool      `json:"models_synced"`
-	KeyPriority             int64     `json:"key_priority"`
-	SourceConversionRatio   float64   `json:"source_conversion_ratio"`
-	ConversionRatio         float64   `json:"conversion_ratio"`
-	ConversionRatioOverride *float64  `json:"conversion_ratio_override"`
-	Weight                  int       `json:"weight"`
-	AutoWeight              int       `json:"auto_weight"`
-	WeightOverride          *int      `json:"weight_override"`
-	Status                  int       `json:"status"`
-	DisabledReason          string    `json:"disabled_reason"`
-	LastSyncAt              int64     `json:"last_sync_at"`
-	LastUsedAt              int64     `json:"last_used_at"`
-	Routable                bool      `json:"routable"`
-	AvailabilityReason      string    `json:"availability_reason,omitempty"`
-	SnapshotOnly            bool      `json:"snapshot_only,omitempty"`
-	CredentialUnavailable   bool      `json:"credential_unavailable,omitempty"`
-	HealthStatus            string    `json:"health_status,omitempty"`
-	HealthReason            string    `json:"health_reason,omitempty"`
-	HealthSampleCount       int       `json:"health_sample_count,omitempty"`
-	HealthSuccessCount      int       `json:"health_success_count,omitempty"`
-	HealthFirstLatencyMs    int64     `json:"health_first_latency_ms,omitempty"`
+	ID                      uint       `json:"id"`
+	KeyID                   uint       `json:"key_id"`
+	ChannelID               int        `json:"channel_id"`
+	ExternalID              string     `json:"external_id"`
+	Name                    string     `json:"name"`
+	KeyPreview              string     `json:"key_preview"`
+	Models                  []string   `json:"models"`
+	AllowedModels           *[]string  `json:"allowed_models,omitempty"`
+	ModelsSynced            bool       `json:"models_synced"`
+	KeyPriority             int64      `json:"key_priority"`
+	SourceConversionRatio   float64    `json:"source_conversion_ratio"`
+	ConversionRatio         float64    `json:"conversion_ratio"`
+	ConversionRatioOverride *float64   `json:"conversion_ratio_override"`
+	Weight                  int        `json:"weight"`
+	AutoWeight              int        `json:"auto_weight"`
+	WeightOverride          *int       `json:"weight_override"`
+	UsedQuota               int64      `json:"used_quota"`
+	RemainQuota             *int64     `json:"remain_quota,omitempty"`
+	ExpiresAt               *time.Time `json:"expires_at,omitempty"`
+	Status                  int        `json:"status"`
+	DisabledReason          string     `json:"disabled_reason"`
+	LastSyncAt              int64      `json:"last_sync_at"`
+	LastUsedAt              int64      `json:"last_used_at"`
+	Routable                bool       `json:"routable"`
+	AvailabilityReason      string     `json:"availability_reason,omitempty"`
+	SnapshotOnly            bool       `json:"snapshot_only,omitempty"`
+	CredentialUnavailable   bool       `json:"credential_unavailable,omitempty"`
+	HealthStatus            string     `json:"health_status,omitempty"`
+	HealthReason            string     `json:"health_reason,omitempty"`
+	HealthSampleCount       int        `json:"health_sample_count,omitempty"`
+	HealthSuccessCount      int        `json:"health_success_count,omitempty"`
+	HealthFirstLatencyMs    int64      `json:"health_first_latency_ms,omitempty"`
+}
+
+type PlatformSiteResourceIdentityResponse struct {
+	PlatformUserID    string  `json:"platform_user_id"`
+	Username          string  `json:"username"`
+	Email             string  `json:"email"`
+	DisplayName       string  `json:"display_name"`
+	Role              string  `json:"role"`
+	CurrentGroup      string  `json:"current_group"`
+	Status            string  `json:"status"`
+	QuotaUnit         string  `json:"quota_unit"`
+	Balance           float64 `json:"balance"`
+	UsedQuota         int64   `json:"used_quota"`
+	CurrentValueAt    int64   `json:"current_value_at"`
+	SnapshotValueAt   int64   `json:"snapshot_value_at"`
+	SourceEndpoint    string  `json:"source_endpoint"`
+	UpstreamUpdatedAt int64   `json:"upstream_updated_at"`
+	LastSyncAt        int64   `json:"last_sync_at"`
+}
+
+type PlatformSiteResourceGroupResponse struct {
+	ExternalID        string  `json:"external_id"`
+	Name              string  `json:"name"`
+	Ratio             float64 `json:"ratio"`
+	Available         bool    `json:"available"`
+	Usable            bool    `json:"usable"`
+	SourceEndpoint    string  `json:"source_endpoint"`
+	UpstreamUpdatedAt int64   `json:"upstream_updated_at"`
+	LastSyncAt        int64   `json:"last_sync_at"`
+}
+
+type PlatformSiteResourceEndpointCapabilityResponse struct {
+	Protocol        string `json:"protocol"`
+	HTTPMethod      string `json:"http_method"`
+	Path            string `json:"path"`
+	Supported       bool   `json:"supported"`
+	SourceData      string `json:"source_data,omitempty"`
+	LastConfirmedAt int64  `json:"last_confirmed_at"`
+}
+
+type PlatformSiteResourceEndpointResponse struct {
+	ManagementURL   string                                           `json:"management_url"`
+	RelayURL        string                                           `json:"relay_url"`
+	ModelsURL       string                                           `json:"models_url"`
+	PricingURL      string                                           `json:"pricing_url"`
+	UsageURL        string                                           `json:"usage_url"`
+	TokenURL        string                                           `json:"token_url"`
+	AdminURL        string                                           `json:"admin_url"`
+	OpenAIURL       string                                           `json:"openai_url"`
+	ClaudeURL       string                                           `json:"claude_url"`
+	GeminiURL       string                                           `json:"gemini_url"`
+	ResponsesURL    string                                           `json:"responses_url"`
+	Source          string                                           `json:"source"`
+	DiscoveryMethod string                                           `json:"discovery_method"`
+	Enabled         bool                                             `json:"enabled"`
+	LastConfirmedAt int64                                            `json:"last_confirmed_at"`
+	Capabilities    []PlatformSiteResourceEndpointCapabilityResponse `json:"capabilities"`
+}
+
+type PlatformSiteResourceSyncResponse struct {
+	ResourceType                 string `json:"resource_type"`
+	Status                       string `json:"status"`
+	AttemptedAt                  int64  `json:"attempted_at"`
+	SucceededAt                  int64  `json:"succeeded_at"`
+	SourceEndpoint               string `json:"source_endpoint"`
+	RecordCount                  int    `json:"record_count"`
+	FailureReason                string `json:"failure_reason,omitempty"`
+	Partial                      bool   `json:"partial"`
+	RequiresSecurityVerification bool   `json:"requires_security_verification"`
+	UsingSnapshot                bool   `json:"using_snapshot"`
+}
+
+type PlatformSiteResourcesResponse struct {
+	ChannelID         int                                   `json:"channel_id"`
+	Platform          string                                `json:"platform"`
+	ManagementBaseURL string                                `json:"management_base_url"`
+	RelayBaseURL      string                                `json:"relay_base_url"`
+	Balance           float64                               `json:"balance"`
+	UsedQuota         int64                                 `json:"used_quota"`
+	Identity          *PlatformSiteResourceIdentityResponse `json:"identity,omitempty"`
+	Groups            []PlatformSiteResourceGroupResponse   `json:"groups"`
+	Endpoint          *PlatformSiteResourceEndpointResponse `json:"endpoint,omitempty"`
+	ResourceSyncs     []PlatformSiteResourceSyncResponse    `json:"resource_syncs"`
+	Keys              []UpstreamKeyResponse                 `json:"keys"`
+	KeyCount          int                                   `json:"key_count"`
+	RoutableKeyCount  int                                   `json:"routable_key_count"`
+	SyncStatus        string                                `json:"sync_status"`
+	LastSyncAt        int64                                 `json:"last_sync_at"`
+	UsingLastSnapshot bool                                  `json:"using_last_snapshot"`
+	AuthStatus        string                                `json:"auth_status,omitempty"`
+	AuthStatusReason  string                                `json:"auth_status_reason,omitempty"`
 }
 
 type UpstreamKeyPatchRequest struct {
@@ -485,7 +582,10 @@ func platformSiteStatus(account *model.PlatformSiteAccount) UpstreamSiteStatusRe
 		ChannelID:           account.ChannelID,
 		Platform:            account.Platform,
 		BaseURL:             redactBaseURL(account.BaseURL),
+		RelayBaseURL:        redactBaseURL(account.RelayBaseURL),
 		AuthType:            account.AuthType,
+		AuthStatus:          account.AuthStatus,
+		AuthStatusReason:    account.AuthStatusReason,
 		RechargeAmount:      account.RechargeAmount,
 		CreditedAmount:      account.CreditedAmount,
 		ConversionRatio:     account.ConversionRatio,
@@ -540,6 +640,9 @@ func toUpstreamKeyResponse(key *model.UpstreamKey) UpstreamKeyResponse {
 		Weight:                  key.EffectiveWeight(),
 		AutoWeight:              key.AutoWeight(),
 		WeightOverride:          key.WeightOverride,
+		UsedQuota:               key.UsedQuota,
+		RemainQuota:             key.RemainQuota,
+		ExpiresAt:               key.ExpiresAt,
 		ModelsSynced:            key.ModelsSynced,
 		Status:                  key.Status,
 		DisabledReason:          key.DisabledReason,
@@ -688,6 +791,205 @@ func GetUpstreamKeys(c *gin.Context) {
 		result = append(result, toPlatformSiteKeyResponse(&keys[index], &account, channel))
 	}
 	common.ApiSuccess(c, gin.H{"items": result, "total": len(result)})
+}
+
+func platformSiteResources(channelID int) (*PlatformSiteResourcesResponse, error) {
+	channel, err := getPlatformSiteChannel(channelID)
+	if err != nil {
+		return nil, err
+	}
+	var account model.PlatformSiteAccount
+	if err := model.DB.Where("channel_id = ?", channelID).First(&account).Error; err != nil {
+		return nil, err
+	}
+
+	response := &PlatformSiteResourcesResponse{
+		ChannelID:         channelID,
+		Platform:          account.Platform,
+		ManagementBaseURL: redactBaseURL(account.BaseURL),
+		RelayBaseURL:      redactBaseURL(account.RelayBaseURL),
+		Balance:           account.Balance,
+		UsedQuota:         account.UsedQuota,
+		SyncStatus:        account.SyncStatus,
+		LastSyncAt:        account.LastSyncAt,
+		UsingLastSnapshot: model.PlatformSiteUsingLastSnapshot(&account),
+		AuthStatus:        account.AuthStatus,
+		AuthStatusReason:  account.AuthStatusReason,
+		Keys:              make([]UpstreamKeyResponse, 0),
+		Groups:            make([]PlatformSiteResourceGroupResponse, 0),
+		ResourceSyncs:     make([]PlatformSiteResourceSyncResponse, 0),
+	}
+
+	var identity model.PlatformSiteIdentity
+	if err := model.DB.Where("channel_id = ?", channelID).First(&identity).Error; err == nil {
+		response.Identity = &PlatformSiteResourceIdentityResponse{
+			PlatformUserID:    identity.PlatformUserID,
+			Username:          identity.Username,
+			Email:             identity.Email,
+			DisplayName:       identity.DisplayName,
+			Role:              identity.Role,
+			CurrentGroup:      identity.CurrentGroup,
+			Status:            identity.Status,
+			QuotaUnit:         identity.QuotaUnit,
+			Balance:           identity.Balance,
+			UsedQuota:         identity.UsedQuota,
+			CurrentValueAt:    identity.CurrentValueAt,
+			SnapshotValueAt:   identity.SnapshotValueAt,
+			SourceEndpoint:    identity.SourceEndpoint,
+			UpstreamUpdatedAt: identity.UpstreamUpdatedAt,
+			LastSyncAt:        identity.LastSyncAt,
+		}
+	}
+
+	var groups []model.PlatformSiteGroup
+	if err := model.DB.Where("channel_id = ?", channelID).
+		Order("usable DESC, name ASC, id ASC").
+		Find(&groups).Error; err != nil {
+		return nil, err
+	}
+	for _, group := range groups {
+		response.Groups = append(response.Groups, PlatformSiteResourceGroupResponse{
+			ExternalID:        group.ExternalID,
+			Name:              group.Name,
+			Ratio:             group.Ratio,
+			Available:         group.Available,
+			Usable:            group.Usable,
+			SourceEndpoint:    group.SourceEndpoint,
+			UpstreamUpdatedAt: group.UpstreamUpdatedAt,
+			LastSyncAt:        group.LastSyncAt,
+		})
+	}
+
+	var endpoint model.PlatformSiteEndpoint
+	if err := model.DB.Where("channel_id = ?", channelID).First(&endpoint).Error; err == nil {
+		response.Endpoint = &PlatformSiteResourceEndpointResponse{
+			ManagementURL:   endpoint.ManagementURL,
+			RelayURL:        endpoint.RelayURL,
+			ModelsURL:       endpoint.ModelsURL,
+			PricingURL:      endpoint.PricingURL,
+			UsageURL:        endpoint.UsageURL,
+			TokenURL:        endpoint.TokenURL,
+			AdminURL:        endpoint.AdminURL,
+			OpenAIURL:       endpoint.OpenAIURL,
+			ClaudeURL:       endpoint.ClaudeURL,
+			GeminiURL:       endpoint.GeminiURL,
+			ResponsesURL:    endpoint.ResponsesURL,
+			Source:          endpoint.Source,
+			DiscoveryMethod: endpoint.DiscoveryMethod,
+			Enabled:         endpoint.Enabled,
+			LastConfirmedAt: endpoint.LastConfirmedAt,
+			Capabilities:    make([]PlatformSiteResourceEndpointCapabilityResponse, 0),
+		}
+		var capabilities []model.PlatformSiteEndpointCapability
+		if err := model.DB.Where("endpoint_id = ?", endpoint.ID).
+			Order("protocol ASC, path ASC, id ASC").
+			Find(&capabilities).Error; err != nil {
+			return nil, err
+		}
+		for _, capability := range capabilities {
+			response.Endpoint.Capabilities = append(response.Endpoint.Capabilities,
+				PlatformSiteResourceEndpointCapabilityResponse{
+					Protocol:        capability.Protocol,
+					HTTPMethod:      capability.HTTPMethod,
+					Path:            capability.Path,
+					Supported:       capability.Supported,
+					SourceData:      capability.SourceData,
+					LastConfirmedAt: capability.LastConfirmedAt,
+				})
+		}
+	}
+
+	var syncs []model.PlatformSiteResourceSync
+	if err := model.DB.Where("channel_id = ?", channelID).
+		Order("resource_type ASC").
+		Find(&syncs).Error; err != nil {
+		return nil, err
+	}
+	for _, sync := range syncs {
+		response.ResourceSyncs = append(response.ResourceSyncs,
+			PlatformSiteResourceSyncResponse{
+				ResourceType:                 sync.ResourceType,
+				Status:                       sync.Status,
+				AttemptedAt:                  sync.AttemptedAt,
+				SucceededAt:                  sync.SucceededAt,
+				SourceEndpoint:               sync.SourceEndpoint,
+				RecordCount:                  sync.RecordCount,
+				FailureReason:                sync.FailureReason,
+				Partial:                      sync.Partial,
+				RequiresSecurityVerification: sync.RequiresSecurityVerification,
+				UsingSnapshot:                sync.UsingSnapshot,
+			})
+	}
+
+	var keys []model.UpstreamKey
+	if err := model.DB.Where("channel_id = ?", channelID).
+		Order("key_priority DESC, weight DESC, id ASC").
+		Find(&keys).Error; err != nil {
+		return nil, err
+	}
+	for index := range keys {
+		if keys[index].RoutingKeyID == 0 {
+			if err := model.EnsureRoutingKeyForUpstreamKey(nil, &keys[index]); err != nil {
+				return nil, err
+			}
+		}
+		key := toPlatformSiteKeyResponse(&keys[index], &account, channel)
+		response.Keys = append(response.Keys, key)
+		if key.Routable {
+			response.RoutableKeyCount++
+		}
+	}
+	response.KeyCount = len(response.Keys)
+	return response, nil
+}
+
+func GetPlatformSiteResources(c *gin.Context) {
+	channelID, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	response, err := platformSiteResources(channelID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, response)
+}
+
+func SyncPlatformSiteResources(c *gin.Context) {
+	channelID, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if _, err := getPlatformSiteChannel(channelID); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	defer cancel()
+	if err := service.SyncUpstreamSite(ctx, channelID); err != nil {
+		recordManageAudit(c, "channel.upstream_resources_sync", map[string]any{
+			"channel_id": channelID,
+			"success":    false,
+		})
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": safeUpstreamErrorForResponse(err),
+		})
+		return
+	}
+	recordManageAudit(c, "channel.upstream_resources_sync", map[string]any{
+		"channel_id": channelID,
+		"success":    true,
+	})
+	response, err := platformSiteResources(channelID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, response)
 }
 
 func PatchUpstreamKey(c *gin.Context) {

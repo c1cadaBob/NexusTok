@@ -538,6 +538,7 @@ func TestPatchUpstreamKeyClearsWeightWhenRestoredRatioIsFree(t *testing.T) {
 			"models_synced": false,
 			"key_priority": 0,
 			"source_conversion_ratio": 1,
+			"used_quota": 0,
 			"conversion_ratio": 0,
 			"conversion_ratio_override": null,
 			"weight": 2000,
