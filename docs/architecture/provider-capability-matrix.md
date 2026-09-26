@@ -1,7 +1,7 @@
 # 渠道能力矩阵
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-25
+> 事实基线日期：2026-09-26
 > 主要代码来源：`constant/channel.go`、`constant/api_type.go`、`common/api_type.go`、`relay/relay_adaptor.go`、`relay/common/relay_info.go`、`relay/channel/*/adaptor.go`、`router/relay-router.go`、`router/task-plugin-protocol-router.go`
 > 关联详细文档：[`README.md`](./README.md)、[`relay-routing-and-conversion.md`](./relay-routing-and-conversion.md)、[`implementation-deviations.md`](./implementation-deviations.md)、[`../key-routing-strategy.md`](../key-routing-strategy.md)
 
@@ -74,6 +74,13 @@
 | 60 | New API | NewAPI / `newapi.Adaptor` | OpenAI、Claude、Gemini、Image、Embedding 等 | 否 | Adaptor | 否 | 平台站点同步和子密钥能力需结合专项文档 |
 | 61 | Task Plugin | 无 API 映射 / `GetAdaptor` 不回退 | `openai_responses`、`openai_video`、原生插件路由、通用任务 | 由协议声明 | 插件 Manifest/模型绑定 | 是 | 必须有插件 Generation 和渠道绑定；不能作为普通 OpenAI 渠道 |
 
+### 2.1 平台站点能力补充（2026-09-26）
+
+| 平台 | 认证与刷新 | 资源来源 | 端点与模型能力 | 失败回退 |
+| --- | --- | --- | --- | --- |
+| New API 平台站点 | 账号密码、自动配置、Access Token、Admin Key、Cookie；支持 `/api/user/login/2fa`、`/api/user/login/verify`；传统刷新与 Dashboard Auth Bundle 均需按结构校验 | `/api/status`、`/api/user/self`、用户组、`/api/pricing`、Token 分页/Key 详情、必要时 Admin API | `/v1/models` 按单个密钥确认；`supported_endpoint` 等 pricing 数据进入端点能力诊断 | 2FA、安全验证、Bundle 不完整或 Admin 资源拒绝只影响对应资源状态，保留最近成功快照 |
+| Sub2API 平台站点 | 账号密码、自动配置、Access Token、Admin Key、Cookie；支持 `/api/v1/auth/login/2fa`；Refresh Token 必须完整轮换 | `/api/v1/auth/me`、profile、usage、groups、keys；Admin Key 额外读取 admin accounts/data | `/v1/models` 按单个密钥确认；页面 `api_base_url` 分离管理和 Relay 地址 | Refresh 轮换不确定时不重放旧令牌；step-up 拒绝不当作密钥不存在，保留旧快照 |
+
 ## 3. 维护解释
 
 - “流式选项”只对应 `streamSupportedChannels`，不表示所有流式 Endpoint 或所有上游事件都可用。
@@ -86,3 +93,4 @@
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 覆盖 `ChannelTypeNames` 当前全部渠道类型，并区分 API 映射、Adaptor、可路由能力和任务插件 | `constant/channel.go`、`common/api_type.go`、`relay/relay_adaptor.go`、`relay/channel/`、路由 | 渠道常量、API 映射、Adaptor 工厂、任务映射和流式列表静态核对 |
+| 2026-09-26 | 平台站点资源能力补充 | NewAPI/Sub2API 仅以渠道类型和适配器入口描述，未区分登录、刷新、资源和失败回退 | 以参考源真实路由登记 2FA、Bundle/轮换、身份/额度/分组/端点/密钥/模型资源及快照回退 | 平台站点管理与路由前置资源同步 | 参考项目路由、DTO、权限和失败语义静态核对 |

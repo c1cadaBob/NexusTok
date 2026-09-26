@@ -1,7 +1,7 @@
 # 实现偏差登记
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-25
+> 事实基线日期：2026-09-26
 > 主要代码来源：`router/relay-router.go`、`common/api_type.go`、`relay/relay_adaptor.go`、`relay/channel/*/adaptor.go`、`router/task-plugin-protocol-router.go`、`docs/architecture/*.md`
 > 关联详细文档：[`README.md`](./README.md)、[`relay-routing-and-conversion.md`](./relay-routing-and-conversion.md)、[`provider-capability-matrix.md`](./provider-capability-matrix.md)、[`../plugin-api/README.md`](../plugin-api/README.md)
 
@@ -39,6 +39,15 @@
 | CHECK-003 | 流式选项 | `streamSupportedChannels` 中的支持是否覆盖每个具体 Relay Format 的上游语义 | 代码有渠道级 map，但不是每个 Endpoint 的完整能力矩阵 | 待核查 | 2026-09-25 | 按 Chat/Claude/Gemini/Responses/Realtime 分 Format 验证 |
 | CHECK-004 | 模型获取 | 每个 Adaptor 的模型获取结果是否与渠道 `models`、映射和 Routing Key 能力一致 | 有 `GetModelList`/模型管理入口，但外部上游响应取决于配置和网络 | 待核查 | 2026-09-25 | 对模型发现、缓存刷新和失败回退分别做验证 |
 
+## 3.1 平台站点新增偏差
+
+| 编号 | 功能模块 | 变更前 | 变更后 | 状态 | 证据路径 | 最近核查时间 |
+| --- | --- | --- | --- | --- | --- | --- |
+| DEV-011 | New API 2FA | 账号密码遇到 `require_2fa` 或安全验证时仅返回普通认证失败 | 通过短期服务端认证流程识别 2FA；Passkey/安全证明仍回退浏览器流程 | 已实现/待上游验证 | `service/upstream_site_adapters.go`、`controller/upstream_channel.go`、New API `controller/twofa.go` | 2026-09-26 |
+| DEV-012 | New API Dashboard Auth Bundle | 刷新逻辑只按 Access Token/Refresh Token 解析，可能错误降级现代响应 | 严格校验 `success`、Token、过期时间、当前 Session 和 user；结构不完整时重新认证 | 已实现/待上游验证 | all-api-hub `apiService/newApi/dashboardAuth.ts`、NexusTok 刷新适配器 | 2026-09-26 |
+| DEV-013 | Sub2API Refresh Token 轮换 | 刷新响应缺少新 Refresh Token 时没有记录轮换不确定性 | 不重放旧 Refresh Token，标记重新认证并保留资源快照 | 已实现/待上游验证 | all-api-hub `apiService/sub2api/tokenRefresh.ts`、Sub2API `auth_handler.go` | 2026-09-26 |
+| DEV-014 | 管理员安全验证与资源失败 | Admin/step-up 拒绝读取资源可能被当作普通空列表 | 资源类型独立记录安全验证要求，旧密钥、额度和模型快照不删除 | 已实现/待上游验证 | Sub2API step-up middleware、平台站点资源同步实现 | 2026-09-26 |
+
 ## 4. 维护规则
 
 新发现偏差必须先确认“预期来源”与“代码实际行为”都能引用，再新增编号。代码修复时在同一功能提交中：
@@ -53,3 +62,4 @@
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 登记路由显式未实现、Adaptor 局部未实现、AIProxyLibrary 工厂缺口和 Responses 入口差异，并区分待核查项 | Relay 路由、Adaptor 工厂、插件协议和后续维护流程 | `router/relay-router.go`、`common/api_type.go`、`relay/relay_adaptor.go`、`relay/channel/` 静态核对 |
+| 2026-09-26 | 平台站点认证与资源偏差登记 | 平台站点 2FA、现代 Session Bundle、Refresh Token 轮换和安全验证失败回退没有单独记录 | 新增 New API 2FA/Bundle、Sub2API 轮换、管理员 step-up 和资源级失败偏差记录 | 平台站点认证、同步、资源面板 | 参考项目路由和本项目适配器静态核对 |

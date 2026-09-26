@@ -1,11 +1,25 @@
 # 上游渠道与平台站点设计
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-25
+> 事实基线日期：2026-09-26
 > 主要代码来源：`model/upstream_channel.go`、`model/routing_key.go`、`service/upstream_site.go`、`controller/upstream_channel.go`、`controller/channel-test.go`
 > 关联架构文档：[`docs/architecture/relay-routing-and-conversion.md`](architecture/relay-routing-and-conversion.md)、[`docs/architecture/provider-capability-matrix.md`](architecture/provider-capability-matrix.md)、[`docs/architecture/data-cache-and-background-jobs.md`](architecture/data-cache-and-background-jobs.md)
 
 ## 1. 目标与范围
+
+### 1.1 参考源与实现核对
+
+涉及 NewAPI、Sub2API 平台站点的认证、会话刷新、资源获取、密钥同步、模型能力、
+端点发现和管理端交互时，必须以本机参考源的实际路由、请求参数、响应结构、权限
+中间件和失败语义为准：
+
+- Sub2API：`/opt/project/sub2api-main`
+- New API：`/opt/project/new-api-main`
+- all-api-hub：`/opt/project/all-api-hub-main`
+
+用户最初将 New API 路径重复写成 Sub2API 路径；本机实际 New API 源码为
+`/opt/project/new-api-main`。参考源中的凭据、Cookie、Token、测试账号和环境变量
+不得复制到 NexusTok。
 
 现有渠道统一称为上游渠道。上游渠道分为两类：
 
@@ -269,6 +283,22 @@ Sub2API 首期协议范围：
 
 适配器不能绕过验证码、交互式二次验证或站点风控。密码登录无法完成时返回可识别的认证状态，管理员可以切换为 Cookie 或令牌认证。
 
+账号密码登录的交互式二次验证不再作为长期认证类型。服务端以一次性短期
+`auth_flow_id` 承载待验证状态，绑定管理员、平台、规范化 Origin、管理地址和可选
+渠道 ID，默认 TTL 为 5 分钟；密码、TOTP 和临时上游会话只保存在短期服务端缓存中，
+流程成功、取消、过期、失败或重复消费后均不可继续使用。New API 的
+`/api/user/login/2fa`、`/api/user/login/verify` 和 Sub2API 的
+`/api/v1/auth/login/2fa` 均由适配器按参考源响应结构处理，前端只获得短期流程 ID。
+New API Passkey、浏览器安全证明和敏感操作安全证明继续通过浏览器自动配置或人工
+浏览器验证，不在 NexusTok 中重新实现 WebAuthn。
+
+New API 会话刷新同时识别传统 Access Token/Refresh Token 和 Dashboard Auth Bundle。
+可识别的现代 Bundle 必须完整包含 `success`、`data.access_token`、
+`data.token_type`、`data.access_expires_at`、当前 `data.session.sid` 和
+`data.user`；结构不完整时标记为需要重新认证，不降级为旧协议。Sub2API Refresh
+Token 采用轮换语义，响应必须同时返回新的 Access Token、新 Refresh Token 和正数
+`expires_in`；响应不完整或网络结果不确定时不重放旧 Refresh Token，并保留已有资源快照。
+
 平台站点表单提供两种认证方式：`password` 和 `auto`（自动配置）。账号密码认证
 由管理员手动输入用户名和密码；自动配置通过短期 Capture Session 和目标站浏览器
 脚本自动判断并采集 Access Token、Admin Key 或 Cookie。采集会话绑定管理员、目标
@@ -344,6 +374,12 @@ Sub2API 普通用户接口如果只能返回掩码密钥，不会伪造真实密
   有效结果，不使用旧快照覆盖。若本次完整同步没有任何账号级已用额度字段，则
   将本次快照中明确返回已用额度的子密钥值求和，作为父渠道和站点账号的回退值。
 
+同步结果还按身份、分组、端点、密钥、模型和用量分别记录。某一资源类型失败时，
+保留该类型最近成功快照并写入资源级失败状态；安全验证或 Admin Key step-up 拒绝
+读取密钥时，不把密钥标记为缺失或删除。只有完整分页、资源校验和密钥读取成功后，
+才依据“本次未返回”标记密钥缺失。余额同时区分当前值、最近成功值、来源接口和
+是否完整，管理地址与 Relay/API 地址独立保存。
+
 同步日志只记录站点 ID、平台、结果、数量、耗时和脱敏错误，不记录任何凭据或实际密钥。
 
 ## 6. API
@@ -356,6 +392,11 @@ GET   /api/channel/:id/upstream-sync
 GET   /api/channel/:id/upstream-keys
 PATCH /api/channel/:id/upstream-keys/:keyId
 POST  /api/channel/:id/upstream-keys/batch-status
+POST  /api/channel/platform-site/auth-flow/start
+POST  /api/channel/platform-site/auth-flow/:flowID/verify
+DELETE /api/channel/platform-site/auth-flow/:flowID
+GET   /api/channel/:id/upstream-resources
+POST  /api/channel/:id/upstream-resources/sync
 ```
 
 接口能力：
@@ -407,6 +448,10 @@ POST  /api/channel/:id/upstream-keys/batch-status
 或仅保留展示快照的记录不会计入可路由数量。
 
 所有接口必须经过管理员权限校验。敏感凭据查看必须经过现有安全验证机制，默认只返回指纹和掩码。
+
+`PlatformSiteInput` 保存账号密码认证时只接受一次性 `auth_flow_id`；服务端消费流程
+后再加密保存最终凭据，不接受前端重复提交密码或验证码。资源查询只返回掩码密钥、
+身份、额度、分组倍率、端点、模型能力和资源级状态，不返回完整密钥。
 
 ## 7. 安全要求
 
@@ -484,6 +529,13 @@ POST  /api/channel/:id/upstream-keys/batch-status
 - 复用现有 DataTable、Dialog、ConfirmDialog 和 CopyButton；
 - 所有文案通过 `useTranslation()` 和 `t(...)` 提供七语言翻译。
 
+认证方式分层展示：默认显示账号密码和自动配置，高级区域显示 Access Token、
+Admin Key 和 Cookie。账号密码及 TOTP 只存在表单内存；2FA 验证只提交到认证流程
+验证接口，成功后仅保存短期 `auth_flow_id`，刷新、关闭、取消、失败和保存完成后
+清理密码、验证码和流程 ID，不写入 Local Storage、Session Storage、URL 或持久化
+Query Cache。资源面板展示管理/Relay 地址、平台身份、余额、已用额度、额度单位、
+当前分组及倍率、协议端点、密钥统计、最近成功同步时间、旧快照和资源级失败原因。
+
 ## 9. 测试与验证
 
 单元测试覆盖：
@@ -515,6 +567,22 @@ bun run build
 并使用 MCP/Playwright 检查桌面端和移动端的折叠、搜索、表单切换、单密钥操作、无重叠和无溢出。
 
 真实站点测试只从本地环境变量读取凭据，执行登录、会话刷新、站点信息、余额、密钥和模型的只读请求。不得执行充值、删除密钥、修改上游配置或其他破坏性操作。测试结果不得记录密码、Cookie、令牌或实际密钥。
+
+认证流程测试必须覆盖 2FA challenge、错误次数、过期、重放、管理员/Origin/平台
+绑定、New API 两种刷新形态、现代 Bundle 不完整拒绝降级、Sub2API 轮换不确定结果、
+敏感字段脱敏和安全验证拒绝读取密钥时的旧快照保留。数据库模型变更必须实际验证
+SQLite、MySQL 和 PostgreSQL 的新建、升级、幂等迁移、索引约束、删除清理与事务回滚；
+未完成矩阵时不得声明数据库兼容已完成。
+
+安全核对基于 OWASP ASVS 5.0.0 以及 Authentication、Session Management、MFA、
+CSRF、Cryptographic Storage 和 SSRF Prevention Cheat Sheet。当前实现明确不覆盖
+New API Passkey/WebAuthn 和上游安全证明的自动完成能力。
+
+## 10. 变更记录
+
+| 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
+| --- | --- | --- | --- | --- | --- |
+| 2026-09-26 | 认证与资源同步基线 | 账号密码遇到 2FA 时只返回普通认证错误；快照主要覆盖余额、模型和密钥 | 增加短期认证流程、两类会话刷新契约、资源级失败/快照保留、管理/Relay 地址分离和新增资源接口设计基线 | NewAPI/Sub2API 认证、同步、管理端和测试 | 参考源路由核对；`service/upstream_site*.go`、`controller/upstream_channel.go`、参考项目认证实现 |
 
 模型能力验收至少覆盖：一个站点包含两个子密钥且模型集合不同，确认父渠道
 模型是两者并集，而每个子密钥只允许路由到自己的模型；站点全局模型列表

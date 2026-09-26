@@ -1,7 +1,7 @@
 # 数据库、缓存与后台任务
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-25
+> 事实基线日期：2026-09-26
 > 主要代码来源：`model/main.go`、`common/database.go`、`common/redis.go`、`model/channel_cache.go`、`model/sync.go`、`service/system_task.go`、`service/task_polling.go`、`main.go`
 > 关联详细文档：[`system-overview.md`](./system-overview.md)、[`authentication-and-authorization.md`](./authentication-and-authorization.md)、[`tasks-and-plugins.md`](./tasks-and-plugins.md)、[`../rate-limiting.md`](../rate-limiting.md)
 
@@ -95,6 +95,15 @@ Redis 由 `common.InitRedisClient` 初始化，未配置 `REDIS_CONN_STRING` 时
 - 系统任务 Runner 的数据库锁和 Handler 的业务幂等是两层保护，锁丢失或重复唤醒不能被当作绝对的单次执行保证。
 - 日志库支持 ClickHouse 不代表主业务库支持 ClickHouse。
 
+### 8.1 平台站点资源快照（2026-09-26）
+
+平台站点同步按身份、分组、端点、密钥、模型和用量资源独立记录尝试时间、成功时间、
+状态、来源接口、数量、脱敏失败原因、部分成功和安全验证要求。同步失败时不覆盖最近
+成功值；只有完整分页和资源校验成功后才允许将未返回密钥标记为缺失。安全验证或
+Admin Key step-up 拒绝读取密钥时保留旧密钥和模型快照，平台路由继续使用最近成功
+快照。资源查询接口读取规范化资源表和现有 `UpstreamKey` 路由主数据，不把短期认证
+流程或任何敏感凭据写入缓存响应。
+
 ## 9. 维护时需要同步的关联模块
 
 修改数据库 DSN、GORM 模型、迁移、锁、缓存键/TTL、Redis 回退、日志字段、后台任务 Type/interval/lease、任务调度或多节点职责时，必须同步本文档、系统总览、任务/插件文档、鉴权/限流专项文档和偏差登记。数据库变更还要按根目录规则完成三数据库验证并记录版本与结果。
@@ -104,3 +113,4 @@ Redis 由 `common.InitRedisClient` 初始化，未配置 `REDIS_CONN_STRING` 时
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 建立数据库选择、缓存生命周期、系统任务 Runner 和后台任务入口说明 | `model/`、`common/`、`service/system_task.go`、`main.go` | 数据库初始化、Redis、Runner 和启动注册代码静态核对 |
+| 2026-09-26 | 平台资源同步补充 | 平台站点同步主要以单个总快照和站点状态表示 | 增加资源类型独立状态、最近成功快照保留、完整分页缺失判定和安全验证失败回退基线 | 平台站点缓存、同步任务、资源查询 | `service/upstream_site.go` 当前快照逻辑与新增资源模型设计核对 |

@@ -27,6 +27,18 @@ This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI pro
 - JavaScript task plugins live in `plugins/tasks/`, run through `pkg/jsplugin/`, and integrate with host task polling and settlement.
 - `web/` is the React frontend (see `web/AGENTS.md`); `electron/` is the desktop wrapper.
 
+## 平台站点参考源项目
+
+涉及 NewAPI 或 Sub2API 平台站点的认证、会话刷新、资源获取、密钥同步、模型能力、端点发现和管理端交互时，必须先核对以下本机参考源项目中的实际路由、请求参数、响应结构、权限要求和失败语义：
+
+- Sub2API 源码：`/opt/project/sub2api-main`
+- New API 源码：`/opt/project/new-api-main`
+- all-api-hub 源码：`/opt/project/all-api-hub-main`
+
+用户原始请求中的 New API 路径与 Sub2API 路径重复填写为 `/opt/project/sub2api-main`；本机实际存在的 New API 参考源为 `/opt/project/new-api-main`，以后以该路径为准。
+
+不得只根据平台名称、README、外部说明或单个适配器方法推断完整能力。修改前应沿参考项目的真实路由、请求 DTO、响应 DTO、认证中间件和错误处理追踪端到端行为。参考项目中的凭据、测试账号、Cookie、Token、Refresh Token、环境变量和其它敏感运行数据不得复制到 NexusTok。
+
 ## Internationalization (i18n)
 
 ### Backend (`i18n/`)

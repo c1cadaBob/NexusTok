@@ -1,7 +1,7 @@
 # 密钥调度策略与日志可观测性
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-25
+> 事实基线日期：2026-09-26
 > 主要代码来源：`model/routing_key.go`、`model/upstream_routing.go`、`middleware/distributor.go`、`service/channel_select.go`、`controller/channel-test.go`、`model/channel_cache.go`
 > 关联架构文档：[`docs/architecture/relay-routing-and-conversion.md`](architecture/relay-routing-and-conversion.md)、[`docs/architecture/provider-capability-matrix.md`](architecture/provider-capability-matrix.md)、[`docs/architecture/implementation-deviations.md`](architecture/implementation-deviations.md)
 
@@ -326,6 +326,18 @@ GET /api/channel/search?model=<model>&sort_by=model_ratio&sort_order=asc
 
 平台站点的余额和已使用额度以平台同步接口返回的 `balance`、`used_quota` 为准，同时保存到 `PlatformSiteAccount` 和父渠道；执行同步渠道或更新余额时会一起刷新这两个字段。`used_quota` 明确返回 `0` 时仍视为有效上游结果；仅当上游没有返回账号级已用额度时，才将本次同步中明确返回的子密钥已用额度求和作为回退值。管理端状态查询返回后优先展示同步结果，不使用本地请求日志或本地累计值替代。Sub2API 如果使用 `api.` 转发地址，只有同协议、同端口的去 `api.` 候选管理站页面明确回指原始 API 地址时才会自动纠正管理地址；失败时保留原配置并不发送凭据。
 
+平台站点同步的资源来源必须能回溯到参考项目真实接口。New API 资源至少包括
+`/api/status`、`/api/user/self`、用户组、`/api/user/models`、`/api/pricing`、
+Token 分页和 `/v1/models`；Sub2API 资源至少包括 auth/me、profile、usage、
+groups、keys、admin accounts/data 和 `/v1/models`。管理地址、Relay 地址、Models
+地址和协议端点分别记录来源与最近确认时间；`supported_endpoint`、group ratio、
+模型限制和单密钥模型能力不能仅依据平台名称推断。
+
+当资源同步部分成功时，路由继续使用最近成功的资源快照。安全验证、Passkey 或
+Admin Key step-up 拒绝只标记资源为 `secure_verification_required`，不把旧密钥标记
+为缺失；只有完整分页成功后才执行缺失判定。资源接口只返回掩码和管理员可见诊断
+字段，使用日志继续通过 `other.admin_info` 保持普通用户不可见。
+
 平台站点可以使用 `http://`、`localhost`、回环地址、私有 IPv4/IPv6 和内网 DNS
 地址。私有地址和 HTTP 仅由平台站点专用同步客户端放行，其他用户可控 URL 仍受
 全局 SSRF 规则约束。Sub2API 的管理地址与转发地址分开保存：管理接口使用
@@ -420,3 +432,4 @@ GET /api/channel/search?model=<model>&sort_by=model_ratio&sort_order=asc
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 补充架构索引与元信息 | 已有密钥调度详细规则没有统一事实基线和架构入口 | 增加事实基线、代码来源、架构分工和变更记录；保留统一 `key_id`、候选和日志细节 | Routing Key、平台站点、模型获取、测试和管理员日志 | `model/upstream_routing.go`、`model/routing_key.go`、`middleware/distributor.go` 静态核对 |
+| 2026-09-26 | 平台站点资源同步补充 | 调度文档只描述站点总快照和子密钥能力，未记录资源来源与部分失败处理 | 补充 New API/Sub2API 资源接口、端点来源、管理/Relay 分离、安全验证失败和旧快照保留规则 | 平台站点同步、路由过滤、管理员诊断 | 参考项目路由、`service/upstream_site_adapters.go` 与资源模型设计核对 |

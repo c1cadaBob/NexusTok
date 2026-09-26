@@ -1,7 +1,7 @@
 # 鉴权、会话与授权原理
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-25
+> 事实基线日期：2026-09-26
 > 主要代码来源：`middleware/auth.go`、`middleware/token_auth.go`、`service/auth_session.go`、`model/user_session.go`、`service/authz/`、`controller/`、`oauth/`
 > 关联详细文档：[`../authentication.md`](../authentication.md)、[`../rate-limiting.md`](../rate-limiting.md)、[`system-overview.md`](./system-overview.md)
 
@@ -84,6 +84,20 @@ Token 限制不是前端 UI 的提示，而是在服务端分发和预扣/扣减
 - 已有详细文档描述了大量安全契约，本架构文档不重复定义所有 Cookie 属性和接口字段；两者冲突时应以代码和最新专项契约核对。
 - OAuth、Passkey、TOTP、PAT 和 Security Proof 的端到端组合场景不能由单个入口文件证明；尚未覆盖的组合场景应标记“待核查”，不能据名称推断。
 
+### 8.1 平台站点认证边界（2026-09-26）
+
+平台站点账号密码登录由 NewAPI/Sub2API 适配器完成，上游返回 2FA challenge 时转入
+服务端短期认证流程。流程绑定管理员、平台、规范化 Origin、管理地址和可选渠道，
+使用不可预测 opaque token、5 分钟 TTL、失败次数限制和单次消费；密码、TOTP、
+Cookie、Token、Refresh Token 和 Session ID 不写入日志、审计字段、URL 或普通响应。
+账号密码和 TOTP 只用于完成当前流程，流程成功后只通过 `auth_flow_id` 交给保存渠道
+逻辑。Passkey/WebAuthn 和上游安全证明保持浏览器自动配置/人工验证边界。
+
+平台站点会话不等同于 NexusTok 面板 Session。NewAPI 既可能返回传统刷新令牌，也可能
+返回 Dashboard Auth Bundle；可识别但结构不完整的现代 Bundle 必须重新认证，不得
+静默按旧协议处理。Sub2API Refresh Token 轮换响应缺少新令牌或有效过期时间时，结果
+标记为不确定，不重放旧令牌，并继续保留最近成功资源快照。
+
 ## 9. 维护时需要同步的关联模块
 
 修改登录、刷新、退出、Session、用户状态、鉴权版本、授权策略、Token 模型、OAuth/OIDC、Passkey、TOTP 或安全证明时，必须同步本文档、[`authentication.md`](../authentication.md)、必要时的[`rate-limiting.md`](../rate-limiting.md)和偏差登记。修改 Redis 键、TTL、缓存回退或多节点传播时同步[`data-cache-and-background-jobs.md`](./data-cache-and-background-jobs.md)。
@@ -93,3 +107,4 @@ Token 限制不是前端 UI 的提示，而是在服务端分发和预扣/扣减
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 建立凭据分层、Session 生命周期、授权和 Redis 拓扑说明 | `middleware/`、`service/auth*`、`model/user_session.go`、`oauth/` | `docs/authentication.md`、`model/user_session.go`、`service/auth_session.go` 静态核对 |
+| 2026-09-26 | 平台站点认证补充 | 平台站点密码认证与系统面板 Session 的边界未单独说明，2FA/刷新失败语义未登记 | 明确短期上游认证流程、NewAPI Bundle 校验、Sub2API 轮换不确定结果和未覆盖的 Passkey/安全证明边界 | `service/upstream_site*.go`、`controller/upstream_channel.go`、平台站点资源接口 | NewAPI/Sub2API/all-api-hub 参考源路由和认证实现静态核对 |
