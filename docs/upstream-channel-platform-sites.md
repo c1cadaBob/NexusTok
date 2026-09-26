@@ -584,6 +584,49 @@ New API Passkey/WebAuthn 和上游安全证明的自动完成能力。
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-26 | 认证与资源同步基线 | 账号密码遇到 2FA 时只返回普通认证错误；快照主要覆盖余额、模型和密钥 | 增加短期认证流程、两类会话刷新契约、资源级失败/快照保留、管理/Relay 地址分离和新增资源接口设计基线 | NewAPI/Sub2API 认证、同步、管理端和测试 | 参考源路由核对；`service/upstream_site*.go`、`controller/upstream_channel.go`、参考项目认证实现 |
 
+### 10.1 2026-09-26 实现校准
+
+**变更前**
+
+- 账号密码认证完成后，管理端无法统一承接 New API 的 2FA challenge；
+- 资源状态主要依赖父渠道同步状态，不能分别说明身份、分组、端点、用量、密钥和模型的失败；
+- New API 账号模型与管理员渠道模型的来源边界不清晰；
+- 管理地址、Relay 地址和模型地址在 Sub2API 页面发现后没有统一展示；
+- 资源面板只能看到密钥基本信息，不能查看端点能力、额度、过期时间和旧快照状态。
+
+**变更后**
+
+- `POST /api/channel/platform-site/auth-flow/start`、`verify` 和 `DELETE` 提供绑定管理员、
+  平台、规范化站点地址和可选渠道的 5 分钟短期流程。账号密码只在流程启动请求中提交，
+  2FA 只提交到 verify 接口，流程成功后保存渠道只提交一次性 `auth_flow_id`；
+- New API 支持 `/api/user/login/2fa`、`/api/user/login/verify`，Sub2API 支持
+  `/api/v1/auth/login/2fa`，均记录失败次数、验证码次数和消费状态。Sub2API 2FA 请求携带
+  同源 `Origin`、`Referer`、`User-Agent` 和 `X-Requested-With`；
+- New API 刷新同时识别传统 Token 对和 Dashboard Auth Bundle。现代 Bundle 一旦被识别但
+  结构不完整，必须进入重新认证，不得降级按旧协议解释；Sub2API 刷新缺少新 Refresh Token
+  或有效 `expires_in` 时记录 `uncertain_rotation`，不重放旧令牌；
+- `platform_site_identities`、`platform_site_groups`、`platform_site_endpoints`、
+  `platform_site_endpoint_capabilities` 和 `platform_site_resource_syncs` 由迁移统一管理。
+  同步事务同时更新规范化资源表与现有 `UpstreamKey`/`UpstreamKeyAbility` 路由主数据；
+- New API 当前读取 `/api/status`、`/api/user/self`、用户组、`/api/user/models`、
+  `/api/pricing`、Token 分页和 Token Key 详情，并在 Admin Key 可用时合并
+  `/api/channel/`、详情和 `fetch_models` 的模型。`supported_endpoint` 仅作为端点诊断能力
+  保存，不会把管理员渠道模型复制给每个子密钥；
+- Sub2API 当前读取 auth/me、profile、usage、groups、keys 和 Admin accounts/data，
+  将页面 `api_base_url` 解析为管理地址与 Relay 地址，并使用每个实际密钥请求
+  `/v1/models` 确认模型能力；
+- 资源同步按类型保存最近尝试、最近成功、来源、数量、失败原因、部分成功和安全验证状态。
+  安全验证拒绝或部分分页失败时保留旧密钥、额度和模型快照，只有完整分页和校验成功后
+  才能把本次未返回的密钥标记为缺失；
+- 管理端新增 `GET /api/channel/:id/upstream-resources` 和
+  `POST /api/channel/:id/upstream-resources/sync`，资源面板显示管理/Relay 地址、身份、
+  额度单位、分组倍率、协议端点、端点能力、密钥额度和资源级状态；普通响应仍不返回完整
+  平台密钥、Cookie、Token 或 Refresh Token。
+
+本次验证使用 SQLite 3.50.4、MySQL 8.2.0 和 PostgreSQL 15.19 的真实实例，完成新表建表、
+资源快照写入、额度回退、旧渠道迁移和重复迁移测试。未覆盖 New API Passkey/WebAuthn、
+Turnstile、Security Proof 及站点风控的自动完成。
+
 模型能力验收至少覆盖：一个站点包含两个子密钥且模型集合不同，确认父渠道
 模型是两者并集，而每个子密钥只允许路由到自己的模型；站点全局模型列表
 即使包含更多模型，也不能被复制给任意子密钥。

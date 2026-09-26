@@ -433,3 +433,25 @@ Admin Key step-up 拒绝只标记资源为 `secure_verification_required`，不�
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 补充架构索引与元信息 | 已有密钥调度详细规则没有统一事实基线和架构入口 | 增加事实基线、代码来源、架构分工和变更记录；保留统一 `key_id`、候选和日志细节 | Routing Key、平台站点、模型获取、测试和管理员日志 | `model/upstream_routing.go`、`model/routing_key.go`、`middleware/distributor.go` 静态核对 |
 | 2026-09-26 | 平台站点资源同步补充 | 调度文档只描述站点总快照和子密钥能力，未记录资源来源与部分失败处理 | 补充 New API/Sub2API 资源接口、端点来源、管理/Relay 分离、安全验证失败和旧快照保留规则 | 平台站点同步、路由过滤、管理员诊断 | 参考项目路由、`service/upstream_site_adapters.go` 与资源模型设计核对 |
+
+### 14.1 2026-09-26 实现校准
+
+**变更前**：平台站点的路由候选主要依赖 `UpstreamKey` 总快照和模型能力，资源来源、
+管理地址与 Relay 地址的边界没有在调度基准中逐项登记；管理员资源读取失败的语义也可能
+影响密钥缺失判定。
+
+**变更后**：
+
+- `UpstreamKey` 和 `UpstreamKeyAbility` 继续是路由兼容主数据。规范化的身份、分组、
+  端点、端点能力和资源同步状态作为诊断与管理数据，不替换子密钥路由身份；
+- 子密钥只有在实际密钥可解密、模型能力已确认、状态可用、未过期且额度允许时进入候选。
+  New API `/api/user/models`、`/api/pricing` 或 Admin channel 模型只能提供账号诊断和
+  能力来源，不能把全局模型复制到每个子密钥；
+- New API 的 `supported_endpoint` 与 Sub2API 页面 `api_base_url` 分别保存端点来源。
+  Sub2API 管理地址用于资源接口，Relay 地址用于模型和转发候选，不能因页面配置缺失而
+  把管理地址误当作已确认的 Relay 地址；
+- 资源同步部分失败、安全验证拒绝或 Refresh Token 轮换不确定时继续使用最近成功快照。
+  只有完整 Token/Key 分页和详情校验成功后，才允许将未返回密钥标记为缺失；管理员倍率
+  覆盖、权重覆盖和源倍率仍按既有公式保留；
+- 管理员资源查询通过 `GET /api/channel/:id/upstream-resources` 读取资源状态，普通
+  用户路由不会获得完整上游密钥、Cookie、Token 或 Refresh Token。

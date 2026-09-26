@@ -94,3 +94,20 @@
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 覆盖 `ChannelTypeNames` 当前全部渠道类型，并区分 API 映射、Adaptor、可路由能力和任务插件 | `constant/channel.go`、`common/api_type.go`、`relay/relay_adaptor.go`、`relay/channel/`、路由 | 渠道常量、API 映射、Adaptor 工厂、任务映射和流式列表静态核对 |
 | 2026-09-26 | 平台站点资源能力补充 | NewAPI/Sub2API 仅以渠道类型和适配器入口描述，未区分登录、刷新、资源和失败回退 | 以参考源真实路由登记 2FA、Bundle/轮换、身份/额度/分组/端点/密钥/模型资源及快照回退 | 平台站点管理与路由前置资源同步 | 参考项目路由、DTO、权限和失败语义静态核对 |
+
+### 3.2 2026-09-26 实现校准
+
+**变更前**：矩阵只表达 New API/Sub2API 的 Relay Adaptor 能力，无法区分平台站点管理面
+认证、资源接口、端点发现和资源失败回退。
+
+**变更后**：平台站点能力以管理面和 Relay 面分开记录。New API 管理面覆盖 status、
+self、groups、user models、pricing、Token 分页/Key 详情以及可选 Admin channel
+接口；Sub2API 管理面覆盖 auth/me、profile、usage、groups、keys 以及可选 Admin
+accounts/data。两者均以实际密钥访问 `/v1/models` 确认子密钥模型能力，New API
+`supported_endpoint` 只进入端点能力诊断。
+
+认证矩阵现在区分 New API 传统刷新与 Dashboard Auth Bundle、Sub2API Refresh Token
+轮换和不确定结果；资源矩阵区分身份、余额/用量、分组倍率、端点、密钥和模型资源。
+管理员资源被拒绝、安全验证未完成或分页部分失败时使用最近成功快照，不将权限错误标记为
+密钥缺失。该矩阵描述当前代码事实，不代表上游 Passkey/WebAuthn、安全证明、Turnstile
+或站点风控已由 NexusTok 自动实现。

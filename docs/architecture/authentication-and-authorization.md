@@ -108,3 +108,27 @@ Cookie、Token、Refresh Token 和 Session ID 不写入日志、审计字段、U
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 建立凭据分层、Session 生命周期、授权和 Redis 拓扑说明 | `middleware/`、`service/auth*`、`model/user_session.go`、`oauth/` | `docs/authentication.md`、`model/user_session.go`、`service/auth_session.go` 静态核对 |
 | 2026-09-26 | 平台站点认证补充 | 平台站点密码认证与系统面板 Session 的边界未单独说明，2FA/刷新失败语义未登记 | 明确短期上游认证流程、NewAPI Bundle 校验、Sub2API 轮换不确定结果和未覆盖的 Passkey/安全证明边界 | `service/upstream_site*.go`、`controller/upstream_channel.go`、平台站点资源接口 | NewAPI/Sub2API/all-api-hub 参考源路由和认证实现静态核对 |
+
+### 9.1 2026-09-26 实现校准
+
+**变更前**：平台站点账号密码、自动配置和高级凭据路径没有统一的短期 2FA 承接语义；
+会话刷新只需要关注访问令牌是否存在，资源管理接口也没有明确区分管理员资源拒绝与普通
+账号失效。
+
+**变更后**：默认管理端入口仍显示账号密码和自动配置，高级区域提供 Access Token、
+Admin Key 和 Cookie。账号密码登录通过服务端 opaque flow ID 承接 New API/Sub2API 的
+TOTP challenge，流程绑定管理员、平台、规范化 Base URL 和 Origin，TTL 为 5 分钟并限制
+验证码尝试次数；密码、验证码、Cookie、Token、Refresh Token 和 Session ID 不进入日志、
+审计字段、URL、普通响应或前端持久化存储。
+
+New API 的传统刷新和 Dashboard Auth Bundle 分开解析。Bundle 必须同时满足 `success`、
+`data.access_token`、`data.token_type`、未来的 `data.access_expires_at`、当前
+`data.session.sid/current` 和 `data.user` 身份字段；已识别但结构不完整时标记重新认证。
+Sub2API 只有在响应同时包含新 Access Token、新 Refresh Token 和有效 `expires_in` 时才替换
+旧令牌；响应不完整或网络结果不确定时标记轮换不确定，不重放旧 Refresh Token。
+
+本次安全核对记录为 OWASP ASVS 5.0.0，以及 Authentication、Session Management、MFA、
+CSRF、Cryptographic Storage、Logging 和 SSRF Prevention Cheat Sheet。已验证流程过期、
+重复消费、管理员/平台/站点绑定、验证码限流、刷新不确定和敏感字段脱敏。New API
+Passkey/WebAuthn、上游 Security Proof、Turnstile 和站点风控仍由浏览器自动配置或人工
+流程处理，NexusTok 未声明自动完成这些能力。

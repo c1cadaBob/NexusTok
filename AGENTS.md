@@ -39,6 +39,12 @@ This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI pro
 
 不得只根据平台名称、README、外部说明或单个适配器方法推断完整能力。修改前应沿参考项目的真实路由、请求 DTO、响应 DTO、认证中间件和错误处理追踪端到端行为。参考项目中的凭据、测试账号、Cookie、Token、Refresh Token、环境变量和其它敏感运行数据不得复制到 NexusTok。
 
+截至 2026-09-26，平台站点实现的代码事实入口包括 `service/platform_site_auth_flow.go`、
+`service/upstream_site.go`、`service/upstream_site_adapters.go`、`model/platform_site_resources.go`
+和 `controller/upstream_channel.go`。涉及认证流程、会话刷新、资源快照或资源管理接口时，
+必须同时核对这些入口与上述三个参考源；资源失败时应保持最近成功快照，不能把权限不足、
+安全验证或部分分页失败误判为密钥不存在。
+
 ## Internationalization (i18n)
 
 ### Backend (`i18n/`)
