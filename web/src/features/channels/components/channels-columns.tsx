@@ -329,6 +329,10 @@ export function UpstreamSiteSyncStatusCell({ channel }: { channel: Channel }) {
     running: { label: t('Running'), variant: 'info' as const },
     success: { label: t('Success'), variant: 'success' as const },
     failed: { label: t('Failed'), variant: 'danger' as const },
+    waiting_verification: {
+      label: t('Waiting'),
+      variant: 'warning' as const,
+    },
   }[status.sync_status] || {
     label: status.sync_status,
     variant: 'neutral' as const,
@@ -343,11 +347,25 @@ export function UpstreamSiteSyncStatusCell({ channel }: { channel: Channel }) {
 
   const usingLastSnapshot =
     status.using_last_snapshot ??
-    ((status.sync_status === 'failed' || status.sync_status === 'running') &&
+    ((status.sync_status === 'failed' ||
+      status.sync_status === 'running' ||
+      status.sync_status === 'waiting_verification') &&
       status.last_sync_at > 0)
   const credentialUnavailable =
     status.needs_credential_save === true ||
     status.credential_available === false
+  let snapshotMessage = t(
+    'Current refresh failed; using the last successful snapshot.'
+  )
+  if (status.sync_status === 'running') {
+    snapshotMessage = t('Sync is running; using the last successful snapshot.')
+  } else if (status.sync_status === 'waiting_verification') {
+    snapshotMessage = status.challenge_id
+      ? t('Upstream site is waiting for verification.')
+      : t(
+          'Complete verification in a real browser and capture the login state before syncing again.'
+        )
+  }
 
   return (
     <TooltipProvider>
@@ -382,13 +400,7 @@ export function UpstreamSiteSyncStatusCell({ channel }: { channel: Channel }) {
               </div>
             )}
             {usingLastSnapshot && (
-              <div>
-                {status.sync_status === 'running'
-                  ? t('Sync is running; using the last successful snapshot.')
-                  : t(
-                      'Current refresh failed; using the last successful snapshot.'
-                    )}
-              </div>
+              <div>{snapshotMessage}</div>
             )}
             {credentialUnavailable && (
               <div>

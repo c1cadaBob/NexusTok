@@ -25,10 +25,11 @@ const (
 	UpstreamAuthAdminKey    = "admin_key"
 	UpstreamAuthCookie      = "cookie"
 
-	UpstreamSiteSyncIdle    = "idle"
-	UpstreamSiteSyncRunning = "running"
-	UpstreamSiteSyncSuccess = "success"
-	UpstreamSiteSyncFailed  = "failed"
+	UpstreamSiteSyncIdle                = "idle"
+	UpstreamSiteSyncRunning             = "running"
+	UpstreamSiteSyncSuccess             = "success"
+	UpstreamSiteSyncFailed              = "failed"
+	UpstreamSiteSyncWaitingVerification = "waiting_verification"
 
 	UpstreamKeyStatusEnabled        = common.ChannelStatusEnabled
 	UpstreamKeyStatusManualDisabled = common.ChannelStatusManuallyDisabled
@@ -87,6 +88,7 @@ type PlatformSiteAccount struct {
 	LastSyncAt            int64   `json:"last_sync_at" gorm:"bigint;index"`
 	SyncStatus            string  `json:"sync_status" gorm:"type:varchar(32);index"`
 	LastSyncError         string  `json:"last_sync_error" gorm:"type:text"`
+	SyncStages            string  `json:"-" gorm:"type:text"`
 	ConsecutiveFailures   int     `json:"consecutive_failures"`
 	DisabledAt            int64   `json:"disabled_at" gorm:"bigint"`
 	DisabledReason        string  `json:"disabled_reason" gorm:"type:varchar(255)"`
@@ -202,7 +204,7 @@ func PlatformSiteSnapshotUsable(account *PlatformSiteAccount) bool {
 	switch account.SyncStatus {
 	case UpstreamSiteSyncSuccess:
 		return true
-	case UpstreamSiteSyncFailed, UpstreamSiteSyncRunning:
+	case UpstreamSiteSyncFailed, UpstreamSiteSyncRunning, UpstreamSiteSyncWaitingVerification:
 		return account.LastSyncAt > 0
 	default:
 		return false
@@ -214,7 +216,8 @@ func PlatformSiteUsingLastSnapshot(account *PlatformSiteAccount) bool {
 		return false
 	}
 	return account.SyncStatus == UpstreamSiteSyncFailed ||
-		account.SyncStatus == UpstreamSiteSyncRunning
+		account.SyncStatus == UpstreamSiteSyncRunning ||
+		account.SyncStatus == UpstreamSiteSyncWaitingVerification
 }
 
 func PlatformSiteCredentialAvailable(account *PlatformSiteAccount) bool {

@@ -113,6 +113,25 @@ JSON 原因，不再让后续网页登录页 HTML 覆盖错误；只有登录路
 备用路径。只要数据库中已有的 Access Token 或 Refresh Token 仍可用，后台同步会继续
 复用缓存登录态，不会因为密码登录暂时需要交互验证而清除最近一次成功快照。
 
+### 7.1 平台站点 Challenge 与阶段状态
+
+`PlatformSiteAccount.sync_stages` 是跨 SQLite、MySQL 和 PostgreSQL 使用的 TEXT 字段，
+由 `common.Marshal`/`common.Unmarshal` 编解码固定八阶段结构。同步开始、认证完成、可选
+阶段完成、分页完成和最终快照落库时更新该字段；Controller 只返回结构化阶段对象，
+不返回数据库原始字符串。
+
+Challenge 使用 HybridCache：Redis 可用时保存共享短期记录和索引，并使用随机锁值、
+`SET NX PX` 和 Lua 安全释放；Redis 不可用时只保证当前进程内互斥。缓存记录 TTL 为
+五分钟，pending 上下文再次使用平台凭据加密机制保存。后台任务遇到已有等待 Challenge
+时不再发起新的密码登录；Challenge 过期后保持 `waiting_verification`，写入“请手动
+重新同步”的脱敏状态，等待管理员重新触发。
+
+认证、当前用户和密钥分页是关键阶段。关键阶段失败不替换最近成功快照；分页任一页失败
+不标记缺失密钥、不禁用旧密钥、不清空能力。余额、用量、倍率、地址、Secret 和模型
+能力属于可拆分阶段，单项失败时保留旧值并标记 `warning`/`used_previous`。所有阶段
+错误只保存脱敏摘要、HTTP 状态、脱敏 URL、Content-Type、重定向状态和响应类别。
+`last_sync_error` 只承载失败或等待的总览信息，成功状态的阶段告警从该字段移出。
+
 ## 8. 当前限制和实际偏差
 
 - 数据库迁移只有 Master 负责，Slave 启动成功不等于已完成迁移。
@@ -132,3 +151,4 @@ JSON 原因，不再让后续网页登录页 HTML 覆盖错误；只有登录路
 | 2026-09-25 | 缺陷修复 | 启动迁移只处理空 `routing_key_id`；平台同步非 JSON 登录响应无法区分网页、验证页和代理文本 | 启动及访问路径校验并修复全部平台子密钥 Routing Key 关系；同步失败保留成功快照并写入安全响应诊断摘要 | Routing Key 一致性、平台站点同步、缓存刷新、管理员排障 | `model/main.go`、`model/routing_key.go`、`service/upstream_site.go`、模型/服务回归测试 |
 | 2026-09-25 | 缺陷修复 | 平台站点认证令牌只在完整快照成功后保存，快照失败会丢失令牌轮换结果 | 认证与快照分阶段处理，令牌更新在快照前立即持久化；快照失败保留最新登录态和旧成功快照 | 平台站点同步、数据库回源和后台任务重试 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`TestSyncPlatformSitePersistsRotatedCredentialBeforeSnapshot` |
 | 2026-09-25 | 缺陷修复 | Sub2API 明确的 Turnstile JSON 错误会被备用登录路径的 HTML 响应覆盖，缓存快照诊断不准确 | 按错误类别决定是否切换登录路径；交互验证错误立即停止并安全展示，缓存登录态和最近成功快照继续保留 | 渠道 2 同步任务、登录失败重试、缓存快照和管理员排障 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go` |
+| 2026-09-25 | 阶段与 Challenge 生命周期 | 平台站点只有粗粒度同步状态，后台会重复尝试需要交互验证的密码登录 | 增加 TEXT 阶段状态、五分钟三次 Challenge、加密 pending 上下文和后台等待/过期规则；认证成功的凭据仍在快照前立即写回 | 主数据库、Redis/HybridCache、后台同步、管理员状态接口 | `model/upstream_channel.go`、`model/upstream_site_sync_stages.go`、`service/upstream_site_challenge.go`、`service/upstream_site.go` |

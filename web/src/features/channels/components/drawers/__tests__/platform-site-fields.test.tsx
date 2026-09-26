@@ -19,6 +19,7 @@ For commercial licensing, please contact support@c1cadabob.dev
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import i18next from 'i18next'
 import { useForm } from 'react-hook-form'
 import { beforeEach, expect, test, vi } from 'vitest'
 
@@ -49,12 +50,16 @@ vi.mock('@/features/channels/api', async () => {
     getTaskPluginOptions: vi.fn(),
     startPlatformSiteCapture: vi.fn(),
     getPlatformSiteCaptureStatus: vi.fn(),
+    submitPlatformSiteVerification: vi.fn(),
+    syncUpstreamSite: vi.fn(),
   }
 })
 
 type PlatformSiteFormProps = {
   isEditing?: boolean
   authType?: ChannelFormValues['platform_site_auth_type']
+  channelId?: number
+  syncStatus?: import('@/features/channels/types').UpstreamSiteStatus
   onSubmit?: (values: ChannelFormValues) => void
 }
 
@@ -141,6 +146,8 @@ function PlatformSiteForm(props: PlatformSiteFormProps) {
           <PlatformSiteFields
             disabled={false}
             isEditing={props.isEditing === true}
+            channelId={props.channelId}
+            syncStatus={props.syncStatus}
           />
           <button type='submit'>Save</button>
         </form>
@@ -516,4 +523,142 @@ test('账号密码模式显示采集入口并提交缓存登录态 capture_id', 
     capture_id: 'capture-123',
   })
   openSpy.mockRestore()
+})
+
+test('等待验证状态显示平台信息和剩余次数并提交验证码', async () => {
+  const user = userEvent.setup()
+  i18next.addResource(
+    'en',
+    'translation',
+    'Attempts remaining',
+    'Attempts remaining: {{count}}'
+  )
+  vi.mocked(channelsApi.submitPlatformSiteVerification).mockResolvedValue({
+    success: false,
+    code: 'UPSTREAM_CHALLENGE_CODE_INVALID',
+    message: 'Verification failed. Please try again.',
+    challenge_id: 'challenge-123',
+    expires_at: Math.floor(Date.now() / 1000) + 240,
+    attempts_remaining: 2,
+  })
+
+  render(
+    <PlatformSiteForm
+      channelId={123}
+      syncStatus={{
+        channel_id: 123,
+        platform: 'newapi',
+        base_url: 'https://upstream.example',
+        auth_type: 'password',
+        recharge_amount: 0,
+        credited_amount: 0,
+        conversion_ratio: 1,
+        balance: 0,
+        used_quota: 0,
+        balance_updated_time: 0,
+        sync_status: 'waiting_verification',
+        last_sync_at: 0,
+        consecutive_failures: 0,
+        challenge_id: 'challenge-123',
+        challenge_expires_at: Math.floor(Date.now() / 1000) + 240,
+        attempts_remaining: 3,
+      }}
+    />
+  )
+
+  expect(screen.getByText('Security verification')).toBeInTheDocument()
+  expect(screen.getByText('NewAPI')).toBeInTheDocument()
+  expect(
+    screen.getByText('Attempts remaining: 3')
+  ).toBeInTheDocument()
+
+  await user.type(
+    screen.getByRole('textbox', { name: 'Verification code' }),
+    '123456'
+  )
+  await user.click(screen.getByRole('button', { name: 'Submit' }))
+
+  await waitFor(() => {
+    expect(channelsApi.submitPlatformSiteVerification).toHaveBeenCalledWith(
+      123,
+      'challenge-123',
+      '123456'
+    )
+  })
+  expect(
+    screen.getByRole('textbox', { name: 'Verification code' })
+  ).toBeInTheDocument()
+})
+
+test('缺少 Challenge 上下文时提示真实浏览器采集登录态', () => {
+  render(
+    <PlatformSiteForm
+      channelId={123}
+      syncStatus={{
+        channel_id: 123,
+        platform: 'newapi',
+        base_url: 'https://upstream.example',
+        auth_type: 'password',
+        recharge_amount: 0,
+        credited_amount: 0,
+        conversion_ratio: 1,
+        balance: 0,
+        used_quota: 0,
+        balance_updated_time: 0,
+        sync_status: 'waiting_verification',
+        last_sync_at: 0,
+        consecutive_failures: 0,
+      }}
+    />
+  )
+
+  expect(
+    screen.getByText(
+      'Complete verification in a real browser and capture the login state before syncing again.'
+    )
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByRole('textbox', { name: 'Verification code' })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: 'Sync upstream site' })
+  ).toBeInTheDocument()
+})
+
+test('重新同步业务失败时显示错误且不误报成功', async () => {
+  const user = userEvent.setup()
+  vi.mocked(channelsApi.syncUpstreamSite).mockResolvedValue({
+    success: false,
+    message: 'Failed to sync upstream site',
+  })
+
+  render(
+    <PlatformSiteForm
+      channelId={123}
+      syncStatus={{
+        channel_id: 123,
+        platform: 'sub2api',
+        base_url: 'https://upstream.example',
+        auth_type: 'password',
+        recharge_amount: 0,
+        credited_amount: 0,
+        conversion_ratio: 1,
+        balance: 0,
+        used_quota: 0,
+        balance_updated_time: 0,
+        sync_status: 'waiting_verification',
+        last_sync_at: 0,
+        consecutive_failures: 0,
+        challenge_id: 'challenge-123',
+        challenge_expires_at: Math.floor(Date.now() / 1000) + 240,
+        attempts_remaining: 3,
+      }}
+    />
+  )
+
+  await user.click(screen.getByRole('button', { name: 'Sync upstream site' }))
+
+  await waitFor(() => {
+    expect(channelsApi.syncUpstreamSite).toHaveBeenCalledWith(123)
+  })
 })

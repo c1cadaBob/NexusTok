@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ExternalLink, Loader2, RefreshCw, ShieldCheck } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useFormContext, useWatch } from 'react-hook-form'
@@ -23,14 +23,18 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
+import { requireServerSuccess } from '@/lib/server-error-message'
 
 import {
   getPlatformSiteCaptureStatus,
+  submitPlatformSiteVerification,
   startPlatformSiteCapture,
+  syncUpstreamSite,
 } from '../../api'
 import { CHANNEL_TYPE_NEW_API, CHANNEL_TYPE_SUB2_API } from '../../constants'
-import type { ChannelFormValues } from '../../lib'
+import { channelsQueryKeys, type ChannelFormValues } from '../../lib'
 import type { UpstreamSiteStatus } from '../../types'
+import { formatTimestampToDate } from '@/lib/format'
 
 type PlatformSiteFieldsProps = {
   disabled: boolean
@@ -113,6 +117,7 @@ function formatPlatformRatioInput(value: number): string {
 
 export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
   const { t } = useTranslation()
+  const queryClient = useQueryClient()
   const form = useFormContext<ChannelFormValues>()
   const channelType = useWatch({
     control: form.control,
@@ -171,6 +176,7 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
   const activeCaptureWindowRef = useRef<Window | null>(null)
   const [handoffURL, setHandoffURL] = useState('')
   const [showHandoffFallback, setShowHandoffFallback] = useState(false)
+  const [verificationCode, setVerificationCode] = useState('')
 
   const captureStatusQuery = useQuery({
     queryKey: ['platform-site-capture-status', captureID],
@@ -179,6 +185,81 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
     refetchInterval: (query) => {
       const status = query.state.data?.data?.status
       return status === 'completed' || status === 'failed' ? false : 2000
+    },
+  })
+
+  const verificationMutation = useMutation({
+    mutationFn: () => {
+      if (!props.channelId || !props.syncStatus?.challenge_id) {
+        throw new Error(t('Verification flow expired'))
+      }
+      return submitPlatformSiteVerification(
+        props.channelId,
+        props.syncStatus.challenge_id,
+        verificationCode.trim()
+      )
+    },
+    onSuccess: async (response) => {
+      if (!response.success) {
+        toast.error(response.message || t('Verification failed. Please try again.'))
+        setVerificationCode('')
+        await queryClient.invalidateQueries({
+          queryKey: ['upstream-site-status', props.channelId],
+        })
+        return
+      }
+      setVerificationCode('')
+      toast.success(t('Completed security verification'))
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: channelsQueryKeys.lists(),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ['upstream-site-status', props.channelId],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ['upstream-keys', props.channelId],
+        }),
+      ])
+    },
+    onError: (error: unknown) => {
+      void queryClient.invalidateQueries({
+        queryKey: ['upstream-site-status', props.channelId],
+      })
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : t('Verification failed. Please try again.')
+      )
+    },
+  })
+
+  const resyncMutation = useMutation({
+    mutationFn: async () => {
+      if (!props.channelId) {
+        throw new Error(t('Verification flow expired'))
+      }
+      return requireServerSuccess(await syncUpstreamSite(props.channelId))
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: channelsQueryKeys.lists(),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ['upstream-site-status', props.channelId],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ['upstream-keys', props.channelId],
+        }),
+      ])
+    },
+    onError: (error: unknown) => {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : t('Failed to sync upstream site')
+      )
     },
   })
 
@@ -249,6 +330,10 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
   })
 
   const captureStatus = captureStatusQuery.data?.data
+  const waitingVerification =
+    props.syncStatus?.sync_status === 'waiting_verification'
+  const verificationChallengeID = props.syncStatus?.challenge_id
+  const verificationStatus = props.syncStatus
   const onCaptureCompleted = props.onCaptureCompleted
 
   useEffect(() => {
@@ -369,6 +454,94 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
               {props.syncStatus.last_sync_error}
             </p>
           )}
+        </div>
+      )}
+      {waitingVerification && verificationStatus && (
+        <div className='border-warning/50 bg-warning/5 grid gap-3 rounded-md border p-3 text-sm'>
+          <div className='flex items-center gap-2 font-medium'>
+            <ShieldCheck className='size-4' aria-hidden='true' />
+            <span>{t('Security verification')}</span>
+          </div>
+          {verificationChallengeID ? (
+            <>
+              <p className='text-muted-foreground text-xs'>
+                {t('Upstream site is waiting for verification.')}
+              </p>
+              <div className='text-muted-foreground grid gap-1 text-xs sm:grid-cols-2'>
+                <span>
+                  {t('Platform site')}:{' '}
+                  {verificationStatus.platform === 'sub2api'
+                    ? 'Sub2API'
+                    : 'NewAPI'}
+                </span>
+                <span>
+                  {t('Expires at')}:{' '}
+                  {verificationStatus.challenge_expires_at
+                    ? formatTimestampToDate(
+                        verificationStatus.challenge_expires_at
+                      )
+                    : '-'}
+                </span>
+                <span>
+                  {t('Attempts remaining', {
+                    count: verificationStatus.attempts_remaining ?? 0,
+                  })}
+                </span>
+              </div>
+              <div className='grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]'>
+                <Input
+                  id='platform-site-verification-code'
+                  value={verificationCode}
+                  onChange={(event) => setVerificationCode(event.target.value)}
+                  placeholder={t('Verification code')}
+                  autoComplete='one-time-code'
+                  inputMode='text'
+                  maxLength={32}
+                  disabled={verificationMutation.isPending}
+                  aria-label={t('Verification code')}
+                />
+                <Button
+                  type='button'
+                  onClick={() => verificationMutation.mutate()}
+                  disabled={
+                    verificationMutation.isPending ||
+                    verificationCode.trim() === ''
+                  }
+                >
+                  {verificationMutation.isPending ? (
+                    <Loader2
+                      className='size-4 animate-spin'
+                      aria-hidden='true'
+                    />
+                  ) : (
+                    <ShieldCheck className='size-4' aria-hidden='true' />
+                  )}
+                  {t('Submit')}
+                </Button>
+              </div>
+            </>
+          ) : (
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'Complete verification in a real browser and capture the login state before syncing again.'
+              )}
+            </p>
+          )}
+          <div className='flex justify-end'>
+            <Button
+              type='button'
+              variant='outline'
+              onClick={() => resyncMutation.mutate()}
+              disabled={resyncMutation.isPending}
+            >
+              {resyncMutation.isPending ? (
+                <Loader2 className='size-4 animate-spin' aria-hidden='true' />
+              ) : (
+                <RefreshCw className='size-4' aria-hidden='true' />
+              )}
+              {t('Sync upstream site')}
+            </Button>
+          </div>
         </div>
       )}
       <div className='grid gap-4 sm:grid-cols-2'>

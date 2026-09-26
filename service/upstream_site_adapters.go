@@ -71,19 +71,45 @@ func (adapter *NewAPIAdapter) Authenticate(ctx context.Context, baseURL string, 
 				setNewAPICompatUserHeaders(session.Headers, credential.UserID)
 			},
 			clearNewAPIAuthentication,
+			func(session *PlatformSiteSession, cookie string) {
+				session.Headers.Set("Cookie", cookie)
+				setNewAPICompatUserHeaders(session.Headers, credential.UserID)
+			},
+			func(session *PlatformSiteSession) {
+				session.Headers.Del("Cookie")
+			},
 		)
 		if authErr != nil {
-			return nil, wrapPlatformSiteStage("NewAPI 认证", authErr)
+			return session, wrapPlatformSiteStage("NewAPI 认证", errors.Join(ErrPlatformSiteAuth, authErr))
 		}
 		if authenticated {
 			return session, nil
 		}
 		payload, requestErr := loginNewAPIWithPassword(ctx, session, credential)
 		if requestErr != nil {
-			return nil, wrapPlatformSiteStage("NewAPI 登录", requestErr)
+			if platformSiteInteractiveVerificationRequired(requestErr) {
+				return session, newPlatformSiteVerificationRequired(
+					model.PlatformNewAPI,
+					session,
+					PlatformSitePendingContext{
+						Kind:    "newapi_cookie",
+						Cookies: platformSiteSessionCookies(session),
+					},
+					requestErr,
+				)
+			}
+			return session, wrapPlatformSiteStage("NewAPI 登录", requestErr)
 		}
 		if loginRequiresInteractiveVerification(payload) {
-			return nil, fmt.Errorf("%w: 需要完成上游二次验证", ErrPlatformSiteAuth)
+			return session, newPlatformSiteVerificationRequired(
+				model.PlatformNewAPI,
+				session,
+				PlatformSitePendingContext{
+					Kind:    "newapi_cookie",
+					Cookies: platformSiteSessionCookies(session),
+				},
+				nil,
+			)
 		}
 		credential.AccessToken = findToken(payload)
 		credential.RefreshToken = findRefreshToken(payload)
@@ -95,6 +121,7 @@ func (adapter *NewAPIAdapter) Authenticate(ctx context.Context, baseURL string, 
 			credential.UserID = userID
 			setNewAPICompatUserHeaders(session.Headers, userID)
 		}
+		credential.Cookie = platformSiteSessionCookie(session)
 		credential.AuthType = model.UpstreamAuthPassword
 		updatedCredential := credential
 		session.CredentialUpdate = &updatedCredential
@@ -110,12 +137,20 @@ func (adapter *NewAPIAdapter) Authenticate(ctx context.Context, baseURL string, 
 				setNewAPICompatUserHeaders(session.Headers, credential.UserID)
 			},
 			clearNewAPIAuthentication,
+			nil,
+			nil,
 		)
 		if authErr != nil {
-			return nil, wrapPlatformSiteStage("NewAPI 认证", authErr)
+			return session, wrapPlatformSiteStage("NewAPI 认证", errors.Join(ErrPlatformSiteAuth, authErr))
+		}
+		if !authenticated && !credentialHasCachedLogin(credential) {
+			return session, wrapPlatformSiteStage("NewAPI 认证", errors.Join(
+				ErrPlatformSiteAuth,
+				fmt.Errorf("缺少访问令牌"),
+			))
 		}
 		if !authenticated {
-			return nil, wrapPlatformSiteStage("NewAPI 认证", fmt.Errorf("%w: 缺少访问令牌", ErrPlatformSiteAuth))
+			return session, wrapPlatformSiteStage("NewAPI 认证", ErrPlatformSiteAuth)
 		}
 		return session, nil
 	case model.UpstreamAuthAdminKey:
@@ -135,18 +170,105 @@ func (adapter *NewAPIAdapter) Authenticate(ctx context.Context, baseURL string, 
 		return nil, wrapPlatformSiteStage("NewAPI 认证", fmt.Errorf("%w: 认证方式不受支持", ErrPlatformSiteAuth))
 	}
 	if _, err := fetchNewAPICurrentUser(ctx, session); err != nil {
-		return nil, wrapPlatformSiteStage("NewAPI 当前用户", err)
+		return session, wrapPlatformSiteStage("NewAPI 当前用户", err)
 	}
 	return session, nil
 }
 
+func (adapter *NewAPIAdapter) CompleteVerification(
+	ctx context.Context,
+	baseURL string,
+	credential model.PlatformSiteCredential,
+	pending PlatformSitePendingContext,
+	code string,
+) (*PlatformSiteSession, error) {
+	if pending.Kind != "newapi_cookie" || len(pending.Cookies) == 0 {
+		return nil, fmt.Errorf("%w: NewAPI 待验证 Cookie 不可用", ErrPlatformSiteVerification)
+	}
+	headers := make(http.Header)
+	setNewAPICompatUserHeaders(headers, credential.UserID)
+	session, err := newPlatformSiteSession(baseURL, headers)
+	if err != nil {
+		return nil, err
+	}
+	if adapter.client != nil {
+		session.Client = adapter.client
+	}
+	if err := restorePlatformSitePendingCookies(session, pending.Cookies); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrPlatformSiteVerification, err)
+	}
+	bodies := []map[string]string{
+		{"code": code},
+		{"otp": code},
+		{"verification_code": code},
+	}
+	paths := []string{
+		"/api/user/auth/2fa",
+		"/api/user/auth/verify",
+		"/api/user/auth/verification",
+		"/api/user/verify",
+	}
+	var lastErr error
+	for _, path := range paths {
+		for _, body := range uniqueStringMaps(bodies) {
+			payload, requestErr := platformSiteRequest(ctx, session, http.MethodPost, path, nil, body)
+			if requestErr != nil {
+				lastErr = requestErr
+				if platformSiteErrorCategoryOf(requestErr) == platformSiteErrorCategoryRouteMissing {
+					break
+				}
+				if verificationCodeRejected(requestErr) {
+					return nil, fmt.Errorf("%w: %w", ErrPlatformSiteVerificationCode, requestErr)
+				}
+				return nil, requestErr
+			}
+			if token := findToken(payload); token != "" {
+				credential.AccessToken = token
+				if refresh := findRefreshToken(payload); refresh != "" {
+					credential.RefreshToken = refresh
+				}
+				if expiresAt := findTokenExpiresAt(payload); expiresAt > 0 {
+					credential.TokenExpiresAt = expiresAt
+				}
+				session.Headers.Set("Authorization", bearerToken(token))
+			}
+			credential.Cookie = firstNonEmptyString(
+				platformSiteSessionCookie(session),
+				platformSitePendingCookieHeader(pending.Cookies),
+			)
+			if _, currentErr := fetchNewAPICurrentUser(ctx, session); currentErr != nil {
+				return nil, currentErr
+			}
+			credential.AuthType = model.UpstreamAuthPassword
+			updatedCredential := credential
+			session.CredentialUpdate = &updatedCredential
+			return session, nil
+		}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("%w: NewAPI 验证接口不可用", ErrPlatformSiteVerification)
+	}
+	return nil, lastErr
+}
+
 func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *PlatformSiteSession) (PlatformSiteSnapshot, error) {
-	quotaPerUnit := fetchNewAPIQuotaPerUnit(ctx, session)
+	stages := model.NewPlatformSiteSyncStages(common.GetTimestamp())
+	quotaPerUnit, quotaErr := fetchNewAPIQuotaPerUnitWithError(ctx, session)
+	if quotaErr != nil {
+		stages.BalanceUsage = platformSiteSyncStage(model.PlatformSiteStageWarning, "", quotaErr)
+	}
 	selfPayload, err := fetchNewAPICurrentUser(ctx, session)
 	if err != nil {
-		return PlatformSiteSnapshot{}, wrapPlatformSiteStage("NewAPI 当前用户", err)
+		stages.CurrentUser = platformSiteSyncStage(model.PlatformSiteStageFailed, "", err)
+		stages.OverallStatus = model.PlatformSiteStageFailed
+		return PlatformSiteSnapshot{SyncStages: stages}, wrapPlatformSiteStage("NewAPI 当前用户", err)
+	}
+	stages.CurrentUser = platformSiteSyncStage(model.PlatformSiteStageSuccess, "", nil)
+	if progressErr := publishPlatformSiteStageProgress(session, stages); progressErr != nil {
+		return PlatformSiteSnapshot{SyncStages: stages}, progressErr
 	}
 	self := firstNestedRecord(selfPayload, "user", "account", "profile")
+	balance, balanceSet := firstOptionalFloat(self, "quota", "balance", "money", "credit")
 	usedQuota, usedQuotaSet := firstOptionalInt64(
 		self,
 		"used_quota",
@@ -160,21 +282,67 @@ func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *Platfo
 		"totalActualCost",
 	)
 	snapshot := PlatformSiteSnapshot{
-		Balance:      normalizeNewAPIQuota(firstFloat(self, "quota", "balance", "money", "credit"), quotaPerUnit),
+		Balance:      normalizeNewAPIQuota(balance, quotaPerUnit),
+		BalanceSet:   balanceSet,
 		UsedQuota:    usedQuota,
 		UsedQuotaSet: usedQuotaSet,
 	}
-	groupRates := fetchNewAPIGroupRates(ctx, session)
+	if quotaErr == nil && (balanceSet || usedQuotaSet) {
+		stages.BalanceUsage = platformSiteSyncStage(model.PlatformSiteStageSuccess, "", nil)
+	} else if quotaErr == nil {
+		stages.BalanceUsage = platformSiteSyncStage(
+			model.PlatformSiteStageWarning,
+			"NewAPI 未返回完整余额或用量",
+			nil,
+		)
+	}
+	if progressErr := publishPlatformSiteStageProgress(session, stages); progressErr != nil {
+		return PlatformSiteSnapshot{SyncStages: stages}, progressErr
+	}
+	groupRates, groupErr := fetchNewAPIGroupRatesWithError(ctx, session)
+	if groupErr == nil {
+		stages.GroupsRates = platformSiteSyncStage(model.PlatformSiteStageSuccess, "", nil)
+	} else {
+		stages.GroupsRates = platformSiteSyncStage(model.PlatformSiteStageWarning, "", groupErr)
+	}
+	if progressErr := publishPlatformSiteStageProgress(session, stages); progressErr != nil {
+		return PlatformSiteSnapshot{SyncStages: stages}, progressErr
+	}
 	tokens, err := fetchNewAPITokens(ctx, session)
 	if err != nil {
-		return PlatformSiteSnapshot{}, wrapPlatformSiteStage("NewAPI 密钥分页", err)
+		stages.KeyPagination = platformSiteSyncStage(model.PlatformSiteStageFailed, "", err)
+		stages.OverallStatus = model.PlatformSiteStageFailed
+		snapshot.SyncStages = stages
+		_ = publishPlatformSiteStageProgress(session, stages)
+		return snapshot, wrapPlatformSiteStage("NewAPI 密钥分页", err)
+	}
+	stages.KeyPagination = platformSiteSyncStage(model.PlatformSiteStageSuccess, "", nil)
+	stages.KeyPagination.ItemsTotal = len(tokens)
+	if progressErr := publishPlatformSiteStageProgress(session, stages); progressErr != nil {
+		return PlatformSiteSnapshot{SyncStages: stages}, progressErr
 	}
 	revealedKeys, revealFailures := fetchNewAPITokenKeys(ctx, session, tokens)
+	stages.KeySecrets.ItemsTotal = len(tokens)
+	stages.KeySecrets.ItemsFailed = len(revealFailures)
+	if len(revealFailures) > 0 {
+		stages.KeySecrets.Status = model.PlatformSiteStageWarning
+		stages.KeySecrets.UpdatedAt = common.GetTimestamp()
+	} else {
+		stages.KeySecrets = platformSiteSyncStage(model.PlatformSiteStageSuccess, "", nil)
+		stages.KeySecrets.ItemsTotal = len(tokens)
+	}
 	snapshot.Keys = make([]UpstreamKeySnapshot, 0, len(tokens))
+	secretFailures := len(revealFailures)
+	modelFailures := 0
 	for _, token := range tokens {
 		externalID := firstString(token, "id", "token_id", "key_id")
 		if externalID == "" {
-			return PlatformSiteSnapshot{}, fmt.Errorf("%w: NewAPI 密钥缺少外部 ID", ErrPlatformSiteResponse)
+			err = fmt.Errorf("%w: NewAPI 密钥缺少外部 ID", ErrPlatformSiteResponse)
+			stages.KeyPagination = platformSiteSyncStage(model.PlatformSiteStageFailed, "", err)
+			stages.OverallStatus = model.PlatformSiteStageFailed
+			snapshot.SyncStages = stages
+			_ = publishPlatformSiteStageProgress(session, stages)
+			return snapshot, err
 		}
 		group := firstString(token, "group", "group_name")
 		ratioKeysPresent := hasAnyField(token, "ratio", "rate", "multiplier", "group_ratio")
@@ -222,6 +390,7 @@ func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *Platfo
 		}
 		if secret == "" || strings.Contains(secret, "*") {
 			item.SyncError = upstreamKeySyncErrorSecretUnavailable
+			secretFailures++
 			snapshot.Keys = append(snapshot.Keys, item)
 			continue
 		}
@@ -233,9 +402,32 @@ func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *Platfo
 				item.ModelsSynced = true
 			} else {
 				item.SyncError = upstreamKeySyncErrorModelsUnavailable
+				modelFailures++
 			}
 		}
 		snapshot.Keys = append(snapshot.Keys, item)
+	}
+	stages.KeySecrets.ItemsFailed = secretFailures
+	stages.KeySecrets.ItemsSucceeded = max(0, stages.KeySecrets.ItemsTotal-secretFailures)
+	if progressErr := publishPlatformSiteStageProgress(session, stages); progressErr != nil {
+		return PlatformSiteSnapshot{SyncStages: stages}, progressErr
+	}
+	stages.KeyModels.ItemsTotal = len(tokens)
+	stages.KeyModels.ItemsFailed = modelFailures
+	stages.KeyModels.ItemsSucceeded = max(0, stages.KeyModels.ItemsTotal-secretFailures-modelFailures)
+	if modelFailures > 0 {
+		stages.KeyModels.Status = model.PlatformSiteStageWarning
+		stages.KeyModels.UpdatedAt = common.GetTimestamp()
+	} else {
+		stages.KeyModels = platformSiteSyncStage(model.PlatformSiteStageSuccess, "", nil)
+		stages.KeyModels.ItemsTotal = len(tokens)
+		stages.KeyModels.ItemsSucceeded = max(0, len(tokens)-secretFailures)
+	}
+	stages.Sub2APIEndpoints = platformSiteSyncStage(model.PlatformSiteStageSkipped, "", nil)
+	stages.OverallStatus = model.PlatformSiteStageSuccess
+	snapshot.SyncStages = stages
+	if progressErr := publishPlatformSiteStageProgress(session, stages); progressErr != nil {
+		return PlatformSiteSnapshot{SyncStages: stages}, progressErr
 	}
 	return snapshot, nil
 }
@@ -291,19 +483,44 @@ func (adapter *Sub2APIAdapter) Authenticate(ctx context.Context, baseURL string,
 			func(session *PlatformSiteSession) {
 				session.Headers.Del("Authorization")
 			},
+			func(session *PlatformSiteSession, cookie string) {
+				session.Headers.Set("Cookie", cookie)
+			},
+			func(session *PlatformSiteSession) {
+				session.Headers.Del("Cookie")
+			},
 		)
 		if authErr != nil {
-			return nil, wrapPlatformSiteStage("Sub2API 认证", authErr)
+			return session, wrapPlatformSiteStage("Sub2API 认证", errors.Join(ErrPlatformSiteAuth, authErr))
 		}
 		if authenticated {
 			return session, nil
 		}
 		payload, requestErr := loginSub2APIWithPassword(ctx, session, credential)
 		if requestErr != nil {
-			return nil, wrapPlatformSiteStage("Sub2API 登录", requestErr)
+			if platformSiteInteractiveVerificationRequired(requestErr) {
+				return session, newPlatformSiteVerificationRequired(
+					model.PlatformSub2API,
+					session,
+					PlatformSitePendingContext{
+						Kind:      "sub2api_temp_token",
+						TempToken: temporaryTokenFromError(requestErr),
+					},
+					requestErr,
+				)
+			}
+			return session, wrapPlatformSiteStage("Sub2API 登录", requestErr)
 		}
 		if loginRequiresInteractiveVerification(payload) {
-			return nil, fmt.Errorf("%w: 需要完成上游二次验证", ErrPlatformSiteAuth)
+			return session, newPlatformSiteVerificationRequired(
+				model.PlatformSub2API,
+				session,
+				PlatformSitePendingContext{
+					Kind:      "sub2api_temp_token",
+					TempToken: findTemporaryToken(payload),
+				},
+				nil,
+			)
 		}
 		if token := findToken(payload); token != "" {
 			session.Headers.Set("Authorization", bearerToken(token))
@@ -313,11 +530,12 @@ func (adapter *Sub2APIAdapter) Authenticate(ctx context.Context, baseURL string,
 			if userID := findUserID(payload); userID != "" {
 				credential.UserID = userID
 			}
+			credential.Cookie = platformSiteSessionCookie(session)
 			credential.AuthType = model.UpstreamAuthPassword
 			updatedCredential := credential
 			session.CredentialUpdate = &updatedCredential
 		} else {
-			return nil, wrapPlatformSiteStage("Sub2API 登录未返回访问令牌", ErrSub2APILoginToken)
+			return session, wrapPlatformSiteStage("Sub2API 登录未返回访问令牌", ErrSub2APILoginToken)
 		}
 	case model.UpstreamAuthAccessToken:
 		authenticated, authErr := tryCachedPlatformSiteCredential(
@@ -332,12 +550,20 @@ func (adapter *Sub2APIAdapter) Authenticate(ctx context.Context, baseURL string,
 			func(session *PlatformSiteSession) {
 				session.Headers.Del("Authorization")
 			},
+			nil,
+			nil,
 		)
 		if authErr != nil {
-			return nil, wrapPlatformSiteStage("Sub2API 认证", authErr)
+			return session, wrapPlatformSiteStage("Sub2API 认证", errors.Join(ErrPlatformSiteAuth, authErr))
+		}
+		if !authenticated && !credentialHasCachedLogin(credential) {
+			return session, wrapPlatformSiteStage("Sub2API 认证", errors.Join(
+				ErrPlatformSiteAuth,
+				fmt.Errorf("缺少访问令牌"),
+			))
 		}
 		if !authenticated {
-			return nil, wrapPlatformSiteStage("Sub2API 认证", fmt.Errorf("%w: 缺少访问令牌", ErrPlatformSiteAuth))
+			return session, wrapPlatformSiteStage("Sub2API 认证", ErrPlatformSiteAuth)
 		}
 		return session, nil
 	case model.UpstreamAuthAdminKey:
@@ -355,9 +581,83 @@ func (adapter *Sub2APIAdapter) Authenticate(ctx context.Context, baseURL string,
 		return nil, wrapPlatformSiteStage("Sub2API 认证", fmt.Errorf("%w: 认证方式不受支持", ErrPlatformSiteAuth))
 	}
 	if _, err := fetchSub2APICurrentUser(ctx, session); err != nil {
-		return nil, wrapPlatformSiteStage("Sub2API 当前用户", err)
+		return session, wrapPlatformSiteStage("Sub2API 当前用户", err)
 	}
 	return session, nil
+}
+
+func (adapter *Sub2APIAdapter) CompleteVerification(
+	ctx context.Context,
+	baseURL string,
+	credential model.PlatformSiteCredential,
+	pending PlatformSitePendingContext,
+	code string,
+) (*PlatformSiteSession, error) {
+	if pending.Kind != "sub2api_temp_token" || strings.TrimSpace(pending.TempToken) == "" {
+		return nil, fmt.Errorf("%w: Sub2API 临时令牌不可用", ErrPlatformSiteVerification)
+	}
+	headers := make(http.Header)
+	headers.Set("X-Verification-Token", pending.TempToken)
+	headers.Set("X-Verification-Code", code)
+	session, err := newPlatformSiteSession(normalizeSub2APIBaseURL(baseURL), headers)
+	if err != nil {
+		return nil, err
+	}
+	if adapter.client != nil {
+		session.Client = adapter.client
+	}
+	setSub2APIBrowserHeaders(session)
+	bodies := []map[string]string{
+		{"code": code, "temp_token": pending.TempToken},
+		{"otp": code, "temp_token": pending.TempToken},
+		{"verification_code": code, "temp_token": pending.TempToken},
+	}
+	paths := []string{
+		"/api/v1/auth/verify",
+		"/api/v1/auth/2fa",
+		"/api/auth/verify",
+		"/auth/verify",
+	}
+	var lastErr error
+	for _, path := range paths {
+		for _, body := range uniqueStringMaps(bodies) {
+			payload, requestErr := platformSiteRequest(ctx, session, http.MethodPost, path, nil, body)
+			if requestErr != nil {
+				lastErr = requestErr
+				if platformSiteErrorCategoryOf(requestErr) == platformSiteErrorCategoryRouteMissing {
+					break
+				}
+				if verificationCodeRejected(requestErr) {
+					return nil, fmt.Errorf("%w: %w", ErrPlatformSiteVerificationCode, requestErr)
+				}
+				return nil, requestErr
+			}
+			if token := findToken(payload); token != "" {
+				credential.AccessToken = token
+				if refresh := findRefreshToken(payload); refresh != "" {
+					credential.RefreshToken = refresh
+				}
+				if expiresAt := findTokenExpiresAt(payload); expiresAt > 0 {
+					credential.TokenExpiresAt = expiresAt
+				}
+				session.Headers.Set("Authorization", bearerToken(token))
+			}
+			if cookie := platformSiteSessionCookie(session); cookie != "" {
+				credential.Cookie = cookie
+			}
+			if _, currentErr := fetchSub2APICurrentUser(ctx, session); currentErr != nil {
+				return nil, currentErr
+			}
+			credential.AuthType = model.UpstreamAuthPassword
+			updatedCredential := credential
+			session.CredentialUpdate = &updatedCredential
+			return session, nil
+		}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("%w: Sub2API 验证接口不可用", ErrPlatformSiteVerification)
+	}
+	return nil, lastErr
 }
 
 func platformSiteCredentialAuthType(credential model.PlatformSiteCredential) string {
@@ -371,9 +671,16 @@ func platformSiteCredentialAuthType(credential model.PlatformSiteCredential) str
 }
 
 func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *PlatformSiteSession) (PlatformSiteSnapshot, error) {
+	stages := model.NewPlatformSiteSyncStages(common.GetTimestamp())
 	mePayload, err := fetchSub2APICurrentUser(ctx, session)
 	if err != nil {
-		return PlatformSiteSnapshot{}, wrapPlatformSiteStage("Sub2API 当前用户", err)
+		stages.CurrentUser = platformSiteSyncStage(model.PlatformSiteStageFailed, "", err)
+		stages.OverallStatus = model.PlatformSiteStageFailed
+		return PlatformSiteSnapshot{SyncStages: stages}, wrapPlatformSiteStage("Sub2API 当前用户", err)
+	}
+	stages.CurrentUser = platformSiteSyncStage(model.PlatformSiteStageSuccess, "", nil)
+	if progressErr := publishPlatformSiteStageProgress(session, stages); progressErr != nil {
+		return PlatformSiteSnapshot{SyncStages: stages}, progressErr
 	}
 	me := firstNestedRecord(mePayload, "user", "account", "profile")
 	usedQuota, usedQuotaSet := firstSub2APIQuota(
@@ -390,17 +697,21 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 		"total_actual_cost",
 		"totalActualCost",
 	)
+	balance, balanceSet := firstOptionalFloat(me, "balance", "quota", "credit")
 	snapshot := PlatformSiteSnapshot{
-		Balance:           firstFloat(me, "balance", "quota", "credit"),
+		Balance:           balance,
+		BalanceSet:        balanceSet,
 		UsedQuota:         usedQuota,
 		UsedQuotaSet:      usedQuotaSet,
 		ManagementBaseURL: strings.TrimRight(strings.TrimSpace(session.ManagementBaseURL), "/"),
 		RelayBaseURL:      strings.TrimRight(strings.TrimSpace(session.ModelBaseURL), "/"),
 	}
+	var profileErr error
 	if payload, requestErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/user/profile", nil, nil); requestErr == nil {
 		profile := firstNestedRecord(payload, "profile", "user", "account")
-		if balance := firstFloat(profile, "balance", "quota", "credit"); balance > 0 {
-			snapshot.Balance = balance
+		if profileBalance, profileBalanceSet := firstOptionalFloat(profile, "balance", "quota", "credit"); profileBalanceSet {
+			snapshot.Balance = profileBalance
+			snapshot.BalanceSet = true
 		}
 		if !snapshot.UsedQuotaSet {
 			if profileUsedQuota, profileUsedQuotaSet := firstSub2APIQuota(
@@ -421,7 +732,10 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 				snapshot.UsedQuotaSet = true
 			}
 		}
+	} else {
+		profileErr = requestErr
 	}
+	var usageErr error
 	if !snapshot.UsedQuotaSet {
 		if payload, requestErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/usage/dashboard/stats", nil, nil); requestErr == nil {
 			usage := firstNestedRecord(payload, "stats", "usage", "dashboard")
@@ -452,18 +766,51 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 				snapshot.UsedQuota = used
 				snapshot.UsedQuotaSet = true
 			}
+		} else {
+			usageErr = requestErr
 		}
 	}
+	if profileErr == nil && usageErr == nil && snapshot.BalanceSet {
+		stages.BalanceUsage = platformSiteSyncStage(model.PlatformSiteStageSuccess, "", nil)
+	} else {
+		warningErr := profileErr
+		if warningErr == nil {
+			warningErr = usageErr
+		}
+		stages.BalanceUsage = platformSiteSyncStage(model.PlatformSiteStageWarning, "", warningErr)
+	}
+	if progressErr := publishPlatformSiteStageProgress(session, stages); progressErr != nil {
+		return PlatformSiteSnapshot{SyncStages: stages}, progressErr
+	}
 	rates := map[string]float64{}
+	var groupErr error
+	groupSuccess := false
 	if payload, requestErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/groups/available", nil, nil); requestErr == nil {
 		for key, value := range parseGroupRates(payload) {
 			rates[key] = value
 		}
+		groupSuccess = len(rates) > 0
+	} else {
+		groupErr = requestErr
 	}
 	if payload, requestErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/groups/rates", nil, nil); requestErr == nil {
 		for key, value := range parseGroupRates(payload) {
 			rates[key] = value
 		}
+		groupSuccess = groupSuccess || len(rates) > 0
+	} else if groupErr == nil {
+		groupErr = requestErr
+	}
+	if groupSuccess {
+		stages.GroupsRates = platformSiteSyncStage(model.PlatformSiteStageSuccess, "", nil)
+	} else {
+		if groupErr == nil {
+			groupErr = fmt.Errorf("%w: Sub2API 分组倍率不可用", ErrPlatformSiteResponse)
+		}
+		stages.GroupsRates = platformSiteSyncStage(model.PlatformSiteStageWarning, "", groupErr)
+	}
+	if progressErr := publishPlatformSiteStageProgress(session, stages); progressErr != nil {
+		return PlatformSiteSnapshot{SyncStages: stages}, progressErr
 	}
 	if session.Headers.Get("x-api-key") != "" {
 		snapshot.Keys, err = fetchSub2APIAdminKeys(ctx, session, rates)
@@ -471,7 +818,66 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 		snapshot.Keys, err = fetchSub2APIKeys(ctx, session, rates)
 	}
 	if err != nil {
-		return PlatformSiteSnapshot{}, wrapPlatformSiteStage("Sub2API 密钥分页", err)
+		stages.KeyPagination = platformSiteSyncStage(model.PlatformSiteStageFailed, "", err)
+		stages.OverallStatus = model.PlatformSiteStageFailed
+		snapshot.SyncStages = stages
+		_ = publishPlatformSiteStageProgress(session, stages)
+		return snapshot, wrapPlatformSiteStage("Sub2API 密钥分页", err)
+	}
+	stages.KeyPagination = platformSiteSyncStage(model.PlatformSiteStageSuccess, "", nil)
+	stages.KeyPagination.ItemsTotal = len(snapshot.Keys)
+	if progressErr := publishPlatformSiteStageProgress(session, stages); progressErr != nil {
+		return PlatformSiteSnapshot{SyncStages: stages}, progressErr
+	}
+	secretFailures := 0
+	modelFailures := 0
+	for _, key := range snapshot.Keys {
+		switch key.SyncError {
+		case upstreamKeySyncErrorSecretUnavailable:
+			secretFailures++
+		case upstreamKeySyncErrorModelsUnavailable:
+			modelFailures++
+		}
+	}
+	stages.KeySecrets.ItemsTotal = len(snapshot.Keys)
+	stages.KeySecrets.ItemsFailed = secretFailures
+	stages.KeySecrets.ItemsSucceeded = len(snapshot.Keys) - secretFailures
+	if secretFailures > 0 {
+		stages.KeySecrets.Status = model.PlatformSiteStageWarning
+		stages.KeySecrets.UpdatedAt = common.GetTimestamp()
+	} else {
+		stages.KeySecrets = platformSiteSyncStage(model.PlatformSiteStageSuccess, "", nil)
+		stages.KeySecrets.ItemsTotal = len(snapshot.Keys)
+		stages.KeySecrets.ItemsSucceeded = len(snapshot.Keys)
+	}
+	if progressErr := publishPlatformSiteStageProgress(session, stages); progressErr != nil {
+		return PlatformSiteSnapshot{SyncStages: stages}, progressErr
+	}
+	stages.KeyModels.ItemsTotal = len(snapshot.Keys)
+	stages.KeyModels.ItemsFailed = modelFailures
+	stages.KeyModels.ItemsSucceeded = len(snapshot.Keys) - modelFailures
+	if modelFailures > 0 {
+		stages.KeyModels.Status = model.PlatformSiteStageWarning
+		stages.KeyModels.UpdatedAt = common.GetTimestamp()
+	} else {
+		stages.KeyModels = platformSiteSyncStage(model.PlatformSiteStageSuccess, "", nil)
+		stages.KeyModels.ItemsTotal = len(snapshot.Keys)
+		stages.KeyModels.ItemsSucceeded = len(snapshot.Keys)
+	}
+	if snapshot.ManagementBaseURL != "" && snapshot.RelayBaseURL != "" {
+		stages.Sub2APIEndpoints = platformSiteSyncStage(model.PlatformSiteStageSuccess, "", nil)
+	} else {
+		stages.Sub2APIEndpoints = platformSiteSyncStage(
+			model.PlatformSiteStageWarning,
+			"Sub2API 管理地址或转发地址未发现，保留现有地址",
+			nil,
+		)
+		stages.Sub2APIEndpoints.UsedPrevious = true
+	}
+	stages.OverallStatus = model.PlatformSiteStageSuccess
+	snapshot.SyncStages = stages
+	if progressErr := publishPlatformSiteStageProgress(session, stages); progressErr != nil {
+		return PlatformSiteSnapshot{SyncStages: stages}, progressErr
 	}
 	return snapshot, nil
 }
@@ -497,6 +903,9 @@ func loginNewAPIWithPassword(ctx context.Context, session *PlatformSiteSession, 
 			return payload, nil
 		}
 		lastErr = err
+		if platformSiteInteractiveVerificationRequired(err) {
+			return nil, err
+		}
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("%w: NewAPI 登录失败", ErrPlatformSiteAuth)
@@ -622,6 +1031,10 @@ func fetchNewAPICurrentUser(ctx context.Context, session *PlatformSiteSession) (
 			return payload, nil
 		}
 		lastErr = err
+		if platformSiteCredentialAuthenticationRejected(err) ||
+			platformSiteErrorCategoryOf(err) == platformSiteErrorCategoryInteractive {
+			return nil, err
+		}
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("%w: NewAPI 当前用户接口不可用", ErrPlatformSiteAuth)
@@ -637,6 +1050,10 @@ func fetchSub2APICurrentUser(ctx context.Context, session *PlatformSiteSession) 
 			return payload, nil
 		}
 		lastErr = err
+		if platformSiteCredentialAuthenticationRejected(err) ||
+			platformSiteErrorCategoryOf(err) == platformSiteErrorCategoryInteractive {
+			return nil, err
+		}
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("%w: Sub2API 当前用户接口不可用", ErrPlatformSiteAuth)
@@ -652,38 +1069,107 @@ func tryCachedPlatformSiteCredential(
 	fetchCurrentUser func(context.Context, *PlatformSiteSession) (any, error),
 	applyAccessToken func(*PlatformSiteSession, string),
 	clearAccessToken func(*PlatformSiteSession),
+	applyCookie func(*PlatformSiteSession, string),
+	clearCookie func(*PlatformSiteSession),
 ) (bool, error) {
 	if credential == nil {
 		return false, nil
 	}
 
-	if accessToken := strings.TrimSpace(credential.AccessToken); accessToken != "" &&
-		(credential.TokenExpiresAt <= 0 || credential.TokenExpiresAt > time.Now().Unix()) {
-		applyAccessToken(session, accessToken)
-		if _, err := fetchCurrentUser(ctx, session); err == nil {
-			return true, nil
-		} else if strings.TrimSpace(credential.RefreshToken) == "" {
-			clearAccessToken(session)
+	accessTokenExpired := false
+	if accessToken := strings.TrimSpace(credential.AccessToken); accessToken != "" {
+		if credential.TokenExpiresAt > 0 && credential.TokenExpiresAt <= time.Now().Unix() {
+			accessTokenExpired = true
+			applyAccessToken(session, accessToken)
+		} else {
+			applyAccessToken(session, accessToken)
+			if payload, err := fetchCurrentUser(ctx, session); err == nil {
+				if userID := findUserID(payload); userID != "" &&
+					userID != credential.UserID {
+					credential.UserID = userID
+					updatedCredential := *credential
+					session.CredentialUpdate = &updatedCredential
+				}
+				return true, nil
+			} else if !platformSiteCredentialAuthenticationRejected(err) {
+				return false, err
+			} else {
+				clearAccessToken(session)
+				credential.AccessToken = ""
+				credential.TokenExpiresAt = 0
+				recordPlatformSiteCredentialUpdate(session, *credential)
+			}
 		}
 	}
 
-	if strings.TrimSpace(credential.RefreshToken) == "" {
-		return false, nil
+	if accessTokenExpired && strings.TrimSpace(credential.RefreshToken) == "" {
+		clearAccessToken(session)
+		credential.AccessToken = ""
+		credential.TokenExpiresAt = 0
+		recordPlatformSiteCredentialUpdate(session, *credential)
 	}
-	if err := refreshPlatformSiteSession(ctx, session, refreshPath, credential); err != nil {
-		if platformSiteCredentialAuthenticationRejected(err) {
+	if strings.TrimSpace(credential.RefreshToken) != "" {
+		if err := refreshPlatformSiteSession(ctx, session, refreshPath, credential); err != nil {
+			if platformSiteCredentialAuthenticationRejected(err) {
+				clearAccessToken(session)
+				credential.AccessToken = ""
+				credential.RefreshToken = ""
+				credential.TokenExpiresAt = 0
+				recordPlatformSiteCredentialUpdate(session, *credential)
+			} else {
+				return false, err
+			}
+		} else if _, err := fetchCurrentUser(ctx, session); err == nil {
+			return true, nil
+		} else if !platformSiteCredentialAuthenticationRejected(err) {
+			return false, err
+		} else {
 			clearAccessToken(session)
-			return false, nil
+			credential.AccessToken = ""
+			credential.RefreshToken = ""
+			credential.TokenExpiresAt = 0
+			recordPlatformSiteCredentialUpdate(session, *credential)
 		}
-		return false, err
 	}
-	if _, err := fetchCurrentUser(ctx, session); err == nil {
-		return true, nil
-	} else if !platformSiteCredentialAuthenticationRejected(err) {
-		return false, err
+
+	if applyCookie != nil && strings.TrimSpace(credential.Cookie) != "" {
+		if accessTokenExpired {
+			clearAccessToken(session)
+			credential.AccessToken = ""
+			credential.TokenExpiresAt = 0
+		}
+		applyCookie(session, credential.Cookie)
+		if _, err := fetchCurrentUser(ctx, session); err == nil {
+			updatedCredential := *credential
+			session.CredentialUpdate = &updatedCredential
+			return true, nil
+		} else if !platformSiteCredentialAuthenticationRejected(err) {
+			return false, err
+		}
+		if clearCookie != nil {
+			clearCookie(session)
+		}
+		credential.Cookie = ""
+		recordPlatformSiteCredentialUpdate(session, *credential)
 	}
-	clearAccessToken(session)
 	return false, nil
+}
+
+func recordPlatformSiteCredentialUpdate(
+	session *PlatformSiteSession,
+	credential model.PlatformSiteCredential,
+) {
+	if session == nil || credential.AuthType != model.UpstreamAuthPassword {
+		return
+	}
+	updatedCredential := credential
+	session.CredentialUpdate = &updatedCredential
+}
+
+func credentialHasCachedLogin(credential model.PlatformSiteCredential) bool {
+	return strings.TrimSpace(credential.AccessToken) != "" ||
+		strings.TrimSpace(credential.RefreshToken) != "" ||
+		strings.TrimSpace(credential.Cookie) != ""
 }
 
 func platformSiteCredentialAuthenticationRejected(err error) bool {
@@ -695,7 +1181,95 @@ func platformSiteCredentialAuthenticationRejected(err error) bool {
 		return statusErr.statusCode == http.StatusUnauthorized ||
 			statusErr.statusCode == http.StatusForbidden
 	}
-	return errors.Is(err, ErrPlatformSiteAuth)
+	var businessErr *platformSiteBusinessError
+	if errors.As(err, &businessErr) {
+		return businessErr.category == platformSiteErrorCategoryAuthentication
+	}
+	return false
+}
+
+func platformSiteInteractiveVerificationRequired(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrSub2APILoginInteractive) ||
+		platformSiteErrorCategoryOf(err) == platformSiteErrorCategoryInteractive {
+		return true
+	}
+	diagnostics, ok := platformSiteResponseDiagnosticsOf(err)
+	if !ok || diagnostics.responseType != "html" {
+		return false
+	}
+	if diagnostics.errorCategory == platformSiteErrorCategoryRouteMissing ||
+		diagnostics.statusCode == http.StatusNotFound ||
+		diagnostics.statusCode == http.StatusMethodNotAllowed {
+		return false
+	}
+	return true
+}
+
+func temporaryTokenFromError(err error) string {
+	if err == nil {
+		return ""
+	}
+	var statusErr *platformSiteHTTPStatusError
+	if errors.As(err, &statusErr) && statusErr.diagnostics.pending != nil {
+		return statusErr.diagnostics.pending.TempToken
+	}
+	var businessErr *platformSiteBusinessError
+	if errors.As(err, &businessErr) && businessErr.diagnostics.pending != nil {
+		return businessErr.diagnostics.pending.TempToken
+	}
+	return ""
+}
+
+func newPlatformSiteVerificationRequired(
+	platform string,
+	session *PlatformSiteSession,
+	pending PlatformSitePendingContext,
+	cause error,
+) error {
+	if session != nil && pending.Kind == "newapi_cookie" && len(pending.Cookies) == 0 {
+		pending.Cookies = platformSiteSessionCookies(session)
+	}
+	baseURL := ""
+	if session != nil {
+		baseURL = session.BaseURL
+	}
+	if cause == nil {
+		cause = ErrPlatformSiteAuth
+	}
+	if platform == model.PlatformSub2API {
+		cause = errors.Join(
+			cause,
+			ErrSub2APILoginInteractive,
+			ErrSub2APILoginHTTPStatus,
+		)
+	}
+	return &PlatformSiteVerificationRequired{
+		Platform: platform,
+		BaseURL:  baseURL,
+		Pending:  pending,
+		Cause:    cause,
+	}
+}
+
+func verificationCodeRejected(err error) bool {
+	if err == nil {
+		return false
+	}
+	var statusErr *platformSiteHTTPStatusError
+	if errors.As(err, &statusErr) {
+		return (statusErr.statusCode == http.StatusBadRequest ||
+			statusErr.statusCode == http.StatusUnauthorized ||
+			statusErr.statusCode == http.StatusForbidden) &&
+			statusErr.diagnostics.verificationCodeRejected
+	}
+	var businessErr *platformSiteBusinessError
+	if errors.As(err, &businessErr) {
+		return businessErr.diagnostics.verificationCodeRejected
+	}
+	return false
 }
 
 func bearerToken(token string) string {
@@ -718,16 +1292,22 @@ func refreshPlatformSiteSession(
 		"refresh_token": credential.RefreshToken,
 	})
 	if err != nil {
-		return fmt.Errorf("%w: 刷新会话失败: %w", ErrPlatformSiteAuth, err)
+		return fmt.Errorf("刷新会话失败: %w", err)
 	}
 	accessToken := findToken(payload)
-	refreshToken := findRefreshToken(payload)
-	if accessToken == "" || refreshToken == "" {
-		return fmt.Errorf("%w: 刷新会话响应不完整", ErrPlatformSiteAuth)
+	if accessToken == "" {
+		return fmt.Errorf("%w: 刷新会话响应不完整", ErrPlatformSiteResponse)
+	}
+	if refreshToken := findRefreshToken(payload); refreshToken != "" {
+		credential.RefreshToken = refreshToken
+	}
+	if expiresAt := findTokenExpiresAt(payload); expiresAt > 0 {
+		credential.TokenExpiresAt = expiresAt
+	}
+	if userID := findUserID(payload); userID != "" {
+		credential.UserID = userID
 	}
 	credential.AccessToken = accessToken
-	credential.RefreshToken = refreshToken
-	credential.TokenExpiresAt = findTokenExpiresAt(payload)
 	session.Headers.Set("Authorization", bearerToken(accessToken))
 	updatedCredential := *credential
 	session.CredentialUpdate = &updatedCredential
@@ -739,7 +1319,7 @@ func findToken(payload any) string {
 	if token := firstString(record, "access_token", "accessToken", "auth_token", "authToken", "id_token", "idToken", "token", "jwt"); token != "" {
 		return token
 	}
-	for _, key := range []string{"data", "result", "auth", "session", "user", "account", "auth_bundle"} {
+	for _, key := range []string{"data", "result", "auth", "session", "user", "account", "profile", "auth_bundle"} {
 		if nested, ok := record[key]; ok {
 			if token := findToken(nested); token != "" {
 				return token
@@ -751,10 +1331,10 @@ func findToken(payload any) string {
 
 func findRefreshToken(payload any) string {
 	record := firstRecord(payload)
-	if token := firstString(record, "refresh_token", "refreshToken", "refresh"); token != "" {
+	if token := firstString(record, "refresh_token", "refreshToken", "refresh", "rt"); token != "" {
 		return token
 	}
-	for _, key := range []string{"data", "result", "auth_bundle"} {
+	for _, key := range []string{"data", "result", "auth", "session", "user", "account", "profile", "auth_bundle"} {
 		if nested, ok := record[key]; ok {
 			if token := findRefreshToken(nested); token != "" {
 				return token
@@ -764,12 +1344,47 @@ func findRefreshToken(payload any) string {
 	return ""
 }
 
+func findTemporaryToken(payload any) string {
+	record := firstRecord(payload)
+	if token := firstString(record,
+		"temp_token",
+		"tempToken",
+		"temporary_token",
+		"temporaryToken",
+		"flow_token",
+		"flowToken",
+		"verification_token",
+		"verificationToken",
+		"challenge_token",
+		"challengeToken",
+	); token != "" {
+		return token
+	}
+	for _, key := range []string{
+		"data",
+		"result",
+		"auth",
+		"session",
+		"user",
+		"account",
+		"profile",
+		"auth_bundle",
+	} {
+		if nested, ok := record[key]; ok {
+			if token := findTemporaryToken(nested); token != "" {
+				return token
+			}
+		}
+	}
+	return ""
+}
+
 func findUserID(payload any) string {
 	record := firstRecord(payload)
-	if userID := firstString(record, "id", "user_id", "userId", "uid"); userID != "" {
+	if userID := firstString(record, "id", "user_id", "userId", "uid", "sub"); userID != "" {
 		return userID
 	}
-	for _, key := range []string{"data", "result", "user", "account", "profile", "auth"} {
+	for _, key := range []string{"data", "result", "auth", "session", "user", "account", "profile"} {
 		if nested, ok := record[key]; ok {
 			if userID := findUserID(nested); userID != "" {
 				return userID
@@ -817,19 +1432,144 @@ func clearNewAPIAuthentication(session *PlatformSiteSession) {
 	}
 }
 
+func platformSiteSessionCookie(session *PlatformSiteSession) string {
+	if session == nil || session.Client == nil || session.Client.Jar == nil {
+		return ""
+	}
+	parsed, err := url.Parse(session.BaseURL)
+	if err != nil {
+		return ""
+	}
+	cookies := session.Client.Jar.Cookies(parsed)
+	if len(cookies) == 0 {
+		return ""
+	}
+	values := make([]string, 0, len(cookies))
+	for _, cookie := range cookies {
+		if cookie == nil || strings.TrimSpace(cookie.Name) == "" {
+			continue
+		}
+		values = append(values, cookie.Name+"="+cookie.Value)
+	}
+	return strings.Join(values, "; ")
+}
+
+func platformSiteSessionCookies(session *PlatformSiteSession) []PlatformSitePendingCookie {
+	if session == nil || session.Client == nil || session.Client.Jar == nil {
+		return nil
+	}
+	parsed, err := url.Parse(session.BaseURL)
+	if err != nil {
+		return nil
+	}
+	cookies := session.Client.Jar.Cookies(parsed)
+	result := make([]PlatformSitePendingCookie, 0, len(cookies))
+	for _, cookie := range cookies {
+		if cookie == nil || strings.TrimSpace(cookie.Name) == "" {
+			continue
+		}
+		sameSite := ""
+		switch cookie.SameSite {
+		case http.SameSiteDefaultMode:
+			sameSite = "default"
+		case http.SameSiteLaxMode:
+			sameSite = "lax"
+		case http.SameSiteStrictMode:
+			sameSite = "strict"
+		case http.SameSiteNoneMode:
+			sameSite = "none"
+		}
+		result = append(result, PlatformSitePendingCookie{
+			Name:     cookie.Name,
+			Value:    cookie.Value,
+			Path:     cookie.Path,
+			Domain:   cookie.Domain,
+			Expires:  cookie.Expires.Unix(),
+			Secure:   cookie.Secure,
+			HttpOnly: cookie.HttpOnly,
+			SameSite: sameSite,
+		})
+	}
+	return result
+}
+
+func platformSitePendingCookieHeader(cookies []PlatformSitePendingCookie) string {
+	values := make([]string, 0, len(cookies))
+	for _, cookie := range cookies {
+		if strings.TrimSpace(cookie.Name) == "" {
+			continue
+		}
+		values = append(values, cookie.Name+"="+cookie.Value)
+	}
+	return strings.Join(values, "; ")
+}
+
+func restorePlatformSitePendingCookies(
+	session *PlatformSiteSession,
+	cookies []PlatformSitePendingCookie,
+) error {
+	if session == nil || session.Client == nil || session.Client.Jar == nil {
+		return errors.New("平台站点 Cookie 会话不可用")
+	}
+	parsed, err := url.Parse(session.BaseURL)
+	if err != nil {
+		return err
+	}
+	restored := make([]*http.Cookie, 0, len(cookies))
+	for _, item := range cookies {
+		if strings.TrimSpace(item.Name) == "" {
+			continue
+		}
+		cookie := &http.Cookie{
+			Name:     item.Name,
+			Value:    item.Value,
+			Path:     item.Path,
+			Domain:   item.Domain,
+			Secure:   item.Secure,
+			HttpOnly: item.HttpOnly,
+		}
+		if item.Expires > 0 {
+			cookie.Expires = time.Unix(item.Expires, 0)
+		}
+		switch item.SameSite {
+		case "default":
+			cookie.SameSite = http.SameSiteDefaultMode
+		case "lax":
+			cookie.SameSite = http.SameSiteLaxMode
+		case "strict":
+			cookie.SameSite = http.SameSiteStrictMode
+		case "none":
+			cookie.SameSite = http.SameSiteNoneMode
+		}
+		restored = append(restored, cookie)
+	}
+	if len(restored) == 0 {
+		return errors.New("平台站点 Cookie 会话为空")
+	}
+	session.Client.Jar.SetCookies(parsed, restored)
+	return nil
+}
+
 func findTokenExpiresAt(payload any) int64 {
 	record := firstRecord(payload)
 	for _, key := range []string{"access_expires_at", "token_expires_at", "expires_at"} {
 		value := firstFloat(record, key)
 		if value > 0 && !math.IsInf(value, 0) && !math.IsNaN(value) {
+			if value >= float64(math.MaxInt64) {
+				continue
+			}
 			return int64(value)
 		}
 	}
 	if expiresIn := firstFloat(record, "expires_in"); expiresIn > 0 &&
 		!math.IsInf(expiresIn, 0) && !math.IsNaN(expiresIn) {
-		return time.Now().Add(time.Duration(expiresIn) * time.Second).Unix()
+		const maxTokenLifetime = 365 * 24 * time.Hour
+		if expiresIn > maxTokenLifetime.Seconds() {
+			expiresIn = maxTokenLifetime.Seconds()
+		}
+		return time.Now().Add(time.Duration(expiresIn * float64(time.Second))).Unix()
 	}
-	for _, key := range []string{"data", "result", "auth_bundle"} {
+	for _, key := range []string{"data", "result", "auth", "session", "user", "account", "profile", "auth_bundle"} {
 		if nested, ok := record[key]; ok {
 			if value := findTokenExpiresAt(nested); value > 0 {
 				return value
@@ -857,7 +1597,16 @@ func loginRequiresInteractiveVerification(payload any) bool {
 				return true
 			}
 		}
-		for _, key := range []string{"data", "auth_bundle", "result"} {
+		for _, key := range []string{
+			"data",
+			"result",
+			"auth",
+			"session",
+			"user",
+			"account",
+			"profile",
+			"auth_bundle",
+		} {
 			if nested, ok := value[key]; ok && loginRequiresInteractiveVerification(nested) {
 				return true
 			}
@@ -968,15 +1717,23 @@ func stringsFromPayload(payload any) []string {
 }
 
 func fetchNewAPIQuotaPerUnit(ctx context.Context, session *PlatformSiteSession) float64 {
-	payload, err := platformSiteRequest(ctx, session, http.MethodGet, "/api/status", nil, nil)
+	quotaPerUnit, err := fetchNewAPIQuotaPerUnitWithError(ctx, session)
 	if err != nil {
 		return defaultNewAPIQuotaPerUnit
 	}
+	return quotaPerUnit
+}
+
+func fetchNewAPIQuotaPerUnitWithError(ctx context.Context, session *PlatformSiteSession) (float64, error) {
+	payload, err := platformSiteRequest(ctx, session, http.MethodGet, "/api/status", nil, nil)
+	if err != nil {
+		return defaultNewAPIQuotaPerUnit, err
+	}
 	quotaPerUnit := firstFloat(firstRecord(payload), "quota_per_unit", "quotaPerUnit")
 	if quotaPerUnit <= 0 || math.IsNaN(quotaPerUnit) || math.IsInf(quotaPerUnit, 0) {
-		return defaultNewAPIQuotaPerUnit
+		return defaultNewAPIQuotaPerUnit, fmt.Errorf("%w: NewAPI 额度单位无效", ErrPlatformSiteResponse)
 	}
-	return quotaPerUnit
+	return quotaPerUnit, nil
 }
 
 func normalizeNewAPIQuota(value float64, quotaPerUnit float64) float64 {
@@ -990,16 +1747,30 @@ func normalizeNewAPIQuota(value float64, quotaPerUnit float64) float64 {
 }
 
 func fetchNewAPIGroupRates(ctx context.Context, session *PlatformSiteSession) map[string]float64 {
+	rates, _ := fetchNewAPIGroupRatesWithError(ctx, session)
+	return rates
+}
+
+func fetchNewAPIGroupRatesWithError(
+	ctx context.Context,
+	session *PlatformSiteSession,
+) (map[string]float64, error) {
+	var lastErr error
 	for _, path := range []string{"/api/user/self/groups", "/api/user/groups"} {
 		payload, err := platformSiteRequest(ctx, session, http.MethodGet, path, nil, nil)
 		if err != nil {
+			lastErr = err
 			continue
 		}
 		if rates := parseGroupRates(payload); len(rates) > 0 {
-			return rates
+			return rates, nil
 		}
+		lastErr = fmt.Errorf("%w: NewAPI 分组倍率为空", ErrPlatformSiteResponse)
 	}
-	return map[string]float64{}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("%w: NewAPI 分组倍率不可用", ErrPlatformSiteResponse)
+	}
+	return map[string]float64{}, lastErr
 }
 
 func modelsFromRecord(record map[string]any) []string {

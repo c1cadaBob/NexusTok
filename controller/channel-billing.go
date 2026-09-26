@@ -584,6 +584,13 @@ func UpdateChannelBalance(c *gin.Context) {
 				response["sync_status"] = account.SyncStatus
 				response["last_sync_at"] = account.LastSyncAt
 				response["last_sync_error"] = account.LastSyncError
+				if account.SyncStatus == model.UpstreamSiteSyncWaitingVerification {
+					if challenge, found := service.GetPlatformSiteChallengeStatus(id); found {
+						response["challenge_id"] = challenge.ChallengeID
+						response["challenge_expires_at"] = challenge.ExpiresAt
+						response["attempts_remaining"] = challenge.AttemptsRemaining
+					}
+				}
 			}
 			c.JSON(http.StatusOK, response)
 			return

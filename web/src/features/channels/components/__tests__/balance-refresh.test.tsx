@@ -51,6 +51,7 @@ beforeEach(() => {
   vi.mocked(channelsApi.getCodexUsage).mockReset()
   vi.spyOn(toast, 'success').mockReturnValue('success')
   vi.spyOn(toast, 'error').mockReturnValue('error')
+  vi.spyOn(toast, 'info').mockReturnValue('info')
 })
 
 function platformChannel(): Channel {
@@ -205,6 +206,39 @@ test('平台站点余额刷新失败时展示错误且不清空已有余额', as
   expect(invalidateSpy).not.toHaveBeenCalledWith(
     expect.objectContaining({ queryKey: ['upstream-keys', 101] })
   )
+  expect(screen.getByText(/2023-11-14/)).toBeInTheDocument()
+})
+
+test('平台站点余额刷新等待验证时保留余额并显示 Challenge 状态', async () => {
+  const user = userEvent.setup()
+  vi.mocked(channelsApi.updateChannelBalance).mockResolvedValue({
+    success: false,
+    message: 'verification required',
+    balance: 1,
+    used_quota: 10,
+    balance_updated_time: 1_700_000_000,
+    sync_status: 'waiting_verification',
+    last_sync_at: 1_700_000_000,
+    last_sync_error: 'waiting verification',
+    challenge_id: 'challenge-123',
+    challenge_expires_at: 1_800_000_000,
+    attempts_remaining: 2,
+  })
+  const { invalidateSpy } = renderBalanceDialog(platformChannel())
+
+  await user.click(screen.getByRole('button', { name: 'Update Balance' }))
+
+  await waitFor(() => {
+    expect(toast.info).toHaveBeenCalled()
+  })
+  expect(toast.error).not.toHaveBeenCalled()
+  expect(
+    invalidateSpy.mock.calls.some(
+      ([options]) =>
+        JSON.stringify(options?.queryKey) ===
+        JSON.stringify(['upstream-site-status', 101])
+    )
+  ).toBe(true)
   expect(screen.getByText(/2023-11-14/)).toBeInTheDocument()
 })
 

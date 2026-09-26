@@ -366,11 +366,21 @@ Cookie 的顺序自动选择；采集不到任何可用凭据时失败，不允�
 平台站点账号同步使用双凭据模型：`password` 模式保留账号密码作为最终恢复凭据，
 同时保留 `AccessToken`、`RefreshToken`、`TokenExpiresAt` 和 `UserID` 作为日常登录态。
 这些登录态可以来自后台账号密码登录、刷新令牌轮换，或密码模式下明确提交的浏览器
-`capture_id`。同步优先验证缓存访问令牌，失效后尝试刷新令牌，两个登录态都失效时
-才使用账号密码；`access_token` 模式刷新失败不会读取账号密码。认证期间产生的令牌
-更新在快照同步前立即加密保存，快照失败不会丢失令牌轮换结果。该凭据生命周期只决定
-平台站点同步能否建立会话，不改变 `key_id`、`upstream_key_id`、Routing Key 或子密钥
-候选的语义。
+`capture_id`，也可以是密码模式合并的加密 Cookie。同步恢复顺序固定为
+`Access Token → Refresh Token → Cookie → 账号密码`；只有明确的 401、403、过期或
+无效凭据响应才清除候选并回退，网络错误、5xx 和非法响应不会放大为多条备用请求。
+`access_token` 模式绝不回退账号密码或 Cookie，`admin_key` 和 `cookie` 模式也不回退
+账号密码。Refresh 响应缺少 Refresh Token、过期时间或 User ID 时保留旧值；新的非空
+字段才覆盖旧值。认证期间产生的令牌更新在快照同步前立即加密保存，快照失败不会丢失
+令牌轮换结果。该凭据生命周期只决定平台站点同步能否建立会话，不改变 `key_id`、
+`upstream_key_id`、Routing Key 或子密钥候选的语义。
+
+平台站点子密钥的路由候选只来自完整成功的密钥分页。分页失败时不标记缺失、不清理
+旧密钥和能力；Secret 读取失败的新密钥自动禁用并标记 `credential_unavailable`，
+旧密钥保留加密 Secret 但禁止自动路由；模型能力读取失败的旧密钥保留旧模型列表和
+能力记录但禁止自动路由，新密钥没有可确认能力时自动禁用。可选余额、用量、倍率和
+Sub2API 地址阶段失败时保留旧值并标记阶段告警，Routing Key、旧快照和可路由候选
+按照上一次成功结果继续工作。
 平台站点同步认证失败时保留最近一次成功快照和已有子密钥路由能力；如果 Sub2API
 登录接口返回明确的 Turnstile/验证码交互验证错误，后台不会清除这些快照，也不会
 继续用网页登录页错误覆盖真实原因。只有登录 API 路由不存在时才尝试备用路径。
@@ -406,6 +416,15 @@ Cookie 的顺序自动选择；采集不到任何可用凭据时失败，不允�
 
 手动渠道测试失败不会触发自动禁用；自动健康检查仍沿用原自动禁用策略。
 
+平台站点 `waiting_verification` 是同步等待状态，不是普通路由失败。它表示后台已经
+停止重复登录，正在等待管理员通过真实浏览器完成上游交互验证。只要存在最近成功
+快照，已有可路由密钥继续参与调度；没有成功快照则不新增候选。Challenge 为五分钟
+有效、最多三次输入，绑定渠道、平台和 Origin；手动创建的 Challenge 还绑定创建管理员。
+后台创建的 Challenge 不绑定创建管理员，但提交请求必须再次通过当前管理员的
+`ChannelOperate` 权限。成功消费为单次操作，Redis 用随机值锁和 Lua 校验释放，Redis
+不可用时仅提供进程内互斥语义。Challenge 成功后才刷新候选；过期、消费、次数耗尽、
+渠道/Origin 不匹配均要求重新同步。
+
 ## 12. 使用日志可观测字段
 
 成功请求和可记录的失败请求都会通过 `other.admin_info` 记录管理员诊断字段：
@@ -418,6 +437,12 @@ Cookie 的顺序自动选择；采集不到任何可用凭据时失败，不允�
 - `multi_key_index`：普通多密钥兼容索引；
 - `upstream_key_id`：平台站点子密钥内部 ID；
 - `upstream_key_name`、`upstream_key_ratio`、`upstream_key_weight`：平台站点兼容诊断字段。
+
+平台同步阶段 JSON 只对管理员状态接口以结构化脱敏对象返回，包含固定八阶段及其
+`status`、更新时间、错误摘要、HTTP 状态、脱敏 URL、Content-Type、重定向状态、
+响应类别、是否使用旧值和逐项数量。`last_sync_error` 仅承载总体失败或等待提示；
+成功同步的可选阶段告警不写入该字段。系统日志、审计事件和前端接口均不返回密码、
+OTP、Cookie、Access Token、Refresh Token、Admin Key、临时 Token 或完整上游响应体。
 
 这些字段只对管理员可见：
 
@@ -461,3 +486,4 @@ Cookie 的顺序自动选择；采集不到任何可用凭据时失败，不允�
 | 2026-09-25 | 缺陷修复 | 平台站点同步每次优先账号密码登录，令牌轮换结果可能在快照失败后丢失 | 账号密码与登录态并存并按缓存优先恢复；认证更新在快照前保存，保持 `key_id` 与 `upstream_key_id` 语义不变 | 平台站点同步、子密钥快照、路由候选和管理员测试 | `service/upstream_site_adapters.go`、`service/upstream_site.go`、`controller/upstream_channel.go`；服务/控制器测试 |
 | 2026-09-25 | 缺陷修复 | 渠道 2 的 Turnstile 登录错误会被后续 HTML 路径覆盖，失败时难以判断是否应继续测试或重新采集 | 交互验证错误立即停止路径切换并保留现有快照；仅路由不存在时继续兼容路径，`key_id`/`upstream_key_id` 语义不变 | 平台站点密钥同步、可路由子密钥保留、管理员测试和错误排障 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go` |
 | 2026-09-25 | 功能优化 | 密码模式无法把一次浏览器验证后的登录态并入原密码凭据，管理员可能为避开上游验证切换到自动配置认证方式 | 密码模式可携带 `capture_id` 合并 Access Token/Refresh Token 缓存登录态，认证方式、子密钥身份和路由候选语义不变 | 平台站点密码凭据、采集会话、子密钥同步和后续自动恢复 | `controller/upstream_channel.go`、`service/platform_site_capture.go`、`web/src/features/channels/`；前后端回归测试 |
+| 2026-09-25 | 阶段同步与交互验证 | 站点认证和密钥快照失败边界不统一，`waiting_verification` 可能触发重复登录，阶段告警缺少管理员可见结构 | 固定八阶段脱敏状态、关键/可选阶段旧快照策略、五分钟三次 Challenge 和单次消费；路由只使用可确认的密钥能力，分页失败不清理旧密钥 | 平台站点同步、上游密钥候选、模型能力、余额和管理员诊断 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_challenge.go`、`model/upstream_site_sync_stages.go` |

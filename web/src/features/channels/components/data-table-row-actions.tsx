@@ -185,7 +185,11 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
       if (!response.success) {
         throw createServerError(response, t('Failed to sync upstream site'))
       }
-      toast.success(t('Upstream site synchronized'))
+      if (response.status === 'waiting_verification') {
+        toast.info(t('Upstream site is waiting for verification.'))
+      } else {
+        toast.success(t('Upstream site synchronized'))
+      }
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() }),
         queryClient.invalidateQueries({

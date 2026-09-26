@@ -77,8 +77,32 @@
 
 新增配置、数据库模型、缓存键、后台任务或插件协议时，同时更新对应功能文档、代码来源和变更记录。只修改文档时，也必须静态检查链接、路径、方法名、接口参数和偏差状态。
 
+## 2026-09-25 平台站点同步事实
+
+本次 NewAPI/Sub2API 优化前，`password` 模式主要依赖账号密码或一次性浏览器采集结果，缓存登录态未完整合并，登录、快照读取和失败回退也没有统一的阶段状态。优化后，密码模式同时保留用户名、密码和浏览器或登录流程得到的 Access Token、Refresh Token、过期时间、User ID、Cookie；恢复优先级固定为 Access Token、Refresh Token、Cookie、账号密码。`access_token`、`admin_key` 和 `cookie` 模式不回退账号密码。
+
+同步被拆为 `authentication`、`current_user`、`balance_usage`、`groups_rates`、
+`key_pagination`、`key_secrets`、`key_models`、`sub2api_endpoints` 八个固定阶段，
+状态保存于 `platform_site_accounts.sync_stages` 的 TEXT JSON。成功、警告、失败、等待
+和跳过均可由管理员状态接口查看；可选阶段失败保留旧余额、用量、倍率、地址、模型能力
+或密钥快照，密钥分页失败不清理旧密钥。
+
+Turnstile、CAPTCHA、Cloudflare、WAF 和其它交互验证不由后台绕过，也不接入第三方打码
+服务。认证遇到验证页或验证错误时停止备用登录和无意义重试，使用真实浏览器完成验证
+后通过 Capture Session 采集合法登录态，或创建五分钟 Challenge。Challenge 只在缓存中
+保存必要的加密 pending Cookie 或短期临时令牌，最多三次，绑定渠道、平台、Origin 和
+手动创建管理员；Redis 使用随机锁值和 Lua 校验释放，Redis 不可用时退回进程内锁。
+验证码成功消费 Challenge 后才继续完整同步；后台同步在等待期间不再次登录，过期后只
+提示管理员重新同步。
+
+同步诊断只允许保存脱敏错误摘要、HTTP 状态、脱敏 URL、Content-Type、重定向状态和
+响应类别。`2xx` HTML、验证页、纯文本代理响应和非法 JSON 分开分类；密码、OTP、
+Cookie、Access Token、Refresh Token、Admin Key 和完整响应体不进入
+`last_sync_error`、系统日志、阶段 JSON 或管理员接口。
+
 ## 变更记录
 
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 建立架构文档总索引、维护入口、状态定义和偏差判断方法 | `docs/architecture/`、后续功能文档维护流程 | `main.go`、`router/`、`middleware/`、`service/`、`model/`、`relay/`、`pkg/` 静态核对 |
+| 2026-09-25 | 平台站点同步优化 | 密码模式、交互验证、快照失败回退和阶段可观测性分散在局部实现 | 统一双凭据恢复顺序、八阶段状态、Challenge 生命周期、验证页分类和敏感信息边界 | NewAPI、Sub2API、管理员同步、后台任务和密钥路由 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_challenge.go`、`model/upstream_site_sync_stages.go` |

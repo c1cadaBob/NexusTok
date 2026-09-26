@@ -244,7 +244,9 @@ function isPlatformSiteSnapshotUsable(channel: Channel): boolean {
   if (status.sync_status === 'success') return true
 
   return (
-    (status.sync_status === 'failed' || status.sync_status === 'running') &&
+    (status.sync_status === 'failed' ||
+      status.sync_status === 'running' ||
+      status.sync_status === 'waiting_verification') &&
     status.last_sync_at > 0
   )
 }

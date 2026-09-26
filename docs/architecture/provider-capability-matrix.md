@@ -70,8 +70,8 @@
 | 56 | Replicate | Replicate / `replicate.Adaptor` | Image/异步预测相关 | 否 | Adaptor | 待核查 | OpenAI、Rerank、Embedding、Audio、Responses、Claude、Gemini 显式未实现；异步预测端到端任务绑定待核查 |
 | 57 | ChatGPT Subscription (Codex) | Codex / `codex.Adaptor` | Codex Responses/兼容入口 | 是 | Adaptor | 无 `taskPluginKeys` 直接映射 | 凭据刷新、模型限制和专用 Header 依赖 Codex 逻辑；`sora` 插件声明的 channel type 是 55 和 1，不是 57 |
 | 58 | Advanced Custom | AdvancedCustom / `advancedcustom.Adaptor` | OpenAI、Claude、Gemini、Responses、Image 等 | 是 | Adaptor/缓存推断 | 否 | 路由设置和端点推断依赖配置缓存 |
-| 59 | Sub2API | Sub2API / `sub2api.Adaptor` | OpenAI 兼容/Responses 等 | 是 | Adaptor | 否 | 平台站点同步和子密钥能力需结合专项文档 |
-| 60 | New API | NewAPI / `newapi.Adaptor` | OpenAI、Claude、Gemini、Image、Embedding 等 | 否 | Adaptor | 否 | 平台站点同步和子密钥能力需结合专项文档 |
+| 59 | Sub2API | Sub2API / `sub2api.Adaptor` | OpenAI 兼容/Responses 等 | 是 | Adaptor | 否 | 平台站点同步支持密码缓存登录态、Cookie/Token 恢复、八阶段快照和交互验证 Challenge；子密钥能力仍需结合专项文档 |
+| 60 | New API | NewAPI / `newapi.Adaptor` | OpenAI、Claude、Gemini、Image、Embedding 等 | 否 | Adaptor | 否 | 平台站点同步支持密码缓存登录态、Cookie/Token 恢复、八阶段快照和交互验证 Challenge；子密钥能力仍需结合专项文档 |
 | 61 | Task Plugin | 无 API 映射 / `GetAdaptor` 不回退 | `openai_responses`、`openai_video`、原生插件路由、通用任务 | 由协议声明 | 插件 Manifest/模型绑定 | 是 | 必须有插件 Generation 和渠道绑定；不能作为普通 OpenAI 渠道 |
 
 ## 3. 维护解释
@@ -86,3 +86,4 @@
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 覆盖 `ChannelTypeNames` 当前全部渠道类型，并区分 API 映射、Adaptor、可路由能力和任务插件 | `constant/channel.go`、`common/api_type.go`、`relay/relay_adaptor.go`、`relay/channel/`、路由 | 渠道常量、API 映射、Adaptor 工厂、任务映射和流式列表静态核对 |
+| 2026-09-25 | 平台站点同步能力 | NewAPI/Sub2API 行仅描述普通 Adaptor，未说明平台站点同步边界 | 明确两类平台站点支持密码双凭据恢复、八阶段快照、交互验证 Challenge 和子密钥路由约束；不代表绕过上游 CAPTCHA/Turnstile/WAF | NewAPI、Sub2API 平台站点管理同步和路由候选 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_challenge.go`、`docs/upstream-channel-platform-sites.md` |

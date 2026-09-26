@@ -32,17 +32,19 @@ const (
 )
 
 var (
-	ErrUnsupportedPlatformSite = errors.New("unsupported upstream platform site")
-	ErrPlatformSiteAuth        = errors.New("platform site authentication failed")
-	ErrPlatformSiteHTTPStatus  = errors.New("platform site http status failed")
-	ErrPlatformSiteResponse    = errors.New("platform site returned an invalid response")
-	ErrPlatformSiteCredential  = errors.New("platform site credential unavailable")
-	ErrSub2APILoginRequest     = errors.New("sub2api login request failed")
-	ErrSub2APILoginHTTPStatus  = errors.New("sub2api login http status failed")
-	ErrSub2APILoginResponse    = errors.New("sub2api login response format failed")
-	ErrSub2APILoginToken       = errors.New("sub2api login token missing")
-	ErrSub2APILoginInteractive = errors.New("sub2api login requires interactive verification")
-	ErrSub2APICurrentUser      = errors.New("sub2api current user request failed")
+	ErrUnsupportedPlatformSite      = errors.New("unsupported upstream platform site")
+	ErrPlatformSiteAuth             = errors.New("platform site authentication failed")
+	ErrPlatformSiteHTTPStatus       = errors.New("platform site http status failed")
+	ErrPlatformSiteResponse         = errors.New("platform site returned an invalid response")
+	ErrPlatformSiteCredential       = errors.New("platform site credential unavailable")
+	ErrPlatformSiteVerificationCode = errors.New("platform site verification code rejected")
+	ErrSub2APILoginRequest          = errors.New("sub2api login request failed")
+	ErrSub2APILoginHTTPStatus       = errors.New("sub2api login http status failed")
+	ErrSub2APILoginResponse         = errors.New("sub2api login response format failed")
+	ErrSub2APILoginToken            = errors.New("sub2api login token missing")
+	ErrSub2APILoginInteractive      = errors.New("sub2api login requires interactive verification")
+	ErrSub2APICurrentUser           = errors.New("sub2api current user request failed")
+	ErrPlatformSiteVerification     = errors.New("platform site verification required")
 )
 
 const (
@@ -62,11 +64,47 @@ type PlatformSiteSession struct {
 	Client            *http.Client
 	Headers           http.Header
 	CredentialUpdate  *model.PlatformSiteCredential
+	StageProgress     func(model.PlatformSiteSyncStages) error
+}
+
+type PlatformSitePendingContext struct {
+	Kind      string                      `json:"kind"`
+	Cookies   []PlatformSitePendingCookie `json:"cookies,omitempty"`
+	TempToken string                      `json:"temp_token,omitempty"`
+}
+
+// PlatformSitePendingCookie 是交互验证期间暂存的 Cookie 最小字段集合。
+// Cookie 只会出现在加密后的 Challenge 上下文中，不会进入 API 响应或日志。
+type PlatformSitePendingCookie struct {
+	Name     string `json:"name"`
+	Value    string `json:"value"`
+	Path     string `json:"path,omitempty"`
+	Domain   string `json:"domain,omitempty"`
+	Expires  int64  `json:"expires,omitempty"`
+	Secure   bool   `json:"secure,omitempty"`
+	HttpOnly bool   `json:"http_only,omitempty"`
+	SameSite string `json:"same_site,omitempty"`
+}
+
+type PlatformSiteVerificationRequired struct {
+	Platform string
+	BaseURL  string
+	Pending  PlatformSitePendingContext
+	Cause    error
+}
+
+func (err *PlatformSiteVerificationRequired) Error() string {
+	return "上游平台需要在真实浏览器中完成交互验证"
+}
+
+func (err *PlatformSiteVerificationRequired) Unwrap() error {
+	return errors.Join(ErrPlatformSiteVerification, err.Cause)
 }
 
 type PlatformSiteAdapter interface {
 	Platform() string
 	Authenticate(context.Context, string, model.PlatformSiteCredential) (*PlatformSiteSession, error)
+	CompleteVerification(context.Context, string, model.PlatformSiteCredential, PlatformSitePendingContext, string) (*PlatformSiteSession, error)
 	FetchSnapshot(context.Context, *PlatformSiteSession) (PlatformSiteSnapshot, error)
 }
 
@@ -91,24 +129,130 @@ type UpstreamKeySnapshot struct {
 
 type PlatformSiteSnapshot struct {
 	Balance           float64
+	BalanceSet        bool
 	UsedQuota         int64
 	UsedQuotaSet      bool
 	Models            []string
 	Keys              []UpstreamKeySnapshot
 	ManagementBaseURL string
 	RelayBaseURL      string
+	SyncStages        model.PlatformSiteSyncStages
+}
+
+func platformSiteSyncStage(status, message string, err error) model.PlatformSiteSyncStage {
+	stage := model.PlatformSiteSyncStage{
+		Status:    status,
+		UpdatedAt: common.GetTimestamp(),
+	}
+	if message != "" {
+		stage.Error = common.MaskSensitiveInfo(message)
+	}
+	if err != nil {
+		stage.Error = common.MaskSensitiveInfo(err.Error())
+		stage.ResponseCategory = platformSiteErrorCategoryOf(err)
+		stage.HTTPStatus, _ = platformSiteHTTPStatusCode(err)
+		diagnostics, ok := platformSiteResponseDiagnosticsOf(err)
+		if ok {
+			stage.URL = diagnostics.finalURL
+			if stage.URL == "" {
+				stage.URL = diagnostics.initialURL
+			}
+			stage.ContentType = diagnostics.contentType
+			stage.Redirected = diagnostics.redirected
+			if stage.ResponseCategory == "" {
+				stage.ResponseCategory = diagnostics.responseType
+			}
+		}
+	}
+	return stage
+}
+
+func persistPlatformSiteSyncStages(
+	account *model.PlatformSiteAccount,
+	stages *model.PlatformSiteSyncStages,
+) error {
+	if account == nil || stages == nil {
+		return errors.New("平台同步阶段不能为空")
+	}
+	stages.UpdatedAt = common.GetTimestamp()
+	raw, err := model.EncodePlatformSiteSyncStages(*stages)
+	if err != nil {
+		return err
+	}
+	account.SyncStages = raw
+	return model.DB.Model(account).Update("sync_stages", raw).Error
+}
+
+func publishPlatformSiteStageProgress(
+	session *PlatformSiteSession,
+	stages model.PlatformSiteSyncStages,
+) error {
+	if session == nil || session.StageProgress == nil || stages.Version == 0 {
+		return nil
+	}
+	return session.StageProgress(stages)
+}
+
+func updatePlatformSiteSyncStageFailure(stages *model.PlatformSiteSyncStages, err error) {
+	if stages == nil || err == nil {
+		return
+	}
+	stages.OverallStatus = model.PlatformSiteStageFailed
+	for _, stage := range []model.PlatformSiteSyncStage{
+		stages.Authentication,
+		stages.CurrentUser,
+		stages.BalanceUsage,
+		stages.GroupsRates,
+		stages.KeyPagination,
+		stages.KeySecrets,
+		stages.KeyModels,
+		stages.Sub2APIEndpoints,
+	} {
+		if stage.Status == model.PlatformSiteStageFailed {
+			return
+		}
+	}
+	stages.Authentication = platformSiteSyncStage(model.PlatformSiteStageFailed, "", err)
+}
+
+func markPlatformSiteSyncStagesUsingPrevious(
+	stages *model.PlatformSiteSyncStages,
+	account *model.PlatformSiteAccount,
+) {
+	if stages == nil || account == nil || account.LastSyncAt <= 0 {
+		return
+	}
+	stagePointers := []*model.PlatformSiteSyncStage{
+		&stages.Authentication,
+		&stages.CurrentUser,
+		&stages.BalanceUsage,
+		&stages.GroupsRates,
+		&stages.KeyPagination,
+		&stages.KeySecrets,
+		&stages.KeyModels,
+		&stages.Sub2APIEndpoints,
+	}
+	for _, stage := range stagePointers {
+		if stage.Status == model.PlatformSiteStageWarning ||
+			stage.Status == model.PlatformSiteStageFailed ||
+			stage.Status == model.PlatformSiteStageWaiting {
+			stage.UsedPrevious = true
+		}
+	}
 }
 
 type platformSiteResponseDiagnostics struct {
-	statusCode    int
-	initialURL    string
-	finalURL      string
-	contentType   string
-	redirected    bool
-	responseType  string
-	errorCode     string
-	errorReason   string
-	errorCategory string
+	statusCode               int
+	initialURL               string
+	finalURL                 string
+	contentType              string
+	redirected               bool
+	responseType             string
+	errorCode                string
+	errorReason              string
+	errorCategory            string
+	verificationCodeRejected bool
+	pending                  *PlatformSitePendingContext
 }
 
 type platformSiteHTTPStatusError struct {
@@ -252,6 +396,19 @@ func validatePlatformSiteURL(raw string) error {
 	return protection.ValidateURL(normalized)
 }
 
+func validateDiscoveredPlatformSiteURL(baseURL, candidate string) error {
+	normalizedCandidate, err := normalizePlatformSiteURL(candidate)
+	if err != nil {
+		return err
+	}
+	// 同一已配置来源只改变路径时不会产生新的网络目的地，避免因临时 DNS
+	// 解析失败而丢弃合法的转发路径；跨主机发现仍必须完整执行 SSRF 校验。
+	if samePlatformSiteOrigin(baseURL, normalizedCandidate) {
+		return nil
+	}
+	return validatePlatformSiteURL(normalizedCandidate)
+}
+
 // ValidatePlatformSiteURLForAdmin validates an administrator-provided site
 // address before it is persisted or used for outbound requests.
 func ValidatePlatformSiteURLForAdmin(raw string) error {
@@ -365,6 +522,13 @@ func platformSiteRequest(
 		if payload, unmarshalErr := unmarshalPlatformSiteJSON(data); unmarshalErr == nil {
 			diagnostics.errorCode, diagnostics.errorReason, diagnostics.errorCategory =
 				platformSiteErrorMetadata(payload)
+			diagnostics.verificationCodeRejected = platformSiteVerificationCodeMetadata(payload)
+			if tempToken := findTemporaryToken(payload); tempToken != "" {
+				diagnostics.pending = &PlatformSitePendingContext{
+					Kind:      "sub2api_temp_token",
+					TempToken: tempToken,
+				}
+			}
 		}
 		return nil, &platformSiteHTTPStatusError{
 			statusCode:  response.StatusCode,
@@ -384,6 +548,13 @@ func platformSiteRequest(
 			diagnostics.errorCode = code
 			diagnostics.errorReason = reason
 			diagnostics.errorCategory = category
+			diagnostics.verificationCodeRejected = platformSiteVerificationCodeMetadata(object)
+			if tempToken := findTemporaryToken(object); tempToken != "" {
+				diagnostics.pending = &PlatformSitePendingContext{
+					Kind:      "sub2api_temp_token",
+					TempToken: tempToken,
+				}
+			}
 			return nil, &platformSiteBusinessError{
 				diagnostics: diagnostics,
 				code:        code,
@@ -396,6 +567,13 @@ func platformSiteRequest(
 			diagnostics.errorCode = errorCode
 			diagnostics.errorReason = reason
 			diagnostics.errorCategory = category
+			diagnostics.verificationCodeRejected = platformSiteVerificationCodeMetadata(object)
+			if tempToken := findTemporaryToken(object); tempToken != "" {
+				diagnostics.pending = &PlatformSitePendingContext{
+					Kind:      "sub2api_temp_token",
+					TempToken: tempToken,
+				}
+			}
 			return nil, &platformSiteBusinessError{
 				diagnostics: diagnostics,
 				code:        errorCode,
@@ -409,6 +587,13 @@ func platformSiteRequest(
 			diagnostics.errorCode = errorCode
 			diagnostics.errorReason = reason
 			diagnostics.errorCategory = category
+			diagnostics.verificationCodeRejected = platformSiteVerificationCodeMetadata(object)
+			if tempToken := findTemporaryToken(object); tempToken != "" {
+				diagnostics.pending = &PlatformSitePendingContext{
+					Kind:      "sub2api_temp_token",
+					TempToken: tempToken,
+				}
+			}
 			return nil, &platformSiteBusinessError{
 				diagnostics: diagnostics,
 				code:        errorCode,
@@ -449,6 +634,27 @@ func platformSiteErrorMetadata(payload any) (code, reason, category string) {
 	message := firstString(record, "message", "error")
 	category = classifyPlatformSiteErrorCategory(code, reason, message)
 	return code, reason, category
+}
+
+func platformSiteVerificationCodeMetadata(payload any) bool {
+	record, ok := payload.(map[string]any)
+	if !ok {
+		return false
+	}
+	combined := strings.ToLower(strings.Join([]string{
+		firstString(record, "code", "error_code", "errorCode", "status"),
+		firstString(record, "reason", "error_reason", "errorReason"),
+		firstString(record, "message", "error"),
+	}, " "))
+	return strings.Contains(combined, "otp") ||
+		strings.Contains(combined, "2fa") ||
+		strings.Contains(combined, "two_factor") ||
+		strings.Contains(combined, "verification_code") ||
+		strings.Contains(combined, "invalid_code") ||
+		strings.Contains(combined, "code_invalid") ||
+		strings.Contains(combined, "invalid code") ||
+		strings.Contains(combined, "invalid verification") ||
+		strings.Contains(combined, "verification code")
 }
 
 func classifyPlatformSiteErrorCategory(code, reason, message string) string {
@@ -710,12 +916,38 @@ func uniqueStrings(values []string) []string {
 }
 
 func syncPlatformSite(ctx context.Context, channelID int) error {
+	return syncPlatformSiteWithSource(ctx, channelID, platformSiteChallengeBackground, 0)
+}
+
+func syncPlatformSiteWithSource(
+	ctx context.Context,
+	channelID int,
+	source string,
+	createdBy int,
+) error {
 	lock := getUpstreamSiteLock(channelID)
 	lock.mu.Lock()
 	defer lock.mu.Unlock()
 
 	var account model.PlatformSiteAccount
 	if err := model.DB.Where("channel_id = ?", channelID).First(&account).Error; err != nil {
+		return err
+	}
+	if source == platformSiteChallengeBackground &&
+		account.SyncStatus == model.UpstreamSiteSyncWaitingVerification {
+		if challenge, found := GetPlatformSiteChallengeStatus(channelID); found {
+			return &PlatformSiteWaitingVerificationError{Result: challenge}
+		}
+		account.LastSyncError = "上游交互验证 Challenge 已过期，请手动重新同步"
+		_ = model.DB.Model(&account).Update("last_sync_error", account.LastSyncError).Error
+		return &PlatformSiteWaitingVerificationError{
+			Result: &PlatformSiteChallengeResult{
+				Status: platformSiteChallengeStatusWaiting,
+			},
+		}
+	}
+	stages := model.NewPlatformSiteSyncStages(common.GetTimestamp())
+	if err := persistPlatformSiteSyncStages(&account, &stages); err != nil {
 		return err
 	}
 	account.SyncStatus = model.UpstreamSiteSyncRunning
@@ -756,28 +988,138 @@ func syncPlatformSite(ctx context.Context, channelID int) error {
 		}
 		if err == nil {
 			session, authenticateErr := adapter.Authenticate(ctx, account.BaseURL, credential)
-			err = authenticateErr
+			if session != nil && session.CredentialUpdate != nil {
+				if credentialErr := persistPlatformSiteCredential(&account, *session.CredentialUpdate); credentialErr != nil {
+					err = wrapPlatformSiteStage("凭据更新", credentialErr)
+				} else {
+					session.CredentialUpdate = nil
+				}
+			}
 			if err == nil {
-				if session.CredentialUpdate != nil {
-					err = persistPlatformSiteCredential(&account, *session.CredentialUpdate)
-					if err != nil {
-						err = wrapPlatformSiteStage("凭据更新", err)
+				err = authenticateErr
+			}
+			if err != nil && session != nil && session.CredentialUpdate != nil {
+				if credentialErr := persistPlatformSiteCredential(&account, *session.CredentialUpdate); credentialErr != nil {
+					err = errors.Join(err, wrapPlatformSiteStage("凭据更新", credentialErr))
+				}
+				session.CredentialUpdate = nil
+			}
+			if err != nil {
+				var verificationErr *PlatformSiteVerificationRequired
+				if errors.As(err, &verificationErr) {
+					challengeResult, challengeErr := HandlePlatformSiteVerification(
+						ctx,
+						&account,
+						verificationErr,
+						source,
+						createdBy,
+					)
+					if challengeErr == nil {
+						stages.OverallStatus = model.PlatformSiteStageWaiting
+						stages.Authentication = platformSiteSyncStage(
+							model.PlatformSiteStageWaiting,
+							"等待管理员在真实浏览器中完成上游验证",
+							verificationErr,
+						)
+						if stageErr := persistPlatformSiteSyncStages(&account, &stages); stageErr != nil {
+							return stageErr
+						}
+						account.SyncStatus = model.UpstreamSiteSyncWaitingVerification
+						account.LastSyncError = "等待上游交互验证"
+						if updateErr := model.DB.Model(&account).Updates(map[string]any{
+							"sync_status":     account.SyncStatus,
+							"last_sync_error": account.LastSyncError,
+						}).Error; updateErr != nil {
+							return updateErr
+						}
+						return &PlatformSiteWaitingVerificationError{Result: challengeResult}
 					}
+					err = challengeErr
+				}
+			}
+			if err == nil {
+				stages.Authentication = platformSiteSyncStage(
+					model.PlatformSiteStageSuccess,
+					"",
+					nil,
+				)
+				stages.CurrentUser = platformSiteSyncStage(
+					model.PlatformSiteStageSuccess,
+					"",
+					nil,
+				)
+				if stageErr := persistPlatformSiteSyncStages(&account, &stages); stageErr != nil {
+					err = wrapPlatformSiteStage("阶段状态", stageErr)
+				}
+			}
+			if session != nil && session.StageProgress == nil {
+				session.StageProgress = func(progress model.PlatformSiteSyncStages) error {
+					if progress.Version == 0 {
+						return nil
+					}
+					progress.Authentication = stages.Authentication
+					if progress.CurrentUser.Status == model.PlatformSiteStagePending {
+						progress.CurrentUser = stages.CurrentUser
+					}
+					stages = progress
+					visibleStages := stages
+					markPlatformSiteSyncStagesUsingPrevious(&visibleStages, &account)
+					return persistPlatformSiteSyncStages(&account, &visibleStages)
 				}
 			}
 			if err == nil {
 				var snapshot PlatformSiteSnapshot
+				hasSnapshotStages := false
 				snapshot, err = adapter.FetchSnapshot(ctx, session)
+				hasSnapshotStages = snapshot.SyncStages.Version > 0
+				if hasSnapshotStages {
+					fetchedStages := snapshot.SyncStages
+					fetchedStages.Authentication = stages.Authentication
+					if fetchedStages.CurrentUser.Status == model.PlatformSiteStagePending {
+						fetchedStages.CurrentUser = stages.CurrentUser
+					}
+					stages = fetchedStages
+					if stageErr := persistPlatformSiteSyncStages(&account, &stages); stageErr != nil {
+						err = wrapPlatformSiteStage("阶段状态", stageErr)
+					}
+				}
 				if err == nil {
 					err = persistPlatformSiteSnapshot(ctx, &account, snapshot)
 					if err != nil {
 						err = wrapPlatformSiteStage("同步写库", err)
 					}
 				}
+				if err == nil {
+					if !hasSnapshotStages {
+						stages.Authentication = platformSiteSyncStage(model.PlatformSiteStageSuccess, "", nil)
+						stages.CurrentUser = platformSiteSyncStage(model.PlatformSiteStageSuccess, "", nil)
+						stages.BalanceUsage = platformSiteSyncStage(model.PlatformSiteStageSuccess, "", nil)
+						stages.GroupsRates = platformSiteSyncStage(model.PlatformSiteStageSuccess, "", nil)
+						stages.KeyPagination = platformSiteSyncStage(model.PlatformSiteStageSuccess, "", nil)
+						stages.KeySecrets = platformSiteSyncStage(model.PlatformSiteStageSuccess, "", nil)
+						stages.KeyModels = platformSiteSyncStage(model.PlatformSiteStageSuccess, "", nil)
+						if account.Platform == model.PlatformSub2API {
+							stages.Sub2APIEndpoints = platformSiteSyncStage(model.PlatformSiteStageSuccess, "", nil)
+						} else {
+							stages.Sub2APIEndpoints = platformSiteSyncStage(model.PlatformSiteStageSkipped, "", nil)
+						}
+					}
+					stages.OverallStatus = model.PlatformSiteStageSuccess
+					markPlatformSiteSyncStagesUsingPrevious(&stages, &account)
+					if stageErr := persistPlatformSiteSyncStages(&account, &stages); stageErr != nil {
+						err = wrapPlatformSiteStage("阶段状态", stageErr)
+					}
+				}
 			}
 		}
 	}
 	if err != nil {
+		if waiting, ok := err.(*PlatformSiteWaitingVerificationError); ok {
+			return waiting
+		}
+		updatePlatformSiteSyncStageFailure(&stages, err)
+		markPlatformSiteSyncStagesUsingPrevious(&stages, &account)
+		_ = persistPlatformSiteSyncStages(&account, &stages)
 		account.SyncStatus = model.UpstreamSiteSyncFailed
 		account.LastSyncError = safeUpstreamError(err)
 		account.ConsecutiveFailures++
@@ -842,6 +1184,8 @@ func SafePlatformSiteError(err error) string {
 		return "Sub2API 登录需要" + label +
 			platformSiteResponseDiagnosticSuffix(err) +
 			"。后台不会自动绕过验证码或安全验证，请先在上游站点完成验证，或使用浏览器采集 Access Token/Cookie"
+	case errors.Is(err, ErrPlatformSiteVerification):
+		return "上游平台需要管理员在真实浏览器中完成交互验证后重新提交验证码"
 	case errors.Is(err, ErrSub2APILoginRequest):
 		return "Sub2API 登录请求失败"
 	case errors.Is(err, ErrSub2APILoginHTTPStatus):
@@ -889,6 +1233,25 @@ func platformSiteHTTPStatusCode(err error) (int, bool) {
 		return businessErr.diagnostics.statusCode, true
 	}
 	return 0, false
+}
+
+func platformSiteResponseDiagnosticsOf(err error) (platformSiteResponseDiagnostics, bool) {
+	if err == nil {
+		return platformSiteResponseDiagnostics{}, false
+	}
+	var statusErr *platformSiteHTTPStatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.diagnostics, true
+	}
+	var responseErr *platformSiteResponseError
+	if errors.As(err, &responseErr) {
+		return responseErr.diagnostics, true
+	}
+	var businessErr *platformSiteBusinessError
+	if errors.As(err, &businessErr) {
+		return businessErr.diagnostics, true
+	}
+	return platformSiteResponseDiagnostics{}, false
 }
 
 func platformSiteErrorContains(err error, value string) bool {
@@ -1059,15 +1422,27 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 			return fmt.Errorf("%w: 密钥额度数据无效", ErrPlatformSiteResponse)
 		}
 	}
+	balanceAvailable := snapshot.BalanceSet || snapshot.Balance != 0
 	usedQuota := snapshot.UsedQuota
-	if !snapshot.UsedQuotaSet && snapshot.UsedQuota == 0 {
-		var err error
-		usedQuota, err = sumUpstreamKeyUsedQuota(snapshot.Keys)
-		if err != nil {
-			return fmt.Errorf("%w: %v", ErrPlatformSiteResponse, err)
+	usedQuotaAvailable := snapshot.UsedQuotaSet || snapshot.UsedQuota != 0
+	if !usedQuotaAvailable && snapshot.UsedQuota == 0 {
+		hasKeyUsage := false
+		for _, key := range snapshot.Keys {
+			if key.UsedQuotaSet {
+				hasKeyUsage = true
+				break
+			}
+		}
+		if hasKeyUsage {
+			var err error
+			usedQuota, err = sumUpstreamKeyUsedQuota(snapshot.Keys)
+			if err != nil {
+				return fmt.Errorf("%w: %v", ErrPlatformSiteResponse, err)
+			}
+			usedQuotaAvailable = true
 		}
 	}
-	if usedQuota < 0 {
+	if usedQuotaAvailable && usedQuota < 0 {
 		return fmt.Errorf("%w: 站点额度数据无效", ErrPlatformSiteResponse)
 	}
 	now := common.GetTimestamp()
@@ -1141,7 +1516,6 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 				updates := map[string]any{
 					"last_sync_at":  now,
 					"missing_since": 0,
-					"models_synced": false,
 					"name":          item.Name,
 				}
 				if item.UsedQuotaSet {
@@ -1167,9 +1541,6 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 				if err := model.EnsureRoutingKeyForUpstreamKey(tx, &existing); err != nil {
 					return err
 				}
-				if err := tx.Where("upstream_key_id = ?", existing.ID).Delete(&model.UpstreamKeyAbility{}).Error; err != nil {
-					return err
-				}
 				continue
 			}
 			if item.Secret == "" {
@@ -1180,6 +1551,8 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 			}
 			models := uniqueStrings(item.Models)
 			modelsSynced := item.ModelsSynced && len(models) > 0
+			var existing model.UpstreamKey
+			findErr := tx.Where("channel_id = ? AND external_id = ?", account.ChannelID, item.ExternalID).First(&existing).Error
 			sourceRatio := item.SourceConversionRatio
 			sourceRatioSet := item.SourceConversionRatioSet
 			if !sourceRatioSet {
@@ -1187,7 +1560,11 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 				sourceRatioSet = item.ConversionRatioSet || item.ConversionRatio > 0
 			}
 			if !sourceRatioSet {
-				sourceRatio = 1
+				if findErr == nil {
+					sourceRatio = existing.EffectiveSourceConversionRatio()
+				} else {
+					sourceRatio = 1
+				}
 			}
 			effectiveRatio, ratioErr := model.CalculatePlatformKeyConversionRatio(ratio, sourceRatio)
 			if ratioErr != nil {
@@ -1201,8 +1578,6 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 			if err != nil {
 				return err
 			}
-			var existing model.UpstreamKey
-			findErr := tx.Where("channel_id = ? AND external_id = ?", account.ChannelID, item.ExternalID).First(&existing).Error
 			if errors.Is(findErr, gorm.ErrRecordNotFound) {
 				existing = model.UpstreamKey{
 					ChannelID:   account.ChannelID,
@@ -1283,8 +1658,6 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 						return err
 					}
 				}
-			} else if err := tx.Where("upstream_key_id = ?", existing.ID).Delete(&model.UpstreamKeyAbility{}).Error; err != nil {
-				return err
 			}
 		}
 		var existingKeys []model.UpstreamKey
@@ -1302,27 +1675,51 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 				}
 			}
 		}
-		channel.Balance = snapshot.Balance
-		channel.UsedQuota = usedQuota
 		if err := model.RebuildPlatformSiteChannelModels(tx, account.ChannelID); err != nil {
 			return err
 		}
-		if err := tx.Model(&channel).Select("balance", "used_quota", "balance_updated_time").Updates(map[string]any{
-			"balance":              snapshot.Balance,
-			"used_quota":           usedQuota,
-			"balance_updated_time": now,
-		}).Error; err != nil {
-			return err
+		channelUpdates := make(map[string]any)
+		if balanceAvailable {
+			channel.Balance = snapshot.Balance
+			channelUpdates["balance"] = snapshot.Balance
 		}
-		accountUpdates := map[string]any{
-			"balance":    snapshot.Balance,
-			"used_quota": usedQuota,
+		if usedQuotaAvailable {
+			channel.UsedQuota = usedQuota
+			channelUpdates["used_quota"] = usedQuota
+		}
+		if len(channelUpdates) > 0 {
+			channelUpdates["balance_updated_time"] = now
+		}
+		if len(channelUpdates) > 0 {
+			if err := tx.Model(&channel).Select("balance", "used_quota", "balance_updated_time").Updates(channelUpdates).Error; err != nil {
+				return err
+			}
+		}
+		accountUpdates := make(map[string]any)
+		if balanceAvailable {
+			accountUpdates["balance"] = snapshot.Balance
+		}
+		if usedQuotaAvailable {
+			accountUpdates["used_quota"] = usedQuota
+		}
+		if len(accountUpdates) == 0 {
+			accountUpdates = make(map[string]any)
 		}
 		managementBaseURL := strings.TrimRight(strings.TrimSpace(snapshot.ManagementBaseURL), "/")
+		if managementBaseURL != "" &&
+			(validateDiscoveredPlatformSiteURL(account.BaseURL, managementBaseURL) != nil ||
+				!relatedPlatformSiteBaseURL(account.BaseURL, managementBaseURL)) {
+			managementBaseURL = ""
+		}
 		if managementBaseURL != "" && account.Platform == model.PlatformSub2API {
 			accountUpdates["base_url"] = managementBaseURL
 		}
 		relayBaseURL := strings.TrimRight(strings.TrimSpace(snapshot.RelayBaseURL), "/")
+		if relayBaseURL != "" &&
+			(validateDiscoveredPlatformSiteURL(account.BaseURL, relayBaseURL) != nil ||
+				!relatedPlatformSiteBaseURL(account.BaseURL, relayBaseURL)) {
+			relayBaseURL = ""
+		}
 		if relayBaseURL == "" && account.Platform == model.PlatformSub2API {
 			relayBaseURL = strings.TrimRight(strings.TrimSpace(account.RelayBaseURL), "/")
 		}
@@ -1377,6 +1774,11 @@ func upstreamKeySyncErrorReason(reason string) string {
 // SyncUpstreamSite performs one read-only synchronization for a platform site.
 func SyncUpstreamSite(ctx context.Context, channelID int) error {
 	return syncPlatformSite(ctx, channelID)
+}
+
+// SyncUpstreamSiteManual 执行绑定当前管理员的手动平台站点同步。
+func SyncUpstreamSiteManual(ctx context.Context, channelID int, userID int) error {
+	return syncPlatformSiteWithSource(ctx, channelID, platformSiteChallengeManual, userID)
 }
 
 // SyncAllUpstreamSites synchronizes every configured platform site. A single

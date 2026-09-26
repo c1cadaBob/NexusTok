@@ -139,6 +139,15 @@ export function BalanceQueryDialog(props: BalanceQueryDialogProps) {
                 last_sync_error:
                   response.last_sync_error ??
                   row.upstream_site_status.last_sync_error,
+                challenge_id:
+                  response.challenge_id ??
+                  row.upstream_site_status.challenge_id,
+                challenge_expires_at:
+                  response.challenge_expires_at ??
+                  row.upstream_site_status.challenge_expires_at,
+                attempts_remaining:
+                  response.attempts_remaining ??
+                  row.upstream_site_status.attempts_remaining,
                 key_count:
                   response.key_count ?? row.upstream_site_status.key_count,
                 routable_key_count:
@@ -168,6 +177,41 @@ export function BalanceQueryDialog(props: BalanceQueryDialogProps) {
       } else if (response.success && response.raw_response !== undefined) {
         setRawResponse(response.raw_response)
       } else {
+        if (
+          row.upstream_kind === 'platform_site' &&
+          response.sync_status === 'waiting_verification' &&
+          row.upstream_site_status
+        ) {
+          setCurrentRow({
+            ...row,
+            upstream_site_status: {
+              ...row.upstream_site_status,
+              balance: response.balance ?? row.upstream_site_status.balance,
+              used_quota:
+                response.used_quota ?? row.upstream_site_status.used_quota,
+              balance_updated_time:
+                response.balance_updated_time ??
+                row.upstream_site_status.balance_updated_time,
+              sync_status: response.sync_status,
+              last_sync_at:
+                response.last_sync_at ?? row.upstream_site_status.last_sync_at,
+              last_sync_error:
+                response.last_sync_error ??
+                row.upstream_site_status.last_sync_error,
+              challenge_id:
+                response.challenge_id ?? row.upstream_site_status.challenge_id,
+              challenge_expires_at:
+                response.challenge_expires_at ??
+                row.upstream_site_status.challenge_expires_at,
+              attempts_remaining:
+                response.attempts_remaining ??
+                row.upstream_site_status.attempts_remaining,
+            },
+          })
+          await invalidatePlatformChannelQueries(queryClient, row.id)
+          toast.info(t('Upstream site is waiting for verification.'))
+          return
+        }
         handleServerError(response, t('Failed to query balance'))
       }
     } catch (error: unknown) {

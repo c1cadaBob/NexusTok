@@ -663,6 +663,8 @@ export function ChannelMutateDrawer({
       queryKey: ['upstream-site-status', channelId],
       queryFn: async () =>
         requireServerSuccess(await getUpstreamSiteStatus(channelId || 0)),
+      refetchInterval: (query) =>
+        query.state.data?.data?.sync_status === 'running' ? 2000 : false,
       enabled:
         isEditing &&
         Boolean(channelId) &&

@@ -271,7 +271,8 @@ func CompletePlatformSiteCaptureSession(
 		return nil, errorsForCapture("采集平台与会话不匹配")
 	}
 	if authType := strings.ToLower(strings.TrimSpace(request.AuthType)); authType != "" && authType != record.AuthType {
-		if record.AuthType == model.UpstreamAuthPassword && authType == model.UpstreamAuthAccessToken {
+		if record.AuthType == model.UpstreamAuthPassword &&
+			(authType == model.UpstreamAuthAccessToken || authType == model.UpstreamAuthCookie) {
 			// 密码模式只允许浏览器采集结果提供缓存登录态，不切换认证方式。
 		} else if record.AuthType != PlatformSiteCaptureAuthAuto ||
 			(authType != PlatformSiteCaptureAuthAuto && !isPlatformSiteScriptAuthType(authType)) {
@@ -488,7 +489,10 @@ func buildPlatformSiteCaptureResolution(
 	authType := record.AuthType
 	strictAuthType := authType != PlatformSiteCaptureAuthAuto
 	if authType == model.UpstreamAuthPassword {
-		authType = model.UpstreamAuthAccessToken
+		authType = selectPlatformSiteCaptureAuthType(request)
+		if authType == "" {
+			return PlatformSiteCaptureResolution{}, nil, errorsForCapture("账号密码模式未采集到可用 Token 或 Cookie")
+		}
 	} else if authType == PlatformSiteCaptureAuthAuto {
 		authType = selectPlatformSiteCaptureAuthType(request)
 		if authType == "" {
@@ -515,17 +519,6 @@ func buildPlatformSiteCaptureResolution(
 		credential.RefreshToken = strings.TrimSpace(request.RefreshToken)
 		credential.UserID = userID
 		credential.TokenExpiresAt = captureTokenExpiresAt(request)
-	case model.UpstreamAuthAdminKey:
-		adminKey := strings.TrimSpace(request.AdminKey)
-		if adminKey == "" {
-			return PlatformSiteCaptureResolution{}, nil, errorsForCapture("未采集到 Admin Key")
-		}
-		if strictAuthType && (strings.TrimSpace(request.AccessToken) != "" ||
-			strings.TrimSpace(request.RefreshToken) != "" ||
-			strings.TrimSpace(request.Cookie) != "") {
-			return PlatformSiteCaptureResolution{}, nil, errorsForCapture("采集结果不是 Admin Key")
-		}
-		credential.AdminKey = adminKey
 	case model.UpstreamAuthCookie:
 		cookie := strings.TrimSpace(request.Cookie)
 		if cookie == "" {
@@ -537,6 +530,17 @@ func buildPlatformSiteCaptureResolution(
 			return PlatformSiteCaptureResolution{}, nil, errorsForCapture("采集结果不是 Cookie")
 		}
 		credential.Cookie = cookie
+	case model.UpstreamAuthAdminKey:
+		adminKey := strings.TrimSpace(request.AdminKey)
+		if adminKey == "" {
+			return PlatformSiteCaptureResolution{}, nil, errorsForCapture("未采集到 Admin Key")
+		}
+		if strictAuthType && (strings.TrimSpace(request.AccessToken) != "" ||
+			strings.TrimSpace(request.RefreshToken) != "" ||
+			strings.TrimSpace(request.Cookie) != "") {
+			return PlatformSiteCaptureResolution{}, nil, errorsForCapture("采集结果不是 Admin Key")
+		}
+		credential.AdminKey = adminKey
 	default:
 		return PlatformSiteCaptureResolution{}, nil, errorsForCapture("采集认证方式不受支持")
 	}

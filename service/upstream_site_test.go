@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -1193,6 +1194,663 @@ func TestPlatformSiteAccessTokenAuthenticationDoesNotFallbackToPassword(t *testi
 	}
 }
 
+func TestPlatformSitePasswordAuthenticationUsesCookieBeforePassword(t *testing.T) {
+	tests := []struct {
+		name        string
+		adapter     func(*http.Client) PlatformSiteAdapter
+		currentPath string
+	}{
+		{
+			name:        "NewAPI",
+			adapter:     func(client *http.Client) PlatformSiteAdapter { return NewNewAPIAdapter(client) },
+			currentPath: "/api/user/self",
+		},
+		{
+			name:        "Sub2API",
+			adapter:     func(client *http.Client) PlatformSiteAdapter { return NewSub2APIAdapter(client) },
+			currentPath: "/api/v1/auth/me",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			loginRequests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				writer.Header().Set("Content-Type", "application/json")
+				switch request.URL.Path {
+				case testCase.currentPath:
+					assert.Equal(t, "session-cookie=valid", request.Header.Get("Cookie"))
+					_, _ = writer.Write([]byte(`{"success":true,"data":{"balance":1}}`))
+				case "/api/user/login", "/api/v1/auth/login", "/api/auth/login", "/auth/login":
+					loginRequests++
+					t.Fatalf("有效 Cookie 登录态不应回退账号密码")
+				default:
+					http.NotFound(writer, request)
+				}
+			}))
+			defer server.Close()
+
+			session, err := testCase.adapter(server.Client()).Authenticate(
+				context.Background(),
+				server.URL,
+				model.PlatformSiteCredential{
+					AuthType: model.UpstreamAuthPassword,
+					Username: "operator",
+					Password: "synthetic-password",
+					Cookie:   "session-cookie=valid",
+				},
+			)
+			require.NoError(t, err)
+			assert.Zero(t, loginRequests)
+			require.NotNil(t, session.CredentialUpdate)
+			assert.Equal(t, "session-cookie=valid", session.CredentialUpdate.Cookie)
+			assert.Equal(t, "operator", session.CredentialUpdate.Username)
+			assert.Equal(t, "synthetic-password", session.CredentialUpdate.Password)
+		})
+	}
+}
+
+func TestPlatformSitePasswordAuthenticationFallsBackAfterInvalidCookie(t *testing.T) {
+	tests := []struct {
+		name        string
+		adapter     func(*http.Client) PlatformSiteAdapter
+		currentPath string
+		loginPath   string
+		loginBody   string
+		currentBody string
+	}{
+		{
+			name:        "NewAPI",
+			adapter:     func(client *http.Client) PlatformSiteAdapter { return NewNewAPIAdapter(client) },
+			currentPath: "/api/user/self",
+			loginPath:   "/api/user/login",
+			loginBody:   `{"success":true,"data":{"access_token":"password-access"}}`,
+			currentBody: `{"success":true,"data":{"quota":1}}`,
+		},
+		{
+			name:        "Sub2API",
+			adapter:     func(client *http.Client) PlatformSiteAdapter { return NewSub2APIAdapter(client) },
+			currentPath: "/api/v1/auth/me",
+			loginPath:   "/api/v1/auth/login",
+			loginBody:   `{"code":0,"data":{"access_token":"password-access"}}`,
+			currentBody: `{"code":0,"data":{"balance":1}}`,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			currentRequests := 0
+			loginRequests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				writer.Header().Set("Content-Type", "application/json")
+				switch request.URL.Path {
+				case testCase.currentPath:
+					currentRequests++
+					if currentRequests == 1 {
+						http.Error(writer, `{"success":false,"message":"expired cookie"}`, http.StatusUnauthorized)
+						return
+					}
+					assert.Equal(t, "Bearer password-access", request.Header.Get("Authorization"))
+					_, _ = writer.Write([]byte(testCase.currentBody))
+				case testCase.loginPath:
+					loginRequests++
+					_, _ = writer.Write([]byte(testCase.loginBody))
+				default:
+					http.NotFound(writer, request)
+				}
+			}))
+			defer server.Close()
+
+			session, err := testCase.adapter(server.Client()).Authenticate(
+				context.Background(),
+				server.URL,
+				model.PlatformSiteCredential{
+					AuthType: model.UpstreamAuthPassword,
+					Username: "operator",
+					Password: "synthetic-password",
+					Cookie:   "session-cookie=expired",
+				},
+			)
+			require.NoError(t, err)
+			assert.Equal(t, 1, loginRequests)
+			require.NotNil(t, session.CredentialUpdate)
+			assert.Empty(t, session.CredentialUpdate.Cookie)
+			assert.Equal(t, "password-access", session.CredentialUpdate.AccessToken)
+			assert.Equal(t, "operator", session.CredentialUpdate.Username)
+			assert.Equal(t, "synthetic-password", session.CredentialUpdate.Password)
+		})
+	}
+}
+
+func TestPlatformSitePasswordAuthenticationDoesNotFallbackOnUpstreamServerError(t *testing.T) {
+	tests := []struct {
+		name        string
+		adapter     func(*http.Client) PlatformSiteAdapter
+		currentPath string
+		loginPath   string
+	}{
+		{
+			name:        "NewAPI",
+			adapter:     func(client *http.Client) PlatformSiteAdapter { return NewNewAPIAdapter(client) },
+			currentPath: "/api/user/self",
+			loginPath:   "/api/user/login",
+		},
+		{
+			name:        "Sub2API",
+			adapter:     func(client *http.Client) PlatformSiteAdapter { return NewSub2APIAdapter(client) },
+			currentPath: "/api/v1/auth/me",
+			loginPath:   "/api/v1/auth/login",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			loginRequests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				writer.Header().Set("Content-Type", "application/json")
+				switch request.URL.Path {
+				case testCase.currentPath:
+					http.Error(writer, `{"success":false,"message":"upstream unavailable"}`, http.StatusBadGateway)
+				case testCase.loginPath:
+					loginRequests++
+					t.Fatalf("上游 5xx 不应立即回退账号密码")
+				default:
+					http.NotFound(writer, request)
+				}
+			}))
+			defer server.Close()
+
+			_, err := testCase.adapter(server.Client()).Authenticate(
+				context.Background(),
+				server.URL,
+				model.PlatformSiteCredential{
+					AuthType:       model.UpstreamAuthPassword,
+					Username:       "operator",
+					Password:       "synthetic-password",
+					AccessToken:    "cached-access",
+					TokenExpiresAt: common.GetTimestamp() + 3600,
+				},
+			)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrPlatformSiteHTTPStatus)
+			assert.Zero(t, loginRequests)
+		})
+	}
+}
+
+func TestPlatformSiteRefreshPreservesMissingOptionalFields(t *testing.T) {
+	tests := []struct {
+		name        string
+		adapter     func(*http.Client) PlatformSiteAdapter
+		refreshPath string
+		currentPath string
+		refreshBody string
+		currentBody string
+	}{
+		{
+			name:        "NewAPI",
+			adapter:     func(client *http.Client) PlatformSiteAdapter { return NewNewAPIAdapter(client) },
+			refreshPath: "/api/user/auth/refresh",
+			currentPath: "/api/user/self",
+			refreshBody: `{"success":true,"data":{"access_token":"refreshed-access"}}`,
+			currentBody: `{"success":true,"data":{"quota":1}}`,
+		},
+		{
+			name:        "Sub2API",
+			adapter:     func(client *http.Client) PlatformSiteAdapter { return NewSub2APIAdapter(client) },
+			refreshPath: "/api/v1/auth/refresh",
+			currentPath: "/api/v1/auth/me",
+			refreshBody: `{"code":0,"data":{"access_token":"refreshed-access"}}`,
+			currentBody: `{"code":0,"data":{"balance":1}}`,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				writer.Header().Set("Content-Type", "application/json")
+				switch request.URL.Path {
+				case testCase.refreshPath:
+					_, _ = writer.Write([]byte(testCase.refreshBody))
+				case testCase.currentPath:
+					assert.Equal(t, "Bearer refreshed-access", request.Header.Get("Authorization"))
+					_, _ = writer.Write([]byte(testCase.currentBody))
+				default:
+					http.NotFound(writer, request)
+				}
+			}))
+			defer server.Close()
+
+			session, err := testCase.adapter(server.Client()).Authenticate(
+				context.Background(),
+				server.URL,
+				model.PlatformSiteCredential{
+					AuthType:       model.UpstreamAuthPassword,
+					Username:       "operator",
+					Password:       "synthetic-password",
+					UserID:         "old-user",
+					AccessToken:    "expired-access",
+					RefreshToken:   "old-refresh",
+					TokenExpiresAt: common.GetTimestamp() - 1,
+				},
+			)
+			require.NoError(t, err)
+			require.NotNil(t, session.CredentialUpdate)
+			assert.Equal(t, "refreshed-access", session.CredentialUpdate.AccessToken)
+			assert.Equal(t, "old-refresh", session.CredentialUpdate.RefreshToken)
+			assert.Equal(t, "old-user", session.CredentialUpdate.UserID)
+			assert.Equal(t, common.GetTimestamp()-1, session.CredentialUpdate.TokenExpiresAt)
+		})
+	}
+}
+
+func TestPlatformSiteCredentialParsersSupportNestedAliases(t *testing.T) {
+	payload := map[string]any{
+		"result": map[string]any{
+			"session": map[string]any{
+				"authToken":  "access-alias",
+				"rt":         "refresh-alias",
+				"expires_in": 3600,
+			},
+			"profile": map[string]any{
+				"sub": "user-alias",
+			},
+		},
+	}
+
+	assert.Equal(t, "access-alias", findToken(payload))
+	assert.Equal(t, "refresh-alias", findRefreshToken(payload))
+	assert.Equal(t, "user-alias", findUserID(payload))
+	assert.Greater(t, findTokenExpiresAt(payload), common.GetTimestamp())
+}
+
+func TestPlatformSiteChallengeLifecycleAndAttemptLimit(t *testing.T) {
+	previousSecret := common.CryptoSecret
+	common.CryptoSecret = "platform-site-challenge-test-secret"
+	t.Cleanup(func() {
+		common.CryptoSecret = previousSecret
+		clearPlatformSiteChallengeForTests()
+	})
+	clearPlatformSiteChallengeForTests()
+
+	t.Run("encrypts structured pending cookies and exposes only metadata", func(t *testing.T) {
+		challenge, err := CreatePlatformSiteChallenge(
+			991,
+			model.PlatformNewAPI,
+			"https://example.com",
+			"https://example.com",
+			7,
+			platformSiteChallengeManual,
+			PlatformSitePendingContext{
+				Kind: "newapi_cookie",
+				Cookies: []PlatformSitePendingCookie{{
+					Name:  "session",
+					Value: "secret-cookie",
+					Path:  "/",
+				}},
+			},
+		)
+		require.NoError(t, err)
+		require.NotEmpty(t, challenge.ChallengeID)
+
+		record, found, err := getPlatformSiteChallengeByChannel(991)
+		require.NoError(t, err)
+		require.True(t, found)
+		assert.NotContains(t, record.ChallengeID, "secret-cookie")
+		plaintext, err := common.DecryptUpstreamCredential(record.PendingContextCiphertext)
+		require.NoError(t, err)
+		var pending PlatformSitePendingContext
+		require.NoError(t, common.Unmarshal([]byte(plaintext), &pending))
+		require.Equal(t, "newapi_cookie", pending.Kind)
+		require.Equal(t, "secret-cookie", pending.Cookies[0].Value)
+
+		_, err = SubmitPlatformSiteChallenge(
+			context.Background(),
+			8,
+			991,
+			challenge.ChallengeID,
+			"123456",
+		)
+		var challengeErr *PlatformSiteChallengeError
+		require.ErrorAs(t, err, &challengeErr)
+		assert.Equal(t, PlatformSiteChallengeCodePermission, challengeErr.Code)
+	})
+
+	t.Run("consumed challenge cannot be replayed", func(t *testing.T) {
+		challenge, err := CreatePlatformSiteChallenge(
+			992,
+			model.PlatformSub2API,
+			"https://example.com",
+			"https://example.com",
+			7,
+			platformSiteChallengeBackground,
+			PlatformSitePendingContext{
+				Kind:      "sub2api_temp_token",
+				TempToken: "temporary-token",
+			},
+		)
+		require.NoError(t, err)
+		record, found, err := getPlatformSiteChallengeByChannel(992)
+		require.NoError(t, err)
+		require.True(t, found)
+		require.NoError(t, consumePlatformSiteChallenge(record))
+
+		_, err = SubmitPlatformSiteChallenge(
+			context.Background(),
+			7,
+			992,
+			challenge.ChallengeID,
+			"123456",
+		)
+		var challengeErr *PlatformSiteChallengeError
+		require.ErrorAs(t, err, &challengeErr)
+		assert.Equal(t, PlatformSiteChallengeCodeConsumed, challengeErr.Code)
+	})
+
+	t.Run("third invalid code consumes the remaining attempts", func(t *testing.T) {
+		previousDB := model.DB
+		dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+		db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+		require.NoError(t, err)
+		require.NoError(t, db.AutoMigrate(&model.PlatformSiteAccount{}))
+		model.DB = db
+		t.Cleanup(func() {
+			model.DB = previousDB
+			sqlDB, closeErr := db.DB()
+			if closeErr == nil {
+				_ = sqlDB.Close()
+			}
+		})
+
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			writer.Header().Set("Content-Type", "application/json")
+			http.Error(writer, `{"success":false,"message":"invalid code"}`, http.StatusUnauthorized)
+		}))
+		defer server.Close()
+
+		ciphertext, err := model.EncryptPlatformSiteCredential(model.PlatformSiteCredential{
+			AuthType: model.UpstreamAuthPassword,
+			Username: "operator",
+			Password: "synthetic-password",
+		})
+		require.NoError(t, err)
+		require.NoError(t, db.Create(&model.PlatformSiteAccount{
+			ChannelID:            993,
+			Platform:             model.PlatformNewAPI,
+			BaseURL:              server.URL,
+			AuthType:             model.UpstreamAuthPassword,
+			CredentialCiphertext: ciphertext,
+		}).Error)
+
+		challenge, err := CreatePlatformSiteChallenge(
+			993,
+			model.PlatformNewAPI,
+			server.URL,
+			server.URL,
+			7,
+			platformSiteChallengeManual,
+			PlatformSitePendingContext{
+				Kind: "newapi_cookie",
+				Cookies: []PlatformSitePendingCookie{{
+					Name:  "challenge",
+					Value: "pending",
+					Path:  "/",
+				}},
+			},
+		)
+		require.NoError(t, err)
+
+		for _, remaining := range []int{2, 1} {
+			result, submitErr := SubmitPlatformSiteChallenge(
+				context.Background(),
+				7,
+				993,
+				challenge.ChallengeID,
+				"123456",
+			)
+			var challengeErr *PlatformSiteChallengeError
+			require.ErrorAs(t, submitErr, &challengeErr)
+			assert.Equal(t, PlatformSiteChallengeCodeInvalidCode, challengeErr.Code)
+			require.NotNil(t, result)
+			assert.Equal(t, remaining, result.AttemptsRemaining)
+		}
+
+		result, submitErr := SubmitPlatformSiteChallenge(
+			context.Background(),
+			7,
+			993,
+			challenge.ChallengeID,
+			"123456",
+		)
+		var challengeErr *PlatformSiteChallengeError
+		require.ErrorAs(t, submitErr, &challengeErr)
+		assert.Equal(t, PlatformSiteChallengeCodeAttempts, challengeErr.Code)
+		assert.Nil(t, result)
+	})
+
+	t.Run("non code verification errors do not consume attempts", func(t *testing.T) {
+		previousDB := model.DB
+		dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+		db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+		require.NoError(t, err)
+		require.NoError(t, db.AutoMigrate(&model.PlatformSiteAccount{}))
+		model.DB = db
+		t.Cleanup(func() {
+			model.DB = previousDB
+			sqlDB, closeErr := db.DB()
+			if closeErr == nil {
+				_ = sqlDB.Close()
+			}
+		})
+
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			writer.Header().Set("Content-Type", "application/json")
+			http.Error(writer, `{"success":false,"message":"session expired"}`, http.StatusUnauthorized)
+		}))
+		defer server.Close()
+
+		ciphertext, err := model.EncryptPlatformSiteCredential(model.PlatformSiteCredential{
+			AuthType: model.UpstreamAuthPassword,
+			Username: "operator",
+			Password: "synthetic-password",
+		})
+		require.NoError(t, err)
+		require.NoError(t, db.Create(&model.PlatformSiteAccount{
+			ChannelID:            994,
+			Platform:             model.PlatformNewAPI,
+			BaseURL:              server.URL,
+			AuthType:             model.UpstreamAuthPassword,
+			CredentialCiphertext: ciphertext,
+		}).Error)
+
+		challenge, err := CreatePlatformSiteChallenge(
+			994,
+			model.PlatformNewAPI,
+			server.URL,
+			server.URL,
+			7,
+			platformSiteChallengeManual,
+			PlatformSitePendingContext{
+				Kind: "newapi_cookie",
+				Cookies: []PlatformSitePendingCookie{{
+					Name:  "challenge",
+					Value: "pending",
+					Path:  "/",
+				}},
+			},
+		)
+		require.NoError(t, err)
+
+		result, submitErr := SubmitPlatformSiteChallenge(
+			context.Background(),
+			7,
+			994,
+			challenge.ChallengeID,
+			"123456",
+		)
+		assert.Nil(t, result)
+		require.Error(t, submitErr)
+		var challengeErr *PlatformSiteChallengeError
+		assert.False(t, errors.As(submitErr, &challengeErr))
+
+		record, found, err := getPlatformSiteChallengeByChannel(994)
+		require.NoError(t, err)
+		require.True(t, found)
+		assert.Zero(t, record.Attempts)
+	})
+}
+
+func TestPlatformSitePasswordSyncPersistsClearedCachedCredentialBeforeWaitingVerification(t *testing.T) {
+	previousDB := model.DB
+	previousSecret := common.CryptoSecret
+	common.CryptoSecret = "platform-site-waiting-credential-test-secret"
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.PlatformSiteAccount{}))
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = previousDB
+		common.CryptoSecret = previousSecret
+		clearPlatformSiteChallengeForTests()
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+	clearPlatformSiteChallengeForTests()
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/user/self":
+			http.Error(writer, `{"success":false,"message":"expired"}`, http.StatusUnauthorized)
+		case "/api/user/auth/refresh":
+			http.Error(writer, `{"success":false,"message":"expired"}`, http.StatusUnauthorized)
+		case "/api/user/login":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"require_2fa":true}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	ciphertext, err := model.EncryptPlatformSiteCredential(model.PlatformSiteCredential{
+		AuthType:       model.UpstreamAuthPassword,
+		Username:       "operator",
+		Password:       "synthetic-password",
+		AccessToken:    "expired-access",
+		RefreshToken:   "expired-refresh",
+		TokenExpiresAt: common.GetTimestamp() + 3600,
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.PlatformSiteAccount{
+		ChannelID:            995,
+		Platform:             model.PlatformNewAPI,
+		BaseURL:              server.URL,
+		AuthType:             model.UpstreamAuthPassword,
+		CredentialCiphertext: ciphertext,
+	}).Error)
+
+	err = SyncUpstreamSiteManual(context.Background(), 995, 7)
+	var waitingErr *PlatformSiteWaitingVerificationError
+	require.ErrorAs(t, err, &waitingErr)
+	require.NotNil(t, waitingErr.Result)
+	assert.Empty(t, waitingErr.Result.ChallengeID)
+
+	var saved model.PlatformSiteAccount
+	require.NoError(t, db.Where("channel_id = ?", 995).First(&saved).Error)
+	assert.Equal(t, model.UpstreamSiteSyncWaitingVerification, saved.SyncStatus)
+	credential, err := model.DecryptPlatformSiteCredential(saved.CredentialCiphertext)
+	require.NoError(t, err)
+	assert.Equal(t, "operator", credential.Username)
+	assert.Equal(t, "synthetic-password", credential.Password)
+	assert.Empty(t, credential.AccessToken)
+	assert.Empty(t, credential.RefreshToken)
+	assert.Zero(t, credential.TokenExpiresAt)
+}
+
+func TestBackgroundPlatformSiteSyncKeepsWaitingChallengeWithoutRelogin(t *testing.T) {
+	previousDB := model.DB
+	previousSecret := common.CryptoSecret
+	common.CryptoSecret = "platform-site-background-challenge-test-secret"
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.PlatformSiteAccount{}))
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = previousDB
+		common.CryptoSecret = previousSecret
+		clearPlatformSiteChallengeForTests()
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+	clearPlatformSiteChallengeForTests()
+
+	serverRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		serverRequests++
+		http.Error(writer, "unexpected request", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	ciphertext, err := model.EncryptPlatformSiteCredential(model.PlatformSiteCredential{
+		AuthType: model.UpstreamAuthPassword,
+		Username: "operator",
+		Password: "synthetic-password",
+	})
+	require.NoError(t, err)
+	account := &model.PlatformSiteAccount{
+		ChannelID:            994,
+		Platform:             model.PlatformNewAPI,
+		BaseURL:              server.URL,
+		AuthType:             model.UpstreamAuthPassword,
+		CredentialCiphertext: ciphertext,
+		SyncStatus:           model.UpstreamSiteSyncWaitingVerification,
+	}
+	require.NoError(t, db.Create(account).Error)
+
+	challenge, err := CreatePlatformSiteChallenge(
+		account.ChannelID,
+		account.Platform,
+		account.BaseURL,
+		server.URL,
+		0,
+		platformSiteChallengeBackground,
+		PlatformSitePendingContext{
+			Kind: "newapi_cookie",
+			Cookies: []PlatformSitePendingCookie{{
+				Name:  "challenge",
+				Value: "pending",
+				Path:  "/",
+			}},
+		},
+	)
+	require.NoError(t, err)
+
+	err = SyncUpstreamSite(context.Background(), account.ChannelID)
+	var waitingErr *PlatformSiteWaitingVerificationError
+	require.ErrorAs(t, err, &waitingErr)
+	require.NotNil(t, waitingErr.Result)
+	assert.Equal(t, challenge.ChallengeID, waitingErr.Result.ChallengeID)
+	assert.Zero(t, serverRequests)
+
+	record, found, err := getPlatformSiteChallengeByChannel(account.ChannelID)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.NoError(t, consumePlatformSiteChallenge(record))
+
+	err = SyncUpstreamSite(context.Background(), account.ChannelID)
+	require.ErrorAs(t, err, &waitingErr)
+	assert.Zero(t, serverRequests)
+	var saved model.PlatformSiteAccount
+	require.NoError(t, db.Where("channel_id = ?", account.ChannelID).First(&saved).Error)
+	assert.Equal(t, "上游交互验证 Challenge 已过期，请手动重新同步", saved.LastSyncError)
+}
+
 func TestNewAPIAdapterRefreshesRotatingSession(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
@@ -2140,7 +2798,7 @@ func TestPersistPlatformSiteSnapshotIsolatesUnavailableKeys(t *testing.T) {
 	require.NoError(t, db.Model(&model.UpstreamKeyAbility{}).
 		Where("upstream_key_id = ?", savedOld.ID).
 		Count(&oldAbilityCount).Error)
-	assert.Zero(t, oldAbilityCount)
+	assert.Equal(t, int64(1), oldAbilityCount)
 
 	var newKey model.UpstreamKey
 	require.NoError(t, db.Where("channel_id = ? AND external_id = ?", channel.Id, "new-key").First(&newKey).Error)
@@ -2836,6 +3494,97 @@ func upstreamSiteDSNDatabaseName(dsn string) string {
 		}
 	}
 	return dsn
+}
+
+func TestPlatformSiteSyncStagesDatabaseMatrix(t *testing.T) {
+	tests := []struct {
+		name      string
+		env       string
+		dialector func(string) gorm.Dialector
+		dsn       func(*testing.T) string
+	}{
+		{
+			name: "sqlite",
+			dsn: func(t *testing.T) string {
+				t.Helper()
+				return fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+			},
+			dialector: func(dsn string) gorm.Dialector { return sqlite.Open(dsn) },
+		},
+		{
+			name:      "mysql",
+			env:       "TEST_MYSQL_DSN",
+			dialector: func(dsn string) gorm.Dialector { return mysql.Open(dsn) },
+		},
+		{
+			name: "postgres",
+			env:  "TEST_POSTGRES_DSN",
+			dialector: func(dsn string) gorm.Dialector {
+				return postgres.New(postgres.Config{
+					DSN:                  dsn,
+					PreferSimpleProtocol: true,
+				})
+			},
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			dsn := ""
+			if testCase.dsn != nil {
+				dsn = testCase.dsn(t)
+			} else {
+				dsn = strings.TrimSpace(os.Getenv(testCase.env))
+				if dsn == "" {
+					t.Skip(testCase.env + " is not configured")
+				}
+				assertScratchDatabaseDSN(t, dsn)
+			}
+			db, err := gorm.Open(testCase.dialector(dsn), &gorm.Config{})
+			require.NoError(t, err)
+			sqlDB, err := db.DB()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = sqlDB.Close() })
+
+			previousDB := model.DB
+			model.DB = db
+			t.Cleanup(func() { model.DB = previousDB })
+
+			legacy := &model.PlatformSiteAccount{
+				ChannelID:            996,
+				Platform:             model.PlatformNewAPI,
+				BaseURL:              "https://legacy.example",
+				AuthType:             model.UpstreamAuthPassword,
+				CredentialCiphertext: "legacy-ciphertext",
+			}
+			require.NoError(t, db.AutoMigrate(&model.PlatformSiteAccount{}))
+			require.NoError(t, db.Create(legacy).Error)
+			require.NoError(t, db.AutoMigrate(&model.PlatformSiteAccount{}))
+
+			stages := model.NewPlatformSiteSyncStages(common.GetTimestamp())
+			stages.OverallStatus = model.PlatformSiteStageSuccess
+			stages.Authentication.Status = model.PlatformSiteStageSuccess
+			raw, err := model.EncodePlatformSiteSyncStages(stages)
+			require.NoError(t, err)
+			require.NoError(t, db.Model(legacy).Update("sync_stages", raw).Error)
+
+			var saved model.PlatformSiteAccount
+			require.NoError(t, db.First(&saved, legacy.ID).Error)
+			assert.Equal(t, raw, saved.SyncStages)
+			decoded, err := model.DecodePlatformSiteSyncStages(saved.SyncStages)
+			require.NoError(t, err)
+			assert.Equal(t, model.PlatformSiteStageSuccess, decoded.OverallStatus)
+			assert.Equal(t, model.PlatformSiteStageSuccess, decoded.Authentication.Status)
+
+			versionQuery := "select version()"
+			if testCase.name == "sqlite" {
+				versionQuery = "select sqlite_version()"
+			}
+			var version string
+			require.NoError(t, db.Raw(versionQuery).Scan(&version).Error)
+			t.Logf("database: %s", version)
+		})
+	}
 }
 
 func TestPersistPlatformSiteSnapshotPreservesManualRatioAndWeightOverrides(t *testing.T) {

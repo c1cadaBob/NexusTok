@@ -968,6 +968,159 @@ func TestGetUpstreamSiteStatusReturnsBalanceRefreshAndKeyCounts(t *testing.T) {
 	assert.Equal(t, 1, response.Data.RoutableKeyCount)
 }
 
+func TestSyncUpstreamSiteNowReturnsWaitingVerificationStatus(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.PlatformSiteAccount{}))
+	previousSecret := common.CryptoSecret
+	common.CryptoSecret = "controller-platform-site-waiting-secret"
+	t.Cleanup(func() { common.CryptoSecret = previousSecret })
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodPost && request.URL.Path == "/api/user/login" {
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"requires_2fa":true}}`))
+			return
+		}
+		http.NotFound(writer, request)
+	}))
+	defer server.Close()
+
+	channel := &model.Channel{
+		Name:         "NewAPI verification channel",
+		Type:         constant.ChannelTypeNewAPI,
+		UpstreamKind: model.UpstreamKindPlatformSite,
+		Status:       common.ChannelStatusEnabled,
+	}
+	require.NoError(t, db.Create(channel).Error)
+	ciphertext, err := model.EncryptPlatformSiteCredential(model.PlatformSiteCredential{
+		AuthType: model.UpstreamAuthPassword,
+		Username: "operator",
+		Password: "synthetic-password",
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.PlatformSiteAccount{
+		ChannelID:            channel.Id,
+		Platform:             model.PlatformNewAPI,
+		BaseURL:              server.URL,
+		AuthType:             model.UpstreamAuthPassword,
+		CredentialCiphertext: ciphertext,
+		CredentialKeyVersion: "v1",
+		SyncStatus:           model.UpstreamSiteSyncIdle,
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "id", Value: strconv.Itoa(channel.Id)}}
+	ctx.Set("id", 7)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/channel/"+strconv.Itoa(channel.Id)+"/upstream-sync", nil)
+
+	SyncUpstreamSiteNow(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Success bool                                `json:"success"`
+		Status  string                              `json:"status"`
+		Data    service.PlatformSiteChallengeResult `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.True(t, response.Success)
+	assert.Equal(t, model.UpstreamSiteSyncWaitingVerification, response.Status)
+	assert.Equal(t, model.UpstreamSiteSyncWaitingVerification, response.Data.Status)
+	assert.Empty(t, response.Data.ChallengeID)
+	assert.NotContains(t, recorder.Body.String(), "synthetic-password")
+	assert.NotContains(t, recorder.Body.String(), "access_token")
+}
+
+func TestCompletePlatformSiteVerificationReturnsRetryableBusinessError(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.PlatformSiteAccount{}))
+	previousSecret := common.CryptoSecret
+	common.CryptoSecret = "controller-platform-site-otp-secret"
+	t.Cleanup(func() { common.CryptoSecret = previousSecret })
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodPost {
+			writer.Header().Set("Content-Type", "application/json")
+			writer.WriteHeader(http.StatusUnauthorized)
+			_, _ = writer.Write([]byte(`{"success":false,"message":"invalid verification code","token":"secret-token"}`))
+			return
+		}
+		http.NotFound(writer, request)
+	}))
+	defer server.Close()
+
+	channel := &model.Channel{
+		Name:         "NewAPI OTP channel",
+		Type:         constant.ChannelTypeNewAPI,
+		UpstreamKind: model.UpstreamKindPlatformSite,
+		Status:       common.ChannelStatusEnabled,
+	}
+	require.NoError(t, db.Create(channel).Error)
+	ciphertext, err := model.EncryptPlatformSiteCredential(model.PlatformSiteCredential{
+		AuthType: model.UpstreamAuthPassword,
+		Username: "operator",
+		Password: "synthetic-password",
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.PlatformSiteAccount{
+		ChannelID:            channel.Id,
+		Platform:             model.PlatformNewAPI,
+		BaseURL:              server.URL,
+		AuthType:             model.UpstreamAuthPassword,
+		CredentialCiphertext: ciphertext,
+		CredentialKeyVersion: "v1",
+	}).Error)
+
+	challenge, err := service.CreatePlatformSiteChallenge(
+		channel.Id,
+		model.PlatformNewAPI,
+		server.URL,
+		server.URL,
+		7,
+		"manual",
+		service.PlatformSitePendingContext{
+			Kind: "newapi_cookie",
+			Cookies: []service.PlatformSitePendingCookie{{
+				Name:  "challenge",
+				Value: "pending-cookie",
+				Path:  "/",
+			}},
+		},
+	)
+	require.NoError(t, err)
+
+	body := bytes.NewBufferString(`{"challenge_id":"` + challenge.ChallengeID + `","code":"123456"}`)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "id", Value: strconv.Itoa(channel.Id)}}
+	ctx.Set("id", 7)
+	ctx.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/api/channel/"+strconv.Itoa(channel.Id)+"/upstream-sync/2fa",
+		body,
+	)
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	CompletePlatformSiteVerification(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Success           bool   `json:"success"`
+		Code              string `json:"code"`
+		Message           string `json:"message"`
+		ChallengeID       string `json:"challenge_id"`
+		AttemptsRemaining int    `json:"attempts_remaining"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.False(t, response.Success)
+	assert.Equal(t, service.PlatformSiteChallengeCodeInvalidCode, response.Code)
+	assert.Equal(t, challenge.ChallengeID, response.ChallengeID)
+	assert.Equal(t, 2, response.AttemptsRemaining)
+	assert.NotEmpty(t, response.Message)
+	assert.NotContains(t, recorder.Body.String(), "pending-cookie")
+	assert.NotContains(t, recorder.Body.String(), "secret-token")
+}
+
 func TestNormalizeModelNames(t *testing.T) {
 	result := normalizeModelNames([]string{
 		" gpt-4o ",

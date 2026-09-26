@@ -69,6 +69,7 @@ var channelPermissionRoutes = []permissionRoute{
 	{method: http.MethodPatch, path: "/:id/upstream-keys/:keyId", permission: authz.ChannelWrite, handler: controller.PatchUpstreamKey},
 	{method: http.MethodPost, path: "/:id/upstream-keys/batch-status", permission: authz.ChannelOperate, handler: controller.BatchUpdateUpstreamKeyStatus},
 	{method: http.MethodPost, path: "/:id/upstream-sync", permission: authz.ChannelOperate, handler: controller.SyncUpstreamSiteNow},
+	{method: http.MethodPost, path: "/:id/upstream-sync/2fa", permission: authz.ChannelOperate, handler: controller.CompletePlatformSiteVerification},
 	{method: http.MethodPost, path: "/:id/upstream-sync/queue", permission: authz.ChannelOperate, handler: controller.EnqueueUpstreamSiteSync},
 	{method: http.MethodGet, path: "/test", permission: authz.ChannelOperate, handler: controller.TestAllChannels},
 	{method: http.MethodGet, path: "/test/:id", permission: authz.ChannelOperate, handler: controller.TestChannel},

@@ -44,6 +44,7 @@ import type {
   PlatformSiteCaptureStartRequest,
   PlatformSiteCaptureStartResponse,
   PlatformSiteCaptureStatusResponse,
+  PlatformSiteVerificationResponse,
   UpstreamKey,
   UpstreamKeysResponse,
   UpstreamSiteStatusResponse,
@@ -187,6 +188,19 @@ export async function syncUpstreamSite(
   const res = await api.post(
     `/api/channel/${id}/upstream-sync`,
     undefined,
+    channelActionConfig()
+  )
+  return res.data
+}
+
+export async function submitPlatformSiteVerification(
+  channelId: number,
+  challengeID: string,
+  code: string
+): Promise<PlatformSiteVerificationResponse> {
+  const res = await api.post(
+    `/api/channel/${channelId}/upstream-sync/2fa`,
+    { challenge_id: challengeID, code },
     channelActionConfig()
   )
   return res.data

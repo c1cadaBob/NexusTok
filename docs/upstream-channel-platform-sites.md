@@ -114,8 +114,9 @@ weight = clamp(round(2000 - conversion_ratio * 1000), 0, 2000)
 | `balance` | 站点共享余额 |
 | `used_quota` | 站点已用额度 |
 | `last_sync_at` | 最近一次成功同步时间；失败或运行状态不会覆盖该时间 |
-| `sync_status` | `idle`、`running`、`success`、`failed` |
+| `sync_status` | `idle`、`running`、`success`、`failed`、`waiting_verification` |
 | `last_sync_error` | 脱敏错误摘要 |
+| `sync_stages` | 固定八阶段的脱敏 JSON，数据库使用跨数据库兼容的 `TEXT` |
 | `consecutive_failures` | 连续失败次数 |
 | `disabled_at` | 站点禁用时间 |
 | `disabled_reason` | 禁用原因 |
@@ -206,6 +207,7 @@ effective_conversion_ratio = platform_site_accounts.conversion_ratio * upstream_
 type PlatformSiteAdapter interface {
     Platform() string
     Authenticate(ctx context.Context, baseURL string, credential model.PlatformSiteCredential) (*PlatformSiteSession, error)
+    CompleteVerification(ctx context.Context, baseURL string, credential model.PlatformSiteCredential, pending PlatformSitePendingContext, code string) (*PlatformSiteSession, error)
     FetchSnapshot(ctx context.Context, session *PlatformSiteSession) (PlatformSiteSnapshot, error)
 }
 ```
@@ -286,12 +288,12 @@ WAF/Turnstile 验证页、反向代理文本错误，或登录 API 路径发生�
 HTML 网页覆盖真实原因。只有返回 `404`、`405` 或明确的路由不存在错误时，才会继续
 尝试 `/api/auth/login` 和 `/auth/login` 兼容路径。
 
-适配器不能绕过验证码、交互式二次验证或站点风控。密码登录无法完成时返回可识别的认证状态，管理员可以切换为 Cookie 或令牌认证。
+适配器不能绕过验证码、交互式二次验证或站点风控。密码登录无法完成时返回可识别的认证状态，管理员可以在真实浏览器中完成验证后提交 Challenge，或通过 Capture Session 合法采集 Cookie/令牌；后台不使用无头浏览器、伪造验证 Token 或第三方打码服务绕过 Turnstile、CAPTCHA、Cloudflare、WAF 和其它人机验证。
 
 平台站点表单提供两种认证方式：`password` 和 `auto`（自动配置）。账号密码认证
 由管理员手动输入用户名和密码，也可以附带一次短期 Capture Session，将浏览器里
-已经完成交互验证后产生的 Access Token/Refresh Token 合并为该密码凭据的缓存登录态；
-此路径不会把认证方式改写为 `access_token`，也不会接受 Admin Key 或 Cookie 混入
+已经完成交互验证后产生的 Access Token/Refresh Token 或 Cookie 合并为该密码凭据的
+缓存登录态；此路径不会把认证方式改写为 `access_token`，也不会接受 Admin Key 混入
 密码模式。自动配置通过短期 Capture Session 和目标站浏览器脚本自动判断并采集
 Access Token、Admin Key 或 Cookie。采集会话绑定管理员、目标 Origin、平台、认证
 类型和可选渠道，默认有效期 10 分钟，完成保存后消费，结果只在短期缓存中传递，
@@ -309,8 +311,8 @@ Cookie 或 Admin Key。
 
 浏览器采集不是后台自动登录步骤。只有平台没有可用缓存登录态、账号密码登录需要
 二次验证/验证码，或管理员明确切换到令牌/Cookie 认证时，才需要使用采集能力。
-在 `password` 模式下，采集结果只补充缓存访问令牌和刷新令牌，后续同步仍按
-Access Token、Refresh Token、账号密码的顺序恢复；后台不绕过上游交互验证。
+在 `password` 模式下，采集结果只补充缓存访问令牌、刷新令牌或 Cookie，后续同步仍按
+Access Token、Refresh Token、Cookie、账号密码的顺序恢复；后台不绕过上游交互验证。
 
 Sub2API 管理地址和转发地址分离处理：账号、分组和密钥接口始终使用
 `base_url` 指向的管理站地址；页面配置中的 `api_base_url` 用于发现 OpenAI
@@ -339,13 +341,15 @@ API 地址的同协议、同主机和同端口来源时，才允许切换；验�
 - `cookie` 只使用 Cookie。
 
 账号密码模式不会因为登录响应包含刷新令牌而改写成令牌模式。账号密码模式的认证
-顺序是：未明确过期的访问令牌先验证，失败后尝试刷新令牌，只有两者都不可用时才
-使用账号密码登录。登录成功后仍保留账号密码，并保存新的访问令牌、刷新令牌、过期
-时间和用户 ID；登录响应没有新的刷新令牌时清除旧刷新令牌。编辑页面没有提交令牌
-字段时，不会用空值覆盖已有登录态；如果提交了密码模式的 `capture_id`，后端只把
-该采集会话中的 Access Token、Refresh Token、过期时间和用户 ID 合并进当前密码
+顺序固定为 `Access Token → Refresh Token → Cookie → 账号密码`：先验证未明确过期
+的访问令牌，认证失败后尝试刷新令牌，缓存登录态全部失效后才使用账号密码登录。
+网络错误、5xx 或非法响应不会立即切换认证方式，避免重复请求放大上游故障。登录
+成功后仍保留账号密码，并保存新的访问令牌、刷新令牌、过期时间和用户 ID；Refresh
+响应缺少 Refresh Token、过期时间或 User ID 时保留旧值。编辑页面没有提交令牌字段
+时，不会用空值覆盖已有登录态；如果提交了密码模式的 `capture_id`，后端只把该采集
+会话中的 Access Token、Refresh Token、过期时间和用户 ID 或 Cookie 合并进当前密码
 凭据，保留用户名和密码作为恢复凭据。明确切换到其它认证方式时，仍只保留该认证方式
-需要的字段。
+需要的字段；`access_token` 模式绝不回退账号密码或 Cookie。
 
 NewAPI 和 Sub2API 都通过 `PlatformSiteSession.CredentialUpdate` 表示认证期间产生的
 凭据更新。宿主同步流程在认证成功后、余额/用量/模型/子密钥快照开始前立即加密保存
@@ -361,10 +365,29 @@ Sub2API 普通用户接口如果只能返回掩码密钥，不会伪造真实密
 - 默认每 15 分钟同步。
 - 同一站点使用互斥锁。
 - 支持管理员手动同步。
+- 分阶段持久化同步状态：`authentication`、`current_user`、`balance_usage`、
+  `groups_rates`、`key_pagination`、`key_secrets`、`key_models` 和
+  `sub2api_endpoints`。阶段状态保存于 `platform_site_accounts.sync_stages` 的
+  `TEXT` 字段，固定使用 `common.Marshal`/`common.Unmarshal`，状态只能为
+  `pending`、`success`、`warning`、`failed`、`waiting` 或 `skipped`。错误只保存
+  脱敏摘要、HTTP 状态、脱敏 URL、Content-Type、重定向状态和响应类别，不保存完整
+  响应体、密码、OTP、Cookie、令牌或 Admin Key。
+- 认证成功后先加密写回新的 Access Token、Refresh Token、过期时间、User ID 或 Cookie，
+  再开始余额、倍率、密钥和模型快照；凭据写回失败作为独立关键错误报告。
 - 分页全部成功后再开启数据库事务并 upsert。
 - 同步开始只切换为 `running`，失败时只记录 `failed`、脱敏错误和连续失败次数；
   不删除旧密钥、不清理旧模型能力、不标记旧密钥 `missing`、不覆盖旧余额，
   并继续复用最近一次成功快照。
+- `authentication` 或 `current_user` 失败时不读取后续快照；密钥分页任何一页失败时
+  不处理缺失密钥、不禁用旧密钥、不清空已有密钥集合，整体同步失败并保留最近成功
+  快照。
+- 单个密钥 Secret 读取失败时不阻塞其它密钥：新密钥自动禁用并标记
+  `credential_unavailable`，旧密钥保留加密 Secret 但禁止自动路由；单个密钥模型
+  能力读取失败时旧密钥保留旧模型列表和能力记录但禁止自动路由，新密钥没有可确认
+  能力时自动禁用，下一次成功同步可恢复。
+- 可选余额、用量、分组倍率或 Sub2API 地址发现失败时，阶段标记 `warning`、
+  `used_previous=true`，`sync_status` 仍为 `success`，旧值继续保留。成功同步不再
+  使用 `last_sync_error` 承载这些阶段告警。
 - 单个子密钥的模型能力获取失败时保留最近一次模型快照，但设置
   `models_synced=false` 并自动禁用该子密钥；新密钥没有真实能力时只创建为
   不可路由记录。
@@ -383,12 +406,51 @@ Sub2API 普通用户接口如果只能返回掩码密钥，不会伪造真实密
 
 同步日志只记录站点 ID、平台、结果、数量、耗时和脱敏错误，不记录任何凭据或实际密钥。
 
+### 5.1 交互验证 Challenge
+
+遇到 `2xx` HTML、验证页、Turnstile/CAPTCHA/Cloudflare/WAF 响应、明确的验证错误码或
+需要 2FA 的登录结果时，认证流程停止备用登录路径和账号密码重复尝试，状态改为
+`waiting_verification`。手动同步返回 HTTP 200、`success=true` 和
+`status=waiting_verification`；其它渠道继续同步。后台同步遇到已有 Challenge 时保留
+Challenge，不重新创建、不重复账号密码登录；Challenge 过期后仍显示等待状态和重新
+同步提示，不自动反复创建。
+
+Challenge 字段固定包含 `challenge_id`、`channel_id`、`platform`、`base_url`、`origin`、
+`created_by`、`source`、`created_at`、`expires_at`、`attempts`、`max_attempts=3`、
+`version` 和 `pending_context_ciphertext`。TTL 固定五分钟。NewAPI 只在现有上游凭据
+加密机制下保存结构化 pending Cookie；Sub2API 只保存短期 `temp_token`，不保存正式
+Access Token、Refresh Token、Admin Key、密码或 OTP。前端只看到 Challenge ID、过期时间
+和剩余次数。
+
+手动 Challenge 绑定创建管理员、渠道、平台和站点 Origin；后台 Challenge 不绑定创建
+管理员，但提交时仍由路由权限和服务端重新校验当前管理员的 `ChannelOperate` 权限。
+所有来源都重新校验渠道、平台、规范化 Base URL 和 Origin。Redis 可用时，创建阶段按
+渠道、提交阶段按 Challenge ID 使用随机锁值的 `SET NX PX`，释放时用 Lua 校验锁值；
+Redis 不可用时使用相同标识的进程内互斥锁。读取、权限校验、尝试次数递减和成功消费
+均在租约内完成。成功先消费 Challenge 再开始完整同步；OTP 错误且仍可重试时在租约内
+递增 attempts 并保留剩余 TTL，第 3 次错误立即删除 Challenge。过期、重放、渠道不匹配、
+Origin 不匹配和权限不足均返回稳定错误码，非 OTP 的网络或上游错误不消耗次数。
+
+接口契约：
+
+```text
+POST /api/channel/:id/upstream-sync/2fa
+body: {"challenge_id":"短期随机 ID","code":"一次性验证码"}
+```
+
+请求体限制为 8 KiB，验证码必须是 1 至 32 个字符的短文本。首次同步等待验证使用
+`success=true`；验证码错误但仍可重试使用 HTTP 200、`success=false`、稳定错误码、
+Challenge ID、剩余次数和过期时间；成功只返回同步状态、阶段结果和脱敏错误，不返回
+任何 Token、Cookie、临时 Token 或 Admin Key。验证完成后复用
+`PlatformSiteAdapter.CompleteVerification` 继续完整快照同步。
+
 ## 6. API
 
 现有对外渠道接口保持兼容。新增管理员接口：
 
 ```text
 POST  /api/channel/:id/upstream-sync
+POST  /api/channel/:id/upstream-sync/2fa
 GET   /api/channel/:id/upstream-sync
 GET   /api/channel/:id/upstream-keys
 PATCH /api/channel/:id/upstream-keys/:keyId
@@ -493,6 +555,11 @@ POST  /api/channel/:id/upstream-keys/batch-status
 - 充值金额和到账金额；
 - 转换倍率预览；
 - 手动同步和同步状态。
+- 同步状态为 `waiting_verification` 时内联显示平台名称、Challenge 过期时间、剩余
+  次数、短文本 OTP 输入、提交按钮和重新同步入口；验证码错误保留输入区，Challenge
+  过期、消费或次数耗尽时清除本地 Challenge 状态并要求重新同步。列表行“立即同步”
+  将该状态显示为等待验证，而不是普通失败；同步完成后停止轮询并刷新渠道、余额、
+  上游密钥和阶段状态。
 
 点击自动配置入口后，管理端创建短期会话。前端会在点击事件同步阶段预开标签页，
 再把创建成功的 handoff 地址导航到该标签页；如果浏览器仍拦截弹窗，则保留会话并
@@ -614,4 +681,5 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
 | 2026-09-25 | 缺陷修复 | Sub2API `2xx` 非 JSON 登录响应只显示笼统格式错误；平台子密钥 Routing Key 关系缺少运行时一致性说明 | 记录 HTML/纯文本/非法 JSON 的安全诊断字段和可操作排障方向；补充平台子密钥 Routing Key 自愈规则 | Sub2API 同步、管理员排障、平台子密钥路由和渠道测试 | `service/upstream_site.go`、`model/routing_key.go`、服务/模型回归测试 |
 | 2026-09-25 | 缺陷修复 | `password` 模式每次同步重新登录，登录态未稳定保留；令牌更新依赖完整快照成功 | 同时保留账号密码和上次登录凭据，按缓存访问令牌、刷新令牌、账号密码顺序恢复；认证更新在快照前立即持久化 | 平台站点认证、同步重试、浏览器采集触发条件和上游登录风控 | `controller/upstream_channel.go`、`service/upstream_site_adapters.go`、`service/upstream_site.go`；服务/控制器回归测试 |
 | 2026-09-25 | 缺陷修复 | 渠道 2 `/api/v1/auth/login` 返回 Turnstile JSON 错误后仍继续尝试备用路径，最终只显示“响应格式错误” | 保留 `TURNSTILE_VERIFICATION_FAILED` 等安全原因；仅在路由不存在时尝试备用路径，并引导浏览器采集而不绕过验证 | 渠道 2 账号密码同步、Sub2API 错误诊断、后台快照保留 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`；真实上游无凭据只读探测 |
-| 2026-09-25 | 功能优化 | 账号密码模式只能依赖后台密码登录或已有令牌轮换，遇到上游交互验证后需要切换自动配置并改变认证方式 | 账号密码模式可提交 `capture_id`，只合并浏览器采集到的 Access Token/Refresh Token 作为缓存登录态，认证方式仍为 `password` | 平台站点密码凭据、浏览器采集、后续同步恢复和上游验证边界 | `controller/upstream_channel.go`、`service/platform_site_capture.go`、前后端回归测试 |
+| 2026-09-25 | 功能优化 | 账号密码模式只能依赖后台密码登录或已有令牌轮换，遇到上游交互验证后需要切换自动配置并改变认证方式 | 账号密码模式可提交 `capture_id`，只合并浏览器采集到的 Access Token/Refresh Token 或 Cookie 作为缓存登录态，认证方式仍为 `password` | 平台站点密码凭据、浏览器采集、后续同步恢复和上游验证边界 | `controller/upstream_channel.go`、`service/platform_site_capture.go`、前后端回归测试 |
+| 2026-09-25 | 阶段同步与交互验证 | 站点同步只有粗粒度状态，验证码或人机验证会触发重复登录，Secret/模型/分页失败的旧值边界不明确 | 增加固定八阶段脱敏状态、关键与可选阶段的旧快照策略、五分钟三次 Challenge、真实浏览器验证码提交和后台等待/过期流程；不绕过上游人机验证 | NewAPI、Sub2API、管理员同步、后台任务、上游密钥和模型能力 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_challenge.go`、`model/upstream_site_sync_stages.go`、前后端回归测试 |

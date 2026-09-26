@@ -118,6 +118,17 @@ Relay 层通常按以下阶段处理请求：
   状态和系统日志中增加 HTTP 状态、脱敏后的最终 URL、Content-Type、是否重定向及
   `html`/`plain_text`/`invalid_json` 等响应类别；完整响应体和认证信息不会保存。
 
+平台站点同步完成认证后才更新密钥候选和能力索引。八个同步阶段分别记录认证、当前用户、
+余额/用量、分组倍率、完整密钥分页、Secret、模型能力和 Sub2API 地址发现；可选阶段
+告警使用旧快照，密钥分页失败则保留旧密钥集合，不执行缺失密钥处理。Secret 不可用
+或模型能力不可确认的子密钥仍可被管理员看到，但过滤出自动路由候选；旧密钥的加密
+Secret 和旧模型能力不被失败请求清空。
+
+`waiting_verification` 不等同于普通渠道失败：它表示上游需要真实浏览器完成
+Turnstile、CAPTCHA、Cloudflare/WAF 或其它交互验证。系统不伪造验证 Token、不使用
+无头浏览器绕过、不接入 CapMonster 等打码服务。Challenge 成功后才刷新 Routing Key
+候选和能力缓存；等待或过期期间继续使用最近成功且仍可路由的快照。
+
 ## 9. 维护时需要同步的关联模块
 
 修改路由、Relay Format、模型字段、渠道约束、亲和、优先级/权重、Routing Key、平台站点同步、参数/Header 覆盖、流式、Usage、错误重试或模型获取时，必须同步本文档、[`key-routing-strategy.md`](../key-routing-strategy.md)、[`upstream-channel-platform-sites.md`](../upstream-channel-platform-sites.md)、能力矩阵和偏差表。修改计费入口时还要同步[`billing-and-quota.md`](./billing-and-quota.md)。
@@ -128,3 +139,4 @@ Relay 层通常按以下阶段处理请求：
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 建立入口、分发、密钥选择、转换、流式和 Usage 的实现说明 | `router/`、`middleware/distributor.go`、`model/*routing*`、`relay/`、`relaykit/` | 路由、Adaptor 注册、流式列表和路由选择代码静态核对 |
 | 2026-09-25 | 缺陷修复 | 平台子密钥的 `routing_key_id` 可能跨渠道或来源不匹配；Sub2API 非 JSON 登录响应只有笼统错误 | 路由相关入口统一校验并自愈平台子密钥 Routing Key；显式旧 `key_id` 可在当前子密钥引用仍存在时恢复；非 JSON 响应记录安全诊断摘要 | 平台站点自动路由、显式密钥测试、模型获取、Sub2API 同步状态和日志 | `model/routing_key.go`、`model/main.go`、`model/upstream_routing.go`、`service/upstream_site.go` 及对应回归测试 |
+| 2026-09-25 | 平台同步编排 | 平台同步失败和交互验证状态会被当作普通路由失败，阶段读取和密钥快照边界不清晰 | 路由只使用成功确认的子密钥；可选阶段告警保留旧值，分页失败保留旧密钥，`waiting_verification` 保留最近成功快照并等待管理员处理 | 渠道过滤、Routing Key、模型能力、余额刷新和 Relay 重试 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`model/upstream_routing.go`、`controller/upstream_channel.go` |

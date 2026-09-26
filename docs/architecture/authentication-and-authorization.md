@@ -67,6 +67,31 @@ Access Token/Refresh Token 合并为当前账号密码凭据的缓存登录态�
 登录路径；只有确认登录路由不存在时才继续尝试兼容路径。这样网页 HTML 不会覆盖真实
 的 JSON 验证原因。
 
+### 2.2 平台同步 Challenge 与交互验证
+
+平台站点的交互验证 Challenge 是独立于面板 Session 的短期缓存对象，固定包含
+`challenge_id`、`channel_id`、`platform`、`base_url`、`origin`、`created_by`、
+`source`、`created_at`、`expires_at`、`attempts`、`max_attempts=3`、`version`
+和 `pending_context_ciphertext`。TTL 固定为五分钟；NewAPI 只保存加密结构化 Cookie，
+Sub2API 只保存加密短期 `temp_token`，不保存正式 Access Token、Refresh Token、
+Admin Key、密码或 OTP。
+
+手动同步的 Challenge 绑定创建管理员、渠道、平台和站点 Origin；后台 Challenge 不
+绑定创建管理员，提交时重新校验当前管理员的 `ChannelOperate` 权限以及渠道、平台、
+Base URL 和 Origin。`POST /api/channel/:id/upstream-sync/2fa` 限制请求体大小和短
+验证码格式，OTP 错误只在次数未耗尽时递增尝试次数，第 3 次立即删除；成功先消费
+Challenge，再开始完整同步，成功响应只包含同步状态、阶段结果和脱敏错误。
+
+Redis 启用时，Challenge ID 使用 `SET NX PX` 的随机锁值，释放通过 Lua 校验锁值；
+Redis 不可用时使用进程内按 Challenge ID 的互斥锁。读取、校验、递减次数和消费均在
+租约内完成。后台同步遇到等待状态不会重复账号密码登录或重新创建 Challenge；Challenge
+过期后保留等待状态和最近成功快照，管理员必须手动重新同步。
+
+本次边界遵循 OWASP Authentication Cheat Sheet、Session Management Cheat Sheet 和
+ASVS 5.0.0 中与会话生命周期、管理员授权、凭据加密、外部请求边界和安全日志相关的
+控制要求。已验证服务端权限、TTL、单次消费、尝试次数、请求体限制和脱敏；不宣称覆盖
+上游平台自身的 CAPTCHA、Turnstile 或 WAF 策略。
+
 ## 3. 面板登录与 Session 生命周期
 
 登录、Passkey、OAuth、WeChat、Telegram 和 2FA 成功路径最终都应通过统一 Session 签发出口，生成 `user_sessions` 记录、Access Token 和 Refresh Cookie。Session 数据库状态是最终权威；Redis 保存用户鉴权快照和 Session 快照，缓存未命中或未启用 Redis 时回源数据库。
@@ -137,3 +162,4 @@ Token 限制不是前端 UI 的提示，而是在服务端分发和预扣/扣减
 | 2026-09-25 | 缺陷修复 | 平台站点密码模式保存时可能清空登录态，且同步每次优先重新登录；认证成功后的令牌更新依赖快照同步成功 | 密码与登录态双凭据并存，优先复用访问令牌、再刷新、最后回退账号密码；认证产生的令牌在快照前立即持久化 | NewAPI/Sub2API 平台站点同步、账号密码恢复、令牌轮换和敏感信息保护 | `controller/upstream_channel.go`、`service/upstream_site_adapters.go`、`service/upstream_site.go`；服务和控制器回归测试 |
 | 2026-09-25 | 缺陷修复 | Sub2API 首个登录接口返回 Turnstile JSON 错误后仍继续尝试备用路径，最终网页响应覆盖真实原因 | 明确交互验证错误立即停止备用路径切换，仅在路由不存在时继续兼容探测，并保留脱敏状态、地址、响应类型和错误原因 | 渠道 2 账号密码同步、交互验证提示、凭据保护和平台登录风控 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`；Sub2API 只读探测 |
 | 2026-09-25 | 功能优化 | 密码模式遇到上游交互验证后只能依赖既有缓存登录态或切换自动配置认证方式 | 密码模式可合并一次浏览器采集的 Access Token/Refresh Token 作为缓存登录态，后续仍按访问令牌、刷新令牌、账号密码顺序恢复，不绕过验证码或安全验证 | 平台站点密码凭据、浏览器采集、同步恢复和凭据保护 | `controller/upstream_channel.go`、`service/platform_site_capture.go`、`web/src/features/channels/`；前后端回归测试 |
+| 2026-09-25 | 交互验证与阶段同步 | 2FA/验证页会触发重复密码登录，阶段失败和旧快照边界不统一 | 增加五分钟、三次、绑定 Origin 的 Challenge；增加八阶段脱敏状态，后台等待期间不重复登录，分页失败不清理旧密钥 | Challenge、后台同步、管理员状态、旧快照和路由可用性 | `service/upstream_site_challenge.go`、`controller/upstream_channel.go`、`model/upstream_site_sync_stages.go`；服务/控制器回归测试 |

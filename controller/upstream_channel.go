@@ -41,28 +41,37 @@ type PlatformSiteInput struct {
 }
 
 type UpstreamSiteStatusResponse struct {
-	ChannelID           int     `json:"channel_id"`
-	Platform            string  `json:"platform"`
-	BaseURL             string  `json:"base_url"`
-	AuthType            string  `json:"auth_type"`
-	RechargeAmount      float64 `json:"recharge_amount"`
-	CreditedAmount      float64 `json:"credited_amount"`
-	ConversionRatio     float64 `json:"conversion_ratio"`
-	Balance             float64 `json:"balance"`
-	UsedQuota           int64   `json:"used_quota"`
-	BalanceUpdatedTime  int64   `json:"balance_updated_time"`
-	SyncStatus          string  `json:"sync_status"`
-	LastSyncAt          int64   `json:"last_sync_at"`
-	LastSyncError       string  `json:"last_sync_error"`
-	ConsecutiveFailures int     `json:"consecutive_failures"`
-	KeyCount            int     `json:"key_count"`
-	RoutableKeyCount    int     `json:"routable_key_count"`
-	SnapshotUsable      bool    `json:"snapshot_usable,omitempty"`
-	UsingLastSnapshot   bool    `json:"using_last_snapshot,omitempty"`
-	CredentialAvailable bool    `json:"credential_available,omitempty"`
-	NeedsCredentialSave bool    `json:"needs_credential_save,omitempty"`
-	Routable            bool    `json:"routable"`
-	AvailabilityReason  string  `json:"availability_reason,omitempty"`
+	ChannelID           int                          `json:"channel_id"`
+	Platform            string                       `json:"platform"`
+	BaseURL             string                       `json:"base_url"`
+	AuthType            string                       `json:"auth_type"`
+	RechargeAmount      float64                      `json:"recharge_amount"`
+	CreditedAmount      float64                      `json:"credited_amount"`
+	ConversionRatio     float64                      `json:"conversion_ratio"`
+	Balance             float64                      `json:"balance"`
+	UsedQuota           int64                        `json:"used_quota"`
+	BalanceUpdatedTime  int64                        `json:"balance_updated_time"`
+	SyncStatus          string                       `json:"sync_status"`
+	LastSyncAt          int64                        `json:"last_sync_at"`
+	LastSyncError       string                       `json:"last_sync_error"`
+	ConsecutiveFailures int                          `json:"consecutive_failures"`
+	KeyCount            int                          `json:"key_count"`
+	RoutableKeyCount    int                          `json:"routable_key_count"`
+	SnapshotUsable      bool                         `json:"snapshot_usable,omitempty"`
+	UsingLastSnapshot   bool                         `json:"using_last_snapshot,omitempty"`
+	CredentialAvailable bool                         `json:"credential_available,omitempty"`
+	NeedsCredentialSave bool                         `json:"needs_credential_save,omitempty"`
+	Routable            bool                         `json:"routable"`
+	AvailabilityReason  string                       `json:"availability_reason,omitempty"`
+	SyncStages          model.PlatformSiteSyncStages `json:"sync_stages"`
+	ChallengeID         string                       `json:"challenge_id,omitempty"`
+	ChallengeExpiresAt  int64                        `json:"challenge_expires_at,omitempty"`
+	AttemptsRemaining   int                          `json:"attempts_remaining,omitempty"`
+}
+
+type PlatformSiteVerificationRequest struct {
+	ChallengeID string `json:"challenge_id"`
+	Code        string `json:"code"`
 }
 
 type UpstreamKeyResponse struct {
@@ -157,8 +166,9 @@ func validatePlatformSiteInput(input *PlatformSiteInput, existing *model.Platfor
 		if credential.Username == "" || credential.Password == "" {
 			return model.PlatformSiteCredential{}, 0, errors.New("账号密码认证需要用户名和密码")
 		}
-		credential.AdminKey = ""
-		credential.Cookie = ""
+		if credential.AdminKey != "" {
+			return model.PlatformSiteCredential{}, 0, errors.New("密码认证不能同时设置 Admin Key")
+		}
 	case model.UpstreamAuthAccessToken:
 		if credential.AccessToken == "" {
 			return model.PlatformSiteCredential{}, 0, errors.New("访问令牌不能为空")
@@ -262,25 +272,26 @@ func savePlatformSiteAccount(channelID int, input *PlatformSiteInput, existing *
 				}
 				switch strings.ToLower(strings.TrimSpace(merged.AuthType)) {
 				case model.UpstreamAuthPassword:
-					updatedCachedLogin := strings.TrimSpace(merged.CaptureID) != "" &&
-						strings.TrimSpace(merged.AccessToken) != ""
 					if strings.TrimSpace(merged.Username) == "" {
 						merged.Username = credential.Username
 					}
 					if merged.Password == "" {
 						merged.Password = credential.Password
 					}
-					if !updatedCachedLogin {
-						if merged.AccessToken == "" {
-							merged.AccessToken = credential.AccessToken
-						}
-						if merged.RefreshToken == "" {
-							merged.RefreshToken = credential.RefreshToken
-						}
-						if merged.UserID == "" {
-							merged.UserID = credential.UserID
-						}
+					if merged.AccessToken == "" {
+						merged.AccessToken = credential.AccessToken
+					}
+					if merged.RefreshToken == "" {
+						merged.RefreshToken = credential.RefreshToken
+					}
+					if merged.UserID == "" {
+						merged.UserID = credential.UserID
+					}
+					if merged.TokenExpiresAt == 0 {
 						merged.TokenExpiresAt = credential.TokenExpiresAt
+					}
+					if merged.Cookie == "" {
+						merged.Cookie = credential.Cookie
 					}
 				case model.UpstreamAuthAccessToken:
 					if merged.AccessToken == "" {
@@ -386,8 +397,7 @@ func applyPlatformSiteCapture(userID, channelID int, input *PlatformSiteInput) (
 	}
 	authType := strings.ToLower(strings.TrimSpace(input.AuthType))
 	if authType == model.UpstreamAuthPassword {
-		if input.UserID != "" || input.AccessToken != "" || input.RefreshToken != "" ||
-			input.AdminKey != "" || input.Cookie != "" {
+		if input.AdminKey != "" {
 			return "", errors.New("账号密码模式的采集会话只能与用户名和密码同时提交")
 		}
 	} else if input.Username != "" || input.Password != "" || input.UserID != "" ||
@@ -410,14 +420,16 @@ func applyPlatformSiteCapture(userID, channelID int, input *PlatformSiteInput) (
 		input.Platform = resolution.Platform
 	}
 	if authType == model.UpstreamAuthPassword {
-		if resolution.Credential.AuthType != model.UpstreamAuthAccessToken {
-			return "", errors.New("账号密码模式只能合并 Access Token 采集结果")
+		if resolution.Credential.AuthType != model.UpstreamAuthAccessToken &&
+			resolution.Credential.AuthType != model.UpstreamAuthCookie {
+			return "", errors.New("账号密码模式只能合并 Token 或 Cookie 采集结果")
 		}
 		input.AuthType = model.UpstreamAuthPassword
 		input.UserID = resolution.Credential.UserID
 		input.AccessToken = resolution.Credential.AccessToken
 		input.RefreshToken = resolution.Credential.RefreshToken
 		input.TokenExpiresAt = resolution.Credential.TokenExpiresAt
+		input.Cookie = resolution.Credential.Cookie
 		if resolution.ManagementBaseURL != "" {
 			input.BaseURL = resolution.ManagementBaseURL
 		}
@@ -464,7 +476,7 @@ func platformSiteStatus(account *model.PlatformSiteAccount) UpstreamSiteStatusRe
 	case usingLastSnapshot:
 		availabilityReason = model.UpstreamAvailabilitySnapshotOnly
 	}
-	return UpstreamSiteStatusResponse{
+	response := UpstreamSiteStatusResponse{
 		ChannelID:           account.ChannelID,
 		Platform:            account.Platform,
 		BaseURL:             redactBaseURL(account.BaseURL),
@@ -483,7 +495,24 @@ func platformSiteStatus(account *model.PlatformSiteAccount) UpstreamSiteStatusRe
 		CredentialAvailable: credentialAvailable,
 		NeedsCredentialSave: !credentialAvailable,
 		AvailabilityReason:  availabilityReason,
+		SyncStages:          decodePlatformSiteSyncStagesForResponse(account.SyncStages),
 	}
+	if account.SyncStatus == model.UpstreamSiteSyncWaitingVerification {
+		if challenge, found := service.GetPlatformSiteChallengeStatus(account.ChannelID); found {
+			response.ChallengeID = challenge.ChallengeID
+			response.ChallengeExpiresAt = challenge.ExpiresAt
+			response.AttemptsRemaining = challenge.AttemptsRemaining
+		}
+	}
+	return response
+}
+
+func decodePlatformSiteSyncStagesForResponse(raw string) model.PlatformSiteSyncStages {
+	stages, err := model.DecodePlatformSiteSyncStages(raw)
+	if err != nil {
+		return model.NewPlatformSiteSyncStages(common.GetTimestamp())
+	}
+	return stages
 }
 
 func getPlatformSiteChannel(channelID int) (*model.Channel, error) {
@@ -871,16 +900,84 @@ func SyncUpstreamSiteNow(c *gin.Context) {
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
-	err = service.SyncUpstreamSite(ctx, channelID)
+	err = service.SyncUpstreamSiteManual(ctx, channelID, c.GetInt("id"))
 	recordManageAudit(c, "channel.upstream_sync", map[string]any{
 		"channel_id": channelID,
 		"success":    err == nil,
 	})
 	if err != nil {
+		var waiting *service.PlatformSiteWaitingVerificationError
+		if errors.As(err, &waiting) && waiting.Result != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": true,
+				"status":  model.UpstreamSiteSyncWaitingVerification,
+				"data":    waiting.Result,
+			})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": safeUpstreamErrorForResponse(err)})
 		return
 	}
 	GetUpstreamSiteStatus(c)
+}
+
+func CompletePlatformSiteVerification(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8<<10)
+	var request PlatformSiteVerificationRequest
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		common.ApiErrorMsg(c, "无效的验证请求")
+		return
+	}
+	if strings.TrimSpace(request.ChallengeID) == "" ||
+		strings.TrimSpace(request.Code) == "" ||
+		len(strings.TrimSpace(request.Code)) > 32 {
+		common.ApiErrorMsg(c, "验证 Challenge ID 和验证码不能为空，且验证码长度不能超过 32 个字符")
+		return
+	}
+	channelID, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if _, err := getPlatformSiteChannel(channelID); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	defer cancel()
+	result, err := service.SubmitPlatformSiteChallenge(
+		ctx,
+		c.GetInt("id"),
+		channelID,
+		request.ChallengeID,
+		request.Code,
+	)
+	if err != nil {
+		var challengeErr *service.PlatformSiteChallengeError
+		if errors.As(err, &challengeErr) {
+			response := gin.H{
+				"success": false,
+				"code":    challengeErr.Code,
+				"message": challengeErr.Message,
+			}
+			if challengeErr.Code == service.PlatformSiteChallengeCodeInvalidCode {
+				if current, found := service.GetPlatformSiteChallengeStatus(channelID); found {
+					response["challenge_id"] = current.ChallengeID
+					response["attempts_remaining"] = current.AttemptsRemaining
+					response["expires_at"] = current.ExpiresAt
+				}
+			}
+			c.JSON(http.StatusOK, response)
+			return
+		}
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"status":  model.UpstreamSiteSyncSuccess,
+		"data":    result,
+	})
 }
 
 func safeUpstreamErrorForResponse(err error) string {

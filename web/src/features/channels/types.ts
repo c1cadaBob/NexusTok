@@ -221,6 +221,9 @@ export interface ChannelBalanceResponse {
   routable_key_count?: number
   currency?: string
   raw_response?: string
+  challenge_id?: string
+  challenge_expires_at?: number
+  attempts_remaining?: number
 }
 
 export interface FetchModelsResponse {
@@ -472,6 +475,47 @@ export interface UpstreamSiteStatus {
   needs_credential_save?: boolean
   routable?: boolean
   availability_reason?: string
+  sync_stages?: PlatformSiteSyncStages
+  challenge_id?: string
+  challenge_expires_at?: number
+  attempts_remaining?: number
+}
+
+export type PlatformSiteSyncStageStatus =
+  | 'pending'
+  | 'success'
+  | 'warning'
+  | 'failed'
+  | 'waiting'
+  | 'skipped'
+
+export interface PlatformSiteSyncStage {
+  status: PlatformSiteSyncStageStatus
+  updated_at: number
+  error: string
+  http_status: number
+  url: string
+  content_type: string
+  redirected: boolean
+  response_category: string
+  used_previous: boolean
+  items_total: number
+  items_succeeded: number
+  items_failed: number
+}
+
+export interface PlatformSiteSyncStages {
+  version: number
+  overall_status: PlatformSiteSyncStageStatus
+  updated_at: number
+  authentication: PlatformSiteSyncStage
+  current_user: PlatformSiteSyncStage
+  balance_usage: PlatformSiteSyncStage
+  groups_rates: PlatformSiteSyncStage
+  key_pagination: PlatformSiteSyncStage
+  key_secrets: PlatformSiteSyncStage
+  key_models: PlatformSiteSyncStage
+  sub2api_endpoints: PlatformSiteSyncStage
 }
 
 export interface UpstreamKey {
@@ -509,7 +553,26 @@ export interface UpstreamKey {
 export interface UpstreamSiteStatusResponse {
   success: boolean
   message?: string
+  status?: string
   data?: UpstreamSiteStatus
+}
+
+export interface PlatformSiteVerificationResponse {
+  success: boolean
+  message?: string
+  code?: string
+  status?: string
+  data?: {
+    challenge_id: string
+    status: string
+    expires_at: number
+    attempts_remaining: number
+    sync_status?: string
+    sync_stages?: PlatformSiteSyncStages
+  }
+  challenge_id?: string
+  expires_at?: number
+  attempts_remaining?: number
 }
 
 export interface PlatformSiteCaptureStartRequest {
