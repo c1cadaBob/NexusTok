@@ -47,6 +47,7 @@
 | DEV-012 | New API Dashboard Auth Bundle | 刷新逻辑只按 Access Token/Refresh Token 解析，可能错误降级现代响应 | 严格校验 `success`、Token、过期时间、当前 Session 和 user；结构不完整时重新认证 | 已实现/待上游验证 | all-api-hub `apiService/newApi/dashboardAuth.ts`、NexusTok 刷新适配器 | 2026-09-26 |
 | DEV-013 | Sub2API Refresh Token 轮换 | 刷新响应缺少新 Refresh Token 时没有记录轮换不确定性 | 不重放旧 Refresh Token，标记重新认证并保留资源快照 | 已实现/待上游验证 | all-api-hub `apiService/sub2api/tokenRefresh.ts`、Sub2API `auth_handler.go` | 2026-09-26 |
 | DEV-014 | 管理员安全验证与资源失败 | Admin/step-up 拒绝读取资源可能被当作普通空列表 | 资源类型独立记录安全验证要求，旧密钥、额度和模型快照不删除 | 已实现/待上游验证 | Sub2API step-up middleware、平台站点资源同步实现 | 2026-09-26 |
+| DEV-015 | 渠道 2、4、5 上游响应诊断与登录回退 | HTML/Turnstile、HTTP 200 业务失败、401 凭据错误和网络不可达可能被合并为响应格式错误；兼容请求可能在非 404/405 后继续尝试 | 固定真实登录 DTO，按认证/交互验证/WAF/路由缺失/传输错误分类，只有 404/405 才回退；同步失败保留最近成功快照并区分 `credentials_invalid` 与 `secure_verification_required` | 已实现/待真实站点持续核验 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`、参考项目真实 DTO | 2026-09-26 |
 
 ### 3.2 2026-09-26 实现核对结果
 
@@ -80,3 +81,4 @@
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 登记路由显式未实现、Adaptor 局部未实现、AIProxyLibrary 工厂缺口和 Responses 入口差异，并区分待核查项 | Relay 路由、Adaptor 工厂、插件协议和后续维护流程 | `router/relay-router.go`、`common/api_type.go`、`relay/relay_adaptor.go`、`relay/channel/` 静态核对 |
 | 2026-09-26 | 平台站点认证与资源偏差登记 | 平台站点 2FA、现代 Session Bundle、Refresh Token 轮换和安全验证失败回退没有单独记录 | 新增 New API 2FA/Bundle、Sub2API 轮换、管理员 step-up 和资源级失败偏差记录 | 平台站点认证、同步、资源面板 | 参考项目路由和本项目适配器静态核对 |
+| 2026-09-26 | 渠道 2、4、5 同步回归核对 | 响应诊断、登录 DTO 和失败快照回退与当前参考源及真实站点表现不一致 | 完成脱敏响应分类、固定登录字段、404/405 回退边界和快照保留回归；安全验证仍需人工浏览器承接 | 平台站点登录、同步失败、管理员诊断 | `service/upstream_site_test.go`；Sub2API/New API/all-api-hub 本机源码；MCP 脱敏观察 |

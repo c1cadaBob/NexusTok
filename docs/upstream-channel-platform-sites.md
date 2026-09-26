@@ -676,6 +676,44 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
 - 余额刷新按钮具备加载禁用状态，刷新成功后列表、父渠道状态和子密钥状态同步更新；
 - 桌面端和移动端均无白屏，Chrome 控制台无 error，未观察到保存前请求风暴。
 
+### 9.2 2026-09-26 渠道 2、4、5 同步回归修复
+
+**变更前**
+
+- 平台站点上游返回 HTTP 错误、HTML/WAF 页面和 HTTP 200 业务失败时，部分路径只保留
+  “响应格式错误”或普通认证失败，管理员无法区分账号密码错误、Turnstile/验证码、
+  WAF 和网络不可达；
+- New API 与 Sub2API 的密码登录可能通过多组字段或兼容路径重复尝试，Sub2API 非法
+  账号格式会被延迟到上游响应阶段才暴露；
+- 兼容资源接口在认证失败、安全验证或网络错误后可能继续尝试其它路径，增加上游请求
+  和限流风险；
+- 同步失败只更新父站点错误字段，无法稳定表达 `credentials_invalid` 与
+  `secure_verification_required` 的差异。
+
+**变更后**
+
+- `service/upstream_site.go` 保存脱敏的 HTTP 状态、最终 URL、Content-Type、响应类型、
+  响应类别和有限错误码；完整响应正文、密码、Cookie、Access Token、Refresh Token 和
+  临时令牌均不进入错误摘要或日志；
+- New API 密码登录固定使用 `/api/user/login?turnstile=` 的 `username/password`；
+  Sub2API 固定使用 `/api/v1/auth/login` 的 `email/password`，发送前校验合法邮箱，
+  不自动拼接虚假域名或漂移为其它字段；
+- 只有明确的 404/405 才继续兼容资源路径；认证失败、Turnstile/验证码、WAF、step-up
+  安全验证和网络错误立即停止重复请求；
+- HTTP 200 的 `success=false`、数值错误码和 HTML/挑战页分别归类为业务认证失败、
+  交互验证、WAF 或路由缺失。同步状态仍记录失败和连续失败次数，但不覆盖
+  `last_sync_at`，不删除密钥、模型、额度、倍率、权重或能力快照；
+- 账号密码错误使用 `auth_status=credentials_invalid`，安全验证使用
+  `auth_status=secure_verification_required`。已有浏览器 Capture/Auth Flow 作为人工
+  验证承接，不绕过 Turnstile、验证码、Passkey 或 WAF；浏览器不可用时仍返回安全验证
+  状态并保留最近成功快照；
+- 管理员可见诊断只包含站点、阶段、状态码、Content-Type、响应类别、同步阶段、失败
+  次数和快照回退标记，不显示任何可用认证材料。
+
+本轮自动化回归覆盖 Sub2API HTML/Turnstile、非法邮箱、New API HTTP 200 业务失败、
+401 凭据错误、404/405 兼容路径、网络超时和失败同步快照保留。真实站点验证只记录
+脱敏请求路径、HTTP 状态、Content-Type、响应类别和页面状态。
+
 ## 与架构文档的关系
 
 本文保留平台站点、账号同步、子密钥字段、倍率/权重公式、权限、SSRF 和测试验收等详细规则；架构文档描述平台站点如何进入渠道过滤、Routing Key 和 Relay 转发。新增平台类型或调整同步/路由语义时，必须同时更新本文、能力矩阵和偏差表。
@@ -685,3 +723,4 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 补充架构索引与元信息 | 已有平台站点详细设计没有统一事实基线和架构入口 | 增加事实基线、代码来源、架构分工和变更记录；保留同步、倍率、权重和兼容性细节 | NewAPI、Sub2API、平台账号、上游密钥和路由 | `model/upstream_channel.go`、`model/routing_key.go`、`service/upstream_site.go` 静态核对 |
+| 2026-09-26 | 修复渠道 2、4、5 同步回归 | 上游 HTML/安全验证/HTTP 200 业务失败和网络错误可能被归为响应格式错误或覆盖同步状态；密码登录存在兼容字段漂移 | 固定 New API/Sub2API 登录 DTO，恢复脱敏响应诊断和错误分类，限制 404/405 回退，失败保留最近成功快照并区分凭据错误与安全验证 | 平台站点认证、资源同步、快照、管理员诊断和路由可用性 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`、本机三套参考源核对 |

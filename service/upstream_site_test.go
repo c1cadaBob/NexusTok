@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -601,11 +602,8 @@ func TestNewAPIAdapterFallbacksBatchRevealUnlimitedQuotaAndPerKeyModels(t *testi
 				body, readErr := io.ReadAll(request.Body)
 				require.NoError(t, readErr)
 				loginAttempts++
-				if strings.Contains(string(body), `"username"`) &&
-					!strings.Contains(string(body), `"email"`) {
-					return platformSiteJSONResponse(http.StatusUnauthorized, `{"success":false,"message":"bad username field"}`), nil
-				}
-				assert.Contains(t, string(body), `"email":"operator@example.com"`)
+				assert.Contains(t, string(body), `"username":"operator@example.com"`)
+				assert.NotContains(t, string(body), `"email"`)
 				return platformSiteJSONResponse(http.StatusOK, `{"success":true,"data":{"access_token":"newapi-session","user":{"uid":888}}}`), nil
 			case request.URL.Path == "/api/status":
 				return platformSiteJSONResponse(http.StatusOK, `{"success":true,"data":{"quota_per_unit":500000}}`), nil
@@ -640,7 +638,7 @@ func TestNewAPIAdapterFallbacksBatchRevealUnlimitedQuotaAndPerKeyModels(t *testi
 		Password: "synthetic-password",
 	})
 	require.NoError(t, err)
-	assert.GreaterOrEqual(t, loginAttempts, 2)
+	assert.Equal(t, 1, loginAttempts)
 
 	snapshot, err := adapter.FetchSnapshot(context.Background(), session)
 	require.NoError(t, err)
@@ -823,7 +821,7 @@ func TestPlatformSitePasswordAuthenticationDoesNotDriftToTokenRefresh(t *testing
 
 			credential := model.PlatformSiteCredential{
 				AuthType:     model.UpstreamAuthPassword,
-				Username:     "operator",
+				Username:     "operator@example.com",
 				Password:     "synthetic-password",
 				AccessToken:  "stale-access",
 				RefreshToken: "stale-refresh",
@@ -1434,10 +1432,8 @@ func TestSub2APIAdapterDiscoversRelayModelsAndTreatsZeroQuotaAsUnlimited(t *test
 				body, readErr := io.ReadAll(request.Body)
 				require.NoError(t, readErr)
 				loginAttempts++
-				if strings.Contains(string(body), `"email"`) &&
-					!strings.Contains(string(body), `"username"`) {
-					return platformSiteJSONResponse(http.StatusUnauthorized, `{"code":401,"message":"email field is unsupported"}`), nil
-				}
+				assert.Contains(t, string(body), `"email":"operator@example.com"`)
+				assert.NotContains(t, string(body), `"username"`)
 				return platformSiteJSONResponse(http.StatusOK, `{"code":0,"data":{"access_token":"sub2api-session"}}`), nil
 			case request.Method == http.MethodGet && request.URL.Path == "/api/v1/auth/me":
 				return platformSiteJSONResponse(http.StatusOK, `{"code":0,"data":{"balance":3}}`), nil
@@ -1469,7 +1465,7 @@ func TestSub2APIAdapterDiscoversRelayModelsAndTreatsZeroQuotaAsUnlimited(t *test
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "https://example.com/v1", session.ModelBaseURL)
-	assert.GreaterOrEqual(t, loginAttempts, 2)
+	assert.Equal(t, 1, loginAttempts)
 
 	snapshot, err := adapter.FetchSnapshot(context.Background(), session)
 	require.NoError(t, err)
@@ -1653,6 +1649,221 @@ func TestSafePlatformSiteErrorIncludesHTTPStatusWithoutResponseBody(t *testing.T
 	assert.Contains(t, message, "HTTP 404")
 	assert.NotContains(t, message, "secret upstream response body")
 	assert.NotContains(t, message, "secret login response body")
+}
+
+func TestSub2APILoginClassifiesHTMLTurnstileAsInteractiveVerification(t *testing.T) {
+	loginRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodPost && request.URL.Path == "/api/v1/auth/login" {
+			loginRequests++
+			writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+			writer.WriteHeader(http.StatusBadRequest)
+			_, _ = writer.Write([]byte(
+				`<html><title>Turnstile challenge</title><body>verify you are human</body></html>`,
+			))
+			return
+		}
+		http.NotFound(writer, request)
+	}))
+	defer server.Close()
+
+	_, err := NewSub2APIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType: model.UpstreamAuthPassword,
+			Username: "operator@example.com",
+			Password: "synthetic-password",
+		},
+	)
+	require.Error(t, err)
+	assert.Equal(t, 1, loginRequests)
+	assert.ErrorIs(t, err, ErrSub2APILoginInteractive)
+	assert.ErrorIs(t, err, ErrPlatformSiteSecurity)
+	assert.Equal(t, platformSiteErrorCategoryInteractive, platformSiteErrorCategoryOf(err))
+	message := SafePlatformSiteError(err)
+	assert.Contains(t, message, "交互验证")
+	assert.Contains(t, message, "HTTP 400")
+	assert.NotContains(t, message, "Turnstile challenge")
+	assert.NotContains(t, message, "synthetic-password")
+}
+
+func TestSub2APILoginRejectsInvalidEmailBeforeLoginRequest(t *testing.T) {
+	loginRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodPost && request.URL.Path == "/api/v1/auth/login" {
+			loginRequests++
+		}
+		http.NotFound(writer, request)
+	}))
+	defer server.Close()
+
+	_, err := NewSub2APIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType: model.UpstreamAuthPassword,
+			Username: "operator",
+			Password: "synthetic-password",
+		},
+	)
+	require.Error(t, err)
+	assert.Equal(t, 0, loginRequests)
+	assert.ErrorIs(t, err, ErrSub2APILoginEmail)
+	message := SafePlatformSiteError(err)
+	assert.Contains(t, message, "合法邮箱")
+	assert.NotContains(t, message, "synthetic-password")
+	assert.NotContains(t, message, "响应格式错误")
+}
+
+func TestNewAPILoginDistinguishesHTTP200InteractiveAndCredentialFailures(t *testing.T) {
+	tests := []struct {
+		name           string
+		body           string
+		wantSecurity   bool
+		wantCredential bool
+		wantMessage    string
+	}{
+		{
+			name:         "turnstile",
+			body:         `{"success":false,"message":"turnstile verification required"}`,
+			wantSecurity: true,
+			wantMessage:  "安全验证",
+		},
+		{
+			name:           "credentials",
+			body:           `{"success":false,"message":"invalid username or password"}`,
+			wantCredential: true,
+			wantMessage:    "账号或密码错误",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			loginRequests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if request.Method == http.MethodPost && request.URL.Path == "/api/user/login" {
+					loginRequests++
+					writer.Header().Set("Content-Type", "application/json")
+					_, _ = writer.Write([]byte(testCase.body))
+					return
+				}
+				t.Fatalf("unexpected request: %s %s", request.Method, request.URL.Path)
+			}))
+			defer server.Close()
+
+			_, err := NewNewAPIAdapter(server.Client()).Authenticate(
+				context.Background(),
+				server.URL,
+				model.PlatformSiteCredential{
+					AuthType: model.UpstreamAuthPassword,
+					Username: "operator",
+					Password: "synthetic-password",
+				},
+			)
+			require.Error(t, err)
+			assert.Equal(t, 1, loginRequests)
+			assert.Equal(t, testCase.wantSecurity, errors.Is(err, ErrPlatformSiteSecurity))
+			assert.Equal(t, testCase.wantCredential, errors.Is(err, ErrPlatformSiteCredentials))
+			message := SafePlatformSiteError(err)
+			assert.Contains(t, message, testCase.wantMessage)
+			assert.NotContains(t, message, "synthetic-password")
+		})
+	}
+}
+
+func TestPlatformSiteCompatibleCurrentUserRoutesOnlyFallbackOn404Or405(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusMethodNotAllowed} {
+		t.Run(fmt.Sprintf("fallback-on-%d", status), func(t *testing.T) {
+			fallbackRequests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				writer.Header().Set("Content-Type", "application/json")
+				switch request.URL.Path {
+				case "/api/user/login":
+					_, _ = writer.Write([]byte(`{"success":true,"data":{"access_token":"session"}}`))
+				case "/api/user/self":
+					writer.WriteHeader(status)
+					_, _ = writer.Write([]byte(fmt.Sprintf(`{"code":%d}`, status)))
+				case "/api/user/me":
+					fallbackRequests++
+					_, _ = writer.Write([]byte(`{"success":true,"data":{"quota":1}}`))
+				default:
+					http.NotFound(writer, request)
+				}
+			}))
+			defer server.Close()
+
+			_, err := NewNewAPIAdapter(server.Client()).Authenticate(
+				context.Background(),
+				server.URL,
+				model.PlatformSiteCredential{
+					AuthType: model.UpstreamAuthPassword,
+					Username: "operator",
+					Password: "synthetic-password",
+				},
+			)
+			require.NoError(t, err)
+			assert.Equal(t, 1, fallbackRequests)
+		})
+	}
+
+	t.Run("no-fallback-on-401", func(t *testing.T) {
+		fallbackRequests := 0
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			writer.Header().Set("Content-Type", "application/json")
+			switch request.URL.Path {
+			case "/api/user/login":
+				_, _ = writer.Write([]byte(`{"success":true,"data":{"access_token":"session"}}`))
+			case "/api/user/self":
+				writer.WriteHeader(http.StatusUnauthorized)
+				_, _ = writer.Write([]byte(`{"code":401,"message":"invalid credentials"}`))
+			case "/api/user/me":
+				fallbackRequests++
+				t.Fatalf("401 后不应继续尝试兼容用户接口")
+			default:
+				http.NotFound(writer, request)
+			}
+		}))
+		defer server.Close()
+
+		_, err := NewNewAPIAdapter(server.Client()).Authenticate(
+			context.Background(),
+			server.URL,
+			model.PlatformSiteCredential{
+				AuthType: model.UpstreamAuthPassword,
+				Username: "operator",
+				Password: "synthetic-password",
+			},
+		)
+		require.Error(t, err)
+		assert.Zero(t, fallbackRequests)
+		assert.ErrorIs(t, err, ErrPlatformSiteCredentials)
+	})
+}
+
+func TestPlatformSiteRequestWrapsNetworkTimeoutWithoutSensitiveDetails(t *testing.T) {
+	session, err := newPlatformSiteSession("https://upstream.example", nil)
+	require.NoError(t, err)
+	session.Client = &http.Client{
+		Transport: platformSiteRoundTripFunc(func(*http.Request) (*http.Response, error) {
+			return nil, context.DeadlineExceeded
+		}),
+	}
+
+	_, err = platformSiteRequest(
+		context.Background(),
+		session,
+		http.MethodGet,
+		"/api/user/self",
+		nil,
+		nil,
+	)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPlatformSiteTransport)
+	message := SafePlatformSiteError(err)
+	assert.Contains(t, message, "保留最近成功快照")
+	assert.NotContains(t, message, "Cookie")
+	assert.NotContains(t, message, "synthetic-password")
 }
 
 func TestSub2APIAdapterResolvesMaskedKeyFromKeyDetail(t *testing.T) {
@@ -2081,6 +2292,9 @@ func TestSyncPlatformSiteFailurePreservesLastSuccessfulSnapshot(t *testing.T) {
 	assert.Equal(t, successfulBalance, savedAccount.Balance)
 	assert.Equal(t, 1, savedAccount.ConsecutiveFailures)
 	assert.Zero(t, savedAccount.DisabledAt)
+	assert.Equal(t, model.PlatformSiteAuthStatusCredentialsInvalid, savedAccount.AuthStatus)
+	assert.Contains(t, savedAccount.LastSyncError, "账号或密码错误")
+	assert.NotContains(t, savedAccount.LastSyncError, "session-token")
 
 	var failedKey model.UpstreamKey
 	require.NoError(t, db.First(&failedKey, savedKey.ID).Error)

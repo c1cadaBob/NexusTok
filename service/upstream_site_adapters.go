@@ -9,6 +9,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"regexp"
 	"slices"
@@ -788,27 +789,18 @@ func loginNewAPIWithPassword(ctx context.Context, session *PlatformSiteSession, 
 	if username == "" || credential.Password == "" {
 		return nil, fmt.Errorf("%w: 缺少账号密码", ErrPlatformSiteAuth)
 	}
-	email := ""
-	if strings.Contains(username, "@") {
-		email = username
+	payload, err := platformSiteRequest(
+		ctx,
+		session,
+		http.MethodPost,
+		"/api/user/login?turnstile=",
+		nil,
+		map[string]string{"username": username, "password": credential.Password},
+	)
+	if err != nil {
+		return nil, err
 	}
-	bodies := uniqueStringMaps([]map[string]string{
-		{"username": username, "password": credential.Password},
-		{"email": firstNonEmptyString(email, username), "password": credential.Password},
-		{"username": username, "email": firstNonEmptyString(email, username), "password": credential.Password},
-	})
-	var lastErr error
-	for _, body := range bodies {
-		payload, err := platformSiteRequest(ctx, session, http.MethodPost, "/api/user/login?turnstile=", nil, body)
-		if err == nil {
-			return payload, nil
-		}
-		lastErr = err
-	}
-	if lastErr == nil {
-		lastErr = fmt.Errorf("%w: NewAPI 登录失败", ErrPlatformSiteAuth)
-	}
-	return nil, lastErr
+	return payload, nil
 }
 
 func loginSub2APIWithPassword(ctx context.Context, session *PlatformSiteSession, credential model.PlatformSiteCredential) (any, error) {
@@ -816,34 +808,37 @@ func loginSub2APIWithPassword(ctx context.Context, session *PlatformSiteSession,
 	if username == "" || credential.Password == "" {
 		return nil, fmt.Errorf("%w: 缺少账号密码", ErrPlatformSiteAuth)
 	}
-	email := ""
-	if strings.Contains(username, "@") {
-		email = username
+	parsedEmail, err := mail.ParseAddress(username)
+	if err != nil || parsedEmail.Address != username {
+		return nil, ErrSub2APILoginEmail
 	}
-	bodies := uniqueStringMaps([]map[string]string{
-		{"email": firstNonEmptyString(email, username), "password": credential.Password},
-		{"username": username, "password": credential.Password},
-		{"email": firstNonEmptyString(email, username), "username": username, "password": credential.Password},
-	})
-	var lastErr error
-	for _, path := range []string{"/api/v1/auth/login", "/api/auth/login", "/auth/login"} {
-		for _, body := range bodies {
-			payload, err := platformSiteRequest(ctx, session, http.MethodPost, path, nil, body)
-			if err == nil {
-				return payload, nil
-			}
-			lastErr = classifySub2APILoginError(err)
-		}
+	payload, requestErr := platformSiteRequest(
+		ctx,
+		session,
+		http.MethodPost,
+		"/api/v1/auth/login",
+		nil,
+		map[string]string{"email": parsedEmail.Address, "password": credential.Password},
+	)
+	if requestErr != nil {
+		return nil, classifySub2APILoginError(requestErr)
 	}
-	if lastErr == nil {
-		lastErr = ErrSub2APILoginRequest
-	}
-	return nil, lastErr
+	return payload, nil
 }
 
 func classifySub2APILoginError(err error) error {
 	if err == nil {
 		return nil
+	}
+	if platformSiteInteractiveVerificationRequired(err) {
+		return errors.Join(
+			ErrSub2APILoginInteractive,
+			ErrPlatformSiteSecurity,
+			fmt.Errorf("%w: %w", ErrSub2APILoginHTTPStatus, err),
+		)
+	}
+	if errors.Is(err, ErrPlatformSiteCredentials) {
+		return errors.Join(ErrPlatformSiteCredentials, ErrSub2APILoginHTTPStatus, err)
 	}
 	if errors.Is(err, ErrPlatformSiteHTTPStatus) {
 		return fmt.Errorf("%w: %w", ErrSub2APILoginHTTPStatus, err)
@@ -880,6 +875,9 @@ func fetchNewAPICurrentUser(ctx context.Context, session *PlatformSiteSession) (
 			return payload, nil
 		}
 		lastErr = err
+		if !platformSiteRouteMissing(err) {
+			break
+		}
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("%w: NewAPI 当前用户接口不可用", ErrPlatformSiteAuth)
@@ -952,6 +950,9 @@ func fetchSub2APICurrentUser(ctx context.Context, session *PlatformSiteSession) 
 			return payload, nil
 		}
 		lastErr = err
+		if !platformSiteRouteMissing(err) {
+			break
+		}
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("%w: Sub2API 当前用户接口不可用", ErrPlatformSiteAuth)
@@ -1384,7 +1385,10 @@ func fetchNewAPIGroupRates(ctx context.Context, session *PlatformSiteSession) ma
 	for _, path := range []string{"/api/user/self/groups", "/api/user/groups"} {
 		payload, err := platformSiteRequest(ctx, session, http.MethodGet, path, nil, nil)
 		if err != nil {
-			continue
+			if platformSiteRouteMissing(err) {
+				continue
+			}
+			break
 		}
 		if rates := parseGroupRates(payload); len(rates) > 0 {
 			return rates
@@ -1571,7 +1575,10 @@ func fetchNewAPIGroupResources(
 	for _, path := range []string{"/api/user/self/groups", "/api/user/groups"} {
 		payload, err := platformSiteRequest(ctx, session, http.MethodGet, path, nil, nil)
 		if err != nil {
-			continue
+			if platformSiteRouteMissing(err) {
+				continue
+			}
+			break
 		}
 		loaded = true
 		sources = append(sources, path)
@@ -1870,6 +1877,9 @@ func fetchModelsForSecret(ctx context.Context, session *PlatformSiteSession, sec
 			payload, err := platformSiteRequest(ctx, &keySession, http.MethodGet, path, nil, nil)
 			if err != nil {
 				lastErr = err
+				if !platformSiteRouteMissing(err) {
+					return nil, err
+				}
 				continue
 			}
 			models := stringsFromPayload(payload)
@@ -2025,6 +2035,9 @@ func fetchNewAPITokens(ctx context.Context, session *PlatformSiteSession) ([]map
 			if err == nil {
 				break
 			}
+			if !platformSiteRouteMissing(err) {
+				break
+			}
 		}
 		if err != nil {
 			return nil, err
@@ -2142,11 +2155,11 @@ func upstreamIdentifier(record map[string]any, keys ...string) (string, any) {
 func fetchNewAPITokenKey(ctx context.Context, session *PlatformSiteSession, externalID string) (string, error) {
 	path := "/api/token/" + url.PathEscape(externalID) + "/key"
 	payload, err := platformSiteRequest(ctx, session, http.MethodPost, path, nil, nil)
-	if err != nil {
+	if err != nil && platformSiteRouteMissing(err) {
 		payload, err = platformSiteRequest(ctx, session, http.MethodGet, path, nil, nil)
-		if err != nil {
-			return "", err
-		}
+	}
+	if err != nil {
+		return "", err
 	}
 	key := stringFromPayload(payload)
 	if key == "" {

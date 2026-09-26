@@ -111,3 +111,19 @@ accounts/data。两者均以实际密钥访问 `/v1/models` 确认子密钥模�
 管理员资源被拒绝、安全验证未完成或分页部分失败时使用最近成功快照，不将权限错误标记为
 密钥缺失。该矩阵描述当前代码事实，不代表上游 Passkey/WebAuthn、安全证明、Turnstile
 或站点风控已由 NexusTok 自动实现。
+
+### 3.3 2026-09-26 渠道 2、4、5 诊断与回退校准
+
+**变更前**：平台站点适配器对 HTML/WAF、HTTP 200 业务失败、网络超时和凭据失败的
+可观测类别不完整，兼容请求可能在非 404/405 错误后继续发送；站点同步失败的管理员
+状态容易混淆为普通响应格式错误。
+
+**变更后**：New API 使用 `/api/user/login` 的 `username/password`，Sub2API 使用
+`/api/v1/auth/login` 的 `email/password`。适配器按 authentication、
+interactive_verification、waf_blocked、route_missing 和 transport 分类上游结果，
+仅在 404/405 时尝试兼容路径。渠道同步失败保留最近成功密钥、模型、额度、倍率、权重
+和能力，并以 `credentials_invalid`、`secure_verification_required`、失败计数和脱敏
+响应诊断向管理员展示；渠道 4 网络不可达时保持快照可路由并等待后续重试。
+
+浏览器 Capture/Auth Flow 只承接人工验证，不绕过上游 Turnstile、验证码、Passkey 或
+WAF；当前容器缺少浏览器时不把该环境错误显示为响应格式错误。

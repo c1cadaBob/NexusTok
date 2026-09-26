@@ -455,3 +455,21 @@ Admin Key step-up 拒绝只标记资源为 `secure_verification_required`，不�
   覆盖、权重覆盖和源倍率仍按既有公式保留；
 - 管理员资源查询通过 `GET /api/channel/:id/upstream-resources` 读取资源状态，普通
   用户路由不会获得完整上游密钥、Cookie、Token 或 Refresh Token。
+
+### 14.2 渠道 2、4、5 同步失败时的路由回退（2026-09-26）
+
+平台站点同步失败必须与路由候选状态分开处理：
+
+- `credentials_invalid` 只表示账号密码或上游认证凭据明确失败；
+- `secure_verification_required` 表示 Turnstile、验证码、WAF、step-up 或人工浏览器
+  验证尚未完成；
+- 网络连接失败、等待响应头超时、TLS/DNS 错误记录为待重试/站点不可用诊断，不自动
+  停用父渠道或删除已有子密钥；
+- `sync_status=failed` 或 `running` 且 `last_sync_at > 0` 时，继续使用最近成功的
+  密钥、模型能力、额度、倍率和权重快照；失败轮次不更新 `last_sync_at`，也不依据
+  空响应执行密钥缺失判定；
+- 只有真实返回 404/405 的兼容接口才允许尝试下一条路径。401/403、交互验证、WAF、
+  step-up 和传输错误立即结束当前阶段，避免重复请求触发限流；
+- 管理员可见诊断保留站点 ID、同步阶段、HTTP 状态、Content-Type、响应类别、失败
+  计数和是否使用旧快照；密码、Cookie、Access Token、Refresh Token、临时令牌和完整
+  响应体永远不进入日志或错误响应。

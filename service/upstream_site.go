@@ -1,12 +1,14 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"math"
+	"mime"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -38,17 +40,25 @@ var (
 	ErrPlatformSiteIdentity    = errors.New("platform site identity mismatch")
 	ErrPlatformSiteAuthBundle  = errors.New("platform site auth bundle invalid")
 	ErrPlatformSiteSecurity    = errors.New("platform site security verification required")
+	ErrPlatformSiteTransport   = errors.New("platform site transport failed")
+	ErrPlatformSiteCredentials = errors.New("platform site credentials invalid")
 	ErrSub2APILoginRequest     = errors.New("sub2api login request failed")
 	ErrSub2APILoginHTTPStatus  = errors.New("sub2api login http status failed")
 	ErrSub2APILoginResponse    = errors.New("sub2api login response format failed")
 	ErrSub2APILoginToken       = errors.New("sub2api login token missing")
+	ErrSub2APILoginInteractive = errors.New("sub2api login requires interactive verification")
+	ErrSub2APILoginEmail       = errors.New("sub2api login requires a valid email")
 	ErrSub2APICurrentUser      = errors.New("sub2api current user request failed")
 )
 
 const (
-	upstreamKeySyncErrorSecretUnavailable = "credential_unavailable"
-	upstreamKeySyncErrorModelsUnavailable = "models_unavailable"
-	upstreamKeySyncErrorInvalidData       = "invalid_data"
+	upstreamKeySyncErrorSecretUnavailable   = "credential_unavailable"
+	upstreamKeySyncErrorModelsUnavailable   = "models_unavailable"
+	upstreamKeySyncErrorInvalidData         = "invalid_data"
+	platformSiteErrorCategoryAuthentication = "authentication"
+	platformSiteErrorCategoryInteractive    = "interactive_verification"
+	platformSiteErrorCategoryRouteMissing   = "route_missing"
+	platformSiteErrorCategoryWAF            = "waf_blocked"
 )
 
 type PlatformSiteSession struct {
@@ -101,6 +111,18 @@ type PlatformSiteSnapshot struct {
 	GroupsLoaded      bool
 	Endpoint          *PlatformSiteEndpointSnapshot
 	ResourceSyncs     []PlatformSiteResourceSyncSnapshot
+}
+
+type platformSiteResponseDiagnostics struct {
+	statusCode    int
+	initialURL    string
+	finalURL      string
+	contentType   string
+	redirected    bool
+	responseType  string
+	errorCode     string
+	errorReason   string
+	errorCategory string
 }
 
 type PlatformSiteIdentitySnapshot struct {
@@ -163,7 +185,8 @@ type PlatformSiteResourceSyncSnapshot struct {
 }
 
 type platformSiteHTTPStatusError struct {
-	statusCode int
+	statusCode  int
+	diagnostics platformSiteResponseDiagnostics
 }
 
 func (err *platformSiteHTTPStatusError) Error() string {
@@ -171,12 +194,69 @@ func (err *platformSiteHTTPStatusError) Error() string {
 }
 
 func (err *platformSiteHTTPStatusError) Unwrap() error {
-	return ErrPlatformSiteHTTPStatus
+	errs := []error{ErrPlatformSiteHTTPStatus}
+	switch err.diagnostics.errorCategory {
+	case platformSiteErrorCategoryAuthentication:
+		errs = append(errs, ErrPlatformSiteCredentials)
+	case platformSiteErrorCategoryInteractive, platformSiteErrorCategoryWAF:
+		errs = append(errs, ErrPlatformSiteSecurity)
+	}
+	return errors.Join(errs...)
+}
+
+type platformSiteResponseError struct {
+	diagnostics platformSiteResponseDiagnostics
+}
+
+func (err *platformSiteResponseError) Error() string {
+	if err == nil {
+		return ""
+	}
+	return fmt.Sprintf("%s: %s", ErrPlatformSiteResponse, err.diagnostics.summary())
+}
+
+func (err *platformSiteResponseError) Unwrap() error {
+	return ErrPlatformSiteResponse
+}
+
+type platformSiteBusinessError struct {
+	diagnostics platformSiteResponseDiagnostics
+	code        string
+	reason      string
+	category    string
+}
+
+func (err *platformSiteBusinessError) Error() string {
+	if err == nil {
+		return ""
+	}
+	parts := []string{ErrPlatformSiteAuth.Error()}
+	if err.category != "" {
+		parts = append(parts, err.category)
+	}
+	if err.reason != "" {
+		parts = append(parts, err.reason)
+	} else if err.code != "" {
+		parts = append(parts, err.code)
+	}
+	return strings.Join(parts, ": ")
+}
+
+func (err *platformSiteBusinessError) Unwrap() error {
+	switch err.category {
+	case platformSiteErrorCategoryInteractive, platformSiteErrorCategoryWAF:
+		return errors.Join(ErrPlatformSiteAuth, ErrPlatformSiteSecurity)
+	case platformSiteErrorCategoryAuthentication:
+		return errors.Join(ErrPlatformSiteAuth, ErrPlatformSiteCredentials)
+	default:
+		return ErrPlatformSiteAuth
+	}
 }
 
 type platformSiteSecurityError struct {
-	code       string
-	statusCode int
+	code        string
+	statusCode  int
+	diagnostics platformSiteResponseDiagnostics
 }
 
 func (err *platformSiteSecurityError) Error() string {
@@ -381,7 +461,7 @@ func platformSiteRequest(
 	}
 	response, err := session.Client.Do(request)
 	if err != nil {
-		return nil, err
+		return nil, errors.Join(ErrPlatformSiteTransport, err)
 	}
 	defer response.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(response.Body, upstreamSiteResponseLimit+1))
@@ -391,36 +471,89 @@ func platformSiteRequest(
 	if len(data) > upstreamSiteResponseLimit {
 		return nil, errors.New("平台站点响应体超过限制")
 	}
-	var payload any
-	if len(strings.TrimSpace(string(data))) > 0 {
-		if unmarshalErr := common.Unmarshal(data, &payload); unmarshalErr != nil &&
-			response.StatusCode >= http.StatusOK &&
-			response.StatusCode < http.StatusMultipleChoices {
-			return nil, fmt.Errorf("%w: JSON", ErrPlatformSiteResponse)
+	diagnostics := platformSiteResponseDiagnosticsFor(target, response)
+	diagnostics.responseType = platformSiteResponseType(response.Header.Get("Content-Type"), data)
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var payload any
+		if parsed, unmarshalErr := unmarshalPlatformSiteJSON(data); unmarshalErr == nil {
+			payload = parsed
+			diagnostics.errorCode, diagnostics.errorReason, diagnostics.errorCategory =
+				platformSiteErrorMetadata(payload)
 		}
+		if code := platformSiteSecurityCode(payload, string(data)); code != "" {
+			diagnostics.errorCode = sanitizePlatformSiteDiagnosticToken(code)
+			diagnostics.errorCategory = platformSiteErrorCategoryInteractive
+			return nil, &platformSiteSecurityError{
+				code:        code,
+				statusCode:  response.StatusCode,
+				diagnostics: diagnostics,
+			}
+		}
+		if diagnostics.errorCategory == "" {
+			diagnostics.errorCategory = classifyPlatformSiteResponseCategory(
+				response.StatusCode,
+				diagnostics.responseType,
+				data,
+			)
+		}
+		return nil, &platformSiteHTTPStatusError{
+			statusCode:  response.StatusCode,
+			diagnostics: diagnostics,
+		}
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return map[string]any{}, nil
+	}
+	var payload any
+	if err := common.Unmarshal(data, &payload); err != nil {
+		return nil, &platformSiteResponseError{diagnostics: diagnostics}
 	}
 	if code := platformSiteSecurityCode(payload, string(data)); code != "" {
+		diagnostics.errorCode = sanitizePlatformSiteDiagnosticToken(code)
+		diagnostics.errorCategory = platformSiteErrorCategoryInteractive
 		return nil, &platformSiteSecurityError{
-			code:       code,
-			statusCode: response.StatusCode,
+			code:        code,
+			statusCode:  response.StatusCode,
+			diagnostics: diagnostics,
 		}
-	}
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return nil, &platformSiteHTTPStatusError{statusCode: response.StatusCode}
-	}
-	if len(strings.TrimSpace(string(data))) == 0 {
-		return map[string]any{}, nil
 	}
 	if object, ok := payload.(map[string]any); ok {
 		if success, exists := object["success"].(bool); exists && !success {
-			return nil, ErrPlatformSiteAuth
+			code, reason, category := platformSiteErrorMetadata(object)
+			diagnostics.errorCode = code
+			diagnostics.errorReason = reason
+			diagnostics.errorCategory = category
+			return nil, &platformSiteBusinessError{
+				diagnostics: diagnostics,
+				code:        code,
+				reason:      reason,
+				category:    category,
+			}
 		}
 		if code := firstFloat(object, "code"); code != 0 && code != 200 {
-			return nil, ErrPlatformSiteAuth
+			errorCode, reason, category := platformSiteErrorMetadata(object)
+			diagnostics.errorCode = errorCode
+			diagnostics.errorReason = reason
+			diagnostics.errorCategory = category
+			return nil, &platformSiteBusinessError{
+				diagnostics: diagnostics,
+				code:        errorCode,
+				reason:      reason,
+				category:    category,
+			}
 		}
 		if code := firstString(object, "code"); code != "" &&
 			code != "0" && code != "200" && !strings.EqualFold(code, "success") {
-			return nil, ErrPlatformSiteAuth
+			errorCode, reason, category := platformSiteErrorMetadata(object)
+			diagnostics.errorCode = errorCode
+			diagnostics.errorReason = reason
+			diagnostics.errorCategory = category
+			return nil, &platformSiteBusinessError{
+				diagnostics: diagnostics,
+				code:        errorCode,
+				reason:      reason,
+				category:    category,
+			}
 		}
 	}
 	return payload, nil
@@ -455,6 +588,300 @@ func platformSiteSecurityCode(payload any, raw string) string {
 		return ""
 	}
 	return findCode(payload)
+}
+
+func unmarshalPlatformSiteJSON(data []byte) (any, error) {
+	var payload any
+	if err := common.Unmarshal(data, &payload); err != nil {
+		return nil, err
+	}
+	return payload, nil
+}
+
+func platformSiteErrorMetadata(payload any) (code, reason, category string) {
+	record, ok := payload.(map[string]any)
+	if !ok {
+		return "", "", ""
+	}
+	code = sanitizePlatformSiteDiagnosticToken(firstString(
+		record,
+		"code",
+		"error_code",
+		"errorCode",
+		"status",
+	))
+	reason = sanitizePlatformSiteDiagnosticToken(firstString(
+		record,
+		"reason",
+		"error_reason",
+		"errorReason",
+	))
+	if code == "" {
+		if numericCode, ok := firstOptionalFloat(record, "code", "status"); ok {
+			code = sanitizePlatformSiteDiagnosticToken(
+				strconv.FormatFloat(numericCode, 'f', -1, 64),
+			)
+		}
+	}
+	message := firstString(record, "message", "error", "detail")
+	category = classifyPlatformSiteErrorCategory(code, reason, message)
+	return code, reason, category
+}
+
+func classifyPlatformSiteErrorCategory(code, reason, message string) string {
+	combined := strings.ToLower(strings.Join([]string{code, reason, message}, " "))
+	switch {
+	case strings.Contains(combined, "turnstile"),
+		strings.Contains(combined, "captcha"),
+		strings.Contains(combined, "challenge"),
+		strings.Contains(combined, "verification_required"),
+		strings.Contains(combined, "requires_verification"),
+		strings.Contains(combined, "verify_required"),
+		strings.Contains(combined, "browser_verification"):
+		return platformSiteErrorCategoryInteractive
+	case strings.Contains(combined, "cloudflare"),
+		strings.Contains(combined, "cf-ray"),
+		strings.Contains(combined, "waf"),
+		strings.Contains(combined, "bot_detection"),
+		strings.Contains(combined, "access_denied"):
+		return platformSiteErrorCategoryWAF
+	case code == "401",
+		code == "403",
+		strings.Contains(combined, "invalid_credentials"),
+		strings.Contains(combined, "invalid_password"),
+		strings.Contains(combined, "invalid username"),
+		strings.Contains(combined, "password error"),
+		strings.Contains(combined, "username_or_password"),
+		strings.Contains(combined, "authentication_failed"),
+		strings.Contains(combined, "unauthorized"),
+		strings.Contains(combined, "login_failed"):
+		return platformSiteErrorCategoryAuthentication
+	case code == "404",
+		code == "405",
+		strings.Contains(combined, "route_not_found"),
+		strings.Contains(combined, "endpoint_not_found"),
+		strings.Contains(combined, "method_not_allowed"):
+		return platformSiteErrorCategoryRouteMissing
+	default:
+		return ""
+	}
+}
+
+func classifyPlatformSiteResponseCategory(statusCode int, responseType string, data []byte) string {
+	sample := bytes.TrimSpace(data)
+	if len(sample) > 4096 {
+		sample = sample[:4096]
+	}
+	combined := strings.ToLower(string(sample))
+	switch {
+	case strings.Contains(combined, "turnstile"),
+		strings.Contains(combined, "captcha"),
+		strings.Contains(combined, "challenge"),
+		strings.Contains(combined, "verify you are human"),
+		strings.Contains(combined, "browser verification"):
+		return platformSiteErrorCategoryInteractive
+	case strings.Contains(combined, "cloudflare"),
+		strings.Contains(combined, "cf-ray"),
+		strings.Contains(combined, "access denied"),
+		strings.Contains(combined, "waf"):
+		return platformSiteErrorCategoryWAF
+	case statusCode == http.StatusUnauthorized,
+		statusCode == http.StatusForbidden:
+		return platformSiteErrorCategoryAuthentication
+	case statusCode == http.StatusNotFound || statusCode == http.StatusMethodNotAllowed:
+		return platformSiteErrorCategoryRouteMissing
+	case responseType == "html" && statusCode == http.StatusForbidden:
+		return platformSiteErrorCategoryWAF
+	default:
+		return ""
+	}
+}
+
+func sanitizePlatformSiteDiagnosticToken(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 96 {
+		return ""
+	}
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') ||
+			(char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') ||
+			char == '_' || char == '-' || char == '.' {
+			continue
+		}
+		return ""
+	}
+	return value
+}
+
+func platformSiteErrorCategoryOf(err error) string {
+	if err == nil {
+		return ""
+	}
+	var statusErr *platformSiteHTTPStatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.diagnostics.errorCategory
+	}
+	var businessErr *platformSiteBusinessError
+	if errors.As(err, &businessErr) {
+		return businessErr.category
+	}
+	var securityErr *platformSiteSecurityError
+	if errors.As(err, &securityErr) {
+		return securityErr.diagnostics.errorCategory
+	}
+	return ""
+}
+
+func platformSiteRouteMissing(err error) bool {
+	return platformSiteErrorCategoryOf(err) == platformSiteErrorCategoryRouteMissing
+}
+
+func platformSiteInteractiveVerificationRequired(err error) bool {
+	return errors.Is(err, ErrPlatformSiteSecurity) ||
+		errors.Is(err, ErrSub2APILoginInteractive) ||
+		platformSiteErrorCategoryOf(err) == platformSiteErrorCategoryInteractive ||
+		platformSiteErrorCategoryOf(err) == platformSiteErrorCategoryWAF
+}
+
+func platformSiteResponseDiagnosticsFor(
+	initialURL string,
+	response *http.Response,
+) platformSiteResponseDiagnostics {
+	diagnostics := platformSiteResponseDiagnostics{
+		initialURL: sanitizePlatformSiteURL(initialURL),
+	}
+	if response != nil {
+		diagnostics.statusCode = response.StatusCode
+		diagnostics.contentType = safePlatformSiteContentType(response.Header.Get("Content-Type"))
+		diagnostics.finalURL = diagnostics.initialURL
+		if response.Request != nil && response.Request.URL != nil {
+			diagnostics.finalURL = sanitizePlatformSiteURL(response.Request.URL.String())
+			diagnostics.redirected = response.Request.URL.String() != initialURL
+		}
+	}
+	return diagnostics
+}
+
+func sanitizePlatformSiteURL(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
+}
+
+func safePlatformSiteContentType(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	mediaType, _, err := mime.ParseMediaType(raw)
+	if err != nil {
+		mediaType = strings.TrimSpace(strings.SplitN(raw, ";", 2)[0])
+	}
+	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
+	if mediaType == "" {
+		return ""
+	}
+	if len(mediaType) > 128 {
+		return mediaType[:128]
+	}
+	return mediaType
+}
+
+func platformSiteResponseType(contentType string, data []byte) string {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 {
+		return "empty"
+	}
+	mediaType := safePlatformSiteContentType(contentType)
+	if mediaType == "text/html" || mediaType == "application/xhtml+xml" {
+		return "html"
+	}
+	sample := trimmed
+	if len(sample) > 512 {
+		sample = sample[:512]
+	}
+	lowerSample := bytes.ToLower(sample)
+	for _, prefix := range [][]byte{
+		[]byte("<!doctype html"),
+		[]byte("<html"),
+		[]byte("<head"),
+		[]byte("<body"),
+	} {
+		if bytes.HasPrefix(lowerSample, prefix) {
+			return "html"
+		}
+	}
+	if strings.HasPrefix(mediaType, "text/plain") {
+		return "plain_text"
+	}
+	var payload any
+	if err := common.Unmarshal(trimmed, &payload); err == nil {
+		return "json"
+	}
+	return "invalid_json"
+}
+
+func (diagnostics platformSiteResponseDiagnostics) summary() string {
+	parts := make([]string, 0, 7)
+	if diagnostics.responseType != "" {
+		parts = append(parts, "响应类型："+diagnostics.responseType)
+	}
+	if diagnostics.statusCode > 0 {
+		parts = append(parts, fmt.Sprintf("HTTP %d", diagnostics.statusCode))
+	}
+	if diagnostics.contentType != "" {
+		parts = append(parts, "Content-Type："+diagnostics.contentType)
+	}
+	if diagnostics.finalURL != "" {
+		parts = append(parts, "地址："+diagnostics.finalURL)
+	}
+	if diagnostics.initialURL != "" && diagnostics.finalURL != "" {
+		if diagnostics.redirected {
+			parts = append(parts, "发生重定向")
+		} else {
+			parts = append(parts, "未发生重定向")
+		}
+	}
+	if diagnostics.errorReason != "" {
+		parts = append(parts, "错误原因："+diagnostics.errorReason)
+	} else if diagnostics.errorCode != "" {
+		parts = append(parts, "错误码："+diagnostics.errorCode)
+	}
+	return strings.Join(parts, "，")
+}
+
+func platformSiteResponseDiagnosticSuffix(err error) string {
+	var responseErr *platformSiteResponseError
+	if errors.As(err, &responseErr) {
+		if summary := responseErr.diagnostics.summary(); summary != "" {
+			return "（" + summary + "）"
+		}
+	}
+	var statusErr *platformSiteHTTPStatusError
+	if errors.As(err, &statusErr) {
+		if summary := statusErr.diagnostics.summary(); summary != "" {
+			return "（" + summary + "）"
+		}
+	}
+	var businessErr *platformSiteBusinessError
+	if errors.As(err, &businessErr) {
+		if summary := businessErr.diagnostics.summary(); summary != "" {
+			return "（" + summary + "）"
+		}
+	}
+	var securityErr *platformSiteSecurityError
+	if errors.As(err, &securityErr) {
+		if summary := securityErr.diagnostics.summary(); summary != "" {
+			return "（" + summary + "）"
+		}
+	}
+	return ""
 }
 
 func unwrapPlatformData(payload any) any {
@@ -742,12 +1169,25 @@ func syncPlatformSite(ctx context.Context, channelID int) error {
 	if err != nil {
 		account.SyncStatus = model.UpstreamSiteSyncFailed
 		account.LastSyncError = safeUpstreamError(err)
-		account.ConsecutiveFailures++
-		if updateErr := model.DB.Model(&account).Updates(map[string]any{
+		failureUpdates := map[string]any{
 			"sync_status":          account.SyncStatus,
 			"last_sync_error":      account.LastSyncError,
-			"consecutive_failures": account.ConsecutiveFailures,
-		}).Error; updateErr != nil {
+			"consecutive_failures": account.ConsecutiveFailures + 1,
+			"auth_status_reason":   account.LastSyncError,
+		}
+		if errors.Is(err, ErrPlatformSiteSecurity) ||
+			errors.Is(err, ErrSub2APILoginInteractive) ||
+			platformSiteErrorCategoryOf(err) == platformSiteErrorCategoryInteractive ||
+			platformSiteErrorCategoryOf(err) == platformSiteErrorCategoryWAF {
+			account.AuthStatus = model.PlatformSiteAuthStatusSecureVerificationRequired
+			failureUpdates["auth_status"] = account.AuthStatus
+		} else if errors.Is(err, ErrPlatformSiteCredentials) ||
+			errors.Is(err, ErrSub2APILoginEmail) {
+			account.AuthStatus = model.PlatformSiteAuthStatusCredentialsInvalid
+			failureUpdates["auth_status"] = account.AuthStatus
+		}
+		account.ConsecutiveFailures++
+		if updateErr := model.DB.Model(&account).Updates(failureUpdates).Error; updateErr != nil {
 			return errors.Join(err, updateErr)
 		}
 		model.InitChannelCache()
@@ -796,17 +1236,33 @@ func SafePlatformSiteError(err error) string {
 	switch {
 	case errors.Is(err, ErrPlatformSiteCredential):
 		return "平台凭据无法解密，请重新保存平台凭据"
+	case errors.Is(err, ErrSub2APILoginInteractive):
+		return "Sub2API 登录需要交互验证" +
+			platformSiteResponseDiagnosticSuffix(err) +
+			"，请先在上游站点完成验证，或使用浏览器采集 Access Token/Cookie"
 	case errors.Is(err, ErrPlatformSiteSecurity):
-		return "上游平台要求完成安全验证"
+		return "上游平台要求完成安全验证" + platformSiteResponseDiagnosticSuffix(err)
+	case errors.Is(err, ErrPlatformSiteTransport):
+		return "上游平台网络连接失败，已保留最近成功快照"
+	case errors.Is(err, ErrSub2APILoginEmail):
+		return "Sub2API 登录账号必须是合法邮箱，请使用上游账号邮箱或浏览器采集登录态"
+	case errors.Is(err, ErrPlatformSiteCredentials):
+		return "上游平台账号或密码错误"
 	case errors.Is(err, ErrSub2APILoginRequest):
 		return "Sub2API 登录请求失败"
 	case errors.Is(err, ErrSub2APILoginHTTPStatus):
 		if statusCode, ok := platformSiteHTTPStatusCode(err); ok {
-			return fmt.Sprintf("Sub2API 登录 HTTP 状态失败（HTTP %d）", statusCode)
+			return fmt.Sprintf(
+				"Sub2API 登录 HTTP 状态失败（HTTP %d%s）",
+				statusCode,
+				platformSiteResponseDiagnosticSuffix(err),
+			)
 		}
 		return "Sub2API 登录 HTTP 状态失败"
 	case errors.Is(err, ErrSub2APILoginResponse):
-		return "Sub2API 登录响应格式错误"
+		return "Sub2API 登录响应格式错误" +
+			platformSiteResponseDiagnosticSuffix(err) +
+			"，请检查管理端 URL、反向代理和登录 API 路径"
 	case errors.Is(err, ErrSub2APILoginToken):
 		return "Sub2API 登录未返回访问令牌"
 	case errors.Is(err, ErrSub2APICurrentUser):
@@ -831,10 +1287,14 @@ func SafePlatformSiteError(err error) string {
 
 func platformSiteHTTPStatusCode(err error) (int, bool) {
 	var statusErr *platformSiteHTTPStatusError
-	if !errors.As(err, &statusErr) || statusErr.statusCode <= 0 {
-		return 0, false
+	if errors.As(err, &statusErr) && statusErr.statusCode > 0 {
+		return statusErr.statusCode, true
 	}
-	return statusErr.statusCode, true
+	var businessErr *platformSiteBusinessError
+	if errors.As(err, &businessErr) && businessErr.diagnostics.statusCode > 0 {
+		return businessErr.diagnostics.statusCode, true
+	}
+	return 0, false
 }
 
 func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteAccount, snapshot PlatformSiteSnapshot) error {
