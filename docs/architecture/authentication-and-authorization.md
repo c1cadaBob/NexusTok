@@ -114,6 +114,7 @@ Cookie、Token、Refresh Token 和 Session ID 不写入日志、审计字段、U
 | 2026-09-26 | 平台站点认证补充 | 平台站点密码认证与系统面板 Session 的边界未单独说明，2FA/刷新失败语义未登记 | 明确短期上游认证流程、NewAPI Bundle 校验、Sub2API 轮换不确定结果和未覆盖的 Passkey/安全证明边界 | `service/upstream_site*.go`、`controller/upstream_channel.go`、平台站点资源接口 | NewAPI/Sub2API/all-api-hub 参考源路由和认证实现静态核对 |
 | 2026-09-27 | 面板登录 Session 复用 | 架构只描述统一签发，未说明重复登录会增长 Session 行和签发计数 | 增加浏览器 SID 定位 Cookie、复用条件、SID/Refresh Secret 轮换、AuthFlow 原子性和失败回退边界 | `service/auth_session.go`、`model/user_session.go`、`model/login_verification.go`、登录 Controller | 服务层回归测试、AuthFlow 事务测试、OWASP ASVS 5.0.0 与认证/会话 Cheat Sheet 核对 |
 | 2026-09-27 | NewAPI Dashboard 会话刷新 | 平台站点 Refresh Cookie、Session ID、Bearer Token 的组合和轮换持久化未统一；非 401 刷新失败可能被理解为可重试凭据错误 | 严格发送 `new_api_refresh` Cookie、`X-Auth-Session` 和旧 Bearer Token，Jar 轮换值优先持久化；现代 Bundle 不完整时拒绝旧协议降级，只有确认 401 凭据失效才允许密码回退，网络/WAF/安全验证/非 401 结果标记不确定 | 平台站点密码、Access Token、Cookie、Auth Flow 和凭据加密保存 | `service/upstream_site_adapters.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go`、OWASP ASVS 5.0.0、Authentication/Session Management Cheat Sheet |
+| 2026-09-27 | 平台站点渠道代理认证 | 平台站点密码登录、2FA 和资源请求没有读取渠道代理，客户端合并可能覆盖平台 CookieJar、超时或重定向校验 | 所有后台同步和 Auth Flow 按 `channel_id` 复用渠道 Transport；只替换底层 Transport，保留 CookieJar、30 秒超时、管理站点重定向校验和 Cookie 轮换；代理配置、网络、凭据、安全验证和资源失败分层 | NewAPI/Sub2API 平台站点认证、Refresh、资源同步和敏感凭据保护 | `service/upstream_site.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go`、OWASP 认证/会话与 SSRF 指引 |
 
 ### 9.1 2026-09-26 实现校准
 
@@ -157,3 +158,17 @@ WAF、Turnstile、权限不足、HTML、非 401 或结构不完整结果不会�
 该边界遵循 OWASP ASVS 5.0.0 中的认证失败处理、会话轮换、凭据保护和日志脱敏要求；
 本项目只保存加密后的平台凭据，不把密码、Cookie、Access Token、Refresh Token 或
 Session ID 写入日志、URL、普通响应或认证审计事件。
+
+### 9.3 2026-09-27 平台站点渠道代理边界
+
+**变更前**：平台站点认证客户端只按管理地址创建，渠道 `setting.proxy` 未覆盖密码登录、
+二次验证、Dashboard Refresh 和资源读取；需要局域网代理的渠道会在服务端直连失败。
+
+**变更后**：账号密码 Auth Flow 的开始与二次验证、后台同步的认证与资源请求都按
+`channel_id` 读取渠道代理、HTTP 协议和连接分片配置。客户端合并只替换 Transport，保留
+平台会话 CookieJar、30 秒超时、管理地址允许内网目标的重定向校验，以及显式 Cookie 与
+Jar 的合并和轮换持久化。空代理仍使用直连平台会话，代理地址不写入源码。
+
+认证失败、代理配置错误、网络错误、WAF/交互验证、权限不足和资源失败继续分别记录；
+任何错误路径都不得把密码、Cookie、Access Token、Refresh Token、Session ID 或完整上游
+响应写入日志、URL、审计字段或普通响应。

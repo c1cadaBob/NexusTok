@@ -590,6 +590,8 @@ func platformSiteAuthFlowErrorMessage(err error) string {
 		return "二次验证码错误"
 	case errors.Is(err, service.ErrPlatformSiteAuth):
 		return "上游平台认证失败"
+	case errors.Is(err, service.ErrPlatformSiteProxy):
+		return "平台站点渠道代理配置无效"
 	case errors.Is(err, service.ErrPlatformSiteAuthFlowInvalid):
 		return "认证流程无效"
 	default:

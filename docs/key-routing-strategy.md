@@ -434,6 +434,7 @@ Admin Key step-up 拒绝只标记资源为 `secure_verification_required`，不�
 | 2026-09-25 | 补充架构索引与元信息 | 已有密钥调度详细规则没有统一事实基线和架构入口 | 增加事实基线、代码来源、架构分工和变更记录；保留统一 `key_id`、候选和日志细节 | Routing Key、平台站点、模型获取、测试和管理员日志 | `model/upstream_routing.go`、`model/routing_key.go`、`middleware/distributor.go` 静态核对 |
 | 2026-09-26 | 平台站点资源同步补充 | 调度文档只描述站点总快照和子密钥能力，未记录资源来源与部分失败处理 | 补充 New API/Sub2API 资源接口、端点来源、管理/Relay 分离、安全验证失败和旧快照保留规则 | 平台站点同步、路由过滤、管理员诊断 | 参考项目路由、`service/upstream_site_adapters.go` 与资源模型设计核对 |
 | 2026-09-27 | NewAPI 类平台会话与资源失败回退 | Cookie 轮换、刷新会话和资源权限失败的调度影响未明确；部分分页失败可能被误解为密钥缺失 | 统一 CookieJar 优先级和 Dashboard Refresh 契约，认证成功后保存部分快照，完整分页前禁止缺失判定，并明确 `last_sync_at` 与管理员诊断边界 | NewAPI 派生平台密钥候选、模型能力、同步回退和日志可观测性 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`、平台站点专项文档 |
+| 2026-09-27 | 平台站点渠道代理出站 | 平台站点认证和资源同步未读取渠道代理，代理网络失败可能被误判为密钥不可用 | NewAPI/Sub2API 的管理面请求按渠道配置复用 Transport；认证成功后的资源失败继续保留最近成功密钥、模型、倍率和权重快照，代理配置错误单独诊断 | 渠道 4 代理同步、渠道 5 认证、平台站点路由候选和管理员可见错误 | `service/upstream_site.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go` |
 
 ### 14.1 2026-09-26 实现校准
 
@@ -497,3 +498,14 @@ Admin Key step-up 拒绝只标记资源为 `secure_verification_required`，不�
 - `sync_status=failed` 的本次轮次不更新 `last_sync_at`。管理员错误保留脱敏阶段、URL、
   HTTP 状态、Content-Type、响应类型、资源状态和快照回退信息，不写入密码、Cookie、
   Access Token、Refresh Token 或完整响应正文。
+
+### 14.4 2026-09-27 平台站点渠道代理与候选快照
+
+**变更前**：平台站点管理面没有使用渠道 `setting.proxy`，因此渠道 4 的管理认证、Refresh
+和资源读取可能绕过已配置的局域网代理；路由层无法区分代理配置错误与上游凭据错误。
+
+**变更后**：平台站点同步、密码登录和二次验证按渠道复用代理 Transport，平台会话的
+CookieJar、Cookie 轮换、30 秒超时和重定向校验保持不变。代理配置无效单独显示为代理
+错误；网络、认证、安全验证、权限和资源失败不删除最近成功 `UpstreamKey`、
+`UpstreamKeyAbility`、模型、倍率和权重。只有完整资源分页成功后才执行密钥缺失判定，
+管理 `BaseURL` 与 Relay 地址仍严格分离，兼容路径只在 404/405 时回退。

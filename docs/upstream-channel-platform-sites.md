@@ -750,6 +750,33 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
   资源状态、快照回退和人工安全验证标记，不记录密码、Cookie、Access Token、Refresh
   Token 或完整响应正文。
 
+### 9.4 2026-09-27 渠道代理与认证链路
+
+**变更前**
+
+- 平台站点同步和账号密码 Auth Flow 只根据站点 `BaseURL` 创建直连客户端，没有读取
+  渠道 `setting.proxy`；需要局域网代理的站点会在认证阶段直接连接失败；
+- 注入通用客户端时可能覆盖平台站点自己的 CookieJar、30 秒超时和内网重定向校验，
+  使认证会话和安全边界出现不一致；
+- NewAPI 返回 `Username or password...` 或 `user has been banned` 时，错误分类不够
+  准确，管理员只能看到普通认证失败。
+
+**变更后**
+
+- `syncPlatformSite`、NewAPI/Sub2API 适配器和平台站点账号密码/二次验证流程按
+  `channel_id` 读取 `model.Channel.setting`，使用已有 `GetHttpClientWithProxySettings`
+  的 `proxy`、HTTP 协议和连接分片配置；空代理继续使用平台站点直连客户端。渠道 4
+  的代理地址由数据库配置提供，代码不硬编码 `http://192.168.0.100:7897`；
+- 注入渠道客户端时只替换底层 `Transport`，保留平台站点 CookieJar、30 秒超时、
+  允许管理站点内网目标的重定向校验以及显式 Cookie 与 Jar 的合并规则。响应
+  `Set-Cookie` 仍会回写 `new_api_refresh` 和其它会话 Cookie；
+- `Username or password`、`user has been banned` 等真实 NewAPI 登录消息归类为凭据
+  错误；代理配置错误、网络失败、安全验证、WAF、权限不足和资源级失败继续保持
+  独立状态，不会互相降级，也不会将密码、Cookie、Token 或完整响应写入错误摘要；
+- 管理 API 的 `BaseURL` 仍是管理根地址并保留路径前缀，Relay 地址不用于猜测管理
+  路由；兼容接口只在明确 HTTP 404/405 时回退，认证成功但资源失败时继续保留最近
+  成功的密钥、模型、倍率、权重和能力快照。
+
 ## 与架构文档的关系
 
 本文保留平台站点、账号同步、子密钥字段、倍率/权重公式、权限、SSRF 和测试验收等详细规则；架构文档描述平台站点如何进入渠道过滤、Routing Key 和 Relay 转发。新增平台类型或调整同步/路由语义时，必须同时更新本文、能力矩阵和偏差表。
@@ -761,3 +788,4 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
 | 2026-09-25 | 补充架构索引与元信息 | 已有平台站点详细设计没有统一事实基线和架构入口 | 增加事实基线、代码来源、架构分工和变更记录；保留同步、倍率、权重和兼容性细节 | NewAPI、Sub2API、平台账号、上游密钥和路由 | `model/upstream_channel.go`、`model/routing_key.go`、`service/upstream_site.go` 静态核对 |
 | 2026-09-26 | 修复渠道 2、4、5 同步回归 | 上游 HTML/安全验证/HTTP 200 业务失败和网络错误可能被归为响应格式错误或覆盖同步状态；密码登录存在兼容字段漂移 | 固定 New API/Sub2API 登录 DTO，恢复脱敏响应诊断和错误分类，限制 404/405 回退，失败保留最近成功快照并区分凭据错误与安全验证 | 平台站点认证、资源同步、快照、管理员诊断和路由可用性 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`、本机三套参考源核对 |
 | 2026-09-27 | 修复 NewAPI 类平台会话与资源同步 | Refresh Cookie、Session ID 和 Bearer Token 的真实 Dashboard 契约未在所有入口统一；Cookie 轮换、资源失败和管理/Relay 地址边界可能导致渠道 4、5 同步失败 | 统一 CookieJar/显式 Cookie 优先级和轮换持久化，严格区分现代 Bundle，按资源保存部分快照并限制 404/405 回退，诊断显示脱敏最终地址和资源状态 | NewAPI 及派生平台认证、刷新、身份/余额、密钥、模型、路由快照和管理员诊断 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go`、New API/Sub2API/all-api-hub 参考源 |
+| 2026-09-27 | 接入渠道代理与 NewAPI 错误分类 | 平台站点同步、密码登录和 2FA 没有读取渠道代理；通用客户端注入可能覆盖平台会话 CookieJar、超时和重定向策略；真实账号错误消息分类不完整 | 按渠道配置复用代理 Transport，保留平台会话策略和 Cookie 轮换；同步与 Auth Flow 统一使用代理；识别 `username or password`/封禁消息并保持认证、网络、安全验证和资源失败分层 | 渠道 4 代理同步、渠道 5 认证诊断、NewAPI/Sub2API 平台站点认证和资源请求 | `service/upstream_site.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go`；代理、CookieJar、Auth Flow 和同步回归 |

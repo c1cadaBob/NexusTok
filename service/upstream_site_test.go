@@ -119,6 +119,174 @@ func TestPlatformSiteHTTPClientAllowsPrivateHTTPWithoutGlobalSSRFClient(t *testi
 	require.Equal(t, http.StatusOK, response.StatusCode)
 }
 
+func TestPlatformSiteChannelProxyPreservesCookieJarAndSessionPolicy(t *testing.T) {
+	proxyRequests := 0
+	proxy := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		proxyRequests++
+		writer.Header().Set("Content-Type", "application/json")
+		if request.URL.Path == "/first" {
+			http.SetCookie(writer, &http.Cookie{
+				Name:  "new_api_refresh",
+				Value: "proxy-refresh",
+				Path:  "/",
+			})
+		}
+		if request.URL.Path == "/second" {
+			assert.Equal(t, "new_api_refresh=proxy-refresh", request.Header.Get("Cookie"))
+		}
+		_, _ = writer.Write([]byte(`{"success":true}`))
+	}))
+	defer proxy.Close()
+
+	channelID := 9801
+	setting := fmt.Sprintf(`{"proxy":%q}`, proxy.URL)
+	channel := &model.Channel{
+		Id:      channelID,
+		Name:    "platform-site-proxy",
+		Setting: &setting,
+	}
+	require.NoError(t, model.DB.Create(channel).Error)
+	t.Cleanup(func() {
+		model.DB.Where("id = ?", channelID).Delete(&model.Channel{})
+	})
+
+	client, err := platformSiteHTTPClientForChannel(channelID)
+	require.NoError(t, err)
+	require.NotNil(t, client)
+
+	session, err := newPlatformSiteSession("http://127.0.0.1:1", nil)
+	require.NoError(t, err)
+	attachPlatformSiteHTTPClient(session, client)
+	require.NotNil(t, session.Client.Jar)
+	assert.Equal(t, upstreamSiteRequestTimeout, session.Client.Timeout)
+	assert.NotNil(t, session.Client.CheckRedirect)
+
+	_, err = platformSiteRequest(context.Background(), session, http.MethodGet, "/first", nil, nil)
+	require.NoError(t, err)
+	_, err = platformSiteRequest(context.Background(), session, http.MethodGet, "/second", nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, proxyRequests)
+}
+
+func TestSyncPlatformSiteUsesChannelProxyAndClassifiesNewAPICredentials(t *testing.T) {
+	require.NoError(t, model.DB.AutoMigrate(&model.PlatformSiteAccount{}, &model.Ability{}))
+
+	proxyRequests := 0
+	proxy := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		proxyRequests++
+		writer.Header().Set("Content-Type", "application/json")
+		if request.URL.Path == "/api/user/login" {
+			_, _ = writer.Write([]byte(
+				`{"success":false,"message":"Username or password error, or user has been banned"}`,
+			))
+			return
+		}
+		http.NotFound(writer, request)
+	}))
+	defer proxy.Close()
+
+	channelID := 9802
+	setting := fmt.Sprintf(`{"proxy":%q}`, proxy.URL)
+	channel := &model.Channel{
+		Id:           channelID,
+		Name:         "platform-site-sync-proxy",
+		Status:       common.ChannelStatusEnabled,
+		UpstreamKind: model.UpstreamKindPlatformSite,
+		Group:        "default",
+		Setting:      &setting,
+	}
+	require.NoError(t, model.DB.Create(channel).Error)
+	t.Cleanup(func() {
+		model.DB.Where("channel_id = ?", channelID).Delete(&model.PlatformSiteAccount{})
+		model.DB.Where("id = ?", channelID).Delete(&model.Channel{})
+	})
+
+	credentialCiphertext, err := model.EncryptPlatformSiteCredential(model.PlatformSiteCredential{
+		AuthType: model.UpstreamAuthPassword,
+		Username: "operator",
+		Password: "proxy-password",
+	})
+	require.NoError(t, err)
+	require.NoError(t, model.DB.Create(&model.PlatformSiteAccount{
+		ChannelID:            channelID,
+		Platform:             model.PlatformNewAPI,
+		BaseURL:              "http://127.0.0.1:1",
+		AuthType:             model.UpstreamAuthPassword,
+		CredentialCiphertext: credentialCiphertext,
+		CredentialKeyVersion: "v1",
+		SyncStatus:           model.UpstreamSiteSyncIdle,
+	}).Error)
+
+	err = SyncUpstreamSite(context.Background(), channelID)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPlatformSiteCredentials)
+	assert.NotErrorIs(t, err, ErrPlatformSiteTransport)
+	assert.GreaterOrEqual(t, proxyRequests, 1)
+	assert.Contains(t, SafePlatformSiteError(err), "账号或密码错误")
+	assert.NotContains(t, SafePlatformSiteError(err), "proxy-password")
+}
+
+func TestPlatformSiteAuthFlowUsesChannelProxyForLoginAndTwoFA(t *testing.T) {
+	proxyRequests := 0
+	proxy := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		proxyRequests++
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/user/login":
+			http.SetCookie(writer, &http.Cookie{
+				Name:  "new_api_refresh",
+				Value: "flow-refresh",
+				Path:  "/api/user/auth",
+			})
+			_, _ = writer.Write([]byte(
+				`{"success":true,"data":{"require_2fa":true,"flow_token":"flow-token"}}`,
+			))
+		case "/api/user/login/2fa":
+			assert.Equal(t, "new_api_refresh=flow-refresh", request.Header.Get("Cookie"))
+			_, _ = writer.Write([]byte(fmt.Sprintf(
+				`{"success":true,"data":{"access_token":"flow-access","token_type":"Bearer","access_expires_at":%d,"session":{"sid":"flow-session","current":true},"user":{"id":17}}}`,
+				common.GetTimestamp()+3600,
+			)))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer proxy.Close()
+
+	channelID := 9803
+	setting := fmt.Sprintf(`{"proxy":%q}`, proxy.URL)
+	channel := &model.Channel{Id: channelID, Name: "platform-site-auth-proxy", Setting: &setting}
+	require.NoError(t, model.DB.Create(channel).Error)
+	t.Cleanup(func() {
+		model.DB.Where("id = ?", channelID).Delete(&model.Channel{})
+	})
+
+	started, err := StartPlatformSiteAuthFlow(context.Background(), 9803, PlatformSiteAuthFlowStartRequest{
+		Platform:  model.PlatformNewAPI,
+		BaseURL:   "http://127.0.0.1:1",
+		AuthType:  model.UpstreamAuthPassword,
+		Username:  "operator",
+		Password:  "flow-password",
+		ChannelID: channelID,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, PlatformSiteAuthFlowStatusTwoFactorRequired, started.Status)
+	t.Cleanup(func() {
+		_ = DeletePlatformSiteAuthFlow(9803, started.FlowID)
+	})
+
+	verified, err := VerifyPlatformSiteAuthFlow(
+		context.Background(),
+		9803,
+		started.FlowID,
+		PlatformSiteAuthFlowVerifyRequest{Code: "123456"},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, PlatformSiteAuthFlowStatusAuthenticated, verified.Status)
+	assert.Equal(t, "17", verified.UserID)
+	assert.Equal(t, 2, proxyRequests)
+}
+
 func TestPlatformSiteCaptureSessionBindsUserAndConsumesAfterSave(t *testing.T) {
 	start, err := StartPlatformSiteCaptureSession(7, PlatformSiteCaptureStartRequest{
 		Platform: model.PlatformSub2API,

@@ -95,6 +95,7 @@
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 覆盖 `ChannelTypeNames` 当前全部渠道类型，并区分 API 映射、Adaptor、可路由能力和任务插件 | `constant/channel.go`、`common/api_type.go`、`relay/relay_adaptor.go`、`relay/channel/`、路由 | 渠道常量、API 映射、Adaptor 工厂、任务映射和流式列表静态核对 |
 | 2026-09-26 | 平台站点资源能力补充 | NewAPI/Sub2API 仅以渠道类型和适配器入口描述，未区分登录、刷新、资源和失败回退 | 以参考源真实路由登记 2FA、Bundle/轮换、身份/额度/分组/端点/密钥/模型资源及快照回退 | 平台站点管理与路由前置资源同步 | 参考项目路由、DTO、权限和失败语义静态核对 |
 | 2026-09-27 | NewAPI 类平台认证与资源能力校准 | Dashboard Refresh Cookie、Session ID 和管理/Relay 地址边界未列入矩阵；资源权限失败可能被误判为凭据失败 | 列明真实 Refresh 请求契约、CookieJar 轮换优先级、现代 Bundle 拒绝降级、资源级状态和最近成功快照保留规则 | NewAPI 派生平台管理面、子密钥路由模型能力和同步诊断 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`、本机参考源 |
+| 2026-09-27 | 平台站点渠道代理接入 | 管理面请求、密码登录和 2FA 未使用渠道代理，客户端合并可能改变会话安全策略 | 按渠道配置复用代理 Transport，保留 CookieJar、超时和重定向策略，并在矩阵中区分代理配置错误、认证错误、网络错误、安全验证和资源权限失败 | NewAPI/Sub2API 管理面、渠道同步和 Auth Flow | `service/upstream_site.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go` |
 
 ### 3.2 2026-09-26 实现校准
 
@@ -142,3 +143,19 @@ Bearer Token，CookieJar 的同名轮换值优先持久化。现代 Bundle 结�
 独立记录状态；权限不足、安全验证或部分分页失败只影响对应资源并使用最近成功快照，
 只有明确 404/405 才执行兼容路径回退。该能力矩阵仍不宣称自动完成上游 Passkey、
 Security Proof、Turnstile 或 WAF。
+
+### 3.5 2026-09-27 平台站点渠道代理与认证客户端
+
+**变更前**：NewAPI/Sub2API 平台站点管理请求按 `BaseURL` 使用直连客户端，渠道
+`setting.proxy` 没有覆盖认证、Refresh、资源和 Auth Flow；注入通用客户端还可能覆盖
+平台会话的 CookieJar、30 秒超时和管理站点重定向校验。
+
+**变更后**：后台同步、账号密码登录、2FA 和资源请求按 `channel_id` 读取渠道的
+`proxy`、HTTP 协议和连接分片配置，并只替换平台会话底层 Transport。平台会话自己的
+CookieJar、显式 Cookie 合并、30 秒超时和允许内网管理地址的重定向校验继续生效。空代理
+仍使用平台站点直连客户端，渠道 4 的局域网代理由配置提供，不写入代码。代理配置错误、
+网络失败、认证失败、安全验证、权限不足和资源失败分别记录，不能互相降级。
+
+兼容地址规则保持不变：`BaseURL` 是管理 API 根地址并保留路径前缀，Relay 地址不参与
+管理路由猜测；只有 HTTP 404/405 才允许继续兼容路径。认证成功但资源失败时保留最近成功
+密钥、模型、倍率、权重和能力快照。

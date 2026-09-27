@@ -46,6 +46,7 @@ var (
 	ErrPlatformSitePermission       = errors.New("platform site permission denied")
 	ErrPlatformSiteSessionLimit     = errors.New("platform site session limit reached")
 	ErrPlatformSiteRefreshUncertain = errors.New("platform site session refresh result uncertain")
+	ErrPlatformSiteProxy            = errors.New("platform site proxy configuration invalid")
 	ErrSub2APILoginRequest          = errors.New("sub2api login request failed")
 	ErrSub2APILoginHTTPStatus       = errors.New("sub2api login http status failed")
 	ErrSub2APILoginResponse         = errors.New("sub2api login response format failed")
@@ -332,12 +333,12 @@ type upstreamSiteSyncLock struct {
 
 var upstreamSiteLocks sync.Map
 
-func adapterForPlatform(platform string) (PlatformSiteAdapter, error) {
+func adapterForPlatform(platform string, client *http.Client) (PlatformSiteAdapter, error) {
 	switch strings.ToLower(strings.TrimSpace(platform)) {
 	case model.PlatformNewAPI:
-		return NewNewAPIAdapter(nil), nil
+		return NewNewAPIAdapter(client), nil
 	case model.PlatformSub2API:
-		return NewSub2APIAdapter(nil), nil
+		return NewSub2APIAdapter(client), nil
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrUnsupportedPlatformSite, platform)
 	}
@@ -415,6 +416,32 @@ func newPlatformSiteHTTPClient() (*http.Client, error) {
 	return client, nil
 }
 
+func platformSiteHTTPClientForChannel(channelID int) (*http.Client, error) {
+	if channelID <= 0 || model.DB == nil {
+		return nil, nil
+	}
+
+	var channel model.Channel
+	if err := model.DB.Select("id", "setting").First(&channel, "id = ?", channelID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, ErrPlatformSiteProxy
+	}
+
+	settings := channel.GetSetting()
+	if strings.TrimSpace(settings.Proxy) == "" &&
+		strings.TrimSpace(settings.HTTPProtocol) == "" &&
+		settings.HTTP2ConnectionShards == 0 {
+		return nil, nil
+	}
+	client, err := GetHttpClientWithProxySettings(settings.Proxy, settings)
+	if err != nil {
+		return nil, ErrPlatformSiteProxy
+	}
+	return client, nil
+}
+
 func newPlatformSiteSession(baseURL string, headers http.Header) (*PlatformSiteSession, error) {
 	normalized, err := normalizePlatformSiteURL(baseURL)
 	if err != nil {
@@ -434,10 +461,12 @@ func attachPlatformSiteHTTPClient(session *PlatformSiteSession, client *http.Cli
 	if session == nil || client == nil {
 		return
 	}
-	clone := *client
-	if clone.Jar == nil && session.Client != nil {
-		clone.Jar = session.Client.Jar
+	if session.Client == nil {
+		session.Client = client
+		return
 	}
+	clone := *session.Client
+	clone.Transport = client.Transport
 	session.Client = &clone
 }
 
@@ -779,6 +808,8 @@ func classifyPlatformSiteErrorCategory(code, reason, message string) string {
 		strings.Contains(combined, "invalid username"),
 		strings.Contains(combined, "password error"),
 		strings.Contains(combined, "username_or_password"),
+		strings.Contains(combined, "username or password"),
+		strings.Contains(combined, "user has been banned"),
 		strings.Contains(combined, "authentication_failed"),
 		strings.Contains(combined, "unauthorized"),
 		strings.Contains(combined, "login_failed"):
@@ -1299,49 +1330,54 @@ func syncPlatformSite(ctx context.Context, channelID int) error {
 		credential.AuthType = authType
 	}
 	if err == nil {
-		var adapter PlatformSiteAdapter
-		adapter, err = adapterForPlatform(account.Platform)
-		if err != nil {
-			err = wrapPlatformSiteStage("适配器选择", err)
-		}
-		if err == nil {
-			session, authenticateErr := adapter.Authenticate(ctx, account.BaseURL, credential)
-			err = authenticateErr
-			if err == nil {
-				if session.CredentialUpdate != nil {
-					err = persistPlatformSiteCredential(&account, *session.CredentialUpdate)
-					if err != nil {
-						err = wrapPlatformSiteStage("凭据更新", err)
-					}
-				}
+		siteClient, clientErr := platformSiteHTTPClientForChannel(account.ChannelID)
+		if clientErr != nil {
+			err = wrapPlatformSiteStage("平台站点代理", clientErr)
+		} else {
+			var adapter PlatformSiteAdapter
+			adapter, err = adapterForPlatform(account.Platform, siteClient)
+			if err != nil {
+				err = wrapPlatformSiteStage("适配器选择", err)
 			}
 			if err == nil {
-				var snapshot PlatformSiteSnapshot
-				snapshot, fetchErr := adapter.FetchSnapshot(ctx, session)
-				normalizePlatformSiteResourceSyncs(&snapshot)
-				if session.CredentialUpdate != nil {
-					if updateErr := persistPlatformSiteCredential(&account, *session.CredentialUpdate); updateErr != nil {
-						fetchErr = errors.Join(fetchErr, wrapPlatformSiteStage("凭据更新", updateErr))
-					}
-				}
-				if fetchErr != nil {
-					err = fetchErr
-					if platformSiteSnapshotHasData(snapshot) {
-						if snapshotErr := persistPlatformSiteSnapshot(ctx, &account, snapshot); snapshotErr != nil {
-							err = errors.Join(err, wrapPlatformSiteStage("部分快照写库", snapshotErr))
+				session, authenticateErr := adapter.Authenticate(ctx, account.BaseURL, credential)
+				err = authenticateErr
+				if err == nil {
+					if session.CredentialUpdate != nil {
+						err = persistPlatformSiteCredential(&account, *session.CredentialUpdate)
+						if err != nil {
+							err = wrapPlatformSiteStage("凭据更新", err)
 						}
 					}
-				} else {
-					err = persistPlatformSiteSnapshot(ctx, &account, snapshot)
-					if err != nil {
-						err = wrapPlatformSiteStage("同步写库", err)
-					} else if platformSiteSnapshotHasBlockingResourceFailure(snapshot) {
-						err = wrapPlatformSiteStage("资源同步", ErrPlatformSiteResource)
-					}
 				}
-			} else if session != nil && session.CredentialUpdate != nil {
-				if updateErr := persistPlatformSiteCredential(&account, *session.CredentialUpdate); updateErr != nil {
-					err = errors.Join(err, wrapPlatformSiteStage("凭据状态更新", updateErr))
+				if err == nil {
+					var snapshot PlatformSiteSnapshot
+					snapshot, fetchErr := adapter.FetchSnapshot(ctx, session)
+					normalizePlatformSiteResourceSyncs(&snapshot)
+					if session.CredentialUpdate != nil {
+						if updateErr := persistPlatformSiteCredential(&account, *session.CredentialUpdate); updateErr != nil {
+							fetchErr = errors.Join(fetchErr, wrapPlatformSiteStage("凭据更新", updateErr))
+						}
+					}
+					if fetchErr != nil {
+						err = fetchErr
+						if platformSiteSnapshotHasData(snapshot) {
+							if snapshotErr := persistPlatformSiteSnapshot(ctx, &account, snapshot); snapshotErr != nil {
+								err = errors.Join(err, wrapPlatformSiteStage("部分快照写库", snapshotErr))
+							}
+						}
+					} else {
+						err = persistPlatformSiteSnapshot(ctx, &account, snapshot)
+						if err != nil {
+							err = wrapPlatformSiteStage("同步写库", err)
+						} else if platformSiteSnapshotHasBlockingResourceFailure(snapshot) {
+							err = wrapPlatformSiteStage("资源同步", ErrPlatformSiteResource)
+						}
+					}
+				} else if session != nil && session.CredentialUpdate != nil {
+					if updateErr := persistPlatformSiteCredential(&account, *session.CredentialUpdate); updateErr != nil {
+						err = errors.Join(err, wrapPlatformSiteStage("凭据状态更新", updateErr))
+					}
 				}
 			}
 		}
@@ -1577,6 +1613,8 @@ func SafePlatformSiteError(err error) string {
 		return "上游平台网络连接失败" +
 			platformSiteStageDiagnosticSuffix(err) +
 			"，已保留最近成功快照"
+	case errors.Is(err, ErrPlatformSiteProxy):
+		return "平台站点渠道代理配置无效" + platformSiteStageDiagnosticSuffix(err)
 	case errors.Is(err, ErrSub2APILoginEmail):
 		return "Sub2API 登录账号必须是合法邮箱" +
 			platformSiteStageDiagnosticSuffix(err) +

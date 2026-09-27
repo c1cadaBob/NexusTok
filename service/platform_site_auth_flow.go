@@ -145,7 +145,11 @@ func StartPlatformSiteAuthFlow(ctx context.Context, userID int, request Platform
 	if credential.Username == "" || credential.Password == "" {
 		return nil, fmt.Errorf("%w: 账号密码不能为空", ErrPlatformSiteAuth)
 	}
-	session, payload, err := authenticatePlatformSitePassword(ctx, platform, baseURL, credential)
+	siteClient, err := platformSiteHTTPClientForChannel(request.ChannelID)
+	if err != nil {
+		return nil, err
+	}
+	session, payload, err := authenticatePlatformSitePassword(ctx, platform, baseURL, credential, siteClient)
 	if err != nil {
 		return nil, classifyPlatformSiteAuthFlowError(err)
 	}
@@ -217,6 +221,11 @@ func VerifyPlatformSiteAuthFlow(ctx context.Context, userID int, flowID string, 
 	if err != nil {
 		return nil, err
 	}
+	siteClient, err := platformSiteHTTPClientForChannel(record.ChannelID)
+	if err != nil {
+		return nil, err
+	}
+	attachPlatformSiteHTTPClient(session, siteClient)
 	if record.Platform == model.PlatformNewAPI {
 		session.CredentialUpdate = &secret.Credential
 		syncNewAPISessionHeaders(session, secret.Credential)
@@ -342,7 +351,13 @@ func DeletePlatformSiteAuthFlow(userID int, flowID string) error {
 	return err
 }
 
-func authenticatePlatformSitePassword(ctx context.Context, platform, baseURL string, credential model.PlatformSiteCredential) (*PlatformSiteSession, any, error) {
+func authenticatePlatformSitePassword(
+	ctx context.Context,
+	platform,
+	baseURL string,
+	credential model.PlatformSiteCredential,
+	client *http.Client,
+) (*PlatformSiteSession, any, error) {
 	if platform != model.PlatformNewAPI && platform != model.PlatformSub2API {
 		return nil, nil, ErrUnsupportedPlatformSite
 	}
@@ -350,6 +365,7 @@ func authenticatePlatformSitePassword(ctx context.Context, platform, baseURL str
 	if err != nil {
 		return nil, nil, err
 	}
+	attachPlatformSiteHTTPClient(session, client)
 	if platform == model.PlatformSub2API {
 		setSub2APIBrowserHeaders(session)
 		payload, err := loginSub2APIWithPassword(ctx, session, credential)
