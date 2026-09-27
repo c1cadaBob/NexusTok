@@ -457,25 +457,6 @@ func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *Platfo
 		UsedQuotaSet: usedQuotaSet,
 		KeysComplete: true,
 	}
-	accountModels, accountModelsErr := fetchNewAPIModels(ctx, session)
-	if accountModelsErr == nil {
-		snapshot.Models = accountModels
-		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, PlatformSiteResourceSyncSnapshot{
-			ResourceType:   model.PlatformSiteResourceModels,
-			Status:         model.PlatformSiteResourceStatusSuccess,
-			SourceEndpoint: "/api/user/models,/api/user/available_models,/api/user/available_model/",
-			RecordCount:    len(accountModels),
-		})
-	} else {
-		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs,
-			newAPIResourceSyncFailure(
-				model.PlatformSiteResourceModels,
-				"/api/user/models,/api/user/available_models,/api/user/available_model/",
-				accountModelsErr,
-				false,
-			),
-		)
-	}
 	if selfErr == nil {
 		snapshot.Identity = platformSiteIdentityFromRecord(
 			self,
@@ -572,6 +553,29 @@ func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *Platfo
 			groupErr,
 			groupsLoaded,
 		))
+	}
+	ratioConfigPayload, ratioConfigErr := platformSiteRequest(
+		ctx,
+		session,
+		http.MethodGet,
+		"/api/ratio_config",
+		nil,
+		nil,
+	)
+	if ratioConfigErr != nil {
+		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, newAPIResourceSyncFailure(
+			model.PlatformSiteResourceEndpoints,
+			"/api/ratio_config",
+			ratioConfigErr,
+			false,
+		))
+	} else {
+		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, PlatformSiteResourceSyncSnapshot{
+			ResourceType:   model.PlatformSiteResourceEndpoints,
+			Status:         model.PlatformSiteResourceStatusSuccess,
+			SourceEndpoint: "/api/ratio_config",
+			RecordCount:    len(recordsFromPayload(ratioConfigPayload)),
+		})
 	}
 	pricingPayload, pricingErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/pricing", nil, nil)
 	if pricingErr == nil {
@@ -701,6 +705,25 @@ func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *Platfo
 			}
 		}
 		snapshot.Keys = append(snapshot.Keys, item)
+	}
+	accountModels, accountModelsErr := fetchNewAPIModels(ctx, session)
+	if accountModelsErr == nil {
+		snapshot.Models = uniqueStrings(append(snapshot.Models, accountModels...))
+		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, PlatformSiteResourceSyncSnapshot{
+			ResourceType:   model.PlatformSiteResourceModels,
+			Status:         model.PlatformSiteResourceStatusSuccess,
+			SourceEndpoint: "/api/user/models,/api/user/available_models,/api/user/available_model/",
+			RecordCount:    len(accountModels),
+		})
+	} else {
+		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs,
+			newAPIResourceSyncFailure(
+				model.PlatformSiteResourceModels,
+				"/api/user/models,/api/user/available_models,/api/user/available_model/",
+				accountModelsErr,
+				false,
+			),
+		)
 	}
 	keysResourceStatus := model.PlatformSiteResourceStatusSuccess
 	keysFailureReason := ""
@@ -2822,16 +2845,14 @@ func (info newAPITokenPageInfo) hasMore(
 
 func fetchNewAPITokens(ctx context.Context, session *PlatformSiteSession) ([]map[string]any, error) {
 	result := make([]map[string]any, 0)
-	page := 0
-	oneBased := false
-	numberingDetected := false
+	page := 1
 	for fetchedPages := 0; fetchedPages < upstreamSiteMaxPages; fetchedPages++ {
 		var payload any
 		var err error
 		for _, path := range []string{"/api/token/", "/api/token", "/api/tokens"} {
 			payload, err = platformSiteRequest(ctx, session, http.MethodGet, path, url.Values{
-				"p":    {fmt.Sprint(page)},
-				"size": {fmt.Sprint(upstreamSitePageSize)},
+				"p":         {fmt.Sprint(page)},
+				"page_size": {fmt.Sprint(upstreamSitePageSize)},
 			}, nil)
 			if err == nil {
 				break
@@ -2846,18 +2867,8 @@ func fetchNewAPITokens(ctx context.Context, session *PlatformSiteSession) ([]map
 		pageItems := recordsFromPayload(payload)
 		result = append(result, pageItems...)
 		pageInfo := newAPITokenPageInfoFromPayload(payload)
-		if !numberingDetected {
-			// New API 接受 p=0 但会返回归一化后的 page=1；没有页码元数据
-			// 的兼容实现按零起始页处理，下一页使用 p=1。
-			oneBased = pageInfo.responsePageSet && pageInfo.responsePage == 1
-			numberingDetected = true
-		}
-		if !pageInfo.hasMore(page, len(pageItems), oneBased) {
+		if !pageInfo.hasMore(page, len(pageItems), true) {
 			return result, nil
-		}
-		if oneBased && page == 0 {
-			page = 2
-			continue
 		}
 		page++
 	}
@@ -2886,14 +2897,16 @@ func fetchNewAPITokenKeys(ctx context.Context, session *PlatformSiteSession, tok
 			batchRouteMissing = platformSiteRouteMissing(err)
 		} else {
 			for id, key := range stringsMapFromPayload(payload) {
-				result[id] = key
+				if isCompleteNewAPITokenKey(key) {
+					result[id] = strings.TrimSpace(key)
+				}
 			}
 		}
 	}
 	var fallbackErr error
 	for _, token := range tokens {
 		externalID := firstString(token, "id", "token_id", "key_id")
-		if externalID == "" || strings.TrimSpace(result[externalID]) != "" {
+		if externalID == "" || isCompleteNewAPITokenKey(result[externalID]) {
 			continue
 		}
 		secret := firstString(token, "key", "token", "api_key")
@@ -2905,21 +2918,19 @@ func fetchNewAPITokenKeys(ctx context.Context, session *PlatformSiteSession, tok
 			failures[externalID] = batchErr
 			continue
 		}
-		if batchErr == nil {
-			failures[externalID] = fmt.Errorf("%w: 批量 Key 响应未包含该密钥", ErrPlatformSiteResponse)
-			continue
-		}
 		key, err := fetchNewAPITokenKey(ctx, session, externalID)
 		if err != nil {
 			fallbackErr = err
 			failures[externalID] = err
 			continue
 		}
-		result[externalID] = key
+		if isCompleteNewAPITokenKey(key) {
+			result[externalID] = strings.TrimSpace(key)
+		}
 	}
 	for _, token := range tokens {
 		externalID := firstString(token, "id", "token_id", "key_id")
-		if externalID == "" || strings.TrimSpace(result[externalID]) != "" {
+		if externalID == "" || isCompleteNewAPITokenKey(result[externalID]) {
 			continue
 		}
 		secret := firstString(token, "key", "token", "api_key")
@@ -2979,13 +2990,24 @@ func fetchNewAPITokenKey(ctx context.Context, session *PlatformSiteSession, exte
 	path := "/api/token/" + url.PathEscape(externalID) + "/key"
 	payload, err := platformSiteRequest(ctx, session, http.MethodPost, path, nil, nil)
 	if err != nil {
-		return "", err
+		if !platformSiteRouteMissing(err) {
+			return "", err
+		}
+		payload, err = platformSiteRequest(ctx, session, http.MethodGet, path, nil, nil)
+		if err != nil {
+			return "", err
+		}
 	}
 	key := stringFromPayload(payload)
-	if key == "" {
+	if !isCompleteNewAPITokenKey(key) {
 		return "", fmt.Errorf("%w: 完整 Key 为空", ErrPlatformSiteResponse)
 	}
 	return key, nil
+}
+
+func isCompleteNewAPITokenKey(value string) bool {
+	value = strings.TrimSpace(value)
+	return value != "" && !strings.Contains(value, "*")
 }
 
 func stringsMapFromPayload(payload any) map[string]string {

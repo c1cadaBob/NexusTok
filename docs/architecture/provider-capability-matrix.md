@@ -1,7 +1,7 @@
 # 渠道能力矩阵
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-26
+> 事实基线日期：2026-09-27
 > 主要代码来源：`constant/channel.go`、`constant/api_type.go`、`common/api_type.go`、`relay/relay_adaptor.go`、`relay/common/relay_info.go`、`relay/channel/*/adaptor.go`、`router/relay-router.go`、`router/task-plugin-protocol-router.go`
 > 关联详细文档：[`README.md`](./README.md)、[`relay-routing-and-conversion.md`](./relay-routing-and-conversion.md)、[`implementation-deviations.md`](./implementation-deviations.md)、[`../key-routing-strategy.md`](../key-routing-strategy.md)
 
@@ -159,3 +159,26 @@ CookieJar、显式 Cookie 合并、30 秒超时和允许内网管理地址的重
 兼容地址规则保持不变：`BaseURL` 是管理 API 根地址并保留路径前缀，Relay 地址不参与
 管理路由猜测；只有 HTTP 404/405 才允许继续兼容路径。认证成功但资源失败时保留最近成功
 密钥、模型、倍率、权重和能力快照。
+
+### 3.6 2026-09-27 NewAPI 旧版协议与能力边界校准
+
+**变更前**：NewAPI 平台站点矩阵只描述资源类型和一般回退，未明确旧版一基 Token
+分页、`/api/status` 的尽力读取、`/api/ratio_config` 的可选状态以及批量 Key 的
+部分结果语义；账号级模型与子密钥真实模型能力的边界也不够明确。
+
+**变更后**：
+
+- NewAPI 用户态同步使用旧版主契约：`/api/status` 尽力读取并在失败时使用默认换算，
+  `/api/user/login?turnstile=` 只发送 `username/password`，随后读取 `self`、主分组、
+  `ratio_config`、Token 分页和 Key；
+- Token 主请求为 `/api/token/?p=1&page_size=100`，后续页按一基页码递增，不再以
+  `p=0&size=100` 作为主路径；`/api/token`、`/api/tokens`、分组和单条 Key 的兼容
+  路径只在 404/405 回退；
+- 批量 Key 缺少部分 ID 时仅补偿缺失项，掩码 Key 不能进入路由；Token 自带的
+  `model_limits`/`models` 优先作为单个 Key 能力，账号级模型目录只作为诊断和展示；
+- 认证成功但可选资源失败时，资源矩阵分别记录 identity、usage、groups、endpoints、
+  keys、models 和 admin 状态，保留最近成功快照。父渠道成功要求至少一个完整 Key
+  和已确认模型能力；否则保持 failed 但不删除身份、余额和旧快照；
+- Dashboard Refresh 仍要求 `new_api_refresh`、`X-Auth-Session` 和旧 Bearer Token，
+  渠道代理只从 `setting.proxy` 读取，管理 `BaseURL` 与 Relay 地址继续分离。当前
+  前端资源模型不变。

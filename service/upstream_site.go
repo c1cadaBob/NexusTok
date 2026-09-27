@@ -1538,20 +1538,16 @@ func mergePlatformSiteResourceReasons(left, right string) string {
 }
 
 func platformSiteSnapshotHasBlockingResourceFailure(snapshot PlatformSiteSnapshot) bool {
-	for _, resource := range snapshot.ResourceSyncs {
-		if resource.ResourceType == model.PlatformSiteResourceModels &&
-			len(snapshot.Models) > 0 {
+	for _, key := range snapshot.Keys {
+		if key.SyncError != "" ||
+			strings.TrimSpace(key.Secret) == "" ||
+			!key.ModelsSynced ||
+			len(uniqueStrings(key.Models)) == 0 {
 			continue
 		}
-		status := resource.Status
-		switch status {
-		case model.PlatformSiteResourceStatusFailed,
-			model.PlatformSiteResourceStatusPartial,
-			model.PlatformSiteResourceStatusSecureVerificationRequired:
-			return true
-		}
+		return false
 	}
-	return false
+	return true
 }
 
 func persistPlatformSiteCredential(account *model.PlatformSiteAccount, credential model.PlatformSiteCredential) error {

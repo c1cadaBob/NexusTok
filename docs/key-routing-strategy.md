@@ -1,7 +1,7 @@
 # 密钥调度策略与日志可观测性
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-26
+> 事实基线日期：2026-09-27
 > 主要代码来源：`model/routing_key.go`、`model/upstream_routing.go`、`middleware/distributor.go`、`service/channel_select.go`、`controller/channel-test.go`、`model/channel_cache.go`
 > 关联架构文档：[`docs/architecture/relay-routing-and-conversion.md`](architecture/relay-routing-and-conversion.md)、[`docs/architecture/provider-capability-matrix.md`](architecture/provider-capability-matrix.md)、[`docs/architecture/implementation-deviations.md`](architecture/implementation-deviations.md)
 
@@ -509,3 +509,25 @@ CookieJar、Cookie 轮换、30 秒超时和重定向校验保持不变。代理�
 错误；网络、认证、安全验证、权限和资源失败不删除最近成功 `UpstreamKey`、
 `UpstreamKeyAbility`、模型、倍率和权重。只有完整资源分页成功后才执行密钥缺失判定，
 管理 `BaseURL` 与 Relay 地址仍严格分离，兼容路径只在 404/405 时回退。
+
+### 14.5 2026-09-27 NewAPI 子密钥能力与旧版同步边界
+
+**变更前**：NewAPI 派生平台的 Token 列表分页、批量 Key 补偿和模型能力来源没有
+完全按旧版同步契约登记；分页失败或账号级模型目录容易影响路由候选和缺失 Key 判断。
+
+**变更后**：
+
+- NewAPI Token 列表固定从 `p=1&page_size=100` 开始，只有完整分页和 Key 集合确认
+  后才把未返回的 `UpstreamKey` 标记为缺失；`KeysComplete=false` 时继续使用最近
+  成功的密钥快照；
+- `POST /api/token/batch/keys` 的部分响应只补偿缺失 ID，`POST /api/token/{id}/key`
+  只有 404/405 才用 GET 回退，空值和掩码值不可路由；
+- `model_limits`/`models` 等 Token 字段是单个 Key 的首选模型来源；没有字段时才
+  用该 Key 自己访问 `/v1/models`。账号级模型、价格和 Admin channel 模型不能复制
+  为所有 Key；
+- 认证成功、分页完整、至少一个完整 Key 和真实模型能力确认后，父渠道更新
+  `sync_status=success` 与 `last_sync_at`；可选资源失败保留最近成功的余额、模型、
+  倍率、权重和能力，并在资源状态中区分权限、安全验证、WAF、代理和网络错误；
+- NewAPI Dashboard Refresh 继续使用 `new_api_refresh`、`X-Auth-Session` 和 Bearer
+  Token；渠道代理读取 `setting.proxy`，不进入路由文档中的固定地址或源码常量。当前
+  前端页面和资源展示模型保持不变。

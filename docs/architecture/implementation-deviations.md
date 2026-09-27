@@ -1,7 +1,7 @@
 # 实现偏差登记
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-26
+> 事实基线日期：2026-09-27
 > 主要代码来源：`router/relay-router.go`、`common/api_type.go`、`relay/relay_adaptor.go`、`relay/channel/*/adaptor.go`、`router/task-plugin-protocol-router.go`、`docs/architecture/*.md`
 > 关联详细文档：[`README.md`](./README.md)、[`relay-routing-and-conversion.md`](./relay-routing-and-conversion.md)、[`provider-capability-matrix.md`](./provider-capability-matrix.md)、[`../plugin-api/README.md`](../plugin-api/README.md)
 
@@ -93,6 +93,23 @@
 代理。适配器只接收代理 Transport，平台站点会话继续拥有自己的 CookieJar、超时和
 重定向安全策略。空代理保持原有直连行为；代理配置错误不会伪装成账号密码错误。真实
 上游成功与否仍需在能访问渠道 4 局域网代理的运行网络中验收。
+
+### 3.5 2026-09-27 NewAPI 旧版协议校准
+
+**变更前**：当前适配器的 NewAPI Token 主路径曾使用 `p=0&size=100`，旧版
+`service/upstreamaccount` 的 status、登录、self、groups、ratio、Token 和 Key 请求
+顺序没有完整保留；批量 Key 的部分响应可能导致重复读取，账号级模型也可能被误解为
+每个 Key 的能力。
+
+**变更后**：NewAPI 主分页固定使用 `p=1&page_size=100`，密码登录只发送
+`username/password`，`/api/status` 失败使用默认换算并单独记录 warning，
+`/api/ratio_config` 为可选资源。批量 Key 只补偿缺失 ID，单条 POST 只有 404/405 才
+GET 回退，掩码值视为不可用。Token 自身模型字段优先，账号级模型不复制给子密钥；
+认证成功、完整分页和至少一个可用 Key/模型才构成父渠道成功条件。
+
+该偏差标记为“已实现/待真实站点持续核验”：测试使用脱敏 HTTP fixture 和本地数据库，
+没有读取或提交任何真实平台凭据；如果真实上游返回明确的凭据错误，仍保持
+`credentials_invalid`，不能通过兼容路径绕过。
 
 ## 4. 维护规则
 

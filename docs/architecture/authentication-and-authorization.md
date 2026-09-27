@@ -172,3 +172,26 @@ Jar 的合并和轮换持久化。空代理仍使用直连平台会话，代理�
 认证失败、代理配置错误、网络错误、WAF/交互验证、权限不足和资源失败继续分别记录；
 任何错误路径都不得把密码、Cookie、Access Token、Refresh Token、Session ID 或完整上游
 响应写入日志、URL、审计字段或普通响应。
+
+### 9.4 2026-09-27 NewAPI 旧版登录与 Dashboard Refresh 契约
+
+**变更前**：NewAPI 密码认证和资源同步的真实旧版请求顺序没有在鉴权文档中明确，
+Token 分页参数、兼容回退和现代 Dashboard 会话刷新容易被宽泛的旧 Token 解析混用。
+
+**变更后**：
+
+- 密码登录请求固定为 `POST /api/user/login?turnstile=`，JSON 只包含
+  `username` 和 `password`；不会因 WAF、Turnstile、网络错误或普通业务失败重放
+  其它密码字段组合；
+- Dashboard Refresh 固定携带 `Cookie: new_api_refresh=...`、
+  `X-Auth-Session` 和当前 Bearer Token，不把 Refresh Cookie 放入 JSON。CookieJar
+  同名值优先，响应轮换 Cookie、Access Token、Token 类型、过期时间、Session ID
+  和用户 ID 一并加密持久化；
+- 现代 Bundle 出现结构标志但字段不完整时进入重新认证/刷新不确定，不降级到旧
+  Token 协议；只有明确 HTTP 401 且可确认旧会话失效时才允许一次密码回退；
+- 认证成功不等于所有资源成功。Token、Key、模型、分组、倍率和 Admin 资源分别记录
+  状态；权限不足、安全验证、WAF、网络错误和部分分页失败不会把有效凭据改写成
+  `credentials_invalid`，也不会触发密码重放；
+- Auth Flow 开始、2FA 验证和后台同步按 `ChannelID` 读取渠道代理；代理配置错误
+  单独分类，平台会话仍保留 CookieJar、30 秒超时和管理站点重定向校验。密码、Cookie、
+  Token、Refresh Token 和验证码不进入认证审计事件。

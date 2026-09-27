@@ -718,7 +718,12 @@ func TestNewAPIAdapterPasswordAuthenticationAndSnapshot(t *testing.T) {
 			assert.True(t, hasTurnstile)
 			body, readErr := io.ReadAll(request.Body)
 			require.NoError(t, readErr)
-			assert.Contains(t, string(body), `"username":"operator"`)
+			var loginPayload map[string]any
+			require.NoError(t, common.Unmarshal(body, &loginPayload))
+			assert.Equal(t, map[string]any{
+				"username": "operator",
+				"password": "synthetic-password",
+			}, loginPayload)
 			writer.WriteHeader(http.StatusOK)
 			_, _ = writer.Write([]byte(`{"success":true,"data":{"token":"newapi-session"}}`))
 		case request.URL.Path == "/api/status":
@@ -728,16 +733,18 @@ func TestNewAPIAdapterPasswordAuthenticationAndSnapshot(t *testing.T) {
 			_, _ = writer.Write([]byte(`{"success":true,"data":{"quota":12.5,"used_quota":3}}`))
 		case request.URL.Path == "/api/user/self/groups":
 			_, _ = writer.Write([]byte(`{"success":true,"data":{"default":{"ratio":0.7,"desc":"默认组"}}}`))
+		case request.URL.Path == "/api/ratio_config":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"group_ratio":{"default":0.7}}}`))
 		case request.URL.Path == "/api/user/groups":
 			groupFallbackRequests++
 			t.Fatalf("第一个分组路由成功后不应继续请求兼容路由")
 		case request.URL.Path == "/api/user/models":
 			_, _ = writer.Write([]byte(`{"success":true,"data":["gpt-4o","claude-3-7-sonnet"]}`))
 		case request.URL.Path == "/api/token/":
-			assert.Equal(t, "0", request.URL.Query().Get("p"))
-			assert.Equal(t, "100", request.URL.Query().Get("size"))
+			assert.Equal(t, "1", request.URL.Query().Get("p"))
+			assert.Equal(t, "100", request.URL.Query().Get("page_size"))
 			assert.Empty(t, request.URL.Query().Get("page"))
-			assert.Empty(t, request.URL.Query().Get("page_size"))
+			assert.Empty(t, request.URL.Query().Get("size"))
 			_, _ = writer.Write([]byte(`{"success":true,"data":{"page":1,"page_size":100,"total":1,"items":[{"id":7,"name":"primary","key":"sk-newapi","group":"default","quota":8,"expired_time":"4102444800","model_limits":"gpt-4o,claude-3-7-sonnet"}]}}`))
 		default:
 			http.NotFound(writer, request)
@@ -766,19 +773,21 @@ func TestNewAPIAdapterPasswordAuthenticationAndSnapshot(t *testing.T) {
 	assert.Zero(t, groupFallbackRequests)
 }
 
-func TestNewAPITokenPaginationSkipsNormalizedFirstPage(t *testing.T) {
+func TestNewAPITokenPaginationUsesLegacyOneBasedParameters(t *testing.T) {
 	requestedPages := make([]string, 0, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		require.Equal(t, "/api/token/", request.URL.Path)
 		requestedPages = append(requestedPages, request.URL.Query().Get("p"))
+		assert.Equal(t, "100", request.URL.Query().Get("page_size"))
+		assert.Empty(t, request.URL.Query().Get("size"))
 		switch request.URL.Query().Get("p") {
-		case "0":
+		case "1":
 			_, _ = writer.Write([]byte(`{"success":true,"data":{"page":1,"page_size":1,"total":2,"items":[{"id":7,"key":"sk-first"}]}}`))
 		case "2":
 			_, _ = writer.Write([]byte(`{"success":true,"data":{"page":2,"page_size":1,"total":2,"items":[{"id":8,"key":"sk-second"}]}}`))
 		default:
-			t.Fatalf("New API 归一化第一页后不应请求 p=%s", request.URL.Query().Get("p"))
+			t.Fatalf("旧版 NewAPI 分页不应请求 p=%s", request.URL.Query().Get("p"))
 		}
 	}))
 	defer server.Close()
@@ -788,26 +797,21 @@ func TestNewAPITokenPaginationSkipsNormalizedFirstPage(t *testing.T) {
 	session.Client = server.Client()
 	tokens, err := fetchNewAPITokens(context.Background(), session)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"0", "2"}, requestedPages)
+	assert.Equal(t, []string{"1", "2"}, requestedPages)
 	require.Len(t, tokens, 2)
 	assert.Equal(t, "7", firstString(tokens[0], "id"))
 	assert.Equal(t, "8", firstString(tokens[1], "id"))
 }
 
-func TestNewAPITokenPaginationSupportsZeroBasedDerivedSite(t *testing.T) {
-	requestedPages := make([]string, 0, 2)
+func TestNewAPITokenPaginationDoesNotUseZeroBasedPrimaryRequest(t *testing.T) {
+	requestedPages := make([]string, 0, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		require.Equal(t, "/api/token/", request.URL.Path)
 		requestedPages = append(requestedPages, request.URL.Query().Get("p"))
-		switch request.URL.Query().Get("p") {
-		case "0":
-			_, _ = writer.Write([]byte(`{"success":true,"data":{"page":0,"page_size":1,"total":2,"items":[{"id":17,"key":"sk-zero"}]}}`))
-		case "1":
-			_, _ = writer.Write([]byte(`{"success":true,"data":{"page":1,"page_size":1,"total":2,"items":[{"id":18,"key":"sk-one"}]}}`))
-		default:
-			t.Fatalf("零起始派生平台不应请求 p=%s", request.URL.Query().Get("p"))
-		}
+		assert.Equal(t, "1", request.URL.Query().Get("p"))
+		assert.Equal(t, "100", request.URL.Query().Get("page_size"))
+		_, _ = writer.Write([]byte(`{"success":true,"data":{"page":1,"page_size":100,"total":1,"items":[{"id":17,"key":"sk-one"}]}}`))
 	}))
 	defer server.Close()
 
@@ -816,10 +820,9 @@ func TestNewAPITokenPaginationSupportsZeroBasedDerivedSite(t *testing.T) {
 	session.Client = server.Client()
 	tokens, err := fetchNewAPITokens(context.Background(), session)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"0", "1"}, requestedPages)
-	require.Len(t, tokens, 2)
+	assert.Equal(t, []string{"1"}, requestedPages)
+	require.Len(t, tokens, 1)
 	assert.Equal(t, "17", firstString(tokens[0], "id"))
-	assert.Equal(t, "18", firstString(tokens[1], "id"))
 }
 
 func TestNewAPIAdapterModelsFallbackOnlyOnMissingRoute(t *testing.T) {
@@ -1532,6 +1535,81 @@ func TestNewAPITokenBatchRevealDoesNotFallbackAfterNonRouteError(t *testing.T) {
 	require.Error(t, failures["7"])
 	assert.ErrorIs(t, failures["7"], ErrPlatformSiteSecurity)
 	assert.Equal(t, 0, singleRequests)
+}
+
+func TestNewAPITokenBatchRevealFallsBackOnlyForMissingIDs(t *testing.T) {
+	singleRequests := make([]string, 0, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/token/batch/keys":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"keys":{"7":"fixture-batch-key"}}}`))
+		case "/api/token/8/key":
+			singleRequests = append(singleRequests, request.Method)
+			require.Equal(t, http.MethodPost, request.Method)
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"key":"fixture-single-key"}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	session, err := newPlatformSiteSession(server.URL, nil)
+	require.NoError(t, err)
+	session.Client = server.Client()
+	revealed, failures := fetchNewAPITokenKeys(context.Background(), session, []map[string]any{
+		{"id": 7, "key": "sk-****"},
+		{"id": 8, "key": "sk-****"},
+	})
+	require.Empty(t, failures)
+	assert.Equal(t, map[string]string{
+		"7": "fixture-batch-key",
+		"8": "fixture-single-key",
+	}, revealed)
+	assert.Equal(t, []string{http.MethodPost}, singleRequests)
+}
+
+func TestNewAPITokenKeyUsesGETOnlyAfterPOSTRouteMissing(t *testing.T) {
+	t.Run("404 允许 GET 兼容", func(t *testing.T) {
+		methods := make([]string, 0, 2)
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			writer.Header().Set("Content-Type", "application/json")
+			methods = append(methods, request.Method)
+			if request.Method == http.MethodPost {
+				http.NotFound(writer, request)
+				return
+			}
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"key":"fixture-get-key"}}`))
+		}))
+		defer server.Close()
+
+		session, err := newPlatformSiteSession(server.URL, nil)
+		require.NoError(t, err)
+		session.Client = server.Client()
+		key, err := fetchNewAPITokenKey(context.Background(), session, "7")
+		require.NoError(t, err)
+		assert.Equal(t, "fixture-get-key", key)
+		assert.Equal(t, []string{http.MethodPost, http.MethodGet}, methods)
+	})
+
+	t.Run("403 不允许 GET 兼容", func(t *testing.T) {
+		methods := make([]string, 0, 1)
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			writer.Header().Set("Content-Type", "application/json")
+			methods = append(methods, request.Method)
+			writer.WriteHeader(http.StatusForbidden)
+			_, _ = writer.Write([]byte(`{"success":false,"message":"verification required"}`))
+		}))
+		defer server.Close()
+
+		session, err := newPlatformSiteSession(server.URL, nil)
+		require.NoError(t, err)
+		session.Client = server.Client()
+		_, err = fetchNewAPITokenKey(context.Background(), session, "7")
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrPlatformSiteSecurity)
+		assert.Equal(t, []string{http.MethodPost}, methods)
+	})
 }
 
 func TestNewAPIAdapterPasswordAuthenticationAddsCompatUserHeader(t *testing.T) {
@@ -2360,6 +2438,38 @@ func TestNewAPIAdminResourceFailureIsolatedFromAuthentication(t *testing.T) {
 	require.NotNil(t, modelResource)
 	assert.Equal(t, model.PlatformSiteResourceStatusFailed, modelResource.Status)
 	assert.Contains(t, modelResource.FailureReason, "权限")
+}
+
+func TestPlatformSiteSnapshotCoreResourcesDefineBlockingFailure(t *testing.T) {
+	snapshot := PlatformSiteSnapshot{
+		ResourceSyncs: []PlatformSiteResourceSyncSnapshot{
+			{
+				ResourceType: model.PlatformSiteResourceEndpoints,
+				Status:       model.PlatformSiteResourceStatusFailed,
+			},
+			{
+				ResourceType:                 model.PlatformSiteResourceKeys,
+				Status:                       model.PlatformSiteResourceStatusSecureVerificationRequired,
+				RequiresSecurityVerification: true,
+			},
+		},
+		Keys: []UpstreamKeySnapshot{
+			{
+				ExternalID:   "healthy",
+				Secret:       "sk-healthy",
+				Models:       []string{"gpt-4o"},
+				ModelsSynced: true,
+			},
+			{
+				ExternalID: "unavailable",
+				SyncError:  upstreamKeySyncErrorSecretUnavailable,
+			},
+		},
+	}
+	assert.False(t, platformSiteSnapshotHasBlockingResourceFailure(snapshot))
+
+	snapshot.Keys[0].SyncError = upstreamKeySyncErrorModelsUnavailable
+	assert.True(t, platformSiteSnapshotHasBlockingResourceFailure(snapshot))
 }
 
 func TestNewAPIResourceFailuresKeepIdentityAndClassifyOptionalResources(t *testing.T) {
@@ -3652,6 +3762,116 @@ func TestSyncPlatformSitePersistsPasswordSessionBeforeResourceFailure(t *testing
 	require.NoError(t, err)
 	assert.Equal(t, "sk-old", oldCredential.AccessToken)
 	assert.Equal(t, model.UpstreamKeyStatusEnabled, savedKey.Status)
+}
+
+func TestSyncPlatformSiteSucceedsWithUsableKeyAndPartialResourceFailure(t *testing.T) {
+	previousDB := model.DB
+	previousSecret := common.CryptoSecret
+	previousMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.CryptoSecret = "upstream-site-partial-resource-success-test-secret"
+	common.MemoryCacheEnabled = false
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&model.Channel{},
+		&model.Ability{},
+		&model.PlatformSiteAccount{},
+		&model.PlatformSiteIdentity{},
+		&model.PlatformSiteGroup{},
+		&model.PlatformSiteEndpoint{},
+		&model.PlatformSiteEndpointCapability{},
+		&model.PlatformSiteResourceSync{},
+		&model.UpstreamKey{},
+		&model.UpstreamKeyAbility{},
+	))
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = previousDB
+		common.CryptoSecret = previousSecret
+		common.MemoryCacheEnabled = previousMemoryCacheEnabled
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/status":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"quota_per_unit":500000}}`))
+		case "/api/user/self":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"id":17,"quota":5000000,"used_quota":1000000}}`))
+		case "/api/user/models":
+			_, _ = writer.Write([]byte(`{"success":true,"data":["gpt-4o"]}`))
+		case "/api/user/self/groups":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"default":{"ratio":1}}}`))
+		case "/api/pricing":
+			http.NotFound(writer, request)
+		case "/api/token/":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"page":1,"page_size":100,"total":2,"items":[{"id":1,"name":"healthy","key":"sk-healthy","group":"default","models":["gpt-4o"]},{"id":2,"name":"protected","key":"sk-****","group":"default","models":["gpt-4o"]}]}}`))
+		case "/api/token/batch/keys":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"keys":{}}}`))
+		case "/api/token/2/key":
+			writer.WriteHeader(http.StatusForbidden)
+			_, _ = writer.Write([]byte(`{"success":false,"message":"verification required"}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	channel := &model.Channel{
+		Id:           905,
+		Name:         "partial-resource-success",
+		Status:       common.ChannelStatusEnabled,
+		UpstreamKind: model.UpstreamKindPlatformSite,
+		Group:        "default",
+	}
+	require.NoError(t, db.Create(channel).Error)
+	ciphertext, err := model.EncryptPlatformSiteCredential(model.PlatformSiteCredential{
+		AuthType:       model.UpstreamAuthAccessToken,
+		AccessToken:    "session-token",
+		TokenExpiresAt: common.GetTimestamp() + 3600,
+	})
+	require.NoError(t, err)
+	account := &model.PlatformSiteAccount{
+		ChannelID:            channel.Id,
+		Platform:             model.PlatformNewAPI,
+		BaseURL:              server.URL,
+		AuthType:             model.UpstreamAuthAccessToken,
+		CredentialCiphertext: ciphertext,
+		CredentialKeyVersion: "v1",
+		ConversionRatio:      0.1,
+		SyncStatus:           model.UpstreamSiteSyncIdle,
+	}
+	require.NoError(t, db.Create(account).Error)
+
+	require.NoError(t, SyncUpstreamSite(context.Background(), channel.Id))
+
+	var saved model.PlatformSiteAccount
+	require.NoError(t, db.First(&saved, account.ID).Error)
+	assert.Equal(t, model.UpstreamSiteSyncSuccess, saved.SyncStatus)
+	assert.NotZero(t, saved.LastSyncAt)
+	assert.Equal(t, model.PlatformSiteAuthStatusSecureVerificationRequired, saved.AuthStatus)
+
+	var savedKey model.UpstreamKey
+	require.NoError(t, db.Where("channel_id = ? AND external_id = ?", channel.Id, "1").First(&savedKey).Error)
+	assert.Equal(t, model.UpstreamKeyStatusEnabled, savedKey.Status)
+	assert.True(t, savedKey.ModelsSynced)
+
+	var protectedKey model.UpstreamKey
+	assert.ErrorIs(t, db.Where("channel_id = ? AND external_id = ?", channel.Id, "2").First(&protectedKey).Error, gorm.ErrRecordNotFound)
+
+	var keyResource model.PlatformSiteResourceSync
+	require.NoError(t, db.Where(
+		"channel_id = ? AND resource_type = ?",
+		channel.Id,
+		model.PlatformSiteResourceKeys,
+	).First(&keyResource).Error)
+	assert.Equal(t, model.PlatformSiteResourceStatusSecureVerificationRequired, keyResource.Status)
+	assert.True(t, keyResource.UsingSnapshot)
 }
 
 func TestSyncPlatformSiteFailurePreservesLastSuccessfulSnapshot(t *testing.T) {

@@ -1,7 +1,7 @@
 # 数据库、缓存与后台任务
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-26
+> 事实基线日期：2026-09-27
 > 主要代码来源：`model/main.go`、`common/database.go`、`common/redis.go`、`model/channel_cache.go`、`model/sync.go`、`service/system_task.go`、`service/task_polling.go`、`main.go`
 > 关联详细文档：[`system-overview.md`](./system-overview.md)、[`authentication-and-authorization.md`](./authentication-and-authorization.md)、[`tasks-and-plugins.md`](./tasks-and-plugins.md)、[`../rate-limiting.md`](../rate-limiting.md)
 
@@ -166,3 +166,21 @@ TTL 为 5 分钟，取消、过期、失败和消费后均不能继续读取。
 记录为渠道代理配置错误；认证失败、网络失败、安全验证、权限不足和资源失败不覆盖最近
 成功 `last_sync_at`、密钥、模型、倍率、权重和能力快照。该改动未增加表、字段或迁移，
 现有 SQLite/MySQL/PostgreSQL 数据结构保持不变。
+
+### 9.4 2026-09-27 按旧版协议写入平台站点快照
+
+**变更前**：NewAPI Token 分页从零起始参数开始时，部分站点会返回不完整或被归一化
+的数据；分页、批量 Key、密钥模型和资源失败边界不清晰，可能造成旧密钥被误标缺失。
+
+**变更后**：
+
+- Token 列表从 `p=1&page_size=100` 开始，只有完整分页成功后才允许执行未返回 Key
+  的缺失判定；分页中途失败、Key 批量读取失败或安全验证时保留旧记录；
+- 批量 Key 只对缺失 ID 做单条补偿，掩码/空值不写入；旧快照中的 Secret、模型、
+  倍率、权重和能力继续可用于路由；
+- 认证成功后的身份、余额和用量可独立落库，分组、倍率、Endpoint、价格和 Admin
+  资源失败写入 `platform_site_resource_syncs` 的独立状态；失败轮次不更新
+  `last_sync_at`；
+- 父渠道只有在本轮至少有一个完整 Secret 且模型能力已确认时才标记成功。没有可用
+  Key/模型时保持 failed，但不清理身份、余额和最近成功快照。当前前端资源模型和
+  数据库表结构不变，渠道代理仍复用已有 `setting.proxy` 配置。

@@ -1,7 +1,7 @@
 # 上游渠道与平台站点设计
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-26
+> 事实基线日期：2026-09-27
 > 主要代码来源：`model/upstream_channel.go`、`model/routing_key.go`、`service/upstream_site.go`、`controller/upstream_channel.go`、`controller/channel-test.go`
 > 关联架构文档：[`docs/architecture/relay-routing-and-conversion.md`](architecture/relay-routing-and-conversion.md)、[`docs/architecture/provider-capability-matrix.md`](architecture/provider-capability-matrix.md)、[`docs/architecture/data-cache-and-background-jobs.md`](architecture/data-cache-and-background-jobs.md)
 
@@ -776,6 +776,47 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
 - 管理 API 的 `BaseURL` 仍是管理根地址并保留路径前缀，Relay 地址不用于猜测管理
   路由；兼容接口只在明确 HTTP 404/405 时回退，认证成功但资源失败时继续保留最近
   成功的密钥、模型、倍率、权重和能力快照。
+
+### 9.5 2026-09-27 旧版 NewAPI 主请求契约校准
+
+**变更前**
+
+- NewAPI 密钥分页主请求曾使用 `p=0&size=100`，部分派生站点会拒绝、归一化或误判
+  分页边界；
+- 登录、身份、分组、倍率、Token、Key 和模型读取的失败边界没有完全沿用旧版
+  `service/upstreamaccount` 的主链路，资源探测失败可能被误解为账号认证失败；
+- 批量明文 Key 返回部分结果时，兼容读取可能重复请求已经成功的密钥；掩码值也可能
+  被误当作可用凭据；
+- 账号级模型目录与子密钥模型能力边界不够明确，存在把账号模型复制给每个子密钥的
+  风险。
+
+**变更后**
+
+- NewAPI 用户态同步按旧版核心顺序处理：尽力读取 `GET /api/status`，失败时使用
+  默认额度换算并记录用量资源 warning；密码登录唯一使用
+  `POST /api/user/login?turnstile=`，JSON 仅包含 `username` 和 `password`；登录后读取
+  `/api/user/self`、`/api/user/self/groups`、`/api/ratio_config`；
+- Token 主分页固定从 `GET /api/token/?p=1&page_size=100` 开始，后续使用 `p=2`、
+  `p=3` 等一基页码，并依据 `total`、页码、页大小和条目数判断是否完成；主路径不再
+  使用 `p=0&size=100`。`/api/token` 和 `/api/tokens` 只在明确 HTTP 404 或 405 时作为
+  路由兼容回退；
+- `POST /api/token/batch/keys` 返回部分 ID 时只补偿缺失 ID；单条
+  `POST /api/token/{id}/key` 只有明确 404/405 才尝试 GET。空值、空白值和包含 `*`
+  的掩码值都不写入真实密钥，也不触发无意义的逐条重放；
+- Token 记录中的 `model_limits`、`models` 等字段优先作为对应子密钥能力。只有该
+  子密钥没有模型字段时，才使用该密钥独立访问 `/v1/models` 探测；账号级模型接口
+  只用于管理端诊断和展示，不复制给所有子密钥；
+- 兼容分组、模型和 Key 路径只在 404/405 回退。401、403、429、WAF、Turnstile、
+  安全验证、网络超时和普通业务错误停止当前阶段，不重放密码、Refresh Cookie 或
+  旧 Access Token；
+- 认证成功、Token 分页完整、至少一个子密钥具有完整 Secret 且确认了真实模型能力时，
+  父渠道才可标记 `success` 并更新 `last_sync_at`。可选 status、分组、倍率、价格、
+  Endpoint、Admin 资源和个别 Key 失败独立记录资源状态；`KeysComplete=false` 时不
+  执行缺失 Key 判定，并保留最近成功密钥、模型、倍率、权重和能力快照；
+- 当前前端页面、管理接口和资源展示模型保持不变。NewAPI `BaseURL` 仍只表示管理
+  API 根地址，保留用户填写的路径前缀，Relay 地址不参与管理路由猜测。Dashboard
+  Refresh 继续同时使用 `new_api_refresh` Cookie、`X-Auth-Session` 和 Bearer Token，
+  CookieJar 轮换值加密回写凭据。
 
 ## 与架构文档的关系
 
