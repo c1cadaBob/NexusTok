@@ -12,7 +12,10 @@ import (
 
 var StartTime = time.Now().Unix() // unit: second
 var Version = "v0.0.0"            // this hard coding will be replaced automatically when building, no need to manually change
-var SystemName = "New API"
+
+const DefaultSystemName = "NexusTok"
+
+var SystemName = DefaultSystemName
 var Footer = ""
 var Logo = ""
 var TopUpLink = ""
@@ -38,7 +41,7 @@ var SessionCookieSecure = false
 var SessionCookieTrustedURLs []string
 
 const (
-	DefaultUserSessionActiveLimit           = 5
+	DefaultUserSessionActiveLimit           = 50
 	DefaultUserSessionIssuanceLimit         = 100
 	DefaultUserSessionIssuanceWindowSeconds = 24 * 60 * 60
 	DefaultUserSessionRevokedRetentionDays  = 7

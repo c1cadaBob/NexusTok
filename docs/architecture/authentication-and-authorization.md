@@ -1,7 +1,7 @@
 # 鉴权、会话与授权原理
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-26
+> 事实基线日期：2026-09-27
 > 主要代码来源：`middleware/auth.go`、`middleware/token_auth.go`、`service/auth_session.go`、`model/user_session.go`、`service/authz/`、`controller/`、`oauth/`
 > 关联详细文档：[`../authentication.md`](../authentication.md)、[`../rate-limiting.md`](../rate-limiting.md)、[`system-overview.md`](./system-overview.md)
 
@@ -17,6 +17,7 @@
 | --- | --- | --- |
 | Access Token | 面板登录后的短期 Bearer JWT，放在浏览器内存 | 用户鉴权中间件和 JWT 校验 |
 | Refresh Cookie | HttpOnly 不透明值，用于轮换 Access Token 和 Refresh Token | `/api/user/auth/refresh`、`service/auth_session.go` |
+| `nexustok_session_id` | HttpOnly 的 SID 定位 Cookie，只在登录凭据已完成校验后帮助复用候选 Session，不能单独鉴权 | 登录出口、`service/auth_session.go`、`model/user_session.go` |
 | `user_sessions` | 数据库中的登录会话控制面，记录 SID、设备、IP、方式、过期和撤销 | Session 服务和 Redis Session 快照 |
 | API Token | Relay API 的调用凭据，关联用户、分组、模型限制、额度和状态 | `middleware.TokenAuth`、Token 模型查询/缓存 |
 | PAT | 面向个人/管理自动化的长期个人访问凭据，权限由对应用户和 Token 状态决定 | Token 相关 Controller/Service |
@@ -30,9 +31,11 @@
 
 ## 3. 面板登录与 Session 生命周期
 
-登录、Passkey、OAuth、WeChat、Telegram 和 2FA 成功路径最终都应通过统一 Session 签发出口，生成 `user_sessions` 记录、Access Token 和 Refresh Cookie。Session 数据库状态是最终权威；Redis 保存用户鉴权快照和 Session 快照，缓存未命中或未启用 Redis 时回源数据库。
+登录、Passkey、OAuth、WeChat、Telegram 和 2FA 成功路径最终都应通过统一 Session 签发出口，生成 Access Token 和 Refresh Cookie。登录出口会先用 `nexustok_session_id` 定位当前用户、当前鉴权版本、active 且未过期的候选 Session；匹配时在原 `user_sessions` 行内轮换 SID、Refresh Secret 摘要和 Session Version，保留 `CreatedAt`，否则按新 Session 流程执行。Session 数据库状态是最终权威；Redis 保存用户鉴权快照和 Session 快照，缓存未命中或未启用 Redis 时回源数据库。
 
 Refresh 采用轮换策略。客户端通过内存保存的 SID 和 `X-Auth-Session` 辅助避免 Cookie 与当前标签页身份错配；服务端在不匹配时返回冲突，不执行轮换/撤销。前端使用 Web Locks 和 BroadcastChannel 或 storage 事件协调同一浏览器配置文件中的刷新，但不跨标签传递 Access Token 或 Refresh Token。
+
+2FA/Passkey 登录完成时，一次性 AuthFlow 的消费和 Session 复用/新建在同一事务内提交；会话上限或数据库写入失败会回滚 AuthFlow 消费。SID 失效、过期、撤销、跨用户或用户鉴权版本不匹配时不能复用，也不能因为 SID 本身获得任何权限。
 
 用户密码、状态、角色、安全因子或其他安全相关属性变更时，`auth_version` 递增，旧会话失效。订阅导致用户组变化只刷新授权缓存，不会退出所有登录设备。Session 版本和撤销 tombstone 防止旧缓存重新授权。
 
@@ -82,6 +85,7 @@ Token 限制不是前端 UI 的提示，而是在服务端分发和预扣/扣减
 - Refresh Cookie、Session 数据库、Redis 快照和 Access Token 的失效传播时间不同，不能只用 JWT 过期时间判断“已退出”。
 - 独立 Redis 节点会带来有界陈旧 Session 和节点局部限流；部署说明必须明确拓扑。
 - 已有详细文档描述了大量安全契约，本架构文档不重复定义所有 Cookie 属性和接口字段；两者冲突时应以代码和最新专项契约核对。
+- 频繁重新登录同一浏览器不会新增 `user_sessions` 行，但每次认证仍会轮换 SID 和 Refresh Secret 摘要；这不是延长旧凭据有效期的豁免。
 - OAuth、Passkey、TOTP、PAT 和 Security Proof 的端到端组合场景不能由单个入口文件证明；尚未覆盖的组合场景应标记“待核查”，不能据名称推断。
 
 ### 8.1 平台站点认证边界（2026-09-26）
@@ -108,6 +112,7 @@ Cookie、Token、Refresh Token 和 Session ID 不写入日志、审计字段、U
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 建立凭据分层、Session 生命周期、授权和 Redis 拓扑说明 | `middleware/`、`service/auth*`、`model/user_session.go`、`oauth/` | `docs/authentication.md`、`model/user_session.go`、`service/auth_session.go` 静态核对 |
 | 2026-09-26 | 平台站点认证补充 | 平台站点密码认证与系统面板 Session 的边界未单独说明，2FA/刷新失败语义未登记 | 明确短期上游认证流程、NewAPI Bundle 校验、Sub2API 轮换不确定结果和未覆盖的 Passkey/安全证明边界 | `service/upstream_site*.go`、`controller/upstream_channel.go`、平台站点资源接口 | NewAPI/Sub2API/all-api-hub 参考源路由和认证实现静态核对 |
+| 2026-09-27 | 面板登录 Session 复用 | 架构只描述统一签发，未说明重复登录会增长 Session 行和签发计数 | 增加浏览器 SID 定位 Cookie、复用条件、SID/Refresh Secret 轮换、AuthFlow 原子性和失败回退边界 | `service/auth_session.go`、`model/user_session.go`、`model/login_verification.go`、登录 Controller | 服务层回归测试、AuthFlow 事务测试、OWASP ASVS 5.0.0 与认证/会话 Cheat Sheet 核对 |
 
 ### 9.1 2026-09-26 实现校准
 

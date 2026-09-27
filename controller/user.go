@@ -170,20 +170,23 @@ func setupLoginAtAuthVersion(user *model.User, expectedAuthVersion int64, c *gin
 		return
 	}
 	var bundle *service.AuthBundle
+	reusableSID := service.LoginSessionSID(c)
 	if expectedAuthVersion > 0 {
-		bundle, err = service.CreateLoginSessionAtAuthVersion(
+		bundle, err = service.CreateLoginSessionAtAuthVersionWithReuse(
 			user.Id,
 			expectedAuthVersion,
 			loginMethodFromContext(c),
 			c.ClientIP(),
 			c.Request.UserAgent(),
+			reusableSID,
 		)
 	} else {
-		bundle, err = service.CreateLoginSession(
+		bundle, err = service.CreateLoginSessionWithReuse(
 			user.Id,
 			loginMethodFromContext(c),
 			c.ClientIP(),
 			c.Request.UserAgent(),
+			reusableSID,
 		)
 	}
 	if err != nil {

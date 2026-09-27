@@ -21,7 +21,7 @@ For commercial licensing, please contact support@c1cadabob.dev
  */
 
 // System Configuration Defaults
-export const DEFAULT_SYSTEM_NAME = 'New API'
+export const DEFAULT_SYSTEM_NAME = 'NexusTok'
 export const DEFAULT_LOGO = '/logo.png'
 
 // LocalStorage Keys

@@ -149,21 +149,45 @@ func CreateUserSession(session *UserSession) error {
 // sessions that were created but never used, so abandoned login attempts do
 // not permanently consume the active-session allowance.
 func CreateUserSessionWithLimits(session *UserSession) error {
+	_, err := CreateOrReuseUserSessionWithLimits(session, "")
+	return err
+}
+
+// CreateOrReuseUserSessionWithLimits 创建登录 Session，或在原行内续期匹配的
+// active Session。续期保留数据库行和原始创建时间，但会更换 SID 与 Refresh
+// 摘要，确保重新认证仍获得新的 Session 标识。
+func CreateOrReuseUserSessionWithLimits(session *UserSession, reusableSID string) (bool, error) {
 	if session == nil {
-		return ErrUserSessionInvalid
+		return false, ErrUserSessionInvalid
 	}
 	cacheDeadline := userSessionCacheDeadline()
 	var revoked []UserSession
+	var replaced *UserSession
+	reused := false
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		var reuseErr error
+		reused, replaced, reuseErr = renewUserSessionWithTx(tx, session, reusableSID, time.Now().Unix())
+		if reuseErr != nil || reused {
+			return reuseErr
+		}
 		var createErr error
 		revoked, createErr = createUserSessionWithLimitsTx(tx, session, time.Now().Unix())
 		return createErr
 	})
 	if err != nil {
-		return err
+		return false, err
 	}
-	publishRevokedUserSessionCaches(revoked)
-	return publishCreatedUserSession(session, cacheDeadline)
+	if !reused {
+		publishRevokedUserSessionCaches(revoked)
+	} else if replaced != nil {
+		replaced.Status = UserSessionStatusRevoked
+		replaced.RevokedAt = time.Now().Unix()
+		replaced.RevokedReason = "login_session_renewed"
+		if err := writeUserSessionCache(replaced.cacheEntry(), time.Time{}); err != nil {
+			common.SysLog("failed to publish renewed user session tombstone: " + err.Error())
+		}
+	}
+	return reused, publishCreatedUserSession(session, cacheDeadline)
 }
 
 func createUserSessionWithTx(tx *gorm.DB, session *UserSession) error {
@@ -195,8 +219,14 @@ func createUserSessionWithLimitsTx(tx *gorm.DB, session *UserSession, now int64)
 	}
 
 	var user User
-	if err := lockForUpdate(tx).Select("id").Where("id = ?", session.UserID).First(&user).Error; err != nil {
+	if err := lockForUpdate(tx).
+		Select("id", "status", "auth_version").
+		Where("id = ?", session.UserID).
+		First(&user).Error; err != nil {
 		return nil, err
+	}
+	if user.Status != common.UserStatusEnabled || user.AuthVersion <= 0 || user.AuthVersion != session.UserAuthVersion {
+		return nil, ErrUserSessionInactive
 	}
 
 	var issuanceCount int64
@@ -260,6 +290,99 @@ func createUserSessionWithLimitsTx(tx *gorm.DB, session *UserSession, now int64)
 		return nil, err
 	}
 	return staleSessions, nil
+}
+
+func renewUserSessionWithTx(tx *gorm.DB, session *UserSession, reusableSID string, now int64) (bool, *UserSession, error) {
+	reusableSID = strings.TrimSpace(reusableSID)
+	if session == nil || session.SID == "" || session.UserID <= 0 || session.UserAuthVersion <= 0 || session.RefreshHash == "" || reusableSID == "" || now <= 0 {
+		return false, nil, nil
+	}
+
+	var user User
+	if err := lockForUpdate(tx).
+		Select("id", "status", "auth_version").
+		Where("id = ?", session.UserID).
+		First(&user).Error; err != nil {
+		return false, nil, err
+	}
+	if user.Status != common.UserStatusEnabled || user.AuthVersion <= 0 || user.AuthVersion != session.UserAuthVersion {
+		return false, nil, ErrUserSessionInactive
+	}
+
+	var existing UserSession
+	if err := lockForUpdate(tx).
+		Where("sid = ? AND user_id = ?", reusableSID, session.UserID).
+		First(&existing).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil, nil
+		}
+		return false, nil, err
+	}
+	if existing.Status != UserSessionStatusActive ||
+		existing.RevokedAt != 0 ||
+		existing.ExpiresAt <= now ||
+		existing.UserAuthVersion != session.UserAuthVersion {
+		return false, nil, nil
+	}
+
+	nextVersion := existing.Version + 1
+	if nextVersion <= 0 {
+		return false, nil, ErrUserSessionInvalid
+	}
+	loginMethod := strings.TrimSpace(session.LoginMethod)
+	if loginMethod == "" {
+		loginMethod = "unknown"
+	}
+	ip := strings.TrimSpace(session.IP)
+	if len(ip) > 64 {
+		ip = ip[:64]
+	}
+	userAgent := strings.TrimSpace(session.UserAgent)
+	if len(userAgent) > 512 {
+		userAgent = userAgent[:512]
+	}
+	result := tx.Model(&UserSession{}).
+		Where(
+			"sid = ? AND user_id = ? AND status = ? AND revoked_at = ? AND expires_at > ? AND user_auth_version = ?",
+			existing.SID,
+			session.UserID,
+			UserSessionStatusActive,
+			0,
+			now,
+			session.UserAuthVersion,
+		).
+		Updates(map[string]any{
+			"version":               nextVersion,
+			"sid":                   session.SID,
+			"refresh_hash":          session.RefreshHash,
+			"previous_refresh_hash": "",
+			"previous_valid_until":  0,
+			"login_method":          loginMethod,
+			"ip":                    ip,
+			"user_agent":            userAgent,
+			"last_active_at":        now,
+			"expires_at":            session.ExpiresAt,
+		})
+	if result.Error != nil {
+		return false, nil, result.Error
+	}
+	if result.RowsAffected != 1 {
+		return false, nil, nil
+	}
+
+	session.Version = nextVersion
+	session.UserAuthVersion = existing.UserAuthVersion
+	session.Status = UserSessionStatusActive
+	session.PreviousRefreshHash = ""
+	session.PreviousValidUntil = 0
+	session.LoginMethod = loginMethod
+	session.IP = ip
+	session.UserAgent = userAgent
+	session.CreatedAt = existing.CreatedAt
+	session.LastActiveAt = now
+	session.RevokedAt = 0
+	session.RevokedReason = ""
+	return true, &existing, nil
 }
 
 func publishCreatedUserSession(session *UserSession, cacheDeadline time.Time) error {

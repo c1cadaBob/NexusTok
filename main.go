@@ -62,7 +62,7 @@ func main() {
 		return
 	}
 
-	common.SysLog("New API " + common.Version + " started")
+	common.SysLog("NexusTok " + common.Version + " started")
 	if os.Getenv("GIN_MODE") != "debug" {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -332,6 +332,9 @@ func InitResources() error {
 		if err := model.MigrateRetiredFrontendOptions(); err != nil {
 			common.SysError("failed to migrate retired frontend options: " + err.Error())
 		}
+		if err := model.MigrateLegacyBrandOptions(); err != nil {
+			common.SysError("failed to migrate legacy brand options: " + err.Error())
+		}
 	}
 	model.InitOptionMap()
 
@@ -377,4 +380,5 @@ func InitResources() error {
 
 	return nil
 }
+
 // 热更新测试注释

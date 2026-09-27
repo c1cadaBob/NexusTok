@@ -11,6 +11,7 @@ import (
 )
 
 const retiredThemeOptionKey = "theme.frontend"
+const systemNameOptionKey = "SystemName"
 
 type legacyOptionTransform func(string) (string, error)
 
@@ -45,6 +46,29 @@ func MigrateRetiredFrontendOptions() error {
 		migrationErrors = append(migrationErrors, err)
 	}
 	return errors.Join(migrationErrors...)
+}
+
+// MigrateLegacyBrandOptions 只迁移历史内置产品名称；管理员明确自定义的名称保持不变。
+func MigrateLegacyBrandOptions() error {
+	if DB == nil {
+		return errors.New("database is not initialized")
+	}
+
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var option Option
+		if err := tx.Where(&Option{Key: systemNameOptionKey}).First(&option).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return err
+		}
+		switch strings.TrimSpace(option.Value) {
+		case "New API", "NewAPI", "newapi":
+			return tx.Model(&option).Update("value", common.DefaultSystemName).Error
+		default:
+			return nil
+		}
+	})
 }
 
 func normalizeRetiredThemeOption() error {

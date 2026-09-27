@@ -395,7 +395,7 @@ docker run --name NexusTok -d --restart always \
 <details>
 <summary><strong>方法 3: 宝塔パネル</strong></summary>
 
-1. 宝塔パネル（**9.2.0バージョン**以上）をインストールし、アプリケーションストアで**New-API**を検索してインストールします。
+1. 宝塔パネル（**9.2.0バージョン**以上）をインストールし、アプリケーションストアで**NexusTok**を検索してインストールします。
 
 📖 [画像付きチュートリアル](./docs/BT.md)
 

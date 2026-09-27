@@ -106,6 +106,10 @@ func requireLoginVerificationMethod(state *model.UserVerificationState, method s
 }
 
 func VerifyLoginCode(token, code, ip, userAgent string) (*AuthBundle, error) {
+	return VerifyLoginCodeWithSession(token, code, ip, userAgent, "")
+}
+
+func VerifyLoginCodeWithSession(token, code, ip, userAgent, reusableSID string) (*AuthBundle, error) {
 	verification, err := RequireLoginVerification(token, VerificationMethodTwoFA)
 	if err != nil {
 		return nil, err
@@ -117,13 +121,17 @@ func VerifyLoginCode(token, code, ip, userAgent string) (*AuthBundle, error) {
 	if err := VerifyTwoFactorCode(twoFA, code); err != nil {
 		return nil, err
 	}
-	return CompleteLoginVerification(token, verification, VerificationMethodTwoFA, ip, userAgent)
+	return CompleteLoginVerificationWithSession(token, verification, VerificationMethodTwoFA, ip, userAgent, reusableSID)
 }
 
 // CompleteLoginVerification must only run after a concrete factor ceremony.
 // Recheck the bound version and method while consuming the flow and creating the
 // session atomically; a different request cannot reuse this authorization.
 func CompleteLoginVerification(token string, verification *LoginVerification, method, ip, userAgent string) (*AuthBundle, error) {
+	return CompleteLoginVerificationWithSession(token, verification, method, ip, userAgent, "")
+}
+
+func CompleteLoginVerificationWithSession(token string, verification *LoginVerification, method, ip, userAgent, reusableSID string) (*AuthBundle, error) {
 	if verification == nil || verification.Flow == nil || verification.State == nil {
 		return nil, model.ErrAuthFlowInvalid
 	}
@@ -131,7 +139,7 @@ func CompleteLoginVerification(token string, verification *LoginVerification, me
 	if err != nil {
 		return nil, err
 	}
-	if err := model.CreateUserSessionFromLoginFlow(token, session, func(flow *model.AuthFlow, state *model.UserVerificationState) error {
+	if _, err := model.CreateOrReuseUserSessionFromLoginFlow(token, session, reusableSID, func(flow *model.AuthFlow, state *model.UserVerificationState) error {
 		var payload loginFlowPayload
 		if flow.Id != verification.Flow.Id || common.UnmarshalJsonStr(flow.Payload, &payload) != nil || payload != verification.payload {
 			return model.ErrAuthFlowInvalid

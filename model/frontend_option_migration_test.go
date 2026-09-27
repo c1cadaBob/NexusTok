@@ -2,6 +2,9 @@ package model
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/c1cadaBob/NexusTok/common"
@@ -164,6 +167,79 @@ func TestMigrateRetiredFrontendOptionsKeepsEmptyAuthoritativeTargets(t *testing.
 	assert.Empty(t, requireOptionValue(t, db, "console_setting.uptime_kuma_groups"))
 	for _, key := range []string{"ApiInfo", "UptimeKumaUrl", "UptimeKumaSlug"} {
 		requireOptionMissing(t, db, key)
+	}
+}
+
+func TestMigrateLegacyBrandOptionsOnlyReplacesBuiltInNames(t *testing.T) {
+	db := useFrontendOptionMigrationDB(t)
+	require.NoError(t, db.Create(&Option{Key: systemNameOptionKey, Value: "New API"}).Error)
+
+	require.NoError(t, MigrateLegacyBrandOptions())
+	assert.Equal(t, common.DefaultSystemName, requireOptionValue(t, db, systemNameOptionKey))
+	require.NoError(t, MigrateLegacyBrandOptions())
+	assert.Equal(t, common.DefaultSystemName, requireOptionValue(t, db, systemNameOptionKey))
+
+	require.NoError(t, db.Model(&Option{}).
+		Where(&Option{Key: systemNameOptionKey}).
+		Update("value", "Team Console").Error)
+	require.NoError(t, MigrateLegacyBrandOptions())
+	assert.Equal(t, "Team Console", requireOptionValue(t, db, systemNameOptionKey))
+}
+
+func TestMigrateLegacyBrandOptionsDatabaseMatrix(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+	}{
+		{name: "sqlite"},
+		{name: "mysql", env: "TEST_MYSQL_DSN"},
+		{name: "postgres", env: "TEST_POSTGRES_DSN"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dsn := strings.TrimSpace(os.Getenv(test.env))
+			if test.name == "sqlite" {
+				previousSQLitePath := common.SQLitePath
+				common.SQLitePath = filepath.Join(t.TempDir(), "brand-migration.db")
+				t.Cleanup(func() { common.SQLitePath = previousSQLitePath })
+				dsn = "local"
+			} else if dsn == "" {
+				t.Skip("test database DSN is not configured")
+			}
+
+			t.Setenv("BRAND_MIGRATION_TEST_DSN", dsn)
+			db, databaseType, err := chooseDB("BRAND_MIGRATION_TEST_DSN", false)
+			require.NoError(t, err)
+			sqlDB, err := db.DB()
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+
+			previousDB := DB
+			previousDatabaseType := common.MainDatabaseType()
+			DB = db
+			common.SetMainDatabaseType(databaseType)
+			t.Cleanup(func() {
+				DB = previousDB
+				common.SetMainDatabaseType(previousDatabaseType)
+			})
+
+			require.NoError(t, db.AutoMigrate(&Option{}))
+			t.Cleanup(func() {
+				require.NoError(t, db.Where(&Option{Key: systemNameOptionKey}).Delete(&Option{}).Error)
+			})
+			require.NoError(t, db.Where(&Option{Key: systemNameOptionKey}).Delete(&Option{}).Error)
+			require.NoError(t, db.Create(&Option{Key: systemNameOptionKey, Value: "New API"}).Error)
+			require.NoError(t, MigrateLegacyBrandOptions())
+			assert.Equal(t, common.DefaultSystemName, requireOptionValue(t, db, systemNameOptionKey))
+			require.NoError(t, MigrateLegacyBrandOptions())
+			assert.Equal(t, common.DefaultSystemName, requireOptionValue(t, db, systemNameOptionKey))
+
+			require.NoError(t, db.Model(&Option{}).
+				Where(&Option{Key: systemNameOptionKey}).
+				Update("value", "Team Console").Error)
+			require.NoError(t, MigrateLegacyBrandOptions())
+			assert.Equal(t, "Team Console", requireOptionValue(t, db, systemNameOptionKey))
+		})
 	}
 }
 

@@ -394,7 +394,7 @@ docker run --name NexusTok -d --restart always \
 <summary><strong>Méthode 3: Panneau BaoTa</strong></summary>
 
 1. Installez le panneau BaoTa (version ≥ 9.2.0)
-2. Recherchez **New-API** dans le magasin d'applications
+2. Recherchez **NexusTok** dans le magasin d'applications
 3. Installation en un clic
 
 📖 [Tutoriel avec des images](./docs/BT.md)

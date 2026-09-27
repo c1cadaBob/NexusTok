@@ -1,7 +1,7 @@
 # 限流与并发保护
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-25
+> 事实基线日期：2026-09-27
 > 主要代码来源：`middleware/rate-limit.go`、`middleware/model-rate-limit.go`、`middleware/task_artifact_access.go`、`controller/plugin_protocol_limiter.go`、`model/user_session.go`
 > 关联架构文档：[`docs/architecture/authentication-and-authorization.md`](architecture/authentication-and-authorization.md)、[`docs/architecture/data-cache-and-background-jobs.md`](architecture/data-cache-and-background-jobs.md)、[`docs/architecture/system-overview.md`](architecture/system-overview.md)
 
@@ -38,7 +38,7 @@
 | 任务产物无效访问 | 进程内 IP 窗口 | 客户端 IP、1 分钟窗口 | 60 次/分钟 | 无效或伪造的匿名任务产物 capability | 先伪装为 `404`；超过限制返回 `429` | 环境变量 | 是 | `middleware/task_artifact_access.go` |
 | 任务产物并发 | 进程内计数器 | 全局、客户端 IP、任务产物对象 | 128/64/16 个并发 | 带有效 capability 的任务产物内容访问 | HTTP `429` | 环境变量 | 是 | `middleware/task_artifact_access.go` |
 | 任务插件观察并发 | 进程内计数器 | 全局、插件、用户、Token | 128/32/4/2 个并发 | 异步任务插件协议观察连接 | HTTP `429`，错误码 `rate_limit_exceeded` | 当前为代码固定值 | 不适用 | `controller/plugin_protocol_limiter.go` |
-| 活跃登录 Session | 数据库 `user_sessions` | 用户 ID、未过期 active Session | 5 个 | 限制同时保留的登录设备 | HTTP `409`，`AUTH_SESSION_LIMIT` | 环境变量 | 是 | `model/user_session.go`、`service/auth_session.go` |
+| 活跃登录 Session | 数据库 `user_sessions` | 用户 ID、未过期 active Session | 50 个 | 限制同时保留的登录设备 | HTTP `409`，`AUTH_SESSION_LIMIT` | 环境变量 | 是 | `model/user_session.go`、`service/auth_session.go` |
 | Session 签发窗口 | 数据库 `user_sessions` | 用户 ID、创建时间窗口 | 100 个/24 小时 | 限制重复创建 Session | HTTP `429`，`AUTH_SESSION_ISSUANCE_LIMIT` | 环境变量 | 是 | `model/user_session.go`、`service/auth_session.go` |
 | 请求体大小 | 请求体字节数 | 全局解压后大小；匿名接口单独限制 | 全局 128 MB；匿名 512 KB | 防止超大请求和压缩包解压导致资源耗尽 | HTTP `413` | 环境变量 | 是 | `middleware/gzip.go`、`middleware/request_body_limit.go` |
 
@@ -313,10 +313,10 @@ Session 限制不是普通 HTTP 请求速率限流，但它是登录 `429`、登
 配置项：
 
 ```env
-USER_SESSION_ACTIVE_LIMIT=5
+USER_SESSION_ACTIVE_LIMIT=50
 ```
 
-默认每个用户最多保留 5 个未过期且状态为 `active` 的 Session。创建新 Session 前，服务端在同一数据库事务中串行化检查、清理和插入。
+默认每个用户最多保留 50 个未过期且状态为 `active` 的 Session。创建新 Session 前，服务端在同一数据库事务中串行化检查、清理和插入。
 
 达到上限时返回：
 
@@ -334,7 +334,13 @@ AUTH_SESSION_LIMIT
 
 “超过 2 小时”的清理阈值是代码固定值，不是环境变量。近期创建的 Session 和已经产生认证活动的 Session 不会被这项清理撤销。
 
-### 8.2 Session 签发窗口
+### 8.2 重复登录复用
+
+密码、OAuth、微信、Telegram、2FA 和 Passkey 登录成功后，服务端读取 `nexustok_session_id`，仅在 SID 属于当前用户、用户启用、鉴权版本一致、Session 为 active 且未过期时复用原 `user_sessions` 行。复用会轮换 SID、Refresh Secret 摘要和 Session Version，保留 `CreatedAt`，并撤销旧 SID；因此旧凭据不能继续使用。
+
+复用不增加活跃 Session 数量，也不增加签发窗口计数。SID 无效、过期、撤销、跨用户或鉴权版本不匹配时回退到新建流程，新建仍受本节的活跃上限和签发窗口约束。2FA/Passkey 的 AuthFlow 消费与复用/新建在同一事务中完成，失败会回滚一次性流程消费。
+
+### 8.3 Session 签发窗口
 
 配置项：
 
@@ -424,7 +430,7 @@ ANONYMOUS_REQUEST_BODY_LIMIT_KB=512
 | `TASK_ARTIFACT_GLOBAL_CONCURRENCY` | `128` | 任务产物全局活跃并发 | 否 | 非正数回退默认值 |
 | `TASK_ARTIFACT_IP_CONCURRENCY` | `64` | 任务产物单 IP 活跃并发 | 否 | 非正数回退默认值 |
 | `TASK_ARTIFACT_OBJECT_CONCURRENCY` | `16` | 单产物对象活跃并发 | 否 | 非正数回退默认值 |
-| `USER_SESSION_ACTIVE_LIMIT` | `5` | 每用户活跃 Session 数 | 否 | 非正数回退默认值 |
+| `USER_SESSION_ACTIVE_LIMIT` | `50` | 每用户活跃 Session 数 | 否 | 非正数回退默认值 |
 | `USER_SESSION_ISSUANCE_LIMIT` | `100` | 每用户签发窗口 Session 数 | 否 | 非正数回退默认值 |
 | `USER_SESSION_ISSUANCE_WINDOW_SECONDS` | `86400` | 签发窗口秒数 | 否 | 非正数回退默认值，超过保留期会钳制 |
 | `USER_SESSION_REVOKED_RETENTION_DAYS` | `7` | revoked Session 保留天数 | 否 | 非正数回退默认值 |
@@ -514,7 +520,7 @@ TRUSTED_PROXIES=none
 | 搜索返回 `429` | `SR` | 按用户 ID 计数 |
 | 模型调用返回 `429` | `MRRL/MRRLS` | 检查管理员后台“系统设置 -> 安全 -> 限流” |
 | 重复登录返回 `429 AUTH_SESSION_ISSUANCE_LIMIT` | Session 签发窗口 | 默认 100 个/24 小时/用户 |
-| 登录返回 `409 AUTH_SESSION_LIMIT` | 活跃 Session 上限 | 默认 5 个；清理后仍有活动会话时不会强制回收 |
+| 登录返回 `409 AUTH_SESSION_LIMIT` | 活跃 Session 上限 | 默认 50 个；复用已有浏览器 Session 不消耗上限；清理后仍有活动会话时不会强制回收 |
 | Refresh/Logout 返回 `409 AUTH_SESSION_MISMATCH` | Session 标识不一致 | 客户端持有的 SID 与 Refresh Cookie 不一致 |
 | 请求返回 `413` | 请求体大小保护 | 检查 `MAX_REQUEST_BODY_MB` 或 `ANONYMOUS_REQUEST_BODY_LIMIT_KB` |
 
@@ -638,3 +644,4 @@ Redis Key 前缀、内存清理周期以及令牌桶内部参数属于实现细�
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 补充架构索引与元信息 | 已有限流详细规则没有统一事实基线和架构入口 | 增加事实基线、代码来源、架构分工和变更记录；保留原有桶、配置和默认值 | Web/API/用户/模型/任务/Session/请求体保护 | `middleware/`、`controller/plugin_protocol_limiter.go`、`model/user_session.go` 静态核对 |
+| 2026-09-27 | 登录 Session 限制与复用校准 | 默认活跃上限为 `5`，每次成功登录都新增 Session 并消耗签发计数 | 默认活跃上限调整为 `50`；同浏览器匹配到未过期 Session 时原行复用并轮换凭据，不增加活跃数或签发窗口计数 | 登录限制、Session 数据库增长、2FA/Passkey 登录完成 | `common/constants.go`、`model/user_session.go`、`service/auth_session.go`、服务层回归测试 |

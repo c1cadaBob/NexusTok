@@ -30,7 +30,13 @@ func VerifyLogin(c *gin.Context) {
 		writeSecurityOperationError(c, service.ErrProofMethod)
 		return
 	}
-	bundle, err := service.VerifyLoginCode(request.FlowToken, request.Code, c.ClientIP(), c.Request.UserAgent())
+	bundle, err := service.VerifyLoginCodeWithSession(
+		request.FlowToken,
+		request.Code,
+		c.ClientIP(),
+		c.Request.UserAgent(),
+		service.LoginSessionSID(c),
+	)
 	if err != nil {
 		writeSecurityOperationError(c, err)
 		return
@@ -127,7 +133,14 @@ func LoginPasskeyFinish(c *gin.Context) {
 		writeSecurityOperationError(c, err)
 		return
 	}
-	bundle, err := service.CompleteLoginVerification(request.FlowToken, verification, service.VerificationMethodPasskey, c.ClientIP(), c.Request.UserAgent())
+	bundle, err := service.CompleteLoginVerificationWithSession(
+		request.FlowToken,
+		verification,
+		service.VerificationMethodPasskey,
+		c.ClientIP(),
+		c.Request.UserAgent(),
+		service.LoginSessionSID(c),
+	)
 	if err != nil {
 		writeSecurityOperationError(c, err)
 		return

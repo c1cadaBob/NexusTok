@@ -1,7 +1,7 @@
 # 用户鉴权与登录会话
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-25
+> 事实基线日期：2026-09-27
 > 主要代码来源：`middleware/`、`service/auth_session.go`、`model/user_session.go`、`controller/`、`oauth/`
 > 关联架构文档：[`docs/architecture/authentication-and-authorization.md`](architecture/authentication-and-authorization.md)、[`docs/architecture/system-overview.md`](architecture/system-overview.md)
 
@@ -13,6 +13,7 @@
 
 - Access Token 是有效期 15 分钟的 JWT，只保存在浏览器内存中，通过 `Authorization: Bearer <token>` 发送。
 - Refresh Token 是随机不透明值，有效期最长 30 天。浏览器只通过 `HttpOnly`、`SameSite=Strict` Cookie 持有它；服务端仅保存 HMAC 摘要，并在每次刷新时轮换。
+- `nexustok_session_id` 是浏览器最近一次成功登录的 Session 定位 Cookie，`HttpOnly`、`Path=/`、`SameSite=Strict`，`Secure` 跟随 `SESSION_COOKIE_SECURE`。它只保存 SID，不能单独完成鉴权，也不保存 Refresh Secret。
 - `new_api_has_session` 是 Refresh Cookie 的会话提示，值恒为 `1`，`Path=/`、非 `HttpOnly`，与 Refresh Cookie 同时写入、同时清除、同一过期时间。它只声明"曾签发过 Refresh Cookie"，不含任何凭据，也不参与任何鉴权判定；伪造它唯一的效果是自费一次注定失败的 refresh。它存在的原因是 Refresh Cookie 被 `HttpOnly` 和 `Path=/api/user/auth` 双重限制，`/` 上的页面无法判断自己是否匿名，否则每次冷启动都要发一次注定 401 的 refresh，而该请求只会占用独立的 `auth-refresh` IP 限流桶，不会消耗登录或注册额度。
 - `user_sessions` 是登录会话控制面，记录设备、IP、登录方式、最后活跃时间、到期时间和撤销状态。数据库中的 Session 状态是最终权威；撤销传播速度取决于下文所述的 Redis 拓扑。
 - 用户的密码、状态、角色或安全因子发生安全相关变化时，`auth_version` 会递增并使旧登录会话失效。订阅带来的分组升降级只刷新授权缓存，不会退出任何登录设备。
@@ -80,11 +81,24 @@
 
 公开页面的冷启动会先读 `new_api_has_session`：提示不存在且内存中没有任何身份时跳过 refresh，直接按匿名渲染，且**不**把这次跳过记为已完成的匿名判定——跳过只是延后，不是服务端结论。会依据鉴权结果做跳转的位置（受保护路由与登录页）不看提示，内存为空时一律回源。因此提示缺失但 Refresh Cookie 有效的用户（该 Cookie 上线前建立的会话，或只清理了 `/` 站点数据的浏览器）会在公开页显示为匿名，并在进入上述任一位置时自动恢复登录态，不需要重新输入密码。提示因服务端撤销而过期时，那次 refresh 返回 401 并在同一响应里清除提示，浪费的请求只发生一次。
 
+## 登录会话复用与凭据持久化
+
+成功完成密码、OAuth、微信、Telegram、2FA 或 Passkey 登录后，服务端会读取同浏览器的 `nexustok_session_id`，优先尝试复用该 SID 对应的会话行。只有以下条件全部满足时才复用：
+
+- SID 属于当前登录用户；
+- 用户仍为启用状态，且会话的 `user_auth_version` 等于当前用户的 `auth_version`；
+- Session 状态为 `active`、未撤销且未过期。
+
+**变更前**：每次成功登录都插入新的 `user_sessions` 行，重复登录会同时消耗活跃 Session 上限和签发窗口，旧 Refresh Cookie 也不能帮助登录流程定位既有会话。
+**变更后**：复用会在原 `user_sessions` 行内更新登录方式、IP、User-Agent、最后活跃时间和过期时间，保留原 `CreatedAt`，但轮换 SID、Refresh Secret 摘要和 Session Version。旧 SID 会写入撤销 tombstone，旧 SID 和旧 Refresh Token 均不可继续使用；复用不增加活跃 Session 数量，也不增加签发窗口计数。
+
+SID 只用于定位候选会话，不能绕过密码、OAuth、2FA 或 Passkey 校验。SID 无效、跨用户、撤销、过期或鉴权版本不匹配时，回退到正常新建流程；新建仍受活跃 Session 上限和签发窗口限制。2FA/Passkey 的一次性 AuthFlow 消费与复用/新建会话在同一数据库事务中完成，若会话处理失败，AuthFlow 消费会回滚。
+
 ## Session 签发限额与保留策略
 
 服务端在所有登录方式的统一 Session 签发出口执行两级账户限制：
 
-- `USER_SESSION_ACTIVE_LIMIT`（默认 `5`）：单用户未过期且状态为 active 的 Session 上限。达到上限时新登录返回 `409 AUTH_SESSION_LIMIT`。
+- `USER_SESSION_ACTIVE_LIMIT`（默认 `50`）：单用户未过期且状态为 active 的 Session 上限。达到上限时新登录返回 `409 AUTH_SESSION_LIMIT`。
 - `USER_SESSION_ISSUANCE_LIMIT`（默认 `100`）和 `USER_SESSION_ISSUANCE_WINDOW_SECONDS`（默认 `86400`）：统计窗口内该用户创建的所有 Session，包含已撤销和旧鉴权版本的记录。达到上限时返回 `429 AUTH_SESSION_ISSUANCE_LIMIT`。
 - 创建 Session 前会在同一数据库事务中锁定对应用户行，串行化该用户的会话上限检查、清理和插入；SQLite 使用其单写者语义完成同样的串行化。计数或写入失败会拒绝签发，不会降级放行。
 
@@ -201,6 +215,7 @@ Proof 同时绑定用户、登录会话、用户鉴权版本、会话版本和 s
 ## 升级注意事项
 
 - 旧 `session` Cookie 不再使用；升级后现有面板登录会失效，用户需要重新登录。
+- 升级后新登录会写入 `nexustok_session_id`。已有 Refresh Cookie 没有该定位 Cookie 时仍可正常 refresh；用户下一次成功登录后才开始享受同浏览器会话复用。
 - 数据库迁移会新增 `user_sessions`、`auth_flows`、`external_identity_claims` 和 `users.auth_version`，并为已有用户初始化鉴权版本、回填 Telegram 账号唯一归属；若历史数据中同一 Telegram ID 已绑定多个用户，迁移会拒绝继续启动，需先消除歧义。
 - 数据库迁移会为 Session 签发计数和分批清理新增索引；已有 `user_sessions` 很大时应为首次启动预留维护窗口。
 - `user_sessions.previous_refresh_hash` 会从定长 `char(64)` 迁移为 `varchar(64)`。应用会兼容读取历史定长字段留下的空格填充；迁移后的目标结构必须保持幂等，连续启动不应反复执行列类型变更。
@@ -219,3 +234,8 @@ Proof 同时绑定用户、登录会话、用户鉴权版本、会话版本和 s
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 补充架构索引与元信息 | 已有详细鉴权契约没有统一事实基线和架构入口 | 增加事实基线、代码来源、架构分工和变更记录；保留原有详细规则 | 面板登录、Session、AuthFlow、Security Proof、Redis 拓扑 | `middleware/`、`service/auth_session.go`、`model/user_session.go` 静态核对 |
+| 2026-09-27 | 登录会话复用与品牌默认值校准 | 每次成功登录都插入新 Session；默认活跃上限为 `5`；旧默认产品名可能覆盖代码默认值 | 同浏览器优先复用未过期且匹配用户/状态/鉴权版本的 Session，轮换 SID 和 Refresh Secret 摘要但保留 `CreatedAt`；默认活跃上限调整为 `50`；精确匹配历史默认名 `New API`/`NewAPI`/`newapi` 的配置迁移为 `NexusTok`，管理员自定义名称不变 | 登录、2FA、Passkey、OAuth、微信、Telegram、Session 限制、系统展示名称 | `model/user_session.go`、`model/login_verification.go`、`service/auth_session.go`、`model/frontend_option_migration.go`；SQLite/测试及三数据库矩阵 |
+
+### 本次认证安全核对
+
+本次变更按 OWASP [ASVS `5.0.0` V7 Session Management](https://github.com/OWASP/ASVS/blob/v5.0.0/5.0/en/0x16-V7-Session-Management.md) 的 `V7.1.2`（并发 Session 限制）、`V7.2.4`（认证及重新认证时生成新 Session Token 并终止当前 Token）和 `V7.4.1`（终止后的 Session 不得继续使用），以及 [Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html) 和 [Session Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html) 核对。已验证 HttpOnly、SameSite、Secure 跟随配置、认证后 SID/Refresh Secret 轮换、Refresh Secret 不落地、失败/过期/跨用户回退、旧 SID deny tombstone 和一次性 AuthFlow 的事务回滚。此记录不代表 NexusTok 已完成 OWASP 全量合规认证，其他认证能力仍需按适用条款分别验证。

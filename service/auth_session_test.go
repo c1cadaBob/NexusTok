@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -36,7 +38,13 @@ func setupAuthSessionTestDB(t *testing.T) *model.User {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.AuthFlow{}))
+	require.NoError(t, db.AutoMigrate(
+		&model.User{},
+		&model.UserSession{},
+		&model.AuthFlow{},
+		&model.TwoFA{},
+		&model.PasskeyCredential{},
+	))
 	model.DB = db
 	common.RedisEnabled = false
 	common.UserSessionActiveLimit = common.DefaultUserSessionActiveLimit
@@ -134,6 +142,197 @@ func TestCreateLoginSessionEnforcesActiveLimitAcrossAuthVersions(t *testing.T) {
 	var count int64
 	require.NoError(t, model.DB.Model(&model.UserSession{}).Count(&count).Error)
 	assert.Equal(t, int64(common.DefaultUserSessionActiveLimit), count)
+}
+
+func TestCreateLoginSessionReusesBrowserSessionWithoutGrowingLimits(t *testing.T) {
+	useTestSessionSecret(t)
+	user := setupAuthSessionTestDB(t)
+	common.UserSessionActiveLimit = 1
+	common.UserSessionIssuanceLimit = 10
+
+	first, err := CreateLoginSession(user.Id, "password", "127.0.0.1", "first-agent")
+	require.NoError(t, err)
+	var storedFirst model.UserSession
+	require.NoError(t, model.DB.First(&storedFirst, "sid = ?", first.Session.SID).Error)
+
+	second, err := CreateLoginSessionWithReuse(
+		user.Id,
+		"password",
+		"127.0.0.2",
+		"second-agent",
+		first.Session.SID,
+	)
+	require.NoError(t, err, "复用同一浏览器会话不应触发活跃会话或签发窗口限制")
+	assert.NotEqual(t, first.Session.SID, second.Session.SID, "重新认证必须轮换 Session ID")
+	assert.NotEqual(t, first.RefreshToken, second.RefreshToken)
+	assert.Equal(t, storedFirst.CreatedAt, second.Session.CreatedAt, "复用应保留原会话创建时间")
+
+	var count int64
+	require.NoError(t, model.DB.Model(&model.UserSession{}).Where("user_id = ?", user.Id).Count(&count).Error)
+	assert.Equal(t, int64(1), count, "复用不得插入新的 user_sessions 行")
+	issued, err := model.CountUserSessionsCreatedSince(user.Id, time.Now().Add(-time.Minute).Unix())
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), issued, "复用不得增加签发窗口计数")
+	assert.ErrorIs(t, model.DB.First(&model.UserSession{}, "sid = ?", first.Session.SID).Error, gorm.ErrRecordNotFound)
+	_, _, err = RefreshLoginSession(first.RefreshToken, first.Session.SID, "127.0.0.1", "first-agent")
+	assert.ErrorIs(t, err, ErrRefreshTokenInvalid, "旧 Session ID 和刷新凭据都必须失效")
+
+	identity, err := ParseAccessToken(second.AccessToken)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), identity.SessionVersion)
+}
+
+func TestCreateOrReuseLoginSessionFromAuthFlowIsAtomic(t *testing.T) {
+	useTestSessionSecret(t)
+	user := setupAuthSessionTestDB(t)
+	common.UserSessionActiveLimit = 1
+	common.UserSessionIssuanceLimit = 10
+
+	first, err := CreateLoginSession(user.Id, "password", "127.0.0.1", "first-agent")
+	require.NoError(t, err)
+
+	reuseToken, _, err := model.CreateAuthFlow(model.AuthFlowCreate{
+		Purpose:   model.AuthFlowPurposeLoginVerification,
+		UserId:    user.Id,
+		ExpiresAt: time.Now().Add(time.Minute),
+	})
+	require.NoError(t, err)
+	reuseSession, _, err := newLoginSession(user.Id, user.AuthVersion, "2fa", "127.0.0.2", "second-agent")
+	require.NoError(t, err)
+
+	reused, err := model.CreateOrReuseUserSessionFromLoginFlow(
+		reuseToken,
+		reuseSession,
+		first.Session.SID,
+		func(_ *model.AuthFlow, state *model.UserVerificationState) error {
+			require.Equal(t, user.Id, state.UserID)
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	assert.True(t, reused)
+	_, err = model.GetAuthFlow(reuseToken, model.AuthFlowMatch{
+		Purpose: model.AuthFlowPurposeLoginVerification,
+		UserId:  user.Id,
+	})
+	assert.ErrorIs(t, err, model.ErrAuthFlowConsumed)
+
+	failedToken, _, err := model.CreateAuthFlow(model.AuthFlowCreate{
+		Purpose:   model.AuthFlowPurposeLoginVerification,
+		UserId:    user.Id,
+		ExpiresAt: time.Now().Add(time.Minute),
+	})
+	require.NoError(t, err)
+	failedSession, _, err := newLoginSession(user.Id, user.AuthVersion, "password", "127.0.0.3", "third-agent")
+	require.NoError(t, err)
+
+	_, err = model.CreateOrReuseUserSessionFromLoginFlow(
+		failedToken,
+		failedSession,
+		"",
+		func(_ *model.AuthFlow, _ *model.UserVerificationState) error {
+			return nil
+		},
+	)
+	assert.ErrorIs(t, err, model.ErrUserSessionLimit)
+	_, err = model.GetAuthFlow(failedToken, model.AuthFlowMatch{
+		Purpose: model.AuthFlowPurposeLoginVerification,
+		UserId:  user.Id,
+	})
+	require.NoError(t, err, "会话创建失败时，一次性登录流程消费必须回滚")
+}
+
+func TestCreateLoginSessionReuseFallsBackForExpiredAndForeignSessions(t *testing.T) {
+	useTestSessionSecret(t)
+	user := setupAuthSessionTestDB(t)
+	common.UserSessionActiveLimit = 10
+	common.UserSessionIssuanceLimit = 10
+
+	expired, err := CreateLoginSession(user.Id, "password", "127.0.0.1", "expired-agent")
+	require.NoError(t, err)
+	require.NoError(t, model.DB.Model(&model.UserSession{}).
+		Where("sid = ?", expired.Session.SID).
+		Updates(map[string]any{"expires_at": time.Now().Add(-time.Minute).Unix()}).Error)
+
+	otherUser := &model.User{
+		Username:    "other-session-user",
+		Password:    "unused-password-hash",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+		Group:       "default",
+		AuthVersion: 1,
+		AffCode:     "other-session-user",
+	}
+	require.NoError(t, model.DB.Create(otherUser).Error)
+	foreign, err := CreateLoginSession(otherUser.Id, "password", "127.0.0.4", "foreign-agent")
+	require.NoError(t, err)
+
+	next, err := CreateLoginSessionWithReuse(
+		user.Id,
+		"password",
+		"127.0.0.5",
+		"next-agent",
+		foreign.Session.SID,
+	)
+	require.NoError(t, err)
+	assert.NotEqual(t, foreign.Session.SID, next.Session.SID)
+	storedNext, err := model.GetUserSessionBySID(next.Session.SID)
+	require.NoError(t, err)
+	assert.Equal(t, user.Id, storedNext.UserID)
+
+	next, err = CreateLoginSessionWithReuse(
+		user.Id,
+		"password",
+		"127.0.0.6",
+		"next-agent-2",
+		expired.Session.SID,
+	)
+	require.NoError(t, err)
+	assert.NotEqual(t, expired.Session.SID, next.Session.SID)
+	storedNext, err = model.GetUserSessionBySID(next.Session.SID)
+	require.NoError(t, err)
+	assert.Equal(t, user.Id, storedNext.UserID)
+}
+
+func TestLoginSessionCookieStoresOnlySessionLocator(t *testing.T) {
+	useTestSessionSecret(t)
+	user := setupAuthSessionTestDB(t)
+	bundle, err := CreateLoginSession(user.Id, "password", "127.0.0.1", "cookie-agent")
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	WriteRefreshCookie(context, bundle.RefreshToken)
+	cookies := recorder.Result().Cookies()
+	var locatorCookie *http.Cookie
+	for i := range cookies {
+		if cookies[i].Name == LoginSessionCookieName {
+			locatorCookie = cookies[i]
+			break
+		}
+	}
+	require.NotNil(t, locatorCookie)
+	assert.Equal(t, bundle.Session.SID, locatorCookie.Value)
+	assert.True(t, locatorCookie.HttpOnly)
+	assert.Equal(t, "/", locatorCookie.Path)
+	assert.NotContains(t, locatorCookie.Value, ".")
+
+	request := httptest.NewRequest("POST", "/api/user/login", nil)
+	request.AddCookie(locatorCookie)
+	context.Request = request
+	assert.Equal(t, bundle.Session.SID, LoginSessionSID(context))
+
+	recorder = httptest.NewRecorder()
+	context, _ = gin.CreateTestContext(recorder)
+	ClearRefreshCookie(context)
+	cleared := recorder.Result().Cookies()
+	for i := range cleared {
+		if cleared[i].Name == LoginSessionCookieName {
+			assert.Equal(t, -1, cleared[i].MaxAge)
+			return
+		}
+	}
+	require.Fail(t, "清除 Refresh Cookie 时必须同步清除浏览器会话定位 Cookie")
 }
 
 func TestCreateLoginSessionCleansOldUnactivatedSessionsBeforeApplyingActiveLimit(t *testing.T) {
@@ -366,6 +565,18 @@ func TestCreateLoginSessionCleanupDatabaseMatrix(t *testing.T) {
 			require.NoError(t, db.First(&stale, "sid = ?", "matrix-stale-"+test.name).Error)
 			assert.Equal(t, model.UserSessionStatusRevoked, stale.Status)
 			assert.Equal(t, "inactive_login_cleanup", stale.RevokedReason)
+
+			reused, err := CreateLoginSessionWithReuse(
+				user.Id,
+				"password",
+				"127.0.0.2",
+				"matrix-agent-2",
+				"matrix-active-"+test.name,
+			)
+			require.NoError(t, err, "各数据库都必须支持在原 user_sessions 行内轮换 SID")
+			assert.NotEqual(t, "matrix-active-"+test.name, reused.Session.SID)
+			var oldActive model.UserSession
+			assert.ErrorIs(t, db.First(&oldActive, "sid = ?", "matrix-active-"+test.name).Error, gorm.ErrRecordNotFound)
 		})
 	}
 }

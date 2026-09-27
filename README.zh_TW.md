@@ -393,7 +393,7 @@ docker run --name NexusTok -d --restart always \
 <summary><strong>方式 3：寶塔面板</strong></summary>
 
 1. 安裝寶塔面板（≥ 9.2.0 版本）
-2. 在應用商店搜尋 **New-API**
+2. 在應用商店搜尋 **NexusTok**
 3. 一鍵安裝
 
 📖 [圖文教學](./docs/BT.md)

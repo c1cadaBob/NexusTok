@@ -48,7 +48,7 @@ function EmptyAboutState() {
         </div>
         <div className='space-y-4 text-sm'>
           <p>
-            {t('New API Project Repository:')}{' '}
+            {t('NexusTok Project Repository:')}{' '}
             <a
               href='https://github.com/c1cadaBob/NexusTok'
               target='_blank'
@@ -65,7 +65,7 @@ function EmptyAboutState() {
               rel='noopener noreferrer'
               className='text-primary hover:underline'
             >
-              {t('NewAPI')}
+              {t('NexusTok')}
             </a>{' '}
             © {currentYear}{' '}
             <a

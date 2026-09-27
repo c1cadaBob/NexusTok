@@ -15,6 +15,11 @@ import (
 
 const RefreshCookieName = "new_api_refresh"
 
+// LoginSessionCookieName 仅保存当前浏览器最近一次成功登录的 Session ID。
+// 它不是认证凭据，服务端只有在本次登录已经完成密码、OAuth、2FA 或
+// Passkey 校验后，才会使用它尝试复用对应的会话行。
+const LoginSessionCookieName = "nexustok_session_id"
+
 // SessionHintCookieName is the script-readable companion to RefreshCookieName.
 // See writeSessionHintCookie for why it exists and what it is not.
 const SessionHintCookieName = "new_api_has_session"
@@ -50,17 +55,25 @@ type AuthBundle struct {
 }
 
 func CreateLoginSession(userID int, loginMethod, ip, userAgent string) (*AuthBundle, error) {
-	return createLoginSession(userID, 0, loginMethod, ip, userAgent)
+	return createLoginSession(userID, 0, loginMethod, ip, userAgent, "")
+}
+
+func CreateLoginSessionWithReuse(userID int, loginMethod, ip, userAgent, reusableSID string) (*AuthBundle, error) {
+	return createLoginSession(userID, 0, loginMethod, ip, userAgent, reusableSID)
 }
 
 func CreateLoginSessionAtAuthVersion(userID int, expectedAuthVersion int64, loginMethod, ip, userAgent string) (*AuthBundle, error) {
+	return CreateLoginSessionAtAuthVersionWithReuse(userID, expectedAuthVersion, loginMethod, ip, userAgent, "")
+}
+
+func CreateLoginSessionAtAuthVersionWithReuse(userID int, expectedAuthVersion int64, loginMethod, ip, userAgent, reusableSID string) (*AuthBundle, error) {
 	if expectedAuthVersion <= 0 {
 		return nil, ErrLoginSessionInvalid
 	}
-	return createLoginSession(userID, expectedAuthVersion, loginMethod, ip, userAgent)
+	return createLoginSession(userID, expectedAuthVersion, loginMethod, ip, userAgent, reusableSID)
 }
 
-func createLoginSession(userID int, expectedAuthVersion int64, loginMethod, ip, userAgent string) (*AuthBundle, error) {
+func createLoginSession(userID int, expectedAuthVersion int64, loginMethod, ip, userAgent, reusableSID string) (*AuthBundle, error) {
 	user, err := model.GetUserCache(userID)
 	if err != nil {
 		return nil, err
@@ -75,7 +88,7 @@ func createLoginSession(userID int, expectedAuthVersion int64, loginMethod, ip, 
 	if err != nil {
 		return nil, err
 	}
-	if err := model.CreateUserSessionWithLimits(session); err != nil {
+	if _, err := model.CreateOrReuseUserSessionWithLimits(session, reusableSID); err != nil {
 		return nil, err
 	}
 	bundle, err := issueAuthBundle(session, session.SID+"."+refreshSecret, true)
@@ -292,7 +305,8 @@ func ListLoginSessions(userID int, currentSID string) ([]LoginSessionView, error
 
 func WriteRefreshCookie(c *gin.Context, rawToken string) {
 	expiresAt := time.Now().Add(LoginSessionTTL)
-	if sid, _, ok := splitRefreshToken(rawToken); ok {
+	sid, _, ok := splitRefreshToken(rawToken)
+	if ok {
 		if session, err := model.GetUserSessionCached(sid); err == nil && session.ExpiresAt > time.Now().Unix() {
 			expiresAt = time.Unix(session.ExpiresAt, 0)
 		}
@@ -308,6 +322,9 @@ func WriteRefreshCookie(c *gin.Context, rawToken string) {
 		Secure:   common.SessionCookieSecure,
 		SameSite: http.SameSiteStrictMode,
 	})
+	if ok {
+		writeLoginSessionCookie(c, sid, maxAge, expiresAt)
+	}
 	writeSessionHintCookie(c, maxAge, expiresAt)
 }
 
@@ -322,7 +339,50 @@ func ClearRefreshCookie(c *gin.Context) {
 		Secure:   common.SessionCookieSecure,
 		SameSite: http.SameSiteStrictMode,
 	})
+	clearLoginSessionCookie(c)
 	clearSessionHintCookie(c)
+}
+
+// LoginSessionSID 返回不可信的浏览器 Session 定位值；它不能单独作为认证凭据。
+func LoginSessionSID(c *gin.Context) string {
+	if c == nil {
+		return ""
+	}
+	sid, err := c.Cookie(LoginSessionCookieName)
+	if err != nil {
+		return ""
+	}
+	sid = strings.TrimSpace(sid)
+	if _, err := uuid.Parse(sid); err != nil {
+		return ""
+	}
+	return sid
+}
+
+func writeLoginSessionCookie(c *gin.Context, sid string, maxAge int, expiresAt time.Time) {
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     LoginSessionCookieName,
+		Value:    sid,
+		Path:     "/",
+		MaxAge:   maxAge,
+		Expires:  expiresAt,
+		HttpOnly: true,
+		Secure:   common.SessionCookieSecure,
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
+func clearLoginSessionCookie(c *gin.Context) {
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     LoginSessionCookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		Expires:  time.Unix(1, 0),
+		HttpOnly: true,
+		Secure:   common.SessionCookieSecure,
+		SameSite: http.SameSiteStrictMode,
+	})
 }
 
 // writeSessionHintCookie mirrors the Refresh Cookie's lifetime with a

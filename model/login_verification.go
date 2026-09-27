@@ -49,11 +49,20 @@ func getUserVerificationState(tx *gorm.DB, userID int, forUpdate bool) (*UserVer
 // the resulting session together. The user lock serializes credential changes
 // and session issuance, including the per-user session limits.
 func CreateUserSessionFromLoginFlow(token string, session *UserSession, validate func(*AuthFlow, *UserVerificationState) error) error {
+	_, err := CreateOrReuseUserSessionFromLoginFlow(token, session, "", validate)
+	return err
+}
+
+// CreateOrReuseUserSessionFromLoginFlow 在同一事务内消费一次性登录授权，
+// 并续期匹配的浏览器 Session 或创建新行。
+func CreateOrReuseUserSessionFromLoginFlow(token string, session *UserSession, reusableSID string, validate func(*AuthFlow, *UserVerificationState) error) (bool, error) {
 	if session == nil || validate == nil {
-		return ErrUserSessionInvalid
+		return false, ErrUserSessionInvalid
 	}
 	cacheDeadline := userSessionCacheDeadline()
 	var revoked []UserSession
+	var replaced *UserSession
+	reused := false
 	_, err := ConsumeAuthFlowWithAction(token, AuthFlowMatch{
 		Purpose: AuthFlowPurposeLoginVerification, UserId: session.UserID,
 	}, func(tx *gorm.DB, flow *AuthFlow) error {
@@ -67,12 +76,26 @@ func CreateUserSessionFromLoginFlow(token string, session *UserSession, validate
 		if err := validate(flow, state); err != nil {
 			return err
 		}
+		var renewErr error
+		reused, replaced, renewErr = renewUserSessionWithTx(tx, session, reusableSID, time.Now().Unix())
+		if renewErr != nil || reused {
+			return renewErr
+		}
 		revoked, err = createUserSessionWithLimitsTx(tx, session, time.Now().Unix())
 		return err
 	})
 	if err != nil {
-		return err
+		return false, err
 	}
-	publishRevokedUserSessionCaches(revoked)
-	return publishCreatedUserSession(session, cacheDeadline)
+	if reused && replaced != nil {
+		replaced.Status = UserSessionStatusRevoked
+		replaced.RevokedAt = time.Now().Unix()
+		replaced.RevokedReason = "login_session_renewed"
+		if err := writeUserSessionCache(replaced.cacheEntry(), time.Time{}); err != nil {
+			common.SysLog("failed to publish renewed user session tombstone: " + err.Error())
+		}
+	} else {
+		publishRevokedUserSessionCaches(revoked)
+	}
+	return reused, publishCreatedUserSession(session, cacheDeadline)
 }
