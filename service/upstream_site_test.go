@@ -541,6 +541,7 @@ func platformSiteJSONResponse(status int, body string) *http.Response {
 }
 
 func TestNewAPIAdapterPasswordAuthenticationAndSnapshot(t *testing.T) {
+	groupFallbackRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		switch {
@@ -559,12 +560,17 @@ func TestNewAPIAdapterPasswordAuthenticationAndSnapshot(t *testing.T) {
 			_, _ = writer.Write([]byte(`{"success":true,"data":{"quota":12.5,"used_quota":3}}`))
 		case request.URL.Path == "/api/user/self/groups":
 			_, _ = writer.Write([]byte(`{"success":true,"data":{"default":{"ratio":0.7,"desc":"默认组"}}}`))
+		case request.URL.Path == "/api/user/groups":
+			groupFallbackRequests++
+			t.Fatalf("第一个分组路由成功后不应继续请求兼容路由")
 		case request.URL.Path == "/api/user/models":
 			_, _ = writer.Write([]byte(`{"success":true,"data":["gpt-4o","claude-3-7-sonnet"]}`))
 		case request.URL.Path == "/api/token/":
-			assert.Equal(t, "1", request.URL.Query().Get("p"))
-			assert.Equal(t, "100", request.URL.Query().Get("page_size"))
-			_, _ = writer.Write([]byte(`{"success":true,"data":{"items":[{"id":7,"name":"primary","key":"sk-newapi","group":"default","quota":8,"expired_time":"4102444800","model_limits":"gpt-4o,claude-3-7-sonnet"}]}}`))
+			assert.Equal(t, "0", request.URL.Query().Get("p"))
+			assert.Equal(t, "100", request.URL.Query().Get("size"))
+			assert.Empty(t, request.URL.Query().Get("page"))
+			assert.Empty(t, request.URL.Query().Get("page_size"))
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"page":1,"page_size":100,"total":1,"items":[{"id":7,"name":"primary","key":"sk-newapi","group":"default","quota":8,"expired_time":"4102444800","model_limits":"gpt-4o,claude-3-7-sonnet"}]}}`))
 		default:
 			http.NotFound(writer, request)
 		}
@@ -589,6 +595,623 @@ func TestNewAPIAdapterPasswordAuthenticationAndSnapshot(t *testing.T) {
 	assert.Equal(t, int64(8), *snapshot.Keys[0].RemainQuota)
 	assert.Equal(t, []string{"gpt-4o", "claude-3-7-sonnet"}, snapshot.Keys[0].Models)
 	assert.Equal(t, 0.7, snapshot.Keys[0].SourceConversionRatio)
+	assert.Zero(t, groupFallbackRequests)
+}
+
+func TestNewAPITokenPaginationSkipsNormalizedFirstPage(t *testing.T) {
+	requestedPages := make([]string, 0, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		require.Equal(t, "/api/token/", request.URL.Path)
+		requestedPages = append(requestedPages, request.URL.Query().Get("p"))
+		switch request.URL.Query().Get("p") {
+		case "0":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"page":1,"page_size":1,"total":2,"items":[{"id":7,"key":"sk-first"}]}}`))
+		case "2":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"page":2,"page_size":1,"total":2,"items":[{"id":8,"key":"sk-second"}]}}`))
+		default:
+			t.Fatalf("New API 归一化第一页后不应请求 p=%s", request.URL.Query().Get("p"))
+		}
+	}))
+	defer server.Close()
+
+	session, err := newPlatformSiteSession(server.URL, nil)
+	require.NoError(t, err)
+	session.Client = server.Client()
+	tokens, err := fetchNewAPITokens(context.Background(), session)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"0", "2"}, requestedPages)
+	require.Len(t, tokens, 2)
+	assert.Equal(t, "7", firstString(tokens[0], "id"))
+	assert.Equal(t, "8", firstString(tokens[1], "id"))
+}
+
+func TestNewAPITokenPaginationSupportsZeroBasedDerivedSite(t *testing.T) {
+	requestedPages := make([]string, 0, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		require.Equal(t, "/api/token/", request.URL.Path)
+		requestedPages = append(requestedPages, request.URL.Query().Get("p"))
+		switch request.URL.Query().Get("p") {
+		case "0":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"page":0,"page_size":1,"total":2,"items":[{"id":17,"key":"sk-zero"}]}}`))
+		case "1":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"page":1,"page_size":1,"total":2,"items":[{"id":18,"key":"sk-one"}]}}`))
+		default:
+			t.Fatalf("零起始派生平台不应请求 p=%s", request.URL.Query().Get("p"))
+		}
+	}))
+	defer server.Close()
+
+	session, err := newPlatformSiteSession(server.URL, nil)
+	require.NoError(t, err)
+	session.Client = server.Client()
+	tokens, err := fetchNewAPITokens(context.Background(), session)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"0", "1"}, requestedPages)
+	require.Len(t, tokens, 2)
+	assert.Equal(t, "17", firstString(tokens[0], "id"))
+	assert.Equal(t, "18", firstString(tokens[1], "id"))
+}
+
+func TestNewAPIAdapterModelsFallbackOnlyOnMissingRoute(t *testing.T) {
+	t.Run("兼容模型路由", func(t *testing.T) {
+		requestedPaths := make([]string, 0, 3)
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			requestedPaths = append(requestedPaths, request.URL.Path)
+			switch request.URL.Path {
+			case "/api/user/models", "/api/user/available_models":
+				http.NotFound(writer, request)
+			case "/api/user/available_model/":
+				writer.Header().Set("Content-Type", "application/json")
+				_, _ = writer.Write([]byte(`{"success":true,"data":["gpt-4o-mini"]}`))
+			default:
+				http.NotFound(writer, request)
+			}
+		}))
+		defer server.Close()
+
+		session, err := newPlatformSiteSession(server.URL, nil)
+		require.NoError(t, err)
+		session.Client = server.Client()
+		models, err := fetchNewAPIModels(context.Background(), session)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"gpt-4o-mini"}, models)
+		assert.Equal(t, []string{
+			"/api/user/models",
+			"/api/user/available_models",
+			"/api/user/available_model/",
+		}, requestedPaths)
+	})
+
+	t.Run("权限错误不继续尝试兼容路由", func(t *testing.T) {
+		compatibleRequests := 0
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			switch request.URL.Path {
+			case "/api/user/models":
+				writer.Header().Set("Content-Type", "application/json")
+				writer.WriteHeader(http.StatusForbidden)
+				_, _ = writer.Write([]byte(`{"success":false,"code":403,"message":"permission denied"}`))
+			case "/api/user/available_models", "/api/user/available_model/":
+				compatibleRequests++
+				t.Fatalf("权限错误时不应继续尝试模型兼容路由")
+			default:
+				http.NotFound(writer, request)
+			}
+		}))
+		defer server.Close()
+
+		session, err := newPlatformSiteSession(server.URL, nil)
+		require.NoError(t, err)
+		session.Client = server.Client()
+		_, err = fetchNewAPIModels(context.Background(), session)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrPlatformSitePermission)
+		assert.Zero(t, compatibleRequests)
+	})
+}
+
+func TestNewAPIAdapterLoadsAPIyiSelectableGroupsAfterMissingDefaultRoutes(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/user/self/groups", "/api/user/groups":
+			http.NotFound(writer, request)
+		case "/api/groupPro/selectable":
+			assert.Equal(t, "0", request.URL.Query().Get("p"))
+			assert.Equal(t, "1000", request.URL.Query().Get("pageSize"))
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(`{"success":true,"data":[{"name":"default","display_name":"Default","convert_ratio":0.5}]}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	session, err := newPlatformSiteSession(server.URL, nil)
+	require.NoError(t, err)
+	session.Client = server.Client()
+	rates, groups, loaded, endpoint, err := fetchNewAPIGroupResources(context.Background(), session)
+	require.NoError(t, err)
+	require.True(t, loaded)
+	assert.Equal(t, "/api/groupPro/selectable", endpoint)
+	assert.Equal(t, 0.5, rates["default"])
+	require.Len(t, groups, 1)
+	assert.Equal(t, "default", groups[0].ExternalID)
+	assert.Equal(t, "Default", groups[0].Name)
+	assert.Equal(t, 0.5, groups[0].Ratio)
+}
+
+func TestNewAPIAdapterPasswordReusesPersistedUnexpiredSession(t *testing.T) {
+	loginRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/user/login":
+			loginRequests++
+			t.Fatalf("未过期的已保存会话不应再次提交密码登录")
+		case "/api/user/self":
+			assert.Equal(t, "Bearer saved-access", request.Header.Get("Authorization"))
+			assert.Equal(t, "new_api_refresh=saved-refresh", request.Header.Get("Cookie"))
+			assert.Equal(t, "saved-session", request.Header.Get("X-Auth-Session"))
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"id":17,"quota":1}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	session, err := NewNewAPIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType:       model.UpstreamAuthPassword,
+			Username:       "operator",
+			Password:       "synthetic-password",
+			UserID:         "17",
+			AccessToken:    "saved-access",
+			TokenType:      "Bearer",
+			TokenExpiresAt: common.GetTimestamp() + 3600,
+			SessionID:      "saved-session",
+			SessionCurrent: true,
+			Cookie:         "new_api_refresh=saved-refresh",
+		},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, 0, loginRequests)
+	require.NotNil(t, session.CredentialUpdate)
+	assert.Equal(t, "17", session.CredentialUpdate.UserID)
+	assert.Equal(t, "saved-access", session.CredentialUpdate.AccessToken)
+	assert.Equal(t, "new_api_refresh=saved-refresh", session.CredentialUpdate.Cookie)
+}
+
+func TestNewAPIAdapterAccessTokenUsesUnexpiredDashboardSessionWithoutRefresh(t *testing.T) {
+	refreshRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/user/auth/refresh":
+			refreshRequests++
+			t.Fatalf("未过期的 Dashboard Access Token 不应无条件刷新")
+		case "/api/user/self":
+			assert.Equal(t, "Bearer saved-access", request.Header.Get("Authorization"))
+			assert.Equal(t, "saved-session", request.Header.Get("X-Auth-Session"))
+			assert.Equal(t, "new_api_refresh=saved-refresh", request.Header.Get("Cookie"))
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"id":17,"quota":1}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	_, err := NewNewAPIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType:       model.UpstreamAuthAccessToken,
+			AccessToken:    "saved-access",
+			TokenExpiresAt: common.GetTimestamp() + 3600,
+			SessionID:      "saved-session",
+			SessionCurrent: true,
+			Cookie:         "new_api_refresh=saved-refresh",
+		},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, 0, refreshRequests)
+}
+
+func TestNewAPIAdapterAccessTokenPersistsResponseCookie(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		if request.URL.Path != "/api/user/self" {
+			http.NotFound(writer, request)
+			return
+		}
+		assert.Equal(t, "Bearer access-token", request.Header.Get("Authorization"))
+		assert.Equal(t, "session=old", request.Header.Get("Cookie"))
+		http.SetCookie(writer, &http.Cookie{
+			Name:  "new_api_refresh",
+			Value: "captured-refresh",
+			Path:  "/api/user/auth",
+		})
+		_, _ = writer.Write([]byte(`{"success":true,"data":{"id":17,"quota":1}}`))
+	}))
+	defer server.Close()
+
+	session, err := NewNewAPIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType:    model.UpstreamAuthAccessToken,
+			AccessToken: "access-token",
+			Cookie:      "session=old",
+		},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, session.CredentialUpdate)
+	assert.Equal(t, "17", session.CredentialUpdate.UserID)
+	assert.Contains(t, session.CredentialUpdate.Cookie, "session=old")
+	assert.Contains(t, session.CredentialUpdate.Cookie, "new_api_refresh=captured-refresh")
+}
+
+func TestNewAPIAdapterPasswordRefreshesModernBundleAndPreservesPasswordFallback(t *testing.T) {
+	refreshRequests := 0
+	loginRequests := 0
+	selfRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/user/self":
+			selfRequests++
+			if selfRequests == 1 {
+				assert.Empty(t, request.Header.Get("Authorization"))
+				writer.WriteHeader(http.StatusUnauthorized)
+				_, _ = writer.Write([]byte(`{"success":false,"code":401}`))
+				return
+			}
+			assert.Equal(t, "Bearer refreshed-access", request.Header.Get("Authorization"))
+			assert.Equal(t, "new_api_refresh=rotated-refresh", request.Header.Get("Cookie"))
+			assert.Equal(t, "rotated-session", request.Header.Get("X-Auth-Session"))
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"id":17,"quota":1}}`))
+		case "/api/user/auth/refresh":
+			refreshRequests++
+			assert.Equal(t, "old-session", request.Header.Get("X-Auth-Session"))
+			assert.Equal(t, "new_api_refresh=old-refresh", request.Header.Get("Cookie"))
+			assert.Equal(t, "Bearer expired-access", request.Header.Get("Authorization"))
+			http.SetCookie(writer, &http.Cookie{Name: "new_api_refresh", Value: "rotated-refresh", Path: "/api/user/auth"})
+			_, _ = writer.Write([]byte(fmt.Sprintf(`{"success":true,"data":{"access_token":"refreshed-access","token_type":"Bearer","access_expires_at":%d,"session":{"sid":"rotated-session","current":true},"user":{"id":17}}}`, common.GetTimestamp()+3600)))
+		case "/api/user/login":
+			loginRequests++
+			t.Fatalf("刷新成功后不应再次提交密码登录")
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	credential := model.PlatformSiteCredential{
+		AuthType:       model.UpstreamAuthPassword,
+		Username:       "operator",
+		Password:       "synthetic-password",
+		UserID:         "17",
+		AccessToken:    "expired-access",
+		TokenType:      "Bearer",
+		TokenExpiresAt: common.GetTimestamp() - 1,
+		SessionID:      "old-session",
+		SessionCurrent: true,
+		Cookie:         "new_api_refresh=old-refresh",
+	}
+	session, err := NewNewAPIAdapter(server.Client()).Authenticate(context.Background(), server.URL, credential)
+	require.NoError(t, err)
+	require.NotNil(t, session.CredentialUpdate)
+	assert.Equal(t, 1, refreshRequests)
+	assert.Equal(t, 0, loginRequests)
+	assert.Equal(t, model.UpstreamAuthPassword, session.CredentialUpdate.AuthType)
+	assert.Equal(t, "operator", session.CredentialUpdate.Username)
+	assert.Equal(t, "synthetic-password", session.CredentialUpdate.Password)
+	assert.Equal(t, "refreshed-access", session.CredentialUpdate.AccessToken)
+	assert.Equal(t, "rotated-session", session.CredentialUpdate.SessionID)
+	assert.Equal(t, "17", session.CredentialUpdate.UserID)
+	assert.Contains(t, session.CredentialUpdate.Cookie, "new_api_refresh=rotated-refresh")
+	assert.Greater(t, session.CredentialUpdate.TokenExpiresAt, common.GetTimestamp())
+}
+
+func TestNewAPIRefreshCookieMergesJarAndExplicitHeaderWithoutDuplicates(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		if request.URL.Path == "/api/user/self" {
+			assert.Equal(t, "new_api_refresh=jar-refresh; session=dashboard", request.Header.Get("Cookie"))
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"id":17}}`))
+			return
+		}
+		http.NotFound(writer, request)
+	}))
+	defer server.Close()
+
+	session, err := newPlatformSiteSession(server.URL, nil)
+	require.NoError(t, err)
+	parsedURL, err := url.Parse(server.URL)
+	require.NoError(t, err)
+	session.Client.Jar.SetCookies(parsedURL, []*http.Cookie{
+		{Name: "new_api_refresh", Value: "jar-refresh", Path: "/"},
+		{Name: "session", Value: "dashboard", Path: "/"},
+	})
+	credential := model.PlatformSiteCredential{Cookie: "new_api_refresh=old-refresh"}
+	captureNewAPIRefreshCookie(session, &credential)
+	syncNewAPISessionHeaders(session, credential)
+
+	_, err = fetchNewAPICurrentUser(context.Background(), session)
+	require.NoError(t, err)
+	assert.Equal(t, "new_api_refresh=jar-refresh; session=dashboard", credential.Cookie)
+}
+
+func TestPlatformSiteRequestCarriesSetCookieAcrossRedirects(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		if request.URL.Path == "/start" {
+			assert.Equal(t, "redirect-session=old", request.Header.Get("Cookie"))
+			http.SetCookie(writer, &http.Cookie{
+				Name:  "redirect-session",
+				Value: "captured",
+				Path:  "/",
+			})
+			http.Redirect(writer, request, "/final", http.StatusFound)
+			return
+		}
+		if request.URL.Path == "/final" {
+			assert.Equal(t, "redirect-session=captured", request.Header.Get("Cookie"))
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"ok":true}}`))
+			return
+		}
+		http.NotFound(writer, request)
+	}))
+	defer server.Close()
+
+	session, err := newPlatformSiteSession(server.URL, nil)
+	require.NoError(t, err)
+	session.Headers.Set("Cookie", "redirect-session=old")
+	_, err = platformSiteRequest(
+		context.Background(),
+		session,
+		http.MethodGet,
+		"/start",
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+	assert.Contains(t, platformSiteJarCookieHeader(session), "redirect-session=captured")
+}
+
+func TestNewAPIAdapterPasswordRefreshUnauthorizedFallsBackOnce(t *testing.T) {
+	refreshRequests := 0
+	loginRequests := 0
+	selfRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/user/self":
+			selfRequests++
+			if selfRequests == 1 {
+				writer.WriteHeader(http.StatusUnauthorized)
+				_, _ = writer.Write([]byte(`{"success":false,"code":401}`))
+				return
+			}
+			assert.Equal(t, "Bearer login-access", request.Header.Get("Authorization"))
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"id":17,"quota":1}}`))
+		case "/api/user/auth/refresh":
+			refreshRequests++
+			writer.WriteHeader(http.StatusUnauthorized)
+			_, _ = writer.Write([]byte(`{"success":false,"code":401,"message":"expired"}`))
+		case "/api/user/login":
+			loginRequests++
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"token":"login-access","user":{"id":17}}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	session, err := NewNewAPIAdapter(server.Client()).Authenticate(context.Background(), server.URL, model.PlatformSiteCredential{
+		AuthType:       model.UpstreamAuthPassword,
+		Username:       "operator",
+		Password:       "synthetic-password",
+		AccessToken:    "expired-access",
+		TokenExpiresAt: common.GetTimestamp() - 1,
+		SessionID:      "old-session",
+		Cookie:         "new_api_refresh=old-refresh",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, refreshRequests)
+	assert.Equal(t, 1, loginRequests)
+	require.NotNil(t, session.CredentialUpdate)
+	assert.Equal(t, model.UpstreamAuthPassword, session.CredentialUpdate.AuthType)
+	assert.Equal(t, "login-access", session.CredentialUpdate.AccessToken)
+}
+
+func TestNewAPIAdapterDoesNotRetryPasswordOnUncertainRefresh(t *testing.T) {
+	tests := []struct {
+		name           string
+		status         int
+		body           string
+		contentType    string
+		wantLimit      bool
+		wantPermission bool
+	}{
+		{
+			name:        "waf",
+			status:      http.StatusForbidden,
+			body:        "<html>Cloudflare challenge</html>",
+			contentType: "text/html",
+		},
+		{
+			name:           "permission denied",
+			status:         http.StatusForbidden,
+			body:           `{"success":false,"code":403,"message":"permission denied"}`,
+			contentType:    "application/json",
+			wantPermission: true,
+		},
+		{
+			name:        "two factor",
+			status:      http.StatusOK,
+			body:        `{"success":false,"message":"turnstile verification required"}`,
+			contentType: "application/json",
+		},
+		{
+			name:        "session limit",
+			status:      http.StatusConflict,
+			body:        `{"success":false,"code":"AUTH_SESSION_LIMIT","message":"too many active sessions"}`,
+			contentType: "application/json",
+			wantLimit:   true,
+		},
+		{
+			name:        "incomplete modern bundle",
+			status:      http.StatusOK,
+			body:        `{"success":true,"data":{"access_token":"partial","token_type":"Bearer"}}`,
+			contentType: "application/json",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			loginRequests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				switch request.URL.Path {
+				case "/api/user/self":
+					writer.WriteHeader(http.StatusUnauthorized)
+					_, _ = writer.Write([]byte(`{"success":false,"code":401}`))
+				case "/api/user/auth/refresh":
+					writer.Header().Set("Content-Type", testCase.contentType)
+					writer.WriteHeader(testCase.status)
+					_, _ = writer.Write([]byte(testCase.body))
+				case "/api/user/login":
+					loginRequests++
+					t.Fatalf("刷新结果不确定时不应重复密码登录")
+				default:
+					http.NotFound(writer, request)
+				}
+			}))
+			defer server.Close()
+
+			_, err := NewNewAPIAdapter(server.Client()).Authenticate(context.Background(), server.URL, model.PlatformSiteCredential{
+				AuthType:       model.UpstreamAuthPassword,
+				Username:       "operator",
+				Password:       "synthetic-password",
+				AccessToken:    "expired-access",
+				TokenExpiresAt: common.GetTimestamp() - 1,
+				SessionID:      "old-session",
+				Cookie:         "new_api_refresh=old-refresh",
+			})
+			require.Error(t, err)
+			assert.Equal(t, 0, loginRequests)
+			assert.Equal(t, testCase.wantLimit, platformSiteSessionLimit(err))
+			assert.Equal(t, testCase.wantPermission, errors.Is(err, ErrPlatformSitePermission))
+			assert.NotContains(t, err.Error(), "synthetic-password")
+		})
+	}
+
+	transport := platformSiteRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Path == "/api/user/self" {
+			return platformSiteJSONResponse(http.StatusUnauthorized, `{"success":false,"code":401}`), nil
+		}
+		if request.URL.Path == "/api/user/auth/refresh" {
+			return nil, errors.New("synthetic network failure")
+		}
+		if request.URL.Path == "/api/user/login" {
+			t.Fatalf("网络错误时不应重复密码登录")
+		}
+		return platformSiteJSONResponse(http.StatusNotFound, `{"success":false}`), nil
+	})
+	_, err := NewNewAPIAdapter(&http.Client{Transport: transport}).Authenticate(context.Background(), "https://example.com", model.PlatformSiteCredential{
+		AuthType:       model.UpstreamAuthPassword,
+		Username:       "operator",
+		Password:       "synthetic-password",
+		AccessToken:    "expired-access",
+		TokenExpiresAt: common.GetTimestamp() - 1,
+		SessionID:      "old-session",
+		Cookie:         "new_api_refresh=old-refresh",
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPlatformSiteRefreshUncertain)
+}
+
+func TestSyncPlatformSiteMapsSessionLimitWithoutPasswordRetry(t *testing.T) {
+	previousDB := model.DB
+	previousSecret := common.CryptoSecret
+	previousMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.CryptoSecret = "upstream-site-session-limit-test-secret"
+	common.MemoryCacheEnabled = false
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.PlatformSiteAccount{}))
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = previousDB
+		common.CryptoSecret = previousSecret
+		common.MemoryCacheEnabled = previousMemoryCacheEnabled
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	loginRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/user/self":
+			writer.WriteHeader(http.StatusUnauthorized)
+			_, _ = writer.Write([]byte(`{"success":false,"code":401}`))
+		case "/api/user/auth/refresh":
+			writer.WriteHeader(http.StatusConflict)
+			_, _ = writer.Write([]byte(`{"success":false,"code":"AUTH_SESSION_LIMIT","message":"too many active sessions"}`))
+		case "/api/user/login":
+			loginRequests++
+			t.Fatalf("会话上限时不应再次提交密码登录")
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	channel := &model.Channel{
+		Id:           904,
+		Name:         "session-limit",
+		Status:       common.ChannelStatusEnabled,
+		UpstreamKind: model.UpstreamKindPlatformSite,
+		Group:        "default",
+	}
+	require.NoError(t, db.Create(channel).Error)
+	ciphertext, err := model.EncryptPlatformSiteCredential(model.PlatformSiteCredential{
+		AuthType:       model.UpstreamAuthPassword,
+		Username:       "operator",
+		Password:       "synthetic-password",
+		AccessToken:    "expired-access",
+		TokenExpiresAt: common.GetTimestamp() - 1,
+		SessionID:      "old-session",
+		Cookie:         "new_api_refresh=old-refresh",
+	})
+	require.NoError(t, err)
+	account := &model.PlatformSiteAccount{
+		ChannelID:            channel.Id,
+		Platform:             model.PlatformNewAPI,
+		BaseURL:              server.URL,
+		AuthType:             model.UpstreamAuthPassword,
+		CredentialCiphertext: ciphertext,
+		CredentialKeyVersion: "v1",
+		SyncStatus:           model.UpstreamSiteSyncIdle,
+	}
+	require.NoError(t, db.Create(account).Error)
+
+	err = SyncUpstreamSite(context.Background(), channel.Id)
+	require.Error(t, err)
+	assert.Equal(t, 0, loginRequests)
+
+	var saved model.PlatformSiteAccount
+	require.NoError(t, db.First(&saved, account.ID).Error)
+	assert.Equal(t, model.PlatformSiteAuthStatusSessionLimit, saved.AuthStatus)
+	assert.Contains(t, saved.AuthStatusReason, "会话")
+	assert.NotContains(t, saved.AuthStatusReason, "synthetic-password")
+	assert.Contains(t, SafePlatformSiteError(err), "清理旧会话")
 }
 
 func TestNewAPIAdapterFallbacksBatchRevealUnlimitedQuotaAndPerKeyModels(t *testing.T) {
@@ -604,7 +1227,7 @@ func TestNewAPIAdapterFallbacksBatchRevealUnlimitedQuotaAndPerKeyModels(t *testi
 				loginAttempts++
 				assert.Contains(t, string(body), `"username":"operator@example.com"`)
 				assert.NotContains(t, string(body), `"email"`)
-				return platformSiteJSONResponse(http.StatusOK, `{"success":true,"data":{"access_token":"newapi-session","user":{"uid":888}}}`), nil
+				return platformSiteJSONResponse(http.StatusOK, `{"success":true,"data":{"token":"newapi-session","user":{"uid":888}}}`), nil
 			case request.URL.Path == "/api/status":
 				return platformSiteJSONResponse(http.StatusOK, `{"success":true,"data":{"quota_per_unit":500000}}`), nil
 			case request.URL.Path == "/api/user/self":
@@ -657,7 +1280,7 @@ func TestNewAPIAdapterBatchRevealPreservesNumericTokenIDs(t *testing.T) {
 		writer.Header().Set("Content-Type", "application/json")
 		switch {
 		case request.Method == http.MethodPost && request.URL.Path == "/api/user/login":
-			_, _ = writer.Write([]byte(`{"success":true,"data":{"access_token":"newapi-session","user":{"id":88}}}`))
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"token":"newapi-session","user":{"id":88}}}`))
 		case request.URL.Path == "/api/user/self":
 			_, _ = writer.Write([]byte(`{"success":true,"data":{"quota":500000}}`))
 		case request.URL.Path == "/api/status":
@@ -711,6 +1334,36 @@ func TestNewAPITokenKeyParsesDirectDataString(t *testing.T) {
 	key, err := fetchNewAPITokenKey(context.Background(), session, "7")
 	require.NoError(t, err)
 	assert.Equal(t, "fixture-direct-data-key", key)
+}
+
+func TestNewAPITokenBatchRevealDoesNotFallbackAfterNonRouteError(t *testing.T) {
+	singleRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/token/batch/keys":
+			writer.WriteHeader(http.StatusForbidden)
+			_, _ = writer.Write([]byte(`{"success":false,"message":"verification required"}`))
+		case "/api/token/7/key":
+			singleRequests++
+			t.Fatalf("批量 Key 返回非 404/405 时不应调用单条回退")
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	session, err := newPlatformSiteSession(server.URL, nil)
+	require.NoError(t, err)
+	session.Client = server.Client()
+	revealed, failures := fetchNewAPITokenKeys(context.Background(), session, []map[string]any{{
+		"id":  7,
+		"key": "sk-****",
+	}})
+	assert.Empty(t, revealed)
+	require.Error(t, failures["7"])
+	assert.ErrorIs(t, failures["7"], ErrPlatformSiteSecurity)
+	assert.Equal(t, 0, singleRequests)
 }
 
 func TestNewAPIAdapterPasswordAuthenticationAddsCompatUserHeader(t *testing.T) {
@@ -771,24 +1424,26 @@ func TestNewAPIAdapterAdminKeySkipsPasswordLogin(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestPlatformSitePasswordAuthenticationDoesNotDriftToTokenRefresh(t *testing.T) {
+func TestPlatformSitePasswordAuthenticationKeepsPasswordFallbackAndPersistsNewAPIState(t *testing.T) {
 	tests := []struct {
-		name        string
-		newAdapter  func(*http.Client) PlatformSiteAdapter
-		loginPath   string
-		refreshPath string
-		selfPath    string
-		loginBody   string
-		selfBody    string
+		name          string
+		newAdapter    func(*http.Client) PlatformSiteAdapter
+		loginPath     string
+		refreshPath   string
+		selfPath      string
+		loginBody     string
+		selfBody      string
+		expectPersist bool
 	}{
 		{
-			name:        "NewAPI",
-			newAdapter:  func(client *http.Client) PlatformSiteAdapter { return NewNewAPIAdapter(client) },
-			loginPath:   "/api/user/login",
-			refreshPath: "/api/user/auth/refresh",
-			selfPath:    "/api/user/self",
-			loginBody:   `{"success":true,"data":{"access_token":"session","refresh_token":"rotated"}}`,
-			selfBody:    `{"success":true,"data":{"quota":1}}`,
+			name:          "NewAPI",
+			newAdapter:    func(client *http.Client) PlatformSiteAdapter { return NewNewAPIAdapter(client) },
+			loginPath:     "/api/user/login",
+			refreshPath:   "/api/user/auth/refresh",
+			selfPath:      "/api/user/self",
+			loginBody:     `{"success":true,"data":{"token":"session","refresh_token":"rotated"}}`,
+			selfBody:      `{"success":true,"data":{"quota":1}}`,
+			expectPersist: true,
 		},
 		{
 			name:        "Sub2API",
@@ -820,15 +1475,21 @@ func TestPlatformSitePasswordAuthenticationDoesNotDriftToTokenRefresh(t *testing
 			defer server.Close()
 
 			credential := model.PlatformSiteCredential{
-				AuthType:     model.UpstreamAuthPassword,
-				Username:     "operator@example.com",
-				Password:     "synthetic-password",
-				AccessToken:  "stale-access",
-				RefreshToken: "stale-refresh",
+				AuthType: model.UpstreamAuthPassword,
+				Username: "operator@example.com",
+				Password: "synthetic-password",
 			}
 			session, err := testCase.newAdapter(server.Client()).Authenticate(context.Background(), server.URL, credential)
 			require.NoError(t, err)
-			assert.Nil(t, session.CredentialUpdate)
+			if testCase.expectPersist {
+				require.NotNil(t, session.CredentialUpdate)
+				assert.Equal(t, model.UpstreamAuthPassword, session.CredentialUpdate.AuthType)
+				assert.Equal(t, "operator@example.com", session.CredentialUpdate.Username)
+				assert.Equal(t, "synthetic-password", session.CredentialUpdate.Password)
+				assert.Equal(t, "session", session.CredentialUpdate.AccessToken)
+			} else {
+				assert.Nil(t, session.CredentialUpdate)
+			}
 		})
 	}
 }
@@ -931,16 +1592,113 @@ func TestPlatformSiteAccessTokenAuthenticationDoesNotFallbackToPassword(t *testi
 	}
 }
 
-func TestNewAPIAdapterRefreshesRotatingSession(t *testing.T) {
+func TestNewAPIAdapterDoesNotSendLegacyRefreshWithoutDashboardCookie(t *testing.T) {
+	refreshRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/user/auth/refresh":
+			refreshRequests++
+			t.Fatalf("缺少 new_api_refresh Cookie 时不应调用 Dashboard Refresh")
+		case "/api/user/self":
+			assert.Equal(t, "Bearer legacy-access", request.Header.Get("Authorization"))
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"id":17}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	_, err := NewNewAPIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType:       model.UpstreamAuthAccessToken,
+			AccessToken:    "legacy-access",
+			TokenExpiresAt: common.GetTimestamp() + 3600,
+			RefreshToken:   "legacy-refresh",
+			SessionID:      "legacy-session",
+		},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, 0, refreshRequests)
+}
+
+func TestNewAPIAdapterReportsUncertainLegacyRefreshWithoutDashboardCookie(t *testing.T) {
+	refreshRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/api/user/auth/refresh" {
+			refreshRequests++
+			t.Fatalf("缺少 new_api_refresh Cookie 时不应调用 Dashboard Refresh")
+		}
+		http.NotFound(writer, request)
+	}))
+	defer server.Close()
+
+	_, err := NewNewAPIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType:     model.UpstreamAuthAccessToken,
+			AccessToken:  "expired-access",
+			RefreshToken: "legacy-refresh",
+			SessionID:    "legacy-session",
+		},
+	)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPlatformSiteRefreshUncertain)
+	assert.Equal(t, 0, refreshRequests)
+}
+
+func TestRefreshPlatformSiteSessionRequiresDashboardRefreshCookie(t *testing.T) {
+	refreshRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		refreshRequests++
+		http.Error(writer, `{"success":false}`, http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	session, err := newPlatformSiteSession(server.URL, nil)
+	require.NoError(t, err)
+	session.Client = server.Client()
+	err = refreshPlatformSiteSession(
+		context.Background(),
+		session,
+		"/api/user/auth/refresh",
+		&model.PlatformSiteCredential{
+			AccessToken:  "expired-access",
+			SessionID:    "legacy-session",
+			RefreshToken: "legacy-refresh",
+		},
+	)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPlatformSiteRefreshUncertain)
+	assert.ErrorIs(t, err, ErrPlatformSiteAuth)
+	assert.Equal(t, 0, refreshRequests)
+}
+
+func TestNewAPIAdapterRefreshesRotatingDashboardSession(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
 		case "/api/user/auth/refresh":
 			assert.Equal(t, "Bearer old-access", request.Header.Get("Authorization"))
+			assert.Equal(t, "old-session", request.Header.Get("X-Auth-Session"))
+			assert.Equal(t, "new_api_refresh=old-refresh", request.Header.Get("Cookie"))
+			assert.Equal(t, "http://"+request.Host, request.Header.Get("Origin"))
+			assert.Equal(t, "http://"+request.Host+"/login", request.Header.Get("Referer"))
 			body, readErr := io.ReadAll(request.Body)
 			require.NoError(t, readErr)
-			assert.Contains(t, string(body), `"refresh_token":"old-refresh"`)
-			_, _ = writer.Write([]byte(`{"success":true,"data":{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600}}`))
+			assert.Empty(t, string(body))
+			http.SetCookie(writer, &http.Cookie{
+				Name:  "new_api_refresh",
+				Value: "new-refresh",
+				Path:  "/api/user/auth",
+			})
+			_, _ = writer.Write([]byte(fmt.Sprintf(
+				`{"success":true,"data":{"access_token":"new-access","token_type":"Bearer","access_expires_at":%d,"session":{"sid":"new-session","current":true},"user":{"id":17}}}`,
+				common.GetTimestamp()+3600,
+			)))
 		case "/api/user/self":
 			assert.Equal(t, "Bearer new-access", request.Header.Get("Authorization"))
 			_, _ = writer.Write([]byte(`{"success":true,"data":{"quota":1}}`))
@@ -955,12 +1713,50 @@ func TestNewAPIAdapterRefreshesRotatingSession(t *testing.T) {
 		AuthType:     model.UpstreamAuthAccessToken,
 		AccessToken:  "old-access",
 		RefreshToken: "old-refresh",
+		SessionID:    "old-session",
+		Cookie:       "new_api_refresh=old-refresh",
 	})
 	require.NoError(t, err)
 	require.NotNil(t, session.CredentialUpdate)
 	assert.Equal(t, "new-access", session.CredentialUpdate.AccessToken)
-	assert.Equal(t, "new-refresh", session.CredentialUpdate.RefreshToken)
+	assert.Equal(t, "new-session", session.CredentialUpdate.SessionID)
+	assert.Contains(t, session.CredentialUpdate.Cookie, "new_api_refresh=new-refresh")
 	assert.Greater(t, session.CredentialUpdate.TokenExpiresAt, common.GetTimestamp())
+}
+
+func TestNewAPIAdapterRefreshWithoutRotatedCookieIsUncertain(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/user/auth/refresh":
+			assert.Equal(t, "new_api_refresh=old-refresh", request.Header.Get("Cookie"))
+			_, _ = writer.Write([]byte(fmt.Sprintf(
+				`{"success":true,"data":{"access_token":"new-access","token_type":"Bearer","access_expires_at":%d,"session":{"sid":"new-session","current":true},"user":{"id":17}}}`,
+				common.GetTimestamp()+3600,
+			)))
+		case "/api/user/self":
+			t.Fatalf("Refresh Cookie 未轮换时不应继续读取当前用户")
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	_, err := NewNewAPIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType:       model.UpstreamAuthAccessToken,
+			AccessToken:    "old-access",
+			TokenExpiresAt: common.GetTimestamp() - 1,
+			SessionID:      "old-session",
+			Cookie:         "new_api_refresh=old-refresh",
+		},
+	)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPlatformSiteRefreshUncertain)
+	assert.NotContains(t, err.Error(), "old-refresh")
+	assert.NotContains(t, err.Error(), "new-access")
 }
 
 func TestNewAPIAdapterRejectsInteractiveLoginVerification(t *testing.T) {
@@ -990,13 +1786,22 @@ func TestPlatformSiteAuthFlowBindsIdentityAndConsumesAfterNewAPITwoFA(t *testing
 		writer.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
 		case "/api/user/login":
+			http.SetCookie(writer, &http.Cookie{
+				Name:  "new_api_refresh",
+				Value: "challenge-refresh",
+				Path:  "/api/user/auth",
+			})
 			_, _ = writer.Write([]byte(`{"success":true,"data":{"require_2fa":true,"flow_token":"upstream-flow"}}`))
 		case "/api/user/login/2fa":
+			assert.Equal(t, "new_api_refresh=challenge-refresh", request.Header.Get("Cookie"))
 			body, readErr := io.ReadAll(request.Body)
 			require.NoError(t, readErr)
 			assert.Contains(t, string(body), `"code":"123456"`)
 			assert.Contains(t, string(body), `"flow_token":"upstream-flow"`)
-			_, _ = writer.Write([]byte(`{"success":true,"data":{"access_token":"newapi-access","refresh_token":"newapi-refresh","expires_in":3600,"user":{"id":17}}}`))
+			_, _ = writer.Write([]byte(fmt.Sprintf(
+				`{"success":true,"data":{"access_token":"newapi-access","token_type":"Bearer","access_expires_at":%d,"session":{"sid":"newapi-session","current":true},"user":{"id":17}}}`,
+				common.GetTimestamp()+3600,
+			)))
 		default:
 			http.NotFound(writer, request)
 		}
@@ -1041,7 +1846,7 @@ func TestPlatformSiteAuthFlowBindsIdentityAndConsumesAfterNewAPITwoFA(t *testing
 	)
 	require.NoError(t, err)
 	assert.Equal(t, PlatformSiteAuthFlowStatusAuthenticated, verified.Status)
-	assert.Equal(t, model.UpstreamAuthAccessToken, verified.AuthType)
+	assert.Equal(t, model.UpstreamAuthPassword, verified.AuthType)
 	assert.Equal(t, "17", verified.UserID)
 	assert.NotContains(t, fmt.Sprint(verified), "newapi-access")
 	assert.NotContains(t, fmt.Sprint(verified), "newapi-refresh")
@@ -1065,6 +1870,7 @@ func TestPlatformSiteAuthFlowBindsIdentityAndConsumesAfterNewAPITwoFA(t *testing
 	require.NoError(t, err)
 	assert.Equal(t, "newapi-access", resolution.Credential.AccessToken)
 	assert.Equal(t, "17", resolution.Credential.UserID)
+	assert.Equal(t, model.UpstreamAuthPassword, resolution.Credential.AuthType)
 
 	require.NoError(t, ConsumePlatformSiteAuthFlow(41, started.FlowID, 7))
 	_, err = ResolvePlatformSiteAuthFlow(
@@ -1075,6 +1881,167 @@ func TestPlatformSiteAuthFlowBindsIdentityAndConsumesAfterNewAPITwoFA(t *testing
 		server.URL,
 	)
 	assert.Error(t, err)
+}
+
+func TestPlatformSiteAuthFlowPersistsRotatedCookieAfterNewAPI2FAError(t *testing.T) {
+	twoFARequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/user/login":
+			http.SetCookie(writer, &http.Cookie{
+				Name:  "new_api_refresh",
+				Value: "challenge-refresh",
+				Path:  "/api/user/auth",
+			})
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"require_2fa":true,"flow_token":"flow-token"}}`))
+		case "/api/user/login/2fa":
+			twoFARequests++
+			body, readErr := io.ReadAll(request.Body)
+			require.NoError(t, readErr)
+			assert.Contains(t, string(body), `"flow_token":"flow-token"`)
+			switch twoFARequests {
+			case 1:
+				assert.Equal(t, "new_api_refresh=challenge-refresh", request.Header.Get("Cookie"))
+				http.SetCookie(writer, &http.Cookie{
+					Name:  "new_api_refresh",
+					Value: "rotated-refresh",
+					Path:  "/api/user/auth",
+				})
+				writer.WriteHeader(http.StatusUnauthorized)
+				_, _ = writer.Write([]byte(`{"success":false,"code":401,"message":"invalid verification code"}`))
+			case 2:
+				assert.Equal(t, "new_api_refresh=rotated-refresh", request.Header.Get("Cookie"))
+				http.SetCookie(writer, &http.Cookie{
+					Name:  "new_api_refresh",
+					Value: "final-refresh",
+					Path:  "/api/user/auth",
+				})
+				_, _ = writer.Write([]byte(fmt.Sprintf(
+					`{"success":true,"data":{"access_token":"twofa-access","token_type":"Bearer","access_expires_at":%d,"session":{"sid":"twofa-session","current":true},"user":{"id":42}}}`,
+					common.GetTimestamp()+3600,
+				)))
+			default:
+				t.Fatalf("不应重复提交超过一次二次验证")
+			}
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	started, err := StartPlatformSiteAuthFlow(context.Background(), 42, PlatformSiteAuthFlowStartRequest{
+		Platform: model.PlatformNewAPI,
+		BaseURL:  server.URL,
+		AuthType: model.UpstreamAuthPassword,
+		Username: "operator",
+		Password: "synthetic-password",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, PlatformSiteAuthFlowStatusTwoFactorRequired, started.Status)
+
+	_, err = VerifyPlatformSiteAuthFlow(
+		context.Background(),
+		42,
+		started.FlowID,
+		PlatformSiteAuthFlowVerifyRequest{Code: "111111"},
+	)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "rotated-refresh")
+	assert.NotContains(t, err.Error(), "flow-token")
+
+	verified, err := VerifyPlatformSiteAuthFlow(
+		context.Background(),
+		42,
+		started.FlowID,
+		PlatformSiteAuthFlowVerifyRequest{Code: "222222"},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, PlatformSiteAuthFlowStatusAuthenticated, verified.Status)
+	assert.Equal(t, model.UpstreamAuthPassword, verified.AuthType)
+	assert.Equal(t, "42", verified.UserID)
+	assert.Equal(t, 2, twoFARequests)
+
+	resolution, err := ResolvePlatformSiteAuthFlow(
+		42,
+		started.FlowID,
+		0,
+		model.PlatformNewAPI,
+		server.URL,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "final-refresh", newAPIRefreshCookieValue(resolution.Credential.Cookie))
+	assert.Equal(t, model.UpstreamAuthPassword, resolution.Credential.AuthType)
+	assert.Equal(t, "synthetic-password", resolution.Credential.Password)
+}
+
+func TestNewAPIAuthFlowRejectsIncompleteModernBundle(t *testing.T) {
+	loginRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodPost && request.URL.Path == "/api/user/login" {
+			loginRequests++
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(
+				`{"success":true,"data":{"access_token":"partial-access","token_type":"Bearer"}}`,
+			))
+			return
+		}
+		http.NotFound(writer, request)
+	}))
+	defer server.Close()
+
+	_, err := StartPlatformSiteAuthFlow(context.Background(), 41, PlatformSiteAuthFlowStartRequest{
+		Platform: model.PlatformNewAPI,
+		BaseURL:  server.URL,
+		AuthType: model.UpstreamAuthPassword,
+		Username: "operator",
+		Password: "synthetic-password",
+	})
+	require.Error(t, err)
+	assert.Equal(t, 1, loginRequests)
+	assert.ErrorIs(t, err, ErrPlatformSiteAuthBundle)
+	assert.NotContains(t, err.Error(), "partial-access")
+	assert.NotContains(t, err.Error(), "synthetic-password")
+}
+
+func TestNewAPIAuthFlowLegacyLoginPreservesPasswordCredential(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		if request.Method == http.MethodPost && request.URL.Path == "/api/user/login" {
+			_, _ = writer.Write([]byte(
+				`{"success":true,"data":{"token":"legacy-access","user":{"id":17}}}`,
+			))
+			return
+		}
+		http.NotFound(writer, request)
+	}))
+	defer server.Close()
+
+	started, err := StartPlatformSiteAuthFlow(context.Background(), 41, PlatformSiteAuthFlowStartRequest{
+		Platform:  model.PlatformNewAPI,
+		BaseURL:   server.URL,
+		AuthType:  model.UpstreamAuthPassword,
+		Username:  "operator",
+		Password:  "synthetic-password",
+		ChannelID: 7,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, PlatformSiteAuthFlowStatusAuthenticated, started.Status)
+	assert.Equal(t, model.UpstreamAuthPassword, started.AuthType)
+	assert.Equal(t, "17", started.UserID)
+
+	resolution, err := ResolvePlatformSiteAuthFlow(
+		41,
+		started.FlowID,
+		7,
+		model.PlatformNewAPI,
+		server.URL,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, model.UpstreamAuthPassword, resolution.Credential.AuthType)
+	assert.Equal(t, "operator", resolution.Credential.Username)
+	assert.Equal(t, "synthetic-password", resolution.Credential.Password)
+	assert.Equal(t, "legacy-access", resolution.Credential.AccessToken)
 }
 
 func TestSub2APIAuthFlowTwoFAUsesBrowserHeaders(t *testing.T) {
@@ -1172,6 +2139,142 @@ func TestNewAPIAdminSnapshotMergesAccountAndChannelModelsAndCapabilities(t *test
 		Path:       "/api/channel/fetch_models/{id}",
 		Supported:  true,
 		SourceData: "route",
+	})
+}
+
+func TestNewAPIAdminResourceFailureIsolatedFromAuthentication(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/status":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"quota_per_unit":500000}}`))
+		case "/api/user/self":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"id":17,"quota":500000}}`))
+		case "/api/user/models", "/api/user/self/groups", "/api/pricing":
+			http.NotFound(writer, request)
+		case "/api/channel/":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"items":[{"id":9}]}}`))
+		case "/api/channel/9":
+			writer.WriteHeader(http.StatusForbidden)
+			_, _ = writer.Write([]byte(`{"success":false,"code":403,"message":"permission denied"}`))
+		case "/api/channel/fetch_models/9":
+			http.NotFound(writer, request)
+		case "/api/token/":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"items":[]}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	session, err := NewNewAPIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType: model.UpstreamAuthAdminKey,
+			AdminKey: "admin-secret",
+		},
+	)
+	require.NoError(t, err)
+
+	snapshot, err := NewNewAPIAdapter(server.Client()).FetchSnapshot(context.Background(), session)
+	require.NoError(t, err)
+	assert.NotNil(t, snapshot.Identity)
+	assert.Equal(t, float64(1), snapshot.Balance)
+	assert.True(t, platformSiteSnapshotHasBlockingResourceFailure(snapshot))
+
+	var modelResource *PlatformSiteResourceSyncSnapshot
+	for index := range snapshot.ResourceSyncs {
+		if snapshot.ResourceSyncs[index].ResourceType == model.PlatformSiteResourceModels {
+			modelResource = &snapshot.ResourceSyncs[index]
+		}
+	}
+	require.NotNil(t, modelResource)
+	assert.Equal(t, model.PlatformSiteResourceStatusFailed, modelResource.Status)
+	assert.Contains(t, modelResource.FailureReason, "权限")
+}
+
+func TestNewAPIResourceFailuresKeepIdentityAndClassifyOptionalResources(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/status":
+			writer.WriteHeader(http.StatusBadGateway)
+			_, _ = writer.Write([]byte(`{"success":false,"code":"UPSTREAM_STATUS_UNAVAILABLE","message":"status unavailable"}`))
+		case "/api/user/self":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"id":17,"quota":500000}}`))
+		case "/api/user/models":
+			_, _ = writer.Write([]byte(`{"success":false,"message":"model catalog unavailable"}`))
+		case "/api/token/":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"items":[]}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	session, err := NewNewAPIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType:    model.UpstreamAuthAccessToken,
+			AccessToken: "access-token",
+		},
+	)
+	require.NoError(t, err)
+
+	snapshot, err := NewNewAPIAdapter(server.Client()).FetchSnapshot(context.Background(), session)
+	require.NoError(t, err)
+	require.NotNil(t, snapshot.Identity)
+	assert.Equal(t, "17", snapshot.Identity.PlatformUserID)
+	assert.Equal(t, float64(1), snapshot.Balance)
+
+	resources := make(map[string]PlatformSiteResourceSyncSnapshot)
+	for _, resource := range snapshot.ResourceSyncs {
+		resources[resource.ResourceType] = resource
+	}
+	assert.Equal(t, model.PlatformSiteResourceStatusFailed, resources[model.PlatformSiteResourceUsage].Status)
+	assert.Equal(t, model.PlatformSiteResourceStatusFailed, resources[model.PlatformSiteResourceModels].Status)
+	assert.Contains(t, resources[model.PlatformSiteResourceModels].FailureReason, "资源")
+	assert.NotContains(t, resources[model.PlatformSiteResourceModels].FailureReason, "账号或密码")
+}
+
+func TestNormalizePlatformSiteModelResourceStatusPrefersFreshSources(t *testing.T) {
+	t.Run("permission failure with fresh source becomes partial", func(t *testing.T) {
+		snapshot := PlatformSiteSnapshot{ResourceSyncs: []PlatformSiteResourceSyncSnapshot{
+			{
+				ResourceType:   model.PlatformSiteResourceModels,
+				Status:         model.PlatformSiteResourceStatusSuccess,
+				SourceEndpoint: "/v1/models",
+			},
+			{
+				ResourceType:   model.PlatformSiteResourceModels,
+				Status:         model.PlatformSiteResourceStatusFailed,
+				SourceEndpoint: "/api/user/models",
+				FailureReason:  "上游平台资源权限不足",
+			},
+		}}
+		normalizePlatformSiteResourceSyncs(&snapshot)
+		require.Len(t, snapshot.ResourceSyncs, 1)
+		assert.Equal(t, model.PlatformSiteResourceStatusPartial, snapshot.ResourceSyncs[0].Status)
+	})
+
+	t.Run("route missing does not hide fresh source", func(t *testing.T) {
+		snapshot := PlatformSiteSnapshot{ResourceSyncs: []PlatformSiteResourceSyncSnapshot{
+			{
+				ResourceType:   model.PlatformSiteResourceModels,
+				Status:         model.PlatformSiteResourceStatusStale,
+				SourceEndpoint: "/api/user/models",
+			},
+			{
+				ResourceType:   model.PlatformSiteResourceModels,
+				Status:         model.PlatformSiteResourceStatusSuccess,
+				SourceEndpoint: "/v1/models",
+			},
+		}}
+		normalizePlatformSiteResourceSyncs(&snapshot)
+		require.Len(t, snapshot.ResourceSyncs, 1)
+		assert.Equal(t, model.PlatformSiteResourceStatusSuccess, snapshot.ResourceSyncs[0].Status)
 	})
 }
 
@@ -1692,28 +2795,33 @@ func TestSub2APILoginClassifiesHTMLTurnstileAsInteractiveVerification(t *testing
 }
 
 func TestPlatformSiteRequestClassifiesHTMLForbiddenAsWAF(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Content-Type", "text/html; charset=utf-8")
-		writer.WriteHeader(http.StatusForbidden)
-		_, _ = writer.Write([]byte("<html><body>request blocked</body></html>"))
-	}))
-	defer server.Close()
+	for _, status := range []int{http.StatusOK, http.StatusForbidden} {
+		t.Run(fmt.Sprintf("HTTP-%d", status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+				writer.WriteHeader(status)
+				_, _ = writer.Write([]byte("<html><body>request blocked</body></html>"))
+			}))
+			t.Cleanup(server.Close)
 
-	session, err := newPlatformSiteSession(server.URL, nil)
-	require.NoError(t, err)
+			session, err := newPlatformSiteSession(server.URL, nil)
+			require.NoError(t, err)
 
-	_, err = platformSiteRequest(
-		context.Background(),
-		session,
-		http.MethodGet,
-		"/api/user/self",
-		nil,
-		nil,
-	)
-	require.Error(t, err)
-	assert.Equal(t, platformSiteErrorCategoryWAF, platformSiteErrorCategoryOf(err))
-	assert.ErrorIs(t, err, ErrPlatformSiteSecurity)
-	assert.NotContains(t, SafePlatformSiteError(err), "账号或密码错误")
+			_, err = platformSiteRequest(
+				context.Background(),
+				session,
+				http.MethodGet,
+				"/api/user/self",
+				nil,
+				nil,
+			)
+			require.Error(t, err)
+			assert.Equal(t, platformSiteErrorCategoryWAF, platformSiteErrorCategoryOf(err))
+			assert.ErrorIs(t, err, ErrPlatformSiteSecurity)
+			assert.NotContains(t, SafePlatformSiteError(err), "账号或密码错误")
+			assert.NotContains(t, SafePlatformSiteError(err), "响应格式错误")
+		})
+	}
 }
 
 func TestSub2APILoginRejectsInvalidEmailBeforeLoginRequest(t *testing.T) {
@@ -1808,7 +2916,7 @@ func TestPlatformSiteCompatibleCurrentUserRoutesOnlyFallbackOn404Or405(t *testin
 				writer.Header().Set("Content-Type", "application/json")
 				switch request.URL.Path {
 				case "/api/user/login":
-					_, _ = writer.Write([]byte(`{"success":true,"data":{"access_token":"session"}}`))
+					_, _ = writer.Write([]byte(`{"success":true,"data":{"token":"session"}}`))
 				case "/api/user/self":
 					writer.WriteHeader(status)
 					_, _ = writer.Write([]byte(fmt.Sprintf(`{"code":%d}`, status)))
@@ -1841,7 +2949,7 @@ func TestPlatformSiteCompatibleCurrentUserRoutesOnlyFallbackOn404Or405(t *testin
 			writer.Header().Set("Content-Type", "application/json")
 			switch request.URL.Path {
 			case "/api/user/login":
-				_, _ = writer.Write([]byte(`{"success":true,"data":{"access_token":"session"}}`))
+				_, _ = writer.Write([]byte(`{"success":true,"data":{"token":"session"}}`))
 			case "/api/user/self":
 				writer.WriteHeader(http.StatusUnauthorized)
 				_, _ = writer.Write([]byte(`{"code":401,"message":"invalid credentials"}`))
@@ -1962,6 +3070,17 @@ func TestNewAPIAdapterReturnsUnavailableKeyWhenKeyRevealFails(t *testing.T) {
 	assert.Equal(t, "7", snapshot.Keys[0].ExternalID)
 	assert.Equal(t, upstreamKeySyncErrorSecretUnavailable, snapshot.Keys[0].SyncError)
 	assert.Empty(t, snapshot.Keys[0].Secret)
+	assert.Equal(t, model.PlatformSiteAuthStatusSecureVerificationRequired, snapshot.AuthStatus)
+	var keyResource *PlatformSiteResourceSyncSnapshot
+	for index := range snapshot.ResourceSyncs {
+		if snapshot.ResourceSyncs[index].ResourceType == model.PlatformSiteResourceKeys {
+			keyResource = &snapshot.ResourceSyncs[index]
+			break
+		}
+	}
+	require.NotNil(t, keyResource)
+	assert.Equal(t, model.PlatformSiteResourceStatusSecureVerificationRequired, keyResource.Status)
+	assert.True(t, keyResource.RequiresSecurityVerification)
 }
 
 func TestPersistPlatformSiteSnapshotIsolatesUnavailableKeys(t *testing.T) {
@@ -2100,6 +3219,18 @@ func TestPersistPlatformSiteSnapshotIsolatesUnavailableKeys(t *testing.T) {
 	require.NoError(t, db.First(&savedChannel, channel.Id).Error)
 	assert.Equal(t, 7.0, savedChannel.Balance)
 	assert.Equal(t, int64(123456), savedChannel.UsedQuota)
+
+	account.Balance = savedAccount.Balance
+	account.UsedQuota = savedAccount.UsedQuota
+	require.NoError(t, persistPlatformSiteSnapshot(context.Background(), account, PlatformSiteSnapshot{
+		KeysComplete: false,
+	}))
+	require.NoError(t, db.First(&savedAccount, account.ID).Error)
+	assert.Equal(t, 7.0, savedAccount.Balance)
+	assert.Equal(t, int64(123456), savedAccount.UsedQuota)
+	require.NoError(t, db.First(&savedChannel, channel.Id).Error)
+	assert.Equal(t, 7.0, savedChannel.Balance)
+	assert.Equal(t, int64(123456), savedChannel.UsedQuota)
 }
 
 func TestPersistPlatformSiteSnapshotSeparatesSub2APIManagementAndRelayURLs(t *testing.T) {
@@ -2209,6 +3340,150 @@ func TestPersistPlatformSiteCredentialStoresOnlyEncryptedRotatedValues(t *testin
 	assert.Equal(t, credential.AccessToken, decrypted.AccessToken)
 	assert.Equal(t, credential.RefreshToken, decrypted.RefreshToken)
 	assert.Equal(t, credential.TokenExpiresAt, decrypted.TokenExpiresAt)
+}
+
+func TestSyncPlatformSitePersistsPasswordSessionBeforeResourceFailure(t *testing.T) {
+	previousDB := model.DB
+	previousSecret := common.CryptoSecret
+	previousMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.CryptoSecret = "upstream-site-password-session-test-secret"
+	common.MemoryCacheEnabled = false
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&model.Channel{},
+		&model.Ability{},
+		&model.PlatformSiteAccount{},
+		&model.PlatformSiteIdentity{},
+		&model.PlatformSiteGroup{},
+		&model.PlatformSiteEndpoint{},
+		&model.PlatformSiteEndpointCapability{},
+		&model.PlatformSiteResourceSync{},
+		&model.UpstreamKey{},
+		&model.UpstreamKeyAbility{},
+	))
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = previousDB
+		common.CryptoSecret = previousSecret
+		common.MemoryCacheEnabled = previousMemoryCacheEnabled
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	loginRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/user/login":
+			loginRequests++
+			http.SetCookie(writer, &http.Cookie{Name: "new_api_refresh", Value: "refresh-1", Path: "/"})
+			_, _ = writer.Write([]byte(fmt.Sprintf(`{"success":true,"data":{"access_token":"login-access","token_type":"Bearer","access_expires_at":%d,"session":{"sid":"login-session","current":true},"user":{"id":17}}}`, common.GetTimestamp()+3600)))
+		case "/api/user/self":
+			assert.Equal(t, "Bearer login-access", request.Header.Get("Authorization"))
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"id":17,"quota":5000000,"used_quota":1000000}}`))
+		case "/api/status":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"quota_per_unit":500000}}`))
+		case "/api/token/":
+			writer.WriteHeader(http.StatusForbidden)
+			_, _ = writer.Write([]byte(`{"success":false,"code":403,"message":"permission denied"}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	priority := int64(2)
+	channel := &model.Channel{
+		Id:           903,
+		Name:         "password-session-persistence",
+		Status:       common.ChannelStatusEnabled,
+		UpstreamKind: model.UpstreamKindPlatformSite,
+		Group:        "default",
+		Priority:     &priority,
+	}
+	require.NoError(t, db.Create(channel).Error)
+	ciphertext, err := model.EncryptPlatformSiteCredential(model.PlatformSiteCredential{
+		AuthType: model.UpstreamAuthPassword,
+		Username: "operator",
+		Password: "synthetic-password",
+	})
+	require.NoError(t, err)
+	account := &model.PlatformSiteAccount{
+		ChannelID:            channel.Id,
+		Platform:             model.PlatformNewAPI,
+		BaseURL:              server.URL,
+		AuthType:             model.UpstreamAuthPassword,
+		CredentialCiphertext: ciphertext,
+		CredentialKeyVersion: "v1",
+		ConversionRatio:      0.1,
+		SyncStatus:           model.UpstreamSiteSyncIdle,
+	}
+	require.NoError(t, db.Create(account).Error)
+	oldSecret, err := model.EncryptPlatformSiteCredential(
+		model.PlatformSiteCredential{AccessToken: "sk-old"},
+	)
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.UpstreamKey{
+		ChannelID:        channel.Id,
+		ExternalID:       "old-key",
+		Name:             "old",
+		SecretCiphertext: oldSecret,
+		Models:           "gpt-4o",
+		ModelsSynced:     true,
+		Status:           model.UpstreamKeyStatusEnabled,
+	}).Error)
+
+	err = SyncUpstreamSite(context.Background(), channel.Id)
+	require.Error(t, err)
+	assert.Equal(t, 1, loginRequests)
+
+	var saved model.PlatformSiteAccount
+	require.NoError(t, db.First(&saved, account.ID).Error)
+	savedCredential, err := model.DecryptPlatformSiteCredential(saved.CredentialCiphertext)
+	require.NoError(t, err)
+	assert.Equal(t, model.UpstreamAuthPassword, savedCredential.AuthType)
+	assert.Equal(t, "operator", savedCredential.Username)
+	assert.Equal(t, "synthetic-password", savedCredential.Password)
+	assert.Equal(t, "login-access", savedCredential.AccessToken)
+	assert.Equal(t, "17", savedCredential.UserID)
+	assert.Equal(t, "login-session", savedCredential.SessionID)
+	assert.Contains(t, savedCredential.Cookie, "new_api_refresh=refresh-1")
+	assert.Equal(t, model.UpstreamSiteSyncFailed, saved.SyncStatus)
+	assert.Zero(t, saved.LastSyncAt)
+	assert.Equal(t, model.PlatformSiteAuthStatusAuthenticated, saved.AuthStatus)
+	assert.Equal(t, 10.0, saved.Balance)
+	assert.Equal(t, int64(1000000), saved.UsedQuota)
+
+	var savedIdentity model.PlatformSiteIdentity
+	require.NoError(t, db.Where("channel_id = ?", channel.Id).First(&savedIdentity).Error)
+	assert.Equal(t, "17", savedIdentity.PlatformUserID)
+	assert.Equal(t, 10.0, savedIdentity.Balance)
+	assert.Equal(t, int64(1000000), savedIdentity.UsedQuota)
+
+	var savedResource model.PlatformSiteResourceSync
+	require.NoError(t, db.Where(
+		"channel_id = ? AND resource_type = ?",
+		channel.Id,
+		model.PlatformSiteResourceKeys,
+	).First(&savedResource).Error)
+	assert.Equal(t, model.PlatformSiteResourceStatusFailed, savedResource.Status)
+	assert.True(t, savedResource.UsingSnapshot)
+	assert.NotContains(t, SafePlatformSiteError(err), "账号或密码")
+
+	var savedKey model.UpstreamKey
+	require.NoError(t, db.Where(
+		"channel_id = ? AND external_id = ?",
+		channel.Id,
+		"old-key",
+	).First(&savedKey).Error)
+	oldCredential, err := model.DecryptPlatformSiteCredential(savedKey.SecretCiphertext)
+	require.NoError(t, err)
+	assert.Equal(t, "sk-old", oldCredential.AccessToken)
+	assert.Equal(t, model.UpstreamKeyStatusEnabled, savedKey.Status)
 }
 
 func TestSyncPlatformSiteFailurePreservesLastSuccessfulSnapshot(t *testing.T) {

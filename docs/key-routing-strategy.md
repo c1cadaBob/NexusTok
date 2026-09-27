@@ -433,6 +433,7 @@ Admin Key step-up 拒绝只标记资源为 `secure_verification_required`，不�
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 补充架构索引与元信息 | 已有密钥调度详细规则没有统一事实基线和架构入口 | 增加事实基线、代码来源、架构分工和变更记录；保留统一 `key_id`、候选和日志细节 | Routing Key、平台站点、模型获取、测试和管理员日志 | `model/upstream_routing.go`、`model/routing_key.go`、`middleware/distributor.go` 静态核对 |
 | 2026-09-26 | 平台站点资源同步补充 | 调度文档只描述站点总快照和子密钥能力，未记录资源来源与部分失败处理 | 补充 New API/Sub2API 资源接口、端点来源、管理/Relay 分离、安全验证失败和旧快照保留规则 | 平台站点同步、路由过滤、管理员诊断 | 参考项目路由、`service/upstream_site_adapters.go` 与资源模型设计核对 |
+| 2026-09-27 | NewAPI 类平台会话与资源失败回退 | Cookie 轮换、刷新会话和资源权限失败的调度影响未明确；部分分页失败可能被误解为密钥缺失 | 统一 CookieJar 优先级和 Dashboard Refresh 契约，认证成功后保存部分快照，完整分页前禁止缺失判定，并明确 `last_sync_at` 与管理员诊断边界 | NewAPI 派生平台密钥候选、模型能力、同步回退和日志可观测性 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`、平台站点专项文档 |
 
 ### 14.1 2026-09-26 实现校准
 
@@ -473,3 +474,26 @@ Admin Key step-up 拒绝只标记资源为 `secure_verification_required`，不�
 - 管理员可见诊断保留站点 ID、同步阶段、HTTP 状态、Content-Type、响应类别、失败
   计数和是否使用旧快照；密码、Cookie、Access Token、Refresh Token、临时令牌和完整
   响应体永远不进入日志或错误响应。
+
+### 14.3 2026-09-27 NewAPI 类平台同步失败与路由快照
+
+**变更前**：NewAPI 派生平台的 Refresh Cookie 轮换、Session ID 和 Bearer Token
+状态可能没有持久化到同一凭据；Token 分页、明文 Key 或模型能力失败时，路由层难以
+判断是账号失效、资源权限不足还是安全验证，存在误删旧密钥或误标缺失的风险。
+
+**变更后**：
+
+- 管理 API 的 `BaseURL` 保留路径前缀，Relay 地址不参与管理接口猜测；兼容资源路径只
+  在 404/405 时尝试，401/403、HTML/WAF、业务失败和传输错误结束当前阶段；
+- Dashboard Refresh 固定使用 `new_api_refresh` Cookie、`X-Auth-Session` 和当前
+  Bearer Token。CookieJar 的同名轮换值优先，显式 Cookie 只补充 Jar 缺少的名称；
+  轮换结果加密回写，避免下一轮调度继续使用旧 Cookie；
+- 认证成功但资源失败时，继续使用最近成功的 `UpstreamKey`、
+  `UpstreamKeyAbility`、模型、倍率和权重。只有完整 Token/Key 分页和校验成功后才把
+  未返回密钥标记为缺失；
+- 路由候选只读取已确认的真实密钥和模型能力。账号级模型、价格或 Admin 渠道诊断不能
+  复制为每个子密钥的能力；资源失败状态由管理员资源接口查看，普通 Relay 不获得完整
+  凭据；
+- `sync_status=failed` 的本次轮次不更新 `last_sync_at`。管理员错误保留脱敏阶段、URL、
+  HTTP 状态、Content-Type、响应类型、资源状态和快照回退信息，不写入密码、Cookie、
+  Access Token、Refresh Token 或完整响应正文。

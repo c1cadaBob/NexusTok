@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -170,6 +169,7 @@ func StartPlatformSiteAuthFlow(ctx context.Context, userID int, request Platform
 		}
 	}
 	capturePlatformSiteSessionCookie(session, &secret.Credential)
+	captureNewAPIRefreshCookie(session, &secret.Credential)
 	if status == PlatformSiteAuthFlowStatusAuthenticated {
 		if err := applyPlatformSiteLoginPayload(session, platform, &credential, payload); err != nil {
 			return nil, classifyPlatformSiteAuthFlowError(err)
@@ -217,14 +217,22 @@ func VerifyPlatformSiteAuthFlow(ctx context.Context, userID int, flowID string, 
 	if err != nil {
 		return nil, err
 	}
+	if record.Platform == model.PlatformNewAPI {
+		session.CredentialUpdate = &secret.Credential
+		syncNewAPISessionHeaders(session, secret.Credential)
+	}
 	var payload any
 	if record.Platform == model.PlatformSub2API {
 		setSub2APIBrowserHeaders(session)
 		payload, err = verifySub2APILogin2FA(ctx, session, secret.TempToken, code)
 	} else {
+		setNewAPIBrowserHeaders(session)
 		payload, err = verifyNewAPILogin2FA(ctx, session, secret.FlowToken, code)
 	}
 	if err != nil {
+		if persistErr := persistPlatformSiteAuthFlowCredential(&record, &secret, session); persistErr != nil {
+			return nil, persistErr
+		}
 		record.Attempts++
 		record.CodeAttempts++
 		if record.CodeAttempts >= platformSiteAuthFlowMaxCodeAttempts ||
@@ -236,6 +244,10 @@ func VerifyPlatformSiteAuthFlow(ctx context.Context, userID int, flowID string, 
 	}
 	credential := secret.Credential
 	if err := applyPlatformSiteLoginPayload(session, record.Platform, &credential, payload); err != nil {
+		secret.Credential = credential
+		if persistErr := persistPlatformSiteAuthFlowCredential(&record, &secret, session); persistErr != nil {
+			return nil, persistErr
+		}
 		record.Status = classifyAuthStatus(err)
 		_ = savePlatformSiteAuthFlowRecord(record)
 		return nil, err
@@ -343,6 +355,7 @@ func authenticatePlatformSitePassword(ctx context.Context, platform, baseURL str
 		payload, err := loginSub2APIWithPassword(ctx, session, credential)
 		return session, payload, err
 	}
+	setNewAPIBrowserHeaders(session)
 	payload, err := loginNewAPIWithPassword(ctx, session, credential)
 	return session, payload, err
 }
@@ -351,14 +364,32 @@ func applyPlatformSiteLoginPayload(session *PlatformSiteSession, platform string
 	if session == nil || credential == nil {
 		return ErrPlatformSiteAuthFlowInvalid
 	}
+	if platform == model.PlatformNewAPI {
+		recognized, bundleErr := applyNewAPIDashboardAuthBundle(payload, credential, true)
+		if recognized {
+			if bundleErr != nil {
+				return bundleErr
+			}
+			capturePlatformSiteSessionCookie(session, credential)
+			captureNewAPIRefreshCookie(session, credential)
+			syncNewAPISessionHeaders(session, *credential)
+			session.Headers.Set("Authorization", bearerToken(credential.AccessToken))
+			setNewAPICompatUserHeaders(session.Headers, credential.UserID)
+			return nil
+		}
+	}
 	token := findToken(payload)
 	if token == "" && platform != model.PlatformNewAPI {
 		return ErrSub2APILoginToken
 	}
+	preservePassword := platform == model.PlatformNewAPI &&
+		credential.AuthType == model.UpstreamAuthPassword
 	if token != "" {
-		credential.AuthType = model.UpstreamAuthAccessToken
-		credential.Username = ""
-		credential.Password = ""
+		if !preservePassword {
+			credential.AuthType = model.UpstreamAuthAccessToken
+			credential.Username = ""
+			credential.Password = ""
+		}
 		credential.AccessToken = token
 		credential.TokenType = firstNonEmptyString(firstString(firstRecord(payload), "token_type", "tokenType"), "Bearer")
 		session.Headers.Set("Authorization", bearerToken(token))
@@ -381,7 +412,7 @@ func applyPlatformSiteLoginPayload(session *PlatformSiteSession, platform string
 	if token == "" && session.Client.Jar == nil {
 		return ErrPlatformSiteAuth
 	}
-	if token == "" {
+	if token == "" && !preservePassword {
 		credential.AuthType = model.UpstreamAuthCookie
 		credential.Username = ""
 		credential.Password = ""
@@ -389,28 +420,43 @@ func applyPlatformSiteLoginPayload(session *PlatformSiteSession, platform string
 	return nil
 }
 
-func capturePlatformSiteSessionCookie(session *PlatformSiteSession, credential *model.PlatformSiteCredential) {
+func capturePlatformSiteSessionCookie(
+	session *PlatformSiteSession,
+	credential *model.PlatformSiteCredential,
+	rawURLs ...string,
+) {
 	if session == nil || credential == nil || session.Client == nil || session.Client.Jar == nil {
 		return
 	}
-	parsed, err := url.Parse(session.BaseURL)
+	rawURL := session.LastRequestURL
+	if len(rawURLs) > 0 && strings.TrimSpace(rawURLs[0]) != "" {
+		rawURL = rawURLs[0]
+	}
+	jarCookie := platformSiteJarCookieHeaderForURL(session, rawURL)
+	if jarCookie == "" {
+		return
+	}
+	credential.Cookie = mergePlatformSiteCookieHeaders(credential.Cookie, jarCookie)
+}
+
+func persistPlatformSiteAuthFlowCredential(
+	record *platformSiteAuthFlowRecord,
+	secret *platformSiteAuthFlowSecret,
+	session *PlatformSiteSession,
+) error {
+	if record == nil || secret == nil || session == nil || session.CredentialUpdate == nil {
+		return nil
+	}
+	secret.Credential.Cookie = mergePlatformSiteCookieHeaders(
+		secret.Credential.Cookie,
+		session.CredentialUpdate.Cookie,
+	)
+	encrypted, err := encryptPlatformSiteAuthFlowSecret(*secret)
 	if err != nil {
-		return
+		return err
 	}
-	cookies := session.Client.Jar.Cookies(parsed)
-	if len(cookies) == 0 {
-		return
-	}
-	values := make([]string, 0, len(cookies))
-	for _, cookie := range cookies {
-		if cookie == nil || strings.TrimSpace(cookie.Name) == "" {
-			continue
-		}
-		values = append(values, cookie.Name+"="+cookie.Value)
-	}
-	if len(values) > 0 {
-		credential.Cookie = strings.Join(values, "; ")
-	}
+	record.Secret = encrypted
+	return savePlatformSiteAuthFlowRecord(*record)
 }
 
 func verifyNewAPILogin2FA(ctx context.Context, session *PlatformSiteSession, flowToken, code string) (any, error) {
@@ -422,6 +468,9 @@ func verifyNewAPILogin2FA(ctx context.Context, session *PlatformSiteSession, flo
 		payload, err := platformSiteRequest(ctx, session, http.MethodPost, path, nil, body)
 		if err == nil {
 			return payload, nil
+		}
+		if !platformSiteRouteMissing(err) {
+			return nil, err
 		}
 	}
 	return nil, ErrPlatformSiteAuth

@@ -457,6 +457,10 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
     form.setValue('platform_site_username', '')
     form.setValue('platform_site_password', '')
     form.setValue('platform_site_access_token', '')
+    form.setValue('platform_site_token_expires_at', undefined)
+    form.setValue('platform_site_token_type', '')
+    form.setValue('platform_site_session_id', '')
+    form.setValue('platform_site_session_current', false)
     form.setValue('platform_site_admin_key', '')
     form.setValue('platform_site_cookie', '')
     form.setValue('platform_site_capture_id', '')
@@ -845,19 +849,59 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
       )}
 
       {authType === 'access_token' && (
-        <FormField
-          control={form.control}
-          name='platform_site_access_token'
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>{t('Access token')}</FormLabel>
-              <FormControl>
-                <Input type='password' autoComplete='off' {...field} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
+        <div className='grid gap-4 sm:grid-cols-2'>
+          <FormField
+            control={form.control}
+            name='platform_site_access_token'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('Access token')}</FormLabel>
+                <FormControl>
+                  <Input type='password' autoComplete='off' {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          {platform === 'newapi' && (
+            <FormField
+              control={form.control}
+              name='platform_site_session_id'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Dashboard Session ID')}</FormLabel>
+                  <FormControl>
+                    <Input type='password' autoComplete='off' {...field} />
+                  </FormControl>
+                  <FormDescription>
+                    {t('Used with the NewAPI Dashboard refresh endpoint.')}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
           )}
-        />
+          {platform === 'newapi' && (
+            <FormField
+              control={form.control}
+              name='platform_site_cookie'
+              render={({ field }) => (
+                <FormItem className='sm:col-span-2'>
+                  <FormLabel>{t('Cookie')}</FormLabel>
+                  <FormControl>
+                    <Input type='password' autoComplete='off' {...field} />
+                  </FormControl>
+                  <FormDescription>
+                    {t(
+                      'For NewAPI Dashboard refresh, include the new_api_refresh cookie.'
+                    )}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          )}
+        </div>
       )}
 
       {authType === 'admin_key' && (

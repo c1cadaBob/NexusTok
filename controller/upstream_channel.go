@@ -32,6 +32,10 @@ type PlatformSiteInput struct {
 	UserID          string   `json:"user_id,omitempty"`
 	AccessToken     string   `json:"access_token"`
 	RefreshToken    string   `json:"refresh_token,omitempty"`
+	TokenExpiresAt  int64    `json:"token_expires_at,omitempty"`
+	TokenType       string   `json:"token_type,omitempty"`
+	SessionID       string   `json:"session_id,omitempty"`
+	SessionCurrent  bool     `json:"session_current,omitempty"`
 	AdminKey        string   `json:"admin_key"`
 	Cookie          string   `json:"cookie"`
 	CaptureID       string   `json:"capture_id,omitempty"`
@@ -239,14 +243,18 @@ func validatePlatformSiteInput(input *PlatformSiteInput, existing *model.Platfor
 		}
 	}
 	credential := model.PlatformSiteCredential{
-		AuthType:     input.AuthType,
-		Username:     strings.TrimSpace(input.Username),
-		Password:     input.Password,
-		UserID:       strings.TrimSpace(input.UserID),
-		AccessToken:  strings.TrimSpace(input.AccessToken),
-		RefreshToken: strings.TrimSpace(input.RefreshToken),
-		AdminKey:     strings.TrimSpace(input.AdminKey),
-		Cookie:       input.Cookie,
+		AuthType:       input.AuthType,
+		Username:       strings.TrimSpace(input.Username),
+		Password:       input.Password,
+		UserID:         strings.TrimSpace(input.UserID),
+		AccessToken:    strings.TrimSpace(input.AccessToken),
+		RefreshToken:   strings.TrimSpace(input.RefreshToken),
+		TokenExpiresAt: input.TokenExpiresAt,
+		TokenType:      strings.TrimSpace(input.TokenType),
+		SessionID:      strings.TrimSpace(input.SessionID),
+		SessionCurrent: input.SessionCurrent,
+		AdminKey:       strings.TrimSpace(input.AdminKey),
+		Cookie:         strings.TrimSpace(input.Cookie),
 	}
 	switch input.AuthType {
 	case model.UpstreamAuthPassword:
@@ -257,6 +265,9 @@ func validatePlatformSiteInput(input *PlatformSiteInput, existing *model.Platfor
 		credential.RefreshToken = ""
 		credential.UserID = ""
 		credential.TokenExpiresAt = 0
+		credential.TokenType = ""
+		credential.SessionID = ""
+		credential.SessionCurrent = false
 		credential.AdminKey = ""
 		credential.Cookie = ""
 	case model.UpstreamAuthAccessToken:
@@ -266,7 +277,6 @@ func validatePlatformSiteInput(input *PlatformSiteInput, existing *model.Platfor
 		credential.Username = ""
 		credential.Password = ""
 		credential.AdminKey = ""
-		credential.Cookie = ""
 	case model.UpstreamAuthAdminKey:
 		if credential.AdminKey == "" {
 			return model.PlatformSiteCredential{}, 0, errors.New("Admin Key 不能为空")
@@ -277,6 +287,9 @@ func validatePlatformSiteInput(input *PlatformSiteInput, existing *model.Platfor
 		credential.AccessToken = ""
 		credential.RefreshToken = ""
 		credential.TokenExpiresAt = 0
+		credential.TokenType = ""
+		credential.SessionID = ""
+		credential.SessionCurrent = false
 		credential.Cookie = ""
 	case model.UpstreamAuthCookie:
 		if credential.Cookie == "" {
@@ -288,6 +301,9 @@ func validatePlatformSiteInput(input *PlatformSiteInput, existing *model.Platfor
 		credential.AccessToken = ""
 		credential.RefreshToken = ""
 		credential.TokenExpiresAt = 0
+		credential.TokenType = ""
+		credential.SessionID = ""
+		credential.SessionCurrent = false
 		credential.AdminKey = ""
 	}
 	rechargeAmount := 0.0
@@ -377,6 +393,21 @@ func savePlatformSiteAccount(channelID int, input *PlatformSiteInput, existing *
 					}
 					if merged.UserID == "" {
 						merged.UserID = credential.UserID
+					}
+					if merged.Cookie == "" {
+						merged.Cookie = credential.Cookie
+					}
+					if merged.TokenExpiresAt == 0 {
+						merged.TokenExpiresAt = credential.TokenExpiresAt
+					}
+					if merged.TokenType == "" {
+						merged.TokenType = credential.TokenType
+					}
+					if merged.SessionID == "" {
+						merged.SessionID = credential.SessionID
+					}
+					if !merged.SessionCurrent {
+						merged.SessionCurrent = credential.SessionCurrent
 					}
 				case model.UpstreamAuthAdminKey:
 					if merged.AdminKey == "" {
@@ -494,6 +525,10 @@ func applyPlatformSiteCapture(userID, channelID int, input *PlatformSiteInput) (
 	input.UserID = resolution.Credential.UserID
 	input.AccessToken = resolution.Credential.AccessToken
 	input.RefreshToken = resolution.Credential.RefreshToken
+	input.TokenExpiresAt = resolution.Credential.TokenExpiresAt
+	input.TokenType = resolution.Credential.TokenType
+	input.SessionID = resolution.Credential.SessionID
+	input.SessionCurrent = resolution.Credential.SessionCurrent
 	input.AdminKey = resolution.Credential.AdminKey
 	input.Cookie = resolution.Credential.Cookie
 	if resolution.ManagementBaseURL != "" {
@@ -534,6 +569,10 @@ func applyPlatformSiteAuthFlow(userID, channelID int, input *PlatformSiteInput) 
 	input.UserID = resolution.Credential.UserID
 	input.AccessToken = resolution.Credential.AccessToken
 	input.RefreshToken = resolution.Credential.RefreshToken
+	input.TokenExpiresAt = resolution.Credential.TokenExpiresAt
+	input.TokenType = resolution.Credential.TokenType
+	input.SessionID = resolution.Credential.SessionID
+	input.SessionCurrent = resolution.Credential.SessionCurrent
 	input.AdminKey = resolution.Credential.AdminKey
 	input.Cookie = resolution.Credential.Cookie
 	return flowID, nil

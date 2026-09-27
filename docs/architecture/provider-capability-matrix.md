@@ -94,6 +94,7 @@
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 覆盖 `ChannelTypeNames` 当前全部渠道类型，并区分 API 映射、Adaptor、可路由能力和任务插件 | `constant/channel.go`、`common/api_type.go`、`relay/relay_adaptor.go`、`relay/channel/`、路由 | 渠道常量、API 映射、Adaptor 工厂、任务映射和流式列表静态核对 |
 | 2026-09-26 | 平台站点资源能力补充 | NewAPI/Sub2API 仅以渠道类型和适配器入口描述，未区分登录、刷新、资源和失败回退 | 以参考源真实路由登记 2FA、Bundle/轮换、身份/额度/分组/端点/密钥/模型资源及快照回退 | 平台站点管理与路由前置资源同步 | 参考项目路由、DTO、权限和失败语义静态核对 |
+| 2026-09-27 | NewAPI 类平台认证与资源能力校准 | Dashboard Refresh Cookie、Session ID 和管理/Relay 地址边界未列入矩阵；资源权限失败可能被误判为凭据失败 | 列明真实 Refresh 请求契约、CookieJar 轮换优先级、现代 Bundle 拒绝降级、资源级状态和最近成功快照保留规则 | NewAPI 派生平台管理面、子密钥路由模型能力和同步诊断 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`、本机参考源 |
 
 ### 3.2 2026-09-26 实现校准
 
@@ -127,3 +128,17 @@ interactive_verification、waf_blocked、route_missing 和 transport 分类上�
 
 浏览器 Capture/Auth Flow 只承接人工验证，不绕过上游 Turnstile、验证码、Passkey 或
 WAF；当前容器缺少浏览器时不把该环境错误显示为响应格式错误。
+
+### 3.4 2026-09-27 NewAPI 类平台管理面契约校准
+
+**变更前**：能力矩阵只登记了 NewAPI 管理资源和一般刷新方式，没有明确
+Dashboard Refresh 的 Cookie、Session ID、Bearer Token 组合，也没有明确管理地址与
+Relay 地址的边界。资源接口返回 401/403 或分页失败时，容易与站点账号认证失败混淆。
+
+**变更后**：NewAPI 及派生平台的 `BaseURL` 只表示管理 API 根地址并保留路径前缀；
+`/api/user/auth/refresh` 使用 `new_api_refresh` Cookie、`X-Auth-Session` 和当前
+Bearer Token，CookieJar 的同名轮换值优先持久化。现代 Bundle 结构不完整时不再降级为
+旧 Token 协议。身份、余额/用量、分组、价格、Token、明文 Key、模型和 Admin 渠道资源
+独立记录状态；权限不足、安全验证或部分分页失败只影响对应资源并使用最近成功快照，
+只有明确 404/405 才执行兼容路径回退。该能力矩阵仍不宣称自动完成上游 Passkey、
+Security Proof、Turnstile 或 WAF。

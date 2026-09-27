@@ -126,28 +126,35 @@ func (adapter *NewAPIAdapter) Authenticate(ctx context.Context, baseURL string, 
 		return nil, err
 	}
 	if adapter.client != nil {
-		session.Client = adapter.client
+		attachPlatformSiteHTTPClient(session, adapter.client)
 	}
+	setNewAPIBrowserHeaders(session)
+	switch platformSiteCredentialAuthType(credential) {
+	case model.UpstreamAuthPassword, model.UpstreamAuthAccessToken, model.UpstreamAuthCookie:
+		// 让登录、当前用户和刷新响应中的 Set-Cookie 都能回写到同一份凭据。
+		session.CredentialUpdate = &credential
+	}
+	var currentUser any
 	switch platformSiteCredentialAuthType(credential) {
 	case model.UpstreamAuthPassword:
-		payload, requestErr := loginNewAPIWithPassword(ctx, session, credential)
-		if requestErr != nil {
-			return nil, wrapPlatformSiteStage("NewAPI 登录", requestErr)
-		}
-		if loginRequiresInteractiveVerification(payload) {
-			return nil, fmt.Errorf("%w: 需要完成上游二次验证", ErrPlatformSiteAuth)
-		}
-		if token := findToken(payload); token != "" {
-			session.Headers.Set("Authorization", bearerToken(token))
-		}
-		if userID := findUserID(payload); userID != "" {
-			setNewAPICompatUserHeaders(session.Headers, userID)
+		currentUser, err = authenticateNewAPIPasswordSession(ctx, session, &credential)
+		if err != nil {
+			return session, wrapPlatformSiteStage("NewAPI 认证", err)
 		}
 	case model.UpstreamAuthAccessToken:
 		if credential.Cookie != "" {
 			headers.Set("Cookie", credential.Cookie)
 		}
-		if credential.RefreshToken != "" || credential.SessionID != "" {
+		if credential.SessionID != "" {
+			headers.Set("X-Auth-Session", credential.SessionID)
+		}
+		if credential.RefreshUncertain {
+			setPlatformSiteCredentialUpdate(session, credential)
+			return session, wrapPlatformSiteStage("NewAPI 刷新令牌", ErrPlatformSiteRefreshUncertain)
+		} else if newAPIAccessTokenUsable(credential) {
+			headers.Set("Authorization", bearerToken(credential.AccessToken))
+			setNewAPICompatUserHeaders(headers, credential.UserID)
+		} else if newAPIRefreshMaterial(credential) {
 			if err := refreshPlatformSiteSession(
 				ctx,
 				session,
@@ -156,54 +163,268 @@ func (adapter *NewAPIAdapter) Authenticate(ctx context.Context, baseURL string, 
 			); err != nil {
 				return session, wrapPlatformSiteStage("NewAPI 刷新令牌", err)
 			}
+		} else if hasLegacyNewAPIRefreshMaterial(credential) &&
+			!newAPIAccessTokenUsable(credential) {
+			setPlatformSiteCredentialUpdate(session, credential)
+			return session, wrapPlatformSiteStage(
+				"NewAPI 刷新令牌",
+				errors.Join(ErrPlatformSiteAuth, ErrPlatformSiteRefreshUncertain),
+			)
 		} else if credential.AccessToken != "" {
 			headers.Set("Authorization", bearerToken(credential.AccessToken))
 			setNewAPICompatUserHeaders(headers, credential.UserID)
 		} else {
-			return nil, wrapPlatformSiteStage("NewAPI 认证", fmt.Errorf("%w: 缺少访问令牌", ErrPlatformSiteAuth))
+			return session, wrapPlatformSiteStage("NewAPI 认证", fmt.Errorf("%w: 缺少访问令牌", ErrPlatformSiteAuth))
 		}
 	case model.UpstreamAuthAdminKey:
 		if credential.AdminKey == "" {
-			return nil, wrapPlatformSiteStage("NewAPI 认证", fmt.Errorf("%w: 缺少 Admin Key", ErrPlatformSiteAuth))
+			return session, wrapPlatformSiteStage("NewAPI 认证", fmt.Errorf("%w: 缺少 Admin Key", ErrPlatformSiteAuth))
 		}
 		headers.Set("Authorization", bearerToken(credential.AdminKey))
 		headers.Set("x-api-key", credential.AdminKey)
 		headers.Set("New-Api-Key", credential.AdminKey)
 	case model.UpstreamAuthCookie:
 		if credential.Cookie == "" {
-			return nil, wrapPlatformSiteStage("NewAPI 认证", fmt.Errorf("%w: 缺少 Cookie", ErrPlatformSiteAuth))
+			return session, wrapPlatformSiteStage("NewAPI 认证", fmt.Errorf("%w: 缺少 Cookie", ErrPlatformSiteAuth))
 		}
 		headers.Set("Cookie", credential.Cookie)
 		setNewAPICompatUserHeaders(headers, credential.UserID)
 	default:
-		return nil, wrapPlatformSiteStage("NewAPI 认证", fmt.Errorf("%w: 认证方式不受支持", ErrPlatformSiteAuth))
+		return session, wrapPlatformSiteStage("NewAPI 认证", fmt.Errorf("%w: 认证方式不受支持", ErrPlatformSiteAuth))
 	}
-	currentUser, err := fetchNewAPICurrentUser(ctx, session)
-	if err != nil {
-		if credential.AuthType != model.UpstreamAuthAdminKey {
-			return nil, wrapPlatformSiteStage("NewAPI 当前用户", err)
+	if currentUser == nil {
+		currentUser, err = fetchNewAPICurrentUser(ctx, session)
+		if err != nil {
+			if credential.AuthType != model.UpstreamAuthAdminKey {
+				return session, wrapPlatformSiteStage("NewAPI 当前用户", err)
+			}
+			if _, adminErr := fetchNewAPIAdminChannels(ctx, session); adminErr != nil {
+				return session, wrapPlatformSiteStage("NewAPI 管理接口", adminErr)
+			}
 		}
-		if _, adminErr := fetchNewAPIAdminChannels(ctx, session); adminErr != nil {
-			return nil, wrapPlatformSiteStage("NewAPI 管理接口", adminErr)
+	}
+	if currentUser != nil {
+		if expectedUserID := strings.TrimSpace(credential.UserID); expectedUserID != "" {
+			actualUserID := strings.TrimSpace(findUserID(currentUser))
+			if actualUserID != "" && actualUserID != expectedUserID {
+				return session, wrapPlatformSiteStage("NewAPI 用户身份", ErrPlatformSiteIdentity)
+			}
 		}
-	} else if expectedUserID := strings.TrimSpace(credential.UserID); expectedUserID != "" {
-		actualUserID := strings.TrimSpace(findUserID(currentUser))
-		if actualUserID != "" && actualUserID != expectedUserID {
-			return nil, wrapPlatformSiteStage("NewAPI 用户身份", ErrPlatformSiteIdentity)
+		if userID := strings.TrimSpace(findUserID(currentUser)); userID != "" {
+			credential.UserID = userID
+		}
+		credential.LastAuthAt = common.GetTimestamp()
+		credential.RefreshStatus = "active"
+		credential.ReauthRequired = false
+		credential.RefreshUncertain = false
+		if session.CredentialUpdate != nil {
+			credential.Cookie = mergePlatformSiteCookieHeaders(
+				credential.Cookie,
+				session.CredentialUpdate.Cookie,
+			)
+			session.CredentialUpdate = &credential
 		}
 	}
 	return session, nil
 }
 
+func authenticateNewAPIPasswordSession(
+	ctx context.Context,
+	session *PlatformSiteSession,
+	credential *model.PlatformSiteCredential,
+) (any, error) {
+	if credential == nil {
+		return nil, fmt.Errorf("%w: 凭据为空", ErrPlatformSiteAuth)
+	}
+	credential.AuthType = model.UpstreamAuthPassword
+	if credential.Cookie != "" {
+		session.Headers.Set("Cookie", credential.Cookie)
+	}
+	if credential.SessionID != "" {
+		session.Headers.Set("X-Auth-Session", credential.SessionID)
+	}
+	if credential.AccessToken != "" {
+		setNewAPICompatUserHeaders(session.Headers, credential.UserID)
+	}
+
+	hasReusableAccessToken := newAPIAccessTokenUsable(*credential)
+	hasCookieSession := strings.TrimSpace(credential.Cookie) != "" ||
+		strings.TrimSpace(credential.SessionID) != ""
+	if hasReusableAccessToken || hasCookieSession {
+		if !hasReusableAccessToken {
+			session.Headers.Del("Authorization")
+		} else {
+			session.Headers.Set("Authorization", bearerToken(credential.AccessToken))
+		}
+		currentUser, err := fetchNewAPICurrentUser(ctx, session)
+		if err == nil {
+			return currentUser, nil
+		}
+		if !newAPISessionInvalid(err) {
+			return nil, err
+		}
+	}
+
+	if credential.RefreshUncertain {
+		setPlatformSiteCredentialUpdate(session, *credential)
+		return nil, ErrPlatformSiteRefreshUncertain
+	}
+	if newAPIRefreshMaterial(*credential) {
+		if err := refreshPlatformSiteSession(
+			ctx,
+			session,
+			"/api/user/auth/refresh",
+			credential,
+		); err == nil {
+			currentUser, currentErr := fetchNewAPICurrentUser(ctx, session)
+			if currentErr == nil {
+				return currentUser, nil
+			}
+			markPlatformSiteRefreshFailure(credential, true)
+			setPlatformSiteCredentialUpdate(session, *credential)
+			return nil, errors.Join(ErrPlatformSiteRefreshUncertain, currentErr)
+		} else if !newAPIPasswordFallbackAllowed(err) {
+			return nil, err
+		} else {
+			resetNewAPISessionBeforePasswordLogin(session, credential)
+		}
+	}
+
+	resetNewAPISessionBeforePasswordLogin(session, credential)
+	payload, err := loginNewAPIWithPassword(ctx, session, *credential)
+	if err != nil {
+		return nil, err
+	}
+	if loginRequiresInteractiveVerification(payload) {
+		return nil, fmt.Errorf("%w: 需要完成上游二次验证", ErrPlatformSiteAuth)
+	}
+	if err := applyNewAPIPasswordLoginPayload(session, credential, payload); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
+func newAPIAccessTokenUsable(credential model.PlatformSiteCredential) bool {
+	return strings.TrimSpace(credential.AccessToken) != "" &&
+		credential.TokenExpiresAt > common.GetTimestamp()
+}
+
+func newAPIRefreshMaterial(credential model.PlatformSiteCredential) bool {
+	return hasNewAPIRefreshCookie(credential.Cookie) &&
+		strings.TrimSpace(credential.AccessToken) != "" &&
+		strings.TrimSpace(credential.SessionID) != ""
+}
+
+func hasLegacyNewAPIRefreshMaterial(credential model.PlatformSiteCredential) bool {
+	return strings.TrimSpace(credential.RefreshToken) != "" ||
+		strings.TrimSpace(credential.SessionID) != ""
+}
+
+func hasNewAPIRefreshCookie(cookieHeader string) bool {
+	return newAPIRefreshCookieValue(cookieHeader) != ""
+}
+
+func newAPIRefreshCookieValue(cookieHeader string) string {
+	for _, part := range strings.Split(cookieHeader, ";") {
+		name, value, found := strings.Cut(strings.TrimSpace(part), "=")
+		if found &&
+			strings.EqualFold(strings.TrimSpace(name), "new_api_refresh") &&
+			strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func newAPISessionInvalid(err error) bool {
+	return errors.Is(err, ErrPlatformSiteCredentials) &&
+		!errors.Is(err, ErrPlatformSiteSecurity) &&
+		!platformSiteSessionLimit(err)
+}
+
+func newAPIPasswordFallbackAllowed(err error) bool {
+	return platformSiteHTTPStatusIsUnauthorized(err) && newAPISessionInvalid(err)
+}
+
+func resetNewAPISessionBeforePasswordLogin(
+	session *PlatformSiteSession,
+	credential *model.PlatformSiteCredential,
+) {
+	if session == nil || credential == nil {
+		return
+	}
+	session.Headers.Del("Authorization")
+	session.Headers.Del("Cookie")
+	session.Headers.Del("X-Auth-Session")
+	credential.AccessToken = ""
+	credential.RefreshToken = ""
+	credential.TokenExpiresAt = 0
+	credential.TokenType = ""
+	credential.SessionID = ""
+	credential.SessionCurrent = false
+	credential.Cookie = ""
+	credential.RefreshStatus = ""
+	credential.ReauthRequired = false
+	credential.RefreshUncertain = false
+}
+
+func applyNewAPIPasswordLoginPayload(
+	session *PlatformSiteSession,
+	credential *model.PlatformSiteCredential,
+	payload any,
+) error {
+	recognized, bundleErr := applyNewAPIDashboardAuthBundle(payload, credential, true)
+	if recognized {
+		if bundleErr != nil {
+			return bundleErr
+		}
+		capturePlatformSiteSessionCookie(session, credential)
+		captureNewAPIRefreshCookie(session, credential)
+		syncNewAPISessionHeaders(session, *credential)
+		session.Headers.Set("Authorization", bearerToken(credential.AccessToken))
+		setNewAPICompatUserHeaders(session.Headers, credential.UserID)
+		setPlatformSiteCredentialUpdate(session, *credential)
+		return nil
+	}
+
+	token := findToken(payload)
+	if token != "" {
+		credential.AccessToken = token
+		credential.TokenType = firstNonEmptyString(findTokenType(payload), "Bearer")
+		session.Headers.Set("Authorization", bearerToken(token))
+	}
+	if refreshToken := findRefreshToken(payload); refreshToken != "" {
+		credential.RefreshToken = refreshToken
+	}
+	credential.TokenExpiresAt = findTokenExpiresAt(payload)
+	if userID := findUserID(payload); userID != "" {
+		credential.UserID = userID
+	}
+	if sessionID := findSessionID(payload); sessionID != "" {
+		credential.SessionID = sessionID
+		credential.SessionCurrent = true
+	}
+	credential.LastAuthAt = common.GetTimestamp()
+	credential.RefreshStatus = "active"
+	credential.ReauthRequired = false
+	credential.RefreshUncertain = false
+	capturePlatformSiteSessionCookie(session, credential)
+	captureNewAPIRefreshCookie(session, credential)
+	syncNewAPISessionHeaders(session, *credential)
+	setNewAPICompatUserHeaders(session.Headers, credential.UserID)
+	setPlatformSiteCredentialUpdate(session, *credential)
+	return nil
+}
+
 func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *PlatformSiteSession) (PlatformSiteSnapshot, error) {
-	quotaPerUnit := fetchNewAPIQuotaPerUnit(ctx, session)
-	selfPayload, err := fetchNewAPICurrentUser(ctx, session)
+	quotaPerUnit, quotaStatusErr := fetchNewAPIQuotaPerUnit(ctx, session)
+	selfPayload, selfErr := fetchNewAPICurrentUser(ctx, session)
 	isAdminKey := session != nil && strings.TrimSpace(session.Headers.Get("x-api-key")) != ""
-	if err != nil && !isAdminKey {
-		return PlatformSiteSnapshot{}, wrapPlatformSiteStage("NewAPI 当前用户", err)
+	if selfErr != nil && !isAdminKey {
+		return PlatformSiteSnapshot{}, wrapPlatformSiteStage("NewAPI 当前用户", selfErr)
 	}
 	self := firstNestedRecord(selfPayload, "user", "account", "profile")
-	usedQuota, usedQuotaSet, quotaErr := firstValidatedInternalQuota(
+	usedQuota, usedQuotaSet, usedQuotaErr := firstValidatedInternalQuota(
 		self,
 		"used_quota",
 		"used",
@@ -215,10 +436,7 @@ func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *Platfo
 		"total_actual_cost",
 		"totalActualCost",
 	)
-	if quotaErr != nil {
-		return PlatformSiteSnapshot{}, quotaErr
-	}
-	balanceValue, _, balanceErr := firstValidatedNonNegativeFloat(
+	balanceValue, balanceSet, balanceErr := firstValidatedNonNegativeFloat(
 		self,
 		"quota",
 		"balance",
@@ -228,24 +446,37 @@ func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *Platfo
 	if balanceErr != nil {
 		return PlatformSiteSnapshot{}, balanceErr
 	}
+	if usedQuotaErr != nil {
+		usedQuota = 0
+		usedQuotaSet = false
+	}
 	snapshot := PlatformSiteSnapshot{
 		Balance:      normalizeNewAPIQuota(balanceValue, quotaPerUnit),
+		BalanceSet:   selfErr == nil && balanceSet,
 		UsedQuota:    usedQuota,
 		UsedQuotaSet: usedQuotaSet,
 		KeysComplete: true,
 	}
-	if accountModels := fetchNewAPIModels(ctx, session); len(accountModels) > 0 {
+	accountModels, accountModelsErr := fetchNewAPIModels(ctx, session)
+	if accountModelsErr == nil {
 		snapshot.Models = accountModels
+		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, PlatformSiteResourceSyncSnapshot{
+			ResourceType:   model.PlatformSiteResourceModels,
+			Status:         model.PlatformSiteResourceStatusSuccess,
+			SourceEndpoint: "/api/user/models,/api/user/available_models,/api/user/available_model/",
+			RecordCount:    len(accountModels),
+		})
+	} else {
 		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs,
-			PlatformSiteResourceSyncSnapshot{
-				ResourceType:   model.PlatformSiteResourceModels,
-				Status:         model.PlatformSiteResourceStatusSuccess,
-				SourceEndpoint: "/api/user/models",
-				RecordCount:    len(accountModels),
-			},
+			newAPIResourceSyncFailure(
+				model.PlatformSiteResourceModels,
+				"/api/user/models,/api/user/available_models,/api/user/available_model/",
+				accountModelsErr,
+				false,
+			),
 		)
 	}
-	if !isAdminKey || err == nil {
+	if selfErr == nil {
 		snapshot.Identity = platformSiteIdentityFromRecord(
 			self,
 			fmt.Sprintf("%.0f", quotaPerUnit),
@@ -254,14 +485,22 @@ func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *Platfo
 		snapshot.Identity.SourceEndpoint = "/api/user/self"
 	}
 	snapshot.Endpoint = newAPIEndpointSnapshot(session)
-	snapshot.ResourceSyncs = append(snapshot.ResourceSyncs,
-		PlatformSiteResourceSyncSnapshot{
-			ResourceType:   model.PlatformSiteResourceUsage,
-			Status:         model.PlatformSiteResourceStatusSuccess,
-			SourceEndpoint: "/api/status,/api/user/self",
-			RecordCount:    1,
-		},
-	)
+	usageResource := PlatformSiteResourceSyncSnapshot{
+		ResourceType:   model.PlatformSiteResourceUsage,
+		Status:         model.PlatformSiteResourceStatusSuccess,
+		SourceEndpoint: "/api/status,/api/user/self",
+		RecordCount:    1,
+	}
+	usageErr := errors.Join(quotaStatusErr, selfErr, usedQuotaErr)
+	if usageErr != nil {
+		usageResource = newAPIResourceSyncFailure(
+			model.PlatformSiteResourceUsage,
+			"/api/status,/api/user/self",
+			usageErr,
+			true,
+		)
+	}
+	snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, usageResource)
 	if snapshot.Identity != nil {
 		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, PlatformSiteResourceSyncSnapshot{
 			ResourceType:   model.PlatformSiteResourceIdentity,
@@ -269,65 +508,118 @@ func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *Platfo
 			SourceEndpoint: "/api/user/self",
 			RecordCount:    1,
 		})
+	} else if selfErr != nil {
+		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, newAPIResourceSyncFailure(
+			model.PlatformSiteResourceIdentity,
+			"/api/user/self",
+			selfErr,
+			true,
+		))
 	}
 	if isAdminKey {
 		adminChannels, adminErr := fetchNewAPIAdminChannels(ctx, session)
 		if adminErr == nil {
 			adminModels := make([]string, 0)
+			var adminModelErr error
 			for _, channel := range adminChannels {
-				adminModels = append(
-					adminModels,
-					fetchNewAPIAdminChannelModels(ctx, session, channel)...,
-				)
+				channelModels, channelErr := fetchNewAPIAdminChannelModels(ctx, session, channel)
+				adminModels = append(adminModels, channelModels...)
+				if channelErr != nil && adminModelErr == nil {
+					adminModelErr = channelErr
+				}
 			}
 			if len(adminModels) > 0 {
 				snapshot.Models = uniqueStrings(append(snapshot.Models, adminModels...))
 			}
-			snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, PlatformSiteResourceSyncSnapshot{
-				ResourceType:   model.PlatformSiteResourceModels,
-				Status:         model.PlatformSiteResourceStatusSuccess,
-				SourceEndpoint: "/api/channel/,/api/channel/{id},/api/channel/fetch_models/{id}",
-				RecordCount:    len(adminModels),
-			})
+			if adminModelErr != nil {
+				snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, newAPIResourceSyncFailure(
+					model.PlatformSiteResourceModels,
+					"/api/channel/,/api/channel/{id},/api/channel/fetch_models/{id}",
+					adminModelErr,
+					true,
+				))
+			} else {
+				snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, PlatformSiteResourceSyncSnapshot{
+					ResourceType:   model.PlatformSiteResourceModels,
+					Status:         model.PlatformSiteResourceStatusSuccess,
+					SourceEndpoint: "/api/channel/,/api/channel/{id},/api/channel/fetch_models/{id}",
+					RecordCount:    len(adminModels),
+				})
+			}
 		} else {
-			snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, PlatformSiteResourceSyncSnapshot{
-				ResourceType:   model.PlatformSiteResourceModels,
-				Status:         model.PlatformSiteResourceStatusStale,
-				SourceEndpoint: "/api/channel/",
-				FailureReason:  "管理员渠道接口不可用，保留最近成功模型快照",
-				Partial:        true,
-			})
+			snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, newAPIResourceSyncFailure(
+				model.PlatformSiteResourceModels,
+				"/api/channel/",
+				adminErr,
+				true,
+			))
 		}
 	}
-	groupRates, groupSnapshots, groupsLoaded, groupEndpoint := fetchNewAPIGroupResources(ctx, session)
+	groupRates, groupSnapshots, groupsLoaded, groupEndpoint, groupErr := fetchNewAPIGroupResources(ctx, session)
 	snapshot.Groups = groupSnapshots
 	snapshot.GroupsLoaded = groupsLoaded
-	if groupsLoaded {
+	if groupsLoaded && (groupErr == nil || platformSiteRouteMissing(groupErr)) {
 		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, PlatformSiteResourceSyncSnapshot{
 			ResourceType:   model.PlatformSiteResourceGroups,
 			Status:         model.PlatformSiteResourceStatusSuccess,
 			SourceEndpoint: groupEndpoint,
 			RecordCount:    len(groupSnapshots),
 		})
-	} else {
-		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, PlatformSiteResourceSyncSnapshot{
-			ResourceType:   model.PlatformSiteResourceGroups,
-			Status:         model.PlatformSiteResourceStatusStale,
-			SourceEndpoint: "/api/user/self/groups,/api/user/groups",
-			FailureReason:  "上游分组接口不可用",
-		})
+	} else if groupErr != nil {
+		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, newAPIResourceSyncFailure(
+			model.PlatformSiteResourceGroups,
+			"/api/user/self/groups,/api/user/groups,/api/groupPro/selectable",
+			groupErr,
+			groupsLoaded,
+		))
 	}
 	pricingPayload, pricingErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/pricing", nil, nil)
 	if pricingErr == nil {
-		applyNewAPIPricingResources(&snapshot, session, pricingPayload)
+		if !applyNewAPIPricingResources(&snapshot, session, pricingPayload) {
+			snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, newAPIResourceSyncFailure(
+				model.PlatformSiteResourceEndpoints,
+				"/api/pricing",
+				fmt.Errorf("%w: NewAPI 价格响应为空", ErrPlatformSiteResponse),
+				false,
+			))
+		}
+	} else {
+		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, newAPIResourceSyncFailure(
+			model.PlatformSiteResourceEndpoints,
+			"/api/pricing",
+			pricingErr,
+			false,
+		))
 	}
-	tokens, err := fetchNewAPITokens(ctx, session)
-	if err != nil {
-		return PlatformSiteSnapshot{}, wrapPlatformSiteStage("NewAPI 密钥分页", err)
+	tokens, tokensErr := fetchNewAPITokens(ctx, session)
+	if tokensErr != nil {
+		snapshot.KeysComplete = false
+		tokenResource := newAPIResourceSyncFailure(
+			model.PlatformSiteResourceKeys,
+			"/api/token/,/api/token,/api/tokens",
+			errors.Join(ErrPlatformSiteResource, tokensErr),
+			true,
+		)
+		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs,
+			tokenResource,
+			PlatformSiteResourceSyncSnapshot{
+				ResourceType:   model.PlatformSiteResourceModels,
+				Status:         model.PlatformSiteResourceStatusStale,
+				SourceEndpoint: "/api/user/models,/v1/models",
+				FailureReason:  "密钥分页失败，保留最近成功模型快照",
+				Partial:        true,
+			},
+		)
+		normalizePlatformSiteResourceSyncs(&snapshot)
+		return snapshot, wrapPlatformSiteStage(
+			"NewAPI 密钥分页",
+			errors.Join(ErrPlatformSiteResource, tokensErr),
+		)
 	}
 	revealedKeys, revealFailures := fetchNewAPITokenKeys(ctx, session, tokens)
 	snapshot.Keys = make([]UpstreamKeySnapshot, 0, len(tokens))
 	snapshot.KeysComplete = true
+	keysRequireSecurityVerification := false
 	for _, token := range tokens {
 		externalID := firstString(token, "id", "token_id", "key_id")
 		if externalID == "" {
@@ -379,6 +671,9 @@ func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *Platfo
 		}
 		if secret == "" || strings.Contains(secret, "*") {
 			if revealErr := revealFailures[externalID]; revealErr != nil {
+				if errors.Is(revealErr, ErrPlatformSiteSecurity) {
+					keysRequireSecurityVerification = true
+				}
 				item.SyncError = upstreamKeySyncErrorSecretUnavailable
 				snapshot.KeysComplete = false
 				snapshot.Keys = append(snapshot.Keys, item)
@@ -398,6 +693,9 @@ func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *Platfo
 				item.Models = models
 				item.ModelsSynced = true
 			} else {
+				if errors.Is(modelsErr, ErrPlatformSiteSecurity) {
+					keysRequireSecurityVerification = true
+				}
 				item.SyncError = upstreamKeySyncErrorModelsUnavailable
 				snapshot.KeysComplete = false
 			}
@@ -412,13 +710,20 @@ func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *Platfo
 		keysFailureReason = "部分密钥详情或模型能力读取失败，已保留最近成功快照"
 		keysPartial = true
 	}
+	if keysRequireSecurityVerification {
+		keysResourceStatus = model.PlatformSiteResourceStatusSecureVerificationRequired
+		keysFailureReason = "读取密钥或模型能力需要完成上游安全验证，已保留最近成功快照"
+		snapshot.AuthStatus = model.PlatformSiteAuthStatusSecureVerificationRequired
+		snapshot.AuthStatusReason = keysFailureReason
+	}
 	snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, PlatformSiteResourceSyncSnapshot{
-		ResourceType:   model.PlatformSiteResourceKeys,
-		Status:         keysResourceStatus,
-		SourceEndpoint: "/api/token/,/api/token/batch/keys",
-		RecordCount:    len(snapshot.Keys),
-		FailureReason:  keysFailureReason,
-		Partial:        keysPartial,
+		ResourceType:                 model.PlatformSiteResourceKeys,
+		Status:                       keysResourceStatus,
+		SourceEndpoint:               "/api/token/,/api/token/batch/keys",
+		RecordCount:                  len(snapshot.Keys),
+		FailureReason:                keysFailureReason,
+		Partial:                      keysPartial,
+		RequiresSecurityVerification: keysRequireSecurityVerification,
 	})
 	if models := uniqueStrings(modelsFromKeys(snapshot.Keys)); len(models) > 0 {
 		snapshot.Models = uniqueStrings(append(snapshot.Models, models...))
@@ -428,21 +733,34 @@ func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *Platfo
 			modelsStatus = model.PlatformSiteResourceStatusStale
 			modelsFailureReason = "密钥资源未完整同步，保留最近成功模型快照"
 		}
+		if keysRequireSecurityVerification {
+			modelsStatus = model.PlatformSiteResourceStatusSecureVerificationRequired
+			modelsFailureReason = "密钥资源需要完成上游安全验证，保留最近成功模型快照"
+		}
 		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, PlatformSiteResourceSyncSnapshot{
-			ResourceType:   model.PlatformSiteResourceModels,
-			Status:         modelsStatus,
-			SourceEndpoint: "/v1/models",
-			RecordCount:    len(models),
-			FailureReason:  modelsFailureReason,
+			ResourceType:                 model.PlatformSiteResourceModels,
+			Status:                       modelsStatus,
+			SourceEndpoint:               "/v1/models",
+			RecordCount:                  len(models),
+			FailureReason:                modelsFailureReason,
+			RequiresSecurityVerification: keysRequireSecurityVerification,
 		})
 	} else {
+		modelsStatus := model.PlatformSiteResourceStatusStale
+		modelsFailureReason := "账号级或密钥级模型目录接口不可用"
+		if keysRequireSecurityVerification {
+			modelsStatus = model.PlatformSiteResourceStatusSecureVerificationRequired
+			modelsFailureReason = "密钥资源需要完成上游安全验证，保留最近成功模型快照"
+		}
 		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, PlatformSiteResourceSyncSnapshot{
-			ResourceType:   model.PlatformSiteResourceModels,
-			Status:         model.PlatformSiteResourceStatusStale,
-			SourceEndpoint: "/api/user/models,/v1/models",
-			FailureReason:  "账号级或密钥级模型目录接口不可用",
+			ResourceType:                 model.PlatformSiteResourceModels,
+			Status:                       modelsStatus,
+			SourceEndpoint:               "/api/user/models,/v1/models",
+			FailureReason:                modelsFailureReason,
+			RequiresSecurityVerification: keysRequireSecurityVerification,
 		})
 	}
+	normalizePlatformSiteResourceSyncs(&snapshot)
 	return snapshot, nil
 }
 
@@ -466,7 +784,7 @@ func (adapter *Sub2APIAdapter) Authenticate(ctx context.Context, baseURL string,
 		return nil, err
 	}
 	if adapter.client != nil {
-		session.Client = adapter.client
+		attachPlatformSiteHTTPClient(session, adapter.client)
 	}
 	setSub2APIBrowserHeaders(session)
 	if modelBaseURL, ok := discoverSub2APIModelBaseURL(ctx, session); ok {
@@ -575,8 +893,18 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 	if quotaErr != nil {
 		return PlatformSiteSnapshot{}, quotaErr
 	}
+	balance, balanceSet, balanceErr := firstValidatedNonNegativeFloat(
+		me,
+		"balance",
+		"quota",
+		"credit",
+	)
+	if balanceErr != nil {
+		return PlatformSiteSnapshot{}, balanceErr
+	}
 	snapshot := PlatformSiteSnapshot{
-		Balance:           firstFloat(me, "balance", "quota", "credit"),
+		Balance:           balance,
+		BalanceSet:        balanceSet,
 		UsedQuota:         usedQuota,
 		UsedQuotaSet:      usedQuotaSet,
 		ManagementBaseURL: strings.TrimRight(strings.TrimSpace(session.ManagementBaseURL), "/"),
@@ -601,8 +929,16 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 	)
 	if payload, requestErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/user/profile", nil, nil); requestErr == nil {
 		profile := firstNestedRecord(payload, "profile", "user", "account")
-		if balance := firstFloat(profile, "balance", "quota", "credit"); balance > 0 {
-			snapshot.Balance = balance
+		if profileBalance, profileBalanceSet, profileBalanceErr := firstValidatedNonNegativeFloat(
+			profile,
+			"balance",
+			"quota",
+			"credit",
+		); profileBalanceErr != nil {
+			return PlatformSiteSnapshot{}, profileBalanceErr
+		} else if profileBalanceSet {
+			snapshot.Balance = profileBalance
+			snapshot.BalanceSet = true
 		}
 		if !snapshot.UsedQuotaSet {
 			if profileUsedQuota, profileUsedQuotaSet, profileQuotaErr := firstSub2APIQuota(
@@ -867,6 +1203,22 @@ func setSub2APIBrowserHeaders(session *PlatformSiteSession) {
 	session.Headers.Set("X-Requested-With", "XMLHttpRequest")
 }
 
+func setNewAPIBrowserHeaders(session *PlatformSiteSession) {
+	if session == nil {
+		return
+	}
+	parsed, err := url.Parse(session.BaseURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return
+	}
+	origin := parsed.Scheme + "://" + parsed.Host
+	referer := strings.TrimRight(session.BaseURL, "/") + "/login"
+	session.Headers.Set("Origin", origin)
+	session.Headers.Set("Referer", referer)
+	session.Headers.Set("User-Agent", "NexusTok-UpstreamSite/1.0")
+	session.Headers.Set("X-Requested-With", "XMLHttpRequest")
+}
+
 func fetchNewAPICurrentUser(ctx context.Context, session *PlatformSiteSession) (any, error) {
 	var lastErr error
 	for _, path := range []string{"/api/user/self", "/api/user/me", "/api/user/profile", "/api/user/info"} {
@@ -885,6 +1237,54 @@ func fetchNewAPICurrentUser(ctx context.Context, session *PlatformSiteSession) (
 	return nil, lastErr
 }
 
+func newAPIResourceSyncFailure(
+	resourceType string,
+	sourceEndpoint string,
+	err error,
+	partial bool,
+) PlatformSiteResourceSyncSnapshot {
+	status := model.PlatformSiteResourceStatusFailed
+	requiresSecurityVerification := false
+	if platformSiteErrorCategoryOf(err) == platformSiteErrorCategoryRouteMissing {
+		status = model.PlatformSiteResourceStatusStale
+	}
+	if errors.Is(err, ErrPlatformSiteSecurity) {
+		status = model.PlatformSiteResourceStatusSecureVerificationRequired
+		requiresSecurityVerification = true
+	}
+	return PlatformSiteResourceSyncSnapshot{
+		ResourceType:                 resourceType,
+		Status:                       status,
+		SourceEndpoint:               sourceEndpoint,
+		FailureReason:                platformSiteResourceFailureReason(err),
+		Partial:                      partial,
+		RequiresSecurityVerification: requiresSecurityVerification,
+	}
+}
+
+func platformSiteResourceFailureReason(err error) string {
+	if err == nil {
+		return ""
+	}
+	diagnostics := platformSiteResponseDiagnosticSuffix(err) + platformSiteStageDiagnosticSuffix(err)
+	switch {
+	case errors.Is(err, ErrPlatformSiteSecurity):
+		return "上游平台资源需要完成安全验证" + diagnostics
+	case errors.Is(err, ErrPlatformSitePermission):
+		return "上游平台资源权限不足" + diagnostics
+	case platformSiteRouteMissing(err):
+		return "上游平台资源路由不存在" + diagnostics
+	case errors.Is(err, ErrPlatformSiteTransport):
+		return "上游平台资源网络请求失败" + diagnostics
+	case errors.Is(err, ErrPlatformSiteCredentials):
+		return "上游平台资源会话已失效" + diagnostics
+	case errors.Is(err, ErrPlatformSiteResponse):
+		return "上游平台资源响应无效" + diagnostics
+	default:
+		return "上游平台资源同步失败" + diagnostics
+	}
+}
+
 func fetchNewAPIAdminChannels(
 	ctx context.Context,
 	session *PlatformSiteSession,
@@ -900,9 +1300,7 @@ func fetchNewAPIAdminChannels(
 		}
 		items := recordsFromPayload(payload)
 		channels = append(channels, items...)
-		if len(items) == 0 ||
-			len(items) < upstreamSitePageSize ||
-			page >= payloadPageCount(payload) {
+		if !platformSitePageHasMore(payload, page, len(items)) {
 			return channels, nil
 		}
 	}
@@ -913,33 +1311,41 @@ func fetchNewAPIAdminChannelModels(
 	ctx context.Context,
 	session *PlatformSiteSession,
 	channel map[string]any,
-) []string {
+) ([]string, error) {
 	models := modelsFromRecord(channel)
 	channelID := firstString(channel, "id", "channel_id", "channelId")
 	if channelID == "" {
-		return uniqueStrings(models)
+		return uniqueStrings(models), nil
 	}
-	if payload, err := platformSiteRequest(
+	payload, err := platformSiteRequest(
 		ctx,
 		session,
 		http.MethodGet,
 		"/api/channel/"+url.PathEscape(channelID),
 		nil,
 		nil,
-	); err == nil {
+	)
+	if err == nil {
 		models = append(models, modelsFromRecord(firstRecord(payload))...)
+	} else if !platformSiteRouteMissing(err) {
+		return uniqueStrings(models), err
 	}
-	if payload, err := platformSiteRequest(
+	payload, err = platformSiteRequest(
 		ctx,
 		session,
 		http.MethodGet,
 		"/api/channel/fetch_models/"+url.PathEscape(channelID),
 		nil,
 		nil,
-	); err == nil {
+	)
+	if err == nil {
 		models = append(models, stringsFromPayload(payload)...)
+		return uniqueStrings(models), nil
 	}
-	return uniqueStrings(models)
+	if platformSiteRouteMissing(err) {
+		return uniqueStrings(models), nil
+	}
+	return uniqueStrings(models), err
 }
 
 func fetchSub2APICurrentUser(ctx context.Context, session *PlatformSiteSession) (any, error) {
@@ -970,44 +1376,92 @@ func refreshPlatformSiteSession(
 	path string,
 	credential *model.PlatformSiteCredential,
 ) error {
-	if credential == nil ||
-		(path != "/api/user/auth/refresh" && strings.TrimSpace(credential.RefreshToken) == "" &&
-			strings.TrimSpace(credential.SessionID) == "") ||
-		(path == "/api/v1/auth/refresh" && strings.TrimSpace(credential.RefreshToken) == "") {
+	isSub2API := path == "/api/v1/auth/refresh"
+	isDashboardRefresh := path == "/api/user/auth/refresh"
+	if credential == nil {
+		return fmt.Errorf("%w: 缺少刷新凭据", ErrPlatformSiteAuth)
+	}
+	if session == nil || session.Headers == nil {
+		return fmt.Errorf("%w: 平台站点会话不可用", ErrPlatformSiteAuth)
+	}
+	if isSub2API && strings.TrimSpace(credential.RefreshToken) == "" {
 		return fmt.Errorf("%w: 缺少刷新令牌", ErrPlatformSiteAuth)
+	}
+	if isDashboardRefresh {
+		captureNewAPIRefreshCookie(session, credential)
+		if !hasNewAPIRefreshCookie(credential.Cookie) ||
+			strings.TrimSpace(credential.AccessToken) == "" ||
+			strings.TrimSpace(credential.SessionID) == "" {
+			return errors.Join(
+				ErrPlatformSiteAuth,
+				ErrPlatformSiteRefreshUncertain,
+				errors.New("缺少 Dashboard Refresh 会话材料"),
+			)
+		}
+	}
+	if strings.TrimSpace(credential.Cookie) != "" {
+		session.Headers.Set("Cookie", credential.Cookie)
 	}
 	if strings.TrimSpace(credential.AccessToken) != "" {
 		session.Headers.Set("Authorization", bearerToken(credential.AccessToken))
 	}
-	isSub2API := path == "/api/v1/auth/refresh"
-	isDashboardRefresh := !isSub2API &&
-		(strings.TrimSpace(credential.SessionID) != "" ||
-			(strings.TrimSpace(credential.Cookie) != "" && strings.TrimSpace(credential.RefreshToken) == ""))
+	if isDashboardRefresh {
+		setNewAPIBrowserHeaders(session)
+	}
+	if isDashboardRefresh && strings.TrimSpace(credential.SessionID) != "" {
+		session.Headers.Set("X-Auth-Session", credential.SessionID)
+	}
+	previousRefreshCookie := newAPIRefreshCookieValue(credential.Cookie)
 	var body any
 	if !isDashboardRefresh {
 		body = map[string]string{"refresh_token": credential.RefreshToken}
 	}
 	payload, err := platformSiteRequest(ctx, session, http.MethodPost, path, nil, body)
 	if err != nil {
-		setPlatformSiteCredentialUpdate(session, *credential)
+		capturePlatformSiteSessionCookie(session, credential)
+		captureNewAPIRefreshCookie(session, credential)
+		syncNewAPISessionHeaders(session, *credential)
+		uncertain := true
 		if isSub2API {
-			markPlatformSiteRefreshFailure(credential, platformSiteHTTPStatusIsUnauthorized(err))
-		} else {
-			markPlatformSiteRefreshFailure(credential, false)
+			uncertain = !platformSiteHTTPStatusIsUnauthorized(err)
+		} else if newAPIPasswordFallbackAllowed(err) {
+			uncertain = false
 		}
+		markPlatformSiteRefreshFailure(credential, uncertain)
 		setPlatformSiteCredentialUpdate(session, *credential)
-		return fmt.Errorf("%w: 刷新会话失败", ErrPlatformSiteAuth)
+		refreshErr := fmt.Errorf("%w: 刷新会话失败", ErrPlatformSiteAuth)
+		if uncertain {
+			return errors.Join(refreshErr, ErrPlatformSiteRefreshUncertain, err)
+		}
+		return errors.Join(refreshErr, err)
 	}
 	if isDashboardRefresh {
-		recognized, bundleErr := applyNewAPIDashboardAuthBundle(payload, credential)
+		recognized, bundleErr := applyNewAPIDashboardAuthBundle(
+			payload,
+			credential,
+			credential.AuthType == model.UpstreamAuthPassword,
+		)
 		if recognized {
 			if bundleErr != nil {
-				markPlatformSiteRefreshFailure(credential, false)
+				markPlatformSiteRefreshFailure(credential, true)
 				setPlatformSiteCredentialUpdate(session, *credential)
-				return bundleErr
+				return errors.Join(bundleErr, ErrPlatformSiteRefreshUncertain)
 			}
 			capturePlatformSiteSessionCookie(session, credential)
+			captureNewAPIRefreshCookie(session, credential)
+			currentRefreshCookie := newAPIRefreshCookieValue(credential.Cookie)
+			if currentRefreshCookie == "" ||
+				(previousRefreshCookie != "" && currentRefreshCookie == previousRefreshCookie) {
+				markPlatformSiteRefreshFailure(credential, true)
+				setPlatformSiteCredentialUpdate(session, *credential)
+				return errors.Join(
+					ErrPlatformSiteRefreshUncertain,
+					fmt.Errorf("%w: 刷新响应未返回轮换后的 Refresh Cookie", ErrPlatformSiteAuth),
+				)
+			}
+			syncNewAPISessionHeaders(session, *credential)
 			session.Headers.Set("Authorization", bearerToken(credential.AccessToken))
+			setNewAPICompatUserHeaders(session.Headers, credential.UserID)
 			updatedCredential := *credential
 			session.CredentialUpdate = &updatedCredential
 			return nil
@@ -1021,9 +1475,12 @@ func refreshPlatformSiteSession(
 		return fmt.Errorf("%w: 刷新会话响应不完整", ErrPlatformSiteAuth)
 	}
 	if !isSub2API && (accessToken == "" || refreshToken == "") {
-		markPlatformSiteRefreshFailure(credential, false)
+		markPlatformSiteRefreshFailure(credential, true)
 		setPlatformSiteCredentialUpdate(session, *credential)
-		return fmt.Errorf("%w: 刷新会话响应不完整", ErrPlatformSiteAuth)
+		return errors.Join(
+			fmt.Errorf("%w: 刷新会话响应不完整", ErrPlatformSiteAuth),
+			ErrPlatformSiteRefreshUncertain,
+		)
 	}
 	credential.AccessToken = accessToken
 	credential.RefreshToken = refreshToken
@@ -1036,7 +1493,18 @@ func refreshPlatformSiteSession(
 	credential.RefreshStatus = "active"
 	credential.ReauthRequired = false
 	credential.RefreshUncertain = false
+	if userID := findUserID(payload); userID != "" {
+		credential.UserID = userID
+	}
+	if sessionID := findSessionID(payload); sessionID != "" {
+		credential.SessionID = sessionID
+		credential.SessionCurrent = true
+	}
+	capturePlatformSiteSessionCookie(session, credential)
+	captureNewAPIRefreshCookie(session, credential)
+	syncNewAPISessionHeaders(session, *credential)
 	session.Headers.Set("Authorization", bearerToken(accessToken))
+	setNewAPICompatUserHeaders(session.Headers, credential.UserID)
 	updatedCredential := *credential
 	session.CredentialUpdate = &updatedCredential
 	return nil
@@ -1048,6 +1516,139 @@ func setPlatformSiteCredentialUpdate(session *PlatformSiteSession, credential mo
 	}
 	updatedCredential := credential
 	session.CredentialUpdate = &updatedCredential
+}
+
+func capturePlatformSiteCredentialCookie(session *PlatformSiteSession, rawURL string) {
+	if session == nil || session.CredentialUpdate == nil {
+		return
+	}
+	capturePlatformSiteSessionCookie(session, session.CredentialUpdate, rawURL)
+	captureNewAPIRefreshCookie(session, session.CredentialUpdate)
+}
+
+func syncNewAPISessionHeaders(session *PlatformSiteSession, credential model.PlatformSiteCredential) {
+	if session == nil {
+		return
+	}
+	if strings.TrimSpace(credential.SessionID) != "" {
+		session.Headers.Set("X-Auth-Session", credential.SessionID)
+	} else {
+		session.Headers.Del("X-Auth-Session")
+	}
+	jarCookie := platformSiteJarCookieHeader(session)
+	mergedCookie := mergePlatformSiteCookieHeaders(credential.Cookie, jarCookie)
+	if mergedCookie != "" {
+		session.Headers.Set("Cookie", mergedCookie)
+	} else {
+		session.Headers.Del("Cookie")
+	}
+}
+
+func platformSiteJarCookieHeader(session *PlatformSiteSession) string {
+	if session == nil {
+		return ""
+	}
+	return platformSiteJarCookieHeaderForURL(session, session.BaseURL)
+}
+
+func platformSiteJarCookieHeaderForURL(session *PlatformSiteSession, rawURL string) string {
+	if session == nil || session.Client == nil || session.Client.Jar == nil {
+		return ""
+	}
+	if strings.TrimSpace(rawURL) == "" {
+		rawURL = session.BaseURL
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	cookies := session.Client.Jar.Cookies(parsed)
+	return platformSiteCookieHeaderFromCookies(cookies)
+}
+
+func platformSiteCookieHeaderFromCookies(cookies []*http.Cookie) string {
+	parts := make([]string, 0, len(cookies))
+	for _, cookie := range cookies {
+		if cookie == nil || strings.TrimSpace(cookie.Name) == "" {
+			continue
+		}
+		parts = append(parts, cookie.Name+"="+cookie.Value)
+	}
+	return strings.Join(parts, "; ")
+}
+
+func platformSiteRequestCookieHeader(session *PlatformSiteSession, rawURL string) string {
+	if session == nil {
+		return ""
+	}
+	jarCookie := platformSiteJarCookieHeaderForURL(session, rawURL)
+	if jarCookie == "" {
+		return mergePlatformSiteCookieHeaders(session.Headers.Get("Cookie"))
+	}
+	jarNames := make(map[string]struct{})
+	for _, part := range strings.Split(jarCookie, ";") {
+		name, _, found := strings.Cut(strings.TrimSpace(part), "=")
+		name = strings.TrimSpace(name)
+		if found && name != "" {
+			jarNames[strings.ToLower(name)] = struct{}{}
+		}
+	}
+	explicitCookie := mergePlatformSiteCookieHeaders(session.Headers.Get("Cookie"))
+	parts := make([]string, 0, len(strings.Split(jarCookie, ";"))+len(strings.Split(explicitCookie, ";")))
+	if jarCookie != "" {
+		parts = append(parts, jarCookie)
+	}
+	for _, part := range strings.Split(explicitCookie, ";") {
+		name, value, found := strings.Cut(strings.TrimSpace(part), "=")
+		name = strings.TrimSpace(name)
+		if !found || name == "" {
+			continue
+		}
+		if _, exists := jarNames[strings.ToLower(name)]; exists {
+			continue
+		}
+		parts = append(parts, name+"="+strings.TrimSpace(value))
+	}
+	return strings.Join(parts, "; ")
+}
+
+func mergePlatformSiteCookieHeaders(values ...string) string {
+	cookies := make(map[string]string)
+	order := make([]string, 0)
+	for _, header := range values {
+		for _, part := range strings.Split(header, ";") {
+			name, value, found := strings.Cut(strings.TrimSpace(part), "=")
+			name = strings.TrimSpace(name)
+			if !found || name == "" {
+				continue
+			}
+			canonicalName := strings.ToLower(name)
+			if _, exists := cookies[canonicalName]; !exists {
+				order = append(order, canonicalName)
+			}
+			cookies[canonicalName] = name + "=" + strings.TrimSpace(value)
+		}
+	}
+	parts := make([]string, 0, len(order))
+	for _, canonicalName := range order {
+		parts = append(parts, cookies[canonicalName])
+	}
+	return strings.Join(parts, "; ")
+}
+
+func captureNewAPIRefreshCookie(session *PlatformSiteSession, credential *model.PlatformSiteCredential) {
+	if session == nil || credential == nil {
+		return
+	}
+	refreshURL, err := upstreamSiteURL(session.BaseURL, "/api/user/auth/refresh", nil)
+	if err != nil {
+		return
+	}
+	jarCookie := platformSiteJarCookieHeaderForURL(session, refreshURL)
+	mergedCookie := mergePlatformSiteCookieHeaders(credential.Cookie, jarCookie)
+	if mergedCookie != "" {
+		credential.Cookie = mergedCookie
+	}
 }
 
 func markPlatformSiteRefreshFailure(credential *model.PlatformSiteCredential, uncertain bool) {
@@ -1071,6 +1672,7 @@ func platformSiteHTTPStatusIsUnauthorized(err error) bool {
 func applyNewAPIDashboardAuthBundle(
 	payload any,
 	credential *model.PlatformSiteCredential,
+	preservePassword bool,
 ) (bool, error) {
 	record, ok := payload.(map[string]any)
 	if !ok {
@@ -1081,8 +1683,9 @@ func applyNewAPIDashboardAuthBundle(
 		return false, nil
 	}
 	session, sessionOK := data["session"].(map[string]any)
+	_, sessionFieldPresent := data["session"]
 	recognized := hasAnyField(data, "access_token", "token_type", "access_expires_at") ||
-		(sessionOK && hasAnyField(session, "sid", "current"))
+		sessionFieldPresent
 	if !recognized {
 		return false, nil
 	}
@@ -1113,9 +1716,11 @@ func applyNewAPIDashboardAuthBundle(
 	if credential.UserID != "" && credential.UserID != bundleUserID {
 		return true, ErrPlatformSiteIdentity
 	}
-	credential.AuthType = model.UpstreamAuthAccessToken
-	credential.Username = ""
-	credential.Password = ""
+	if !preservePassword {
+		credential.AuthType = model.UpstreamAuthAccessToken
+		credential.Username = ""
+		credential.Password = ""
+	}
 	credential.UserID = bundleUserID
 	credential.AccessToken = token
 	credential.RefreshToken = ""
@@ -1359,16 +1964,16 @@ func stringsFromPayload(payload any) []string {
 	return nil
 }
 
-func fetchNewAPIQuotaPerUnit(ctx context.Context, session *PlatformSiteSession) float64 {
+func fetchNewAPIQuotaPerUnit(ctx context.Context, session *PlatformSiteSession) (float64, error) {
 	payload, err := platformSiteRequest(ctx, session, http.MethodGet, "/api/status", nil, nil)
 	if err != nil {
-		return defaultNewAPIQuotaPerUnit
+		return defaultNewAPIQuotaPerUnit, err
 	}
 	quotaPerUnit := firstFloat(firstRecord(payload), "quota_per_unit", "quotaPerUnit")
 	if quotaPerUnit <= 0 || math.IsNaN(quotaPerUnit) || math.IsInf(quotaPerUnit, 0) {
-		return defaultNewAPIQuotaPerUnit
+		return defaultNewAPIQuotaPerUnit, fmt.Errorf("%w: NewAPI 额度单位无效", ErrPlatformSiteResponse)
 	}
-	return quotaPerUnit
+	return quotaPerUnit, nil
 }
 
 func normalizeNewAPIQuota(value float64, quotaPerUnit float64) float64 {
@@ -1513,6 +2118,9 @@ func newAPIEndpointCapabilities() []PlatformSiteEndpointCapabilitySnapshot {
 		{"management", http.MethodGet, "/api/user/self/groups"},
 		{"management", http.MethodGet, "/api/user/groups"},
 		{"management", http.MethodGet, "/api/user/models"},
+		{"management", http.MethodGet, "/api/user/available_models"},
+		{"management", http.MethodGet, "/api/user/available_model/"},
+		{"management", http.MethodGet, "/api/groupPro/selectable"},
 		{"management", http.MethodGet, "/api/pricing"},
 		{"management", http.MethodGet, "/api/token/"},
 		{"management", http.MethodGet, "/api/token/{id}/key"},
@@ -1567,27 +2175,92 @@ func sub2APIEndpointCapabilities() []PlatformSiteEndpointCapabilitySnapshot {
 func fetchNewAPIGroupResources(
 	ctx context.Context,
 	session *PlatformSiteSession,
-) (map[string]float64, []PlatformSiteGroupSnapshot, bool, string) {
+) (map[string]float64, []PlatformSiteGroupSnapshot, bool, string, error) {
 	rates := make(map[string]float64)
 	groups := make([]PlatformSiteGroupSnapshot, 0)
-	loaded := false
-	sources := make([]string, 0, 2)
 	for _, path := range []string{"/api/user/self/groups", "/api/user/groups"} {
 		payload, err := platformSiteRequest(ctx, session, http.MethodGet, path, nil, nil)
 		if err != nil {
 			if platformSiteRouteMissing(err) {
 				continue
 			}
-			break
+			return rates, groups, false, path, err
 		}
-		loaded = true
-		sources = append(sources, path)
 		for key, value := range parseGroupRates(payload) {
 			rates[key] = value
 		}
 		groups = mergePlatformSiteGroups(groups, parsePlatformSiteGroups(payload, path, rates))
+		return rates, groups, true, path, nil
 	}
-	return rates, groups, loaded, strings.Join(sources, ",")
+	selectableRates, selectableGroups, selectableErr := fetchNewAPISelectableGroups(ctx, session)
+	if selectableErr == nil {
+		return selectableRates, selectableGroups, true, "/api/groupPro/selectable", nil
+	}
+	return rates, groups, false, "/api/groupPro/selectable", selectableErr
+}
+
+func fetchNewAPISelectableGroups(
+	ctx context.Context,
+	session *PlatformSiteSession,
+) (map[string]float64, []PlatformSiteGroupSnapshot, error) {
+	const pageSize = 1000
+
+	rates := make(map[string]float64)
+	groups := make([]PlatformSiteGroupSnapshot, 0)
+	for page := range upstreamSiteMaxPages {
+		payload, err := platformSiteRequest(
+			ctx,
+			session,
+			http.MethodGet,
+			"/api/groupPro/selectable",
+			url.Values{
+				"p":        {fmt.Sprint(page)},
+				"pageSize": {fmt.Sprint(pageSize)},
+			},
+			nil,
+		)
+		if err != nil {
+			return rates, groups, err
+		}
+
+		rawItems := unwrapPlatformData(payload)
+		items, ok := rawItems.([]any)
+		if !ok {
+			return rates, groups, fmt.Errorf(
+				"%w: APIyi 可选分组响应不是数组",
+				ErrPlatformSiteResponse,
+			)
+		}
+		for _, item := range items {
+			record, ok := item.(map[string]any)
+			if !ok {
+				return rates, groups, fmt.Errorf(
+					"%w: APIyi 可选分组记录无效",
+					ErrPlatformSiteResponse,
+				)
+			}
+			name := firstString(record, "name")
+			ratio, found, ratioErr := firstValidatedNonNegativeFloat(record, "convert_ratio")
+			if ratioErr != nil || !found || !isValidConversionRatio(ratio) || name == "" {
+				return rates, groups, fmt.Errorf(
+					"%w: APIyi 可选分组字段无效",
+					ErrPlatformSiteResponse,
+				)
+			}
+		}
+
+		for key, value := range parseGroupRates(payload) {
+			rates[key] = value
+		}
+		groups = mergePlatformSiteGroups(
+			groups,
+			parsePlatformSiteGroups(payload, "/api/groupPro/selectable", rates),
+		)
+		if len(items) < pageSize {
+			return rates, groups, nil
+		}
+	}
+	return rates, groups, errors.New("APIyi 可选分组分页超过安全上限")
 }
 
 func mergePlatformSiteGroups(
@@ -1621,13 +2294,19 @@ func applyNewAPIPricingResources(
 	snapshot *PlatformSiteSnapshot,
 	_ *PlatformSiteSession,
 	payload any,
-) {
+) bool {
 	if snapshot == nil {
-		return
+		return false
 	}
-	record := firstRecord(payload)
+	record := make(map[string]any)
+	if envelope, ok := payload.(map[string]any); ok {
+		maps.Copy(record, envelope)
+		if dataRecord, ok := envelope["data"].(map[string]any); ok {
+			maps.Copy(record, dataRecord)
+		}
+	}
 	if len(record) == 0 {
-		return
+		return false
 	}
 	rates := parseGroupRates(record["group_ratio"])
 	usableGroups := map[string]any{}
@@ -1681,6 +2360,7 @@ func applyNewAPIPricingResources(
 		SourceEndpoint: "/api/pricing",
 		RecordCount:    len(snapshot.Endpoint.Capabilities),
 	})
+	return true
 }
 
 func newAPIPricingEndpointCapabilities(payload any) []PlatformSiteEndpointCapabilitySnapshot {
@@ -1758,16 +2438,48 @@ func parsePlatformSiteGroups(
 	}
 	result := make([]PlatformSiteGroupSnapshot, 0, len(records))
 	for _, record := range records {
-		groupID := firstString(record, "id", "group_id", "groupId", "external_id", "externalId")
-		groupName := firstString(record, "name", "group_name", "groupName", "group")
+		groupID := firstString(
+			record,
+			"id",
+			"group_id",
+			"groupId",
+			"external_id",
+			"externalId",
+			"name",
+		)
+		groupName := firstString(
+			record,
+			"display_name",
+			"displayName",
+			"name",
+			"group_name",
+			"groupName",
+			"group",
+		)
 		if groupID == "" {
 			groupID = groupName
 		}
 		if groupID == "" {
 			continue
 		}
-		ratioSet := hasAnyField(record, "rate_multiplier", "ratio", "rate", "multiplier", "group_ratio")
-		ratio := firstFloat(record, "rate_multiplier", "ratio", "rate", "multiplier", "group_ratio")
+		ratioSet := hasAnyField(
+			record,
+			"rate_multiplier",
+			"ratio",
+			"rate",
+			"multiplier",
+			"group_ratio",
+			"convert_ratio",
+		)
+		ratio := firstFloat(
+			record,
+			"rate_multiplier",
+			"ratio",
+			"rate",
+			"multiplier",
+			"group_ratio",
+			"convert_ratio",
+		)
 		if !ratioSet {
 			ratio = firstGroupRate(rates, groupID, groupName)
 			if !hasGroupRate(rates, groupID, groupName) {
@@ -1806,17 +2518,31 @@ func firstBoolOrDefault(record map[string]any, fallback bool, keys ...string) bo
 	return boolFromRecord(record, keys...)
 }
 
-func fetchNewAPIModels(ctx context.Context, session *PlatformSiteSession) []string {
-	for _, path := range []string{"/api/user/models"} {
+func fetchNewAPIModels(ctx context.Context, session *PlatformSiteSession) ([]string, error) {
+	var lastErr error
+	for _, path := range []string{
+		"/api/user/models",
+		"/api/user/available_models",
+		"/api/user/available_model/",
+	} {
 		payload, err := platformSiteRequest(ctx, session, http.MethodGet, path, nil, nil)
 		if err != nil {
+			lastErr = err
+			if !platformSiteRouteMissing(err) {
+				return nil, err
+			}
 			continue
 		}
-		if models := uniqueStrings(append(stringsFromPayload(payload), modelsFromGroups(payload)...)); len(models) > 0 {
-			return models
+		models := uniqueStrings(append(stringsFromPayload(payload), modelsFromGroups(payload)...))
+		if len(models) > 0 {
+			return models, nil
 		}
+		return []string{}, nil
 	}
-	return nil
+	if lastErr == nil {
+		lastErr = fmt.Errorf("%w: NewAPI 模型接口不可用", ErrPlatformSiteResponse)
+	}
+	return nil, lastErr
 }
 
 func fetchSub2APIModels(ctx context.Context, session *PlatformSiteSession) []string {
@@ -2020,17 +2746,92 @@ func sub2APIGroupIdentifiers(item map[string]any) (string, string) {
 	return groupID, groupName
 }
 
+type newAPITokenPageInfo struct {
+	responsePage    int64
+	responsePageSet bool
+	pageSize        int64
+	pageSizeSet     bool
+	total           int64
+	totalSet        bool
+}
+
+func newAPITokenPageInfoFromPayload(payload any) newAPITokenPageInfo {
+	record := firstRecord(payload)
+	responsePage, responsePageSet := firstOptionalInt64(record, "page")
+	pageSize, pageSizeSet := firstOptionalInt64(record, "page_size", "pageSize", "size")
+	total, totalSet := firstOptionalInt64(record, "total")
+	return newAPITokenPageInfo{
+		responsePage:    responsePage,
+		responsePageSet: responsePageSet && responsePage >= 0,
+		pageSize:        pageSize,
+		pageSizeSet:     pageSizeSet && pageSize > 0,
+		total:           total,
+		totalSet:        totalSet && total >= 0,
+	}
+}
+
+func (info newAPITokenPageInfo) hasMore(
+	requestedPage int,
+	itemCount int,
+	oneBased bool,
+) bool {
+	if itemCount == 0 {
+		return false
+	}
+	pageSize := int64(upstreamSitePageSize)
+	if info.pageSizeSet {
+		pageSize = info.pageSize
+	}
+	if pageSize <= 0 {
+		return itemCount >= upstreamSitePageSize
+	}
+	if info.totalSet {
+		responsePage := int64(requestedPage)
+		if info.responsePageSet {
+			responsePage = info.responsePage
+		}
+		var offset int64
+		const maxInt64 = int64(^uint64(0) >> 1)
+		if oneBased {
+			if responsePage < 1 {
+				return itemCount >= int(pageSize)
+			}
+			pageIndex := responsePage - 1
+			if pageIndex > maxInt64/pageSize {
+				return itemCount >= int(pageSize)
+			}
+			offset = pageIndex * pageSize
+		} else if responsePage >= 0 {
+			if responsePage > maxInt64/pageSize {
+				return itemCount >= int(pageSize)
+			}
+			offset = responsePage * pageSize
+		} else {
+			return itemCount >= int(pageSize)
+		}
+		if int64(itemCount) > maxInt64-offset {
+			return itemCount >= int(pageSize)
+		}
+		loadedThrough := offset + int64(itemCount)
+		if info.total >= loadedThrough {
+			return loadedThrough < info.total
+		}
+	}
+	return itemCount >= int(pageSize)
+}
+
 func fetchNewAPITokens(ctx context.Context, session *PlatformSiteSession) ([]map[string]any, error) {
 	result := make([]map[string]any, 0)
-	for page := 1; page <= upstreamSiteMaxPages; page++ {
+	page := 0
+	oneBased := false
+	numberingDetected := false
+	for fetchedPages := 0; fetchedPages < upstreamSiteMaxPages; fetchedPages++ {
 		var payload any
 		var err error
 		for _, path := range []string{"/api/token/", "/api/token", "/api/tokens"} {
 			payload, err = platformSiteRequest(ctx, session, http.MethodGet, path, url.Values{
-				"p":         {fmt.Sprint(page)},
-				"page":      {fmt.Sprint(page)},
-				"page_size": {fmt.Sprint(upstreamSitePageSize)},
-				"size":      {fmt.Sprint(upstreamSitePageSize)},
+				"p":    {fmt.Sprint(page)},
+				"size": {fmt.Sprint(upstreamSitePageSize)},
 			}, nil)
 			if err == nil {
 				break
@@ -2044,9 +2845,21 @@ func fetchNewAPITokens(ctx context.Context, session *PlatformSiteSession) ([]map
 		}
 		pageItems := recordsFromPayload(payload)
 		result = append(result, pageItems...)
-		if len(pageItems) == 0 || len(pageItems) < upstreamSitePageSize || page >= payloadPageCount(payload) {
+		pageInfo := newAPITokenPageInfoFromPayload(payload)
+		if !numberingDetected {
+			// New API 接受 p=0 但会返回归一化后的 page=1；没有页码元数据
+			// 的兼容实现按零起始页处理，下一页使用 p=1。
+			oneBased = pageInfo.responsePageSet && pageInfo.responsePage == 1
+			numberingDetected = true
+		}
+		if !pageInfo.hasMore(page, len(pageItems), oneBased) {
 			return result, nil
 		}
+		if oneBased && page == 0 {
+			page = 2
+			continue
+		}
+		page++
 	}
 	return nil, errors.New("NewAPI 密钥分页超过安全上限")
 }
@@ -2063,12 +2876,14 @@ func fetchNewAPITokenKeys(ctx context.Context, session *PlatformSiteSession, tok
 		}
 	}
 	var batchErr error
+	batchRouteMissing := false
 	if len(ids) > 0 {
 		payload, err := platformSiteRequest(ctx, session, http.MethodPost, "/api/token/batch/keys", nil, map[string]any{
 			"ids": ids,
 		})
 		if err != nil {
 			batchErr = err
+			batchRouteMissing = platformSiteRouteMissing(err)
 		} else {
 			for id, key := range stringsMapFromPayload(payload) {
 				result[id] = key
@@ -2084,6 +2899,14 @@ func fetchNewAPITokenKeys(ctx context.Context, session *PlatformSiteSession, tok
 		secret := firstString(token, "key", "token", "api_key")
 		if secret != "" && !strings.Contains(secret, "*") {
 			result[externalID] = secret
+			continue
+		}
+		if batchErr != nil && !batchRouteMissing {
+			failures[externalID] = batchErr
+			continue
+		}
+		if batchErr == nil {
+			failures[externalID] = fmt.Errorf("%w: 批量 Key 响应未包含该密钥", ErrPlatformSiteResponse)
 			continue
 		}
 		key, err := fetchNewAPITokenKey(ctx, session, externalID)
@@ -2155,9 +2978,6 @@ func upstreamIdentifier(record map[string]any, keys ...string) (string, any) {
 func fetchNewAPITokenKey(ctx context.Context, session *PlatformSiteSession, externalID string) (string, error) {
 	path := "/api/token/" + url.PathEscape(externalID) + "/key"
 	payload, err := platformSiteRequest(ctx, session, http.MethodPost, path, nil, nil)
-	if err != nil && platformSiteRouteMissing(err) {
-		payload, err = platformSiteRequest(ctx, session, http.MethodGet, path, nil, nil)
-	}
 	if err != nil {
 		return "", err
 	}
@@ -2319,7 +3139,7 @@ func fetchSub2APIKeys(ctx context.Context, session *PlatformSiteSession, rates m
 			}
 			result = append(result, keySnapshot)
 		}
-		if len(items) == 0 || len(items) < upstreamSitePageSize || page >= payloadPageCount(payload) {
+		if !platformSitePageHasMore(payload, page, len(items)) {
 			break
 		}
 	}
@@ -2457,7 +3277,7 @@ func fetchSub2APIAdminKeys(ctx context.Context, session *PlatformSiteSession, ra
 			}
 			result = append(result, keySnapshot)
 		}
-		if len(items) == 0 || len(items) < upstreamSitePageSize || page >= payloadPageCount(payload) {
+		if !platformSitePageHasMore(payload, page, len(items)) {
 			break
 		}
 	}
@@ -2783,6 +3603,17 @@ func payloadPageCount(payload any) int {
 	return upstreamSiteMaxPages + 1
 }
 
+func platformSitePageHasMore(payload any, page, itemCount int) bool {
+	if itemCount == 0 {
+		return false
+	}
+	pageCount := payloadPageCount(payload)
+	if pageCount <= upstreamSiteMaxPages {
+		return page < pageCount
+	}
+	return itemCount >= upstreamSitePageSize
+}
+
 func nestedString(value map[string]any, path ...string) string {
 	var current any = value
 	for _, part := range path {
@@ -2808,8 +3639,22 @@ func parseGroupRates(payload any) map[string]float64 {
 	records := recordsFromPayload(payload)
 	for _, record := range records {
 		name := firstString(record, "name", "group", "group_name", "id")
-		ratioKeysPresent := hasAnyField(record, "rate_multiplier", "ratio", "rate", "multiplier")
-		ratio := firstFloat(record, "rate_multiplier", "ratio", "rate", "multiplier")
+		ratioKeysPresent := hasAnyField(
+			record,
+			"rate_multiplier",
+			"ratio",
+			"rate",
+			"multiplier",
+			"convert_ratio",
+		)
+		ratio := firstFloat(
+			record,
+			"rate_multiplier",
+			"ratio",
+			"rate",
+			"multiplier",
+			"convert_ratio",
+		)
 		if name != "" && ratioKeysPresent && isValidConversionRatio(ratio) {
 			rates[name] = ratio
 		}
@@ -2822,7 +3667,14 @@ func parseGroupRates(payload any) map[string]float64 {
 					rates[key] = parsed
 				}
 			case map[string]any:
-				ratio := firstFloat(parsed, "rate_multiplier", "ratio", "rate", "multiplier")
+				ratio := firstFloat(
+					parsed,
+					"rate_multiplier",
+					"ratio",
+					"rate",
+					"multiplier",
+					"convert_ratio",
+				)
 				if isValidConversionRatio(ratio) {
 					rates[key] = ratio
 					if name := firstString(parsed, "name", "group", "group_name", "id"); name != "" {

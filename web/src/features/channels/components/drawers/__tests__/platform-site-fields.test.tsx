@@ -380,9 +380,35 @@ test('高级访问令牌认证显示令牌输入框而不是脚本采集入口',
 
   expect(screen.queryByText('Browser login state capture')).not.toBeInTheDocument()
   expect(screen.getByLabelText('Access token')).toBeInTheDocument()
+  expect(screen.getByLabelText('Dashboard Session ID')).toBeInTheDocument()
+  expect(screen.getByLabelText('Cookie')).toBeInTheDocument()
   expect(screen.queryByLabelText('Admin Key')).not.toBeInTheDocument()
-  expect(screen.queryByLabelText('Cookie')).not.toBeInTheDocument()
   expect(screen.queryByLabelText('Username')).not.toBeInTheDocument()
+})
+
+test('NewAPI访问令牌认证可提交Dashboard刷新Cookie和Session ID', async () => {
+  const user = userEvent.setup()
+  const onSubmit = vi.fn<(values: ChannelFormValues) => void>()
+  render(<PlatformSiteForm authType='access_token' onSubmit={onSubmit} />)
+
+  await user.type(screen.getByLabelText('Access token'), 'access-token')
+  await user.type(screen.getByLabelText('Dashboard Session ID'), 'session-id')
+  await user.type(
+    screen.getByLabelText('Cookie'),
+    'new_api_refresh=refresh-cookie'
+  )
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+
+  await waitFor(() => {
+    expect(onSubmit).toHaveBeenCalledOnce()
+  })
+  const payload = transformFormDataToCreatePayload(onSubmit.mock.calls[0][0])
+  expect(payload.platform_site).toMatchObject({
+    auth_type: 'access_token',
+    access_token: 'access-token',
+    cookie: 'new_api_refresh=refresh-cookie',
+    session_id: 'session-id',
+  })
 })
 
 test('点击自动配置时同步预开窗口并仅提交自动认证方式', async () => {

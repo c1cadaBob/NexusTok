@@ -113,6 +113,7 @@ Cookie、Token、Refresh Token 和 Session ID 不写入日志、审计字段、U
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 建立凭据分层、Session 生命周期、授权和 Redis 拓扑说明 | `middleware/`、`service/auth*`、`model/user_session.go`、`oauth/` | `docs/authentication.md`、`model/user_session.go`、`service/auth_session.go` 静态核对 |
 | 2026-09-26 | 平台站点认证补充 | 平台站点密码认证与系统面板 Session 的边界未单独说明，2FA/刷新失败语义未登记 | 明确短期上游认证流程、NewAPI Bundle 校验、Sub2API 轮换不确定结果和未覆盖的 Passkey/安全证明边界 | `service/upstream_site*.go`、`controller/upstream_channel.go`、平台站点资源接口 | NewAPI/Sub2API/all-api-hub 参考源路由和认证实现静态核对 |
 | 2026-09-27 | 面板登录 Session 复用 | 架构只描述统一签发，未说明重复登录会增长 Session 行和签发计数 | 增加浏览器 SID 定位 Cookie、复用条件、SID/Refresh Secret 轮换、AuthFlow 原子性和失败回退边界 | `service/auth_session.go`、`model/user_session.go`、`model/login_verification.go`、登录 Controller | 服务层回归测试、AuthFlow 事务测试、OWASP ASVS 5.0.0 与认证/会话 Cheat Sheet 核对 |
+| 2026-09-27 | NewAPI Dashboard 会话刷新 | 平台站点 Refresh Cookie、Session ID、Bearer Token 的组合和轮换持久化未统一；非 401 刷新失败可能被理解为可重试凭据错误 | 严格发送 `new_api_refresh` Cookie、`X-Auth-Session` 和旧 Bearer Token，Jar 轮换值优先持久化；现代 Bundle 不完整时拒绝旧协议降级，只有确认 401 凭据失效才允许密码回退，网络/WAF/安全验证/非 401 结果标记不确定 | 平台站点密码、Access Token、Cookie、Auth Flow 和凭据加密保存 | `service/upstream_site_adapters.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go`、OWASP ASVS 5.0.0、Authentication/Session Management Cheat Sheet |
 
 ### 9.1 2026-09-26 实现校准
 
@@ -137,3 +138,22 @@ CSRF、Cryptographic Storage、Logging 和 SSRF Prevention Cheat Sheet。已验�
 重复消费、管理员/平台/站点绑定、验证码限流、刷新不确定和敏感字段脱敏。New API
 Passkey/WebAuthn、上游 Security Proof、Turnstile 和站点风控仍由浏览器自动配置或人工
 流程处理，NexusTok 未声明自动完成这些能力。
+
+### 9.2 2026-09-27 NewAPI Dashboard Refresh 认证边界
+
+**变更前**：NewAPI 新版 Dashboard 会话刷新所需的 `new_api_refresh` Cookie、
+`X-Auth-Session`、Bearer Token、Session Bundle 和轮换 Cookie 没有在密码认证、令牌
+认证、Cookie 认证和短期 Auth Flow 入口统一；刷新遇到非 401 错误时存在重复密码登录
+风险。
+
+**变更后**：所有 NewAPI 认证入口都按管理地址调用 `/api/user/auth/refresh`。请求携带
+当前 Bearer Token、可信的 Session ID 和 Cookie；CookieJar 中同名 Cookie 优先，显式
+Cookie 只补充 Jar 没有的值，响应轮换 Cookie 回写加密凭据。现代 Bundle 的
+`access_token`、`token_type`、`access_expires_at`、当前 `session.sid/current` 和
+用户身份字段必须完整，已识别但不完整时返回重新认证/刷新不确定，不进入旧 Token 兜底。
+密码模式只有在刷新明确返回 401 且错误属于旧凭据失效时才允许一次密码登录；网络错误、
+WAF、Turnstile、权限不足、HTML、非 401 或结构不完整结果不会重放密码。
+
+该边界遵循 OWASP ASVS 5.0.0 中的认证失败处理、会话轮换、凭据保护和日志脱敏要求；
+本项目只保存加密后的平台凭据，不把密码、Cookie、Access Token、Refresh Token 或
+Session ID 写入日志、URL、普通响应或认证审计事件。

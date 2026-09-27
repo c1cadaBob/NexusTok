@@ -48,6 +48,7 @@
 | DEV-013 | Sub2API Refresh Token 轮换 | 刷新响应缺少新 Refresh Token 时没有记录轮换不确定性 | 不重放旧 Refresh Token，标记重新认证并保留资源快照 | 已实现/待上游验证 | all-api-hub `apiService/sub2api/tokenRefresh.ts`、Sub2API `auth_handler.go` | 2026-09-26 |
 | DEV-014 | 管理员安全验证与资源失败 | Admin/step-up 拒绝读取资源可能被当作普通空列表 | 资源类型独立记录安全验证要求，旧密钥、额度和模型快照不删除 | 已实现/待上游验证 | Sub2API step-up middleware、平台站点资源同步实现 | 2026-09-26 |
 | DEV-015 | 渠道 2、4、5 上游响应诊断与登录回退 | HTML/Turnstile、HTTP 200 业务失败、401 凭据错误和网络不可达可能被合并为响应格式错误；兼容请求可能在非 404/405 后继续尝试 | 固定真实登录 DTO，按认证/交互验证/WAF/路由缺失/传输错误分类，只有 404/405 才回退；同步失败保留最近成功快照并区分 `credentials_invalid` 与 `secure_verification_required` | 已实现/待真实站点持续核验 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`、参考项目真实 DTO | 2026-09-26 |
+| DEV-016 | NewAPI Dashboard Session 与资源权限 | Refresh Cookie、Session ID、Bearer Token 和 CookieJar 轮换优先级未统一；资源 403/分页失败可能污染凭据状态或触发密钥缺失判定 | 统一 `new_api_refresh` Cookie、`X-Auth-Session` 和 Bearer Token 请求；Jar 同名 Cookie 优先持久化；现代 Bundle 不完整时不降级；认证成功后按资源保存快照，权限/安全验证/部分分页失败不标记账号凭据无效或密钥缺失 | 已实现/待真实站点持续核验 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_auth_flow.go`、New API/all-api-hub 参考源 | 2026-09-27 |
 
 ### 3.2 2026-09-26 实现核对结果
 
@@ -66,6 +67,22 @@
 状态仍标记为“已实现/待上游验证”，因为本地自动化验证使用了脱敏的 HTTP fixture 和
 本地数据库，未对所有上游部署版本逐一执行真实登录或安全证明流程。
 
+### 3.3 2026-09-27 NewAPI 类平台偏差复核
+
+**变更前**：现代 Dashboard Refresh 的真实请求契约与旧派生站点 Token 协议共用宽泛
+解析；CookieJar 轮换值可能重复发送或没有持久化。资源接口的权限错误、安全验证和
+分页失败也可能沿认证错误路径处理，影响旧密钥、模型能力和最近成功同步时间。
+
+**变更后**：现代 Bundle 只要出现 Dashboard 结构标志就必须完整校验；刷新请求固定
+携带 `new_api_refresh`、`X-Auth-Session` 和旧 Bearer Token，Set-Cookie 轮换值写回
+加密凭据，只有确认旧凭据失效的 401 才可触发一次密码回退。`BaseURL` 保留管理路径
+前缀，不盲目从 Relay 地址推断管理地址，兼容路径只在 404/405 回退。身份和余额成功
+但 Token/Key/模型资源失败时，资源表记录状态并保留最近成功路由快照；管理员可见错误
+只含脱敏 URL、状态、Content-Type、响应类别、阶段和回退标记。
+
+本偏差仍标记“待真实站点持续核验”，因为当前测试使用脱敏 HTTP fixture，未复制或使用
+参考项目的真实凭据、Cookie、Token、Refresh Token 或环境变量。
+
 ## 4. 维护规则
 
 新发现偏差必须先确认“预期来源”与“代码实际行为”都能引用，再新增编号。代码修复时在同一功能提交中：
@@ -82,3 +99,4 @@
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 登记路由显式未实现、Adaptor 局部未实现、AIProxyLibrary 工厂缺口和 Responses 入口差异，并区分待核查项 | Relay 路由、Adaptor 工厂、插件协议和后续维护流程 | `router/relay-router.go`、`common/api_type.go`、`relay/relay_adaptor.go`、`relay/channel/` 静态核对 |
 | 2026-09-26 | 平台站点认证与资源偏差登记 | 平台站点 2FA、现代 Session Bundle、Refresh Token 轮换和安全验证失败回退没有单独记录 | 新增 New API 2FA/Bundle、Sub2API 轮换、管理员 step-up 和资源级失败偏差记录 | 平台站点认证、同步、资源面板 | 参考项目路由和本项目适配器静态核对 |
 | 2026-09-26 | 渠道 2、4、5 同步回归核对 | 响应诊断、登录 DTO 和失败快照回退与当前参考源及真实站点表现不一致 | 完成脱敏响应分类、固定登录字段、404/405 回退边界和快照保留回归；安全验证仍需人工浏览器承接 | 平台站点登录、同步失败、管理员诊断 | `service/upstream_site_test.go`；Sub2API/New API/all-api-hub 本机源码；MCP 脱敏观察 |
+| 2026-09-27 | NewAPI 类平台 Dashboard 会话与资源状态偏差 | Refresh Cookie/Session ID/Bundle、管理地址边界和资源权限失败语义未在偏差表中单独登记 | 新增 DEV-016，明确 CookieJar 优先级、现代 Bundle 严格校验、401 密码回退限制、资源快照保留和真实站点待核查范围 | NewAPI 派生平台认证、密钥/模型同步、管理员诊断和路由回退 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`、本机参考源静态核对 |

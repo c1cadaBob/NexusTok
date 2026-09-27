@@ -704,6 +704,23 @@ func TestSavePlatformSiteAccountKeepsExistingCredentialForAutomaticEdit(t *testi
 	assert.Equal(t, "existing-admin-key", credential.AdminKey)
 }
 
+func TestValidatePlatformSiteInputKeepsExplicitCookieWithAccessToken(t *testing.T) {
+	credential, _, err := validatePlatformSiteInput(&PlatformSiteInput{
+		Platform:    model.PlatformNewAPI,
+		BaseURL:     "http://127.0.0.1:8089",
+		AuthType:    model.UpstreamAuthAccessToken,
+		AccessToken: "access-token",
+		Cookie:      "new_api_refresh=refresh-cookie",
+		TokenType:   "Bearer",
+		SessionID:   "session-id",
+	}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "access-token", credential.AccessToken)
+	assert.Equal(t, "new_api_refresh=refresh-cookie", credential.Cookie)
+	assert.Equal(t, "Bearer", credential.TokenType)
+	assert.Equal(t, "session-id", credential.SessionID)
+}
+
 func TestGetUpstreamSiteStatusReturnsBalanceRefreshAndKeyCounts(t *testing.T) {
 	db := setupModelListControllerTestDB(t)
 	require.NoError(t, db.AutoMigrate(

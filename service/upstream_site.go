@@ -32,23 +32,27 @@ const (
 )
 
 var (
-	ErrUnsupportedPlatformSite = errors.New("unsupported upstream platform site")
-	ErrPlatformSiteAuth        = errors.New("platform site authentication failed")
-	ErrPlatformSiteHTTPStatus  = errors.New("platform site http status failed")
-	ErrPlatformSiteResponse    = errors.New("platform site returned an invalid response")
-	ErrPlatformSiteCredential  = errors.New("platform site credential unavailable")
-	ErrPlatformSiteIdentity    = errors.New("platform site identity mismatch")
-	ErrPlatformSiteAuthBundle  = errors.New("platform site auth bundle invalid")
-	ErrPlatformSiteSecurity    = errors.New("platform site security verification required")
-	ErrPlatformSiteTransport   = errors.New("platform site transport failed")
-	ErrPlatformSiteCredentials = errors.New("platform site credentials invalid")
-	ErrSub2APILoginRequest     = errors.New("sub2api login request failed")
-	ErrSub2APILoginHTTPStatus  = errors.New("sub2api login http status failed")
-	ErrSub2APILoginResponse    = errors.New("sub2api login response format failed")
-	ErrSub2APILoginToken       = errors.New("sub2api login token missing")
-	ErrSub2APILoginInteractive = errors.New("sub2api login requires interactive verification")
-	ErrSub2APILoginEmail       = errors.New("sub2api login requires a valid email")
-	ErrSub2APICurrentUser      = errors.New("sub2api current user request failed")
+	ErrUnsupportedPlatformSite      = errors.New("unsupported upstream platform site")
+	ErrPlatformSiteAuth             = errors.New("platform site authentication failed")
+	ErrPlatformSiteHTTPStatus       = errors.New("platform site http status failed")
+	ErrPlatformSiteResponse         = errors.New("platform site returned an invalid response")
+	ErrPlatformSiteResource         = errors.New("platform site resource synchronization failed")
+	ErrPlatformSiteCredential       = errors.New("platform site credential unavailable")
+	ErrPlatformSiteIdentity         = errors.New("platform site identity mismatch")
+	ErrPlatformSiteAuthBundle       = errors.New("platform site auth bundle invalid")
+	ErrPlatformSiteSecurity         = errors.New("platform site security verification required")
+	ErrPlatformSiteTransport        = errors.New("platform site transport failed")
+	ErrPlatformSiteCredentials      = errors.New("platform site credentials invalid")
+	ErrPlatformSitePermission       = errors.New("platform site permission denied")
+	ErrPlatformSiteSessionLimit     = errors.New("platform site session limit reached")
+	ErrPlatformSiteRefreshUncertain = errors.New("platform site session refresh result uncertain")
+	ErrSub2APILoginRequest          = errors.New("sub2api login request failed")
+	ErrSub2APILoginHTTPStatus       = errors.New("sub2api login http status failed")
+	ErrSub2APILoginResponse         = errors.New("sub2api login response format failed")
+	ErrSub2APILoginToken            = errors.New("sub2api login token missing")
+	ErrSub2APILoginInteractive      = errors.New("sub2api login requires interactive verification")
+	ErrSub2APILoginEmail            = errors.New("sub2api login requires a valid email")
+	ErrSub2APICurrentUser           = errors.New("sub2api current user request failed")
 )
 
 const (
@@ -59,12 +63,15 @@ const (
 	platformSiteErrorCategoryInteractive    = "interactive_verification"
 	platformSiteErrorCategoryRouteMissing   = "route_missing"
 	platformSiteErrorCategoryWAF            = "waf_blocked"
+	platformSiteErrorCategoryPermission     = "permission_denied"
+	platformSiteErrorCategorySessionLimit   = "session_limit"
 )
 
 type PlatformSiteSession struct {
 	BaseURL           string
 	ModelBaseURL      string
 	ManagementBaseURL string
+	LastRequestURL    string
 	Client            *http.Client
 	Headers           http.Header
 	CredentialUpdate  *model.PlatformSiteCredential
@@ -97,6 +104,7 @@ type UpstreamKeySnapshot struct {
 
 type PlatformSiteSnapshot struct {
 	Balance           float64
+	BalanceSet        bool
 	UsedQuota         int64
 	UsedQuotaSet      bool
 	Models            []string
@@ -200,6 +208,10 @@ func (err *platformSiteHTTPStatusError) Unwrap() error {
 		errs = append(errs, ErrPlatformSiteCredentials)
 	case platformSiteErrorCategoryInteractive, platformSiteErrorCategoryWAF:
 		errs = append(errs, ErrPlatformSiteSecurity)
+	case platformSiteErrorCategoryPermission:
+		errs = append(errs, ErrPlatformSitePermission)
+	case platformSiteErrorCategorySessionLimit:
+		errs = append(errs, ErrPlatformSiteSessionLimit)
 	}
 	return errors.Join(errs...)
 }
@@ -216,6 +228,9 @@ func (err *platformSiteResponseError) Error() string {
 }
 
 func (err *platformSiteResponseError) Unwrap() error {
+	if err != nil && err.diagnostics.errorCategory == platformSiteErrorCategoryWAF {
+		return errors.Join(ErrPlatformSiteResponse, ErrPlatformSiteSecurity)
+	}
 	return ErrPlatformSiteResponse
 }
 
@@ -248,6 +263,10 @@ func (err *platformSiteBusinessError) Unwrap() error {
 		return errors.Join(ErrPlatformSiteAuth, ErrPlatformSiteSecurity)
 	case platformSiteErrorCategoryAuthentication:
 		return errors.Join(ErrPlatformSiteAuth, ErrPlatformSiteCredentials)
+	case platformSiteErrorCategoryPermission:
+		return errors.Join(ErrPlatformSiteAuth, ErrPlatformSitePermission)
+	case platformSiteErrorCategorySessionLimit:
+		return errors.Join(ErrPlatformSiteAuth, ErrPlatformSiteSessionLimit)
 	default:
 		return ErrPlatformSiteAuth
 	}
@@ -411,6 +430,17 @@ func newPlatformSiteSession(baseURL string, headers http.Header) (*PlatformSiteS
 	return &PlatformSiteSession{BaseURL: normalized, Client: client, Headers: headers}, nil
 }
 
+func attachPlatformSiteHTTPClient(session *PlatformSiteSession, client *http.Client) {
+	if session == nil || client == nil {
+		return
+	}
+	clone := *client
+	if clone.Jar == nil && session.Client != nil {
+		clone.Jar = session.Client.Jar
+	}
+	session.Client = &clone
+}
+
 func upstreamSiteURL(baseURL, path string, query url.Values) (string, error) {
 	normalized, err := normalizePlatformSiteURL(baseURL)
 	if err != nil {
@@ -455,14 +485,27 @@ func platformSiteRequest(
 		request.Header.Set("Content-Type", "application/json")
 	}
 	for name, values := range session.Headers {
+		if strings.EqualFold(name, "Cookie") {
+			continue
+		}
 		for _, value := range values {
 			request.Header.Add(name, value)
 		}
 	}
-	response, err := session.Client.Do(request)
+	if cookieHeader := platformSiteRequestCookieHeader(session, target); cookieHeader != "" {
+		request.Header.Set("Cookie", cookieHeader)
+	}
+	session.LastRequestURL = target
+	response, err := platformSiteDoRequest(session, request)
 	if err != nil {
 		return nil, errors.Join(ErrPlatformSiteTransport, err)
 	}
+	cookieURL := target
+	if response.Request != nil && response.Request.URL != nil {
+		cookieURL = response.Request.URL.String()
+		session.LastRequestURL = cookieURL
+	}
+	capturePlatformSiteCredentialCookie(session, cookieURL)
 	defer response.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(response.Body, upstreamSiteResponseLimit+1))
 	if err != nil {
@@ -500,6 +543,10 @@ func platformSiteRequest(
 			statusCode:  response.StatusCode,
 			diagnostics: diagnostics,
 		}
+	}
+	if diagnostics.responseType == "html" {
+		diagnostics.errorCategory = platformSiteErrorCategoryWAF
+		return nil, &platformSiteResponseError{diagnostics: diagnostics}
 	}
 	if len(bytes.TrimSpace(data)) == 0 {
 		return map[string]any{}, nil
@@ -557,6 +604,75 @@ func platformSiteRequest(
 		}
 	}
 	return payload, nil
+}
+
+func platformSiteDoRequest(
+	session *PlatformSiteSession,
+	request *http.Request,
+) (*http.Response, error) {
+	if session == nil || session.Client == nil || request == nil {
+		return nil, errors.New("平台站点请求不可用")
+	}
+	client := *session.Client
+	jar := client.Jar
+	if jar != nil {
+		client.Jar = nil
+		client.Transport = &platformSiteCookieRoundTripper{
+			transport:      client.Transport,
+			jar:            jar,
+			explicitCookie: session.Headers.Get("Cookie"),
+		}
+	}
+	response, err := client.Do(request)
+	if jar == nil || response == nil {
+		return response, err
+	}
+	cookieURL := request.URL
+	if response.Request != nil && response.Request.URL != nil {
+		cookieURL = response.Request.URL
+	}
+	if cookies := response.Cookies(); len(cookies) > 0 {
+		jar.SetCookies(cookieURL, cookies)
+	}
+	return response, err
+}
+
+type platformSiteCookieRoundTripper struct {
+	transport      http.RoundTripper
+	jar            http.CookieJar
+	explicitCookie string
+}
+
+func (transport *platformSiteCookieRoundTripper) RoundTrip(
+	request *http.Request,
+) (*http.Response, error) {
+	if request == nil {
+		return nil, errors.New("平台站点请求不可用")
+	}
+	if transport == nil || transport.jar == nil {
+		return http.DefaultTransport.RoundTrip(request)
+	}
+	cookieHeader := mergePlatformSiteCookieHeaders(
+		transport.explicitCookie,
+		platformSiteCookieHeaderFromCookies(transport.jar.Cookies(request.URL)),
+	)
+	if cookieHeader == "" {
+		request.Header.Del("Cookie")
+	} else {
+		request.Header.Set("Cookie", cookieHeader)
+	}
+	roundTripper := transport.transport
+	if roundTripper == nil {
+		roundTripper = http.DefaultTransport
+	}
+	response, err := roundTripper.RoundTrip(request)
+	if err != nil || response == nil {
+		return response, err
+	}
+	if cookies := response.Cookies(); len(cookies) > 0 {
+		transport.jar.SetCookies(request.URL, cookies)
+	}
+	return response, nil
 }
 
 func platformSiteSecurityCode(payload any, raw string) string {
@@ -635,8 +751,11 @@ func classifyPlatformSiteErrorCategory(code, reason, message string) string {
 		strings.Contains(combined, "captcha"),
 		strings.Contains(combined, "challenge"),
 		strings.Contains(combined, "verification_required"),
+		strings.Contains(combined, "verification required"),
 		strings.Contains(combined, "requires_verification"),
 		strings.Contains(combined, "verify_required"),
+		strings.Contains(combined, "two factor"),
+		strings.Contains(combined, "2fa"),
 		strings.Contains(combined, "browser_verification"):
 		return platformSiteErrorCategoryInteractive
 	case strings.Contains(combined, "cloudflare"),
@@ -645,8 +764,16 @@ func classifyPlatformSiteErrorCategory(code, reason, message string) string {
 		strings.Contains(combined, "bot_detection"),
 		strings.Contains(combined, "access_denied"):
 		return platformSiteErrorCategoryWAF
+	case strings.Contains(combined, "auth_session_limit"),
+		strings.Contains(combined, "auth_session_issuance_limit"),
+		strings.Contains(combined, "session_limit"),
+		strings.Contains(combined, "session issuance"),
+		strings.Contains(combined, "too many active sessions"),
+		strings.Contains(combined, "maximum active sessions"),
+		strings.Contains(combined, "active session limit"),
+		strings.Contains(combined, "session issuance limit"):
+		return platformSiteErrorCategorySessionLimit
 	case code == "401",
-		code == "403",
 		strings.Contains(combined, "invalid_credentials"),
 		strings.Contains(combined, "invalid_password"),
 		strings.Contains(combined, "invalid username"),
@@ -656,6 +783,12 @@ func classifyPlatformSiteErrorCategory(code, reason, message string) string {
 		strings.Contains(combined, "unauthorized"),
 		strings.Contains(combined, "login_failed"):
 		return platformSiteErrorCategoryAuthentication
+	case code == "403",
+		strings.Contains(combined, "permission_denied"),
+		strings.Contains(combined, "insufficient_permission"),
+		strings.Contains(combined, "forbidden"),
+		strings.Contains(combined, "not allowed"):
+		return platformSiteErrorCategoryPermission
 	case code == "404",
 		code == "405",
 		strings.Contains(combined, "route_not_found"),
@@ -677,7 +810,10 @@ func classifyPlatformSiteResponseCategory(statusCode int, responseType string, d
 	case strings.Contains(combined, "turnstile"),
 		strings.Contains(combined, "captcha"),
 		strings.Contains(combined, "challenge"),
+		strings.Contains(combined, "verification required"),
 		strings.Contains(combined, "verify you are human"),
+		strings.Contains(combined, "two factor"),
+		strings.Contains(combined, "2fa"),
 		strings.Contains(combined, "browser verification"):
 		return platformSiteErrorCategoryInteractive
 	case strings.Contains(combined, "cloudflare"),
@@ -685,13 +821,23 @@ func classifyPlatformSiteResponseCategory(statusCode int, responseType string, d
 		strings.Contains(combined, "access denied"),
 		strings.Contains(combined, "waf"):
 		return platformSiteErrorCategoryWAF
+	case strings.Contains(combined, "auth_session_limit"),
+		strings.Contains(combined, "auth_session_issuance_limit"),
+		strings.Contains(combined, "session_limit"),
+		strings.Contains(combined, "session issuance"),
+		strings.Contains(combined, "too many active sessions"),
+		strings.Contains(combined, "maximum active sessions"),
+		strings.Contains(combined, "active session limit"),
+		strings.Contains(combined, "session issuance limit"):
+		return platformSiteErrorCategorySessionLimit
 	case statusCode == http.StatusNotFound || statusCode == http.StatusMethodNotAllowed:
 		return platformSiteErrorCategoryRouteMissing
 	case responseType == "html" && statusCode >= http.StatusBadRequest:
 		return platformSiteErrorCategoryWAF
-	case statusCode == http.StatusUnauthorized,
-		statusCode == http.StatusForbidden:
+	case statusCode == http.StatusUnauthorized:
 		return platformSiteErrorCategoryAuthentication
+	case statusCode == http.StatusForbidden:
+		return platformSiteErrorCategoryPermission
 	default:
 		return ""
 	}
@@ -718,6 +864,10 @@ func platformSiteErrorCategoryOf(err error) string {
 	if err == nil {
 		return ""
 	}
+	var responseErr *platformSiteResponseError
+	if errors.As(err, &responseErr) {
+		return responseErr.diagnostics.errorCategory
+	}
 	var statusErr *platformSiteHTTPStatusError
 	if errors.As(err, &statusErr) {
 		return statusErr.diagnostics.errorCategory
@@ -742,6 +892,11 @@ func platformSiteInteractiveVerificationRequired(err error) bool {
 		errors.Is(err, ErrSub2APILoginInteractive) ||
 		platformSiteErrorCategoryOf(err) == platformSiteErrorCategoryInteractive ||
 		platformSiteErrorCategoryOf(err) == platformSiteErrorCategoryWAF
+}
+
+func platformSiteSessionLimit(err error) bool {
+	return errors.Is(err, ErrPlatformSiteSessionLimit) ||
+		platformSiteErrorCategoryOf(err) == platformSiteErrorCategorySessionLimit
 }
 
 func platformSiteResponseDiagnosticsFor(
@@ -880,6 +1035,14 @@ func platformSiteResponseDiagnosticSuffix(err error) string {
 		if summary := securityErr.diagnostics.summary(); summary != "" {
 			return "（" + summary + "）"
 		}
+	}
+	return ""
+}
+
+func platformSiteStageDiagnosticSuffix(err error) string {
+	var stageErr *platformSiteStageError
+	if errors.As(err, &stageErr) && stageErr.stage != "" {
+		return "（阶段：" + stageErr.stage + "）"
 	}
 	return ""
 }
@@ -1145,18 +1308,35 @@ func syncPlatformSite(ctx context.Context, channelID int) error {
 			session, authenticateErr := adapter.Authenticate(ctx, account.BaseURL, credential)
 			err = authenticateErr
 			if err == nil {
+				if session.CredentialUpdate != nil {
+					err = persistPlatformSiteCredential(&account, *session.CredentialUpdate)
+					if err != nil {
+						err = wrapPlatformSiteStage("凭据更新", err)
+					}
+				}
+			}
+			if err == nil {
 				var snapshot PlatformSiteSnapshot
-				snapshot, err = adapter.FetchSnapshot(ctx, session)
-				if err == nil {
+				snapshot, fetchErr := adapter.FetchSnapshot(ctx, session)
+				normalizePlatformSiteResourceSyncs(&snapshot)
+				if session.CredentialUpdate != nil {
+					if updateErr := persistPlatformSiteCredential(&account, *session.CredentialUpdate); updateErr != nil {
+						fetchErr = errors.Join(fetchErr, wrapPlatformSiteStage("凭据更新", updateErr))
+					}
+				}
+				if fetchErr != nil {
+					err = fetchErr
+					if platformSiteSnapshotHasData(snapshot) {
+						if snapshotErr := persistPlatformSiteSnapshot(ctx, &account, snapshot); snapshotErr != nil {
+							err = errors.Join(err, wrapPlatformSiteStage("部分快照写库", snapshotErr))
+						}
+					}
+				} else {
 					err = persistPlatformSiteSnapshot(ctx, &account, snapshot)
 					if err != nil {
 						err = wrapPlatformSiteStage("同步写库", err)
-					}
-					if err == nil && session.CredentialUpdate != nil {
-						err = persistPlatformSiteCredential(&account, *session.CredentialUpdate)
-						if err != nil {
-							err = wrapPlatformSiteStage("凭据更新", err)
-						}
+					} else if platformSiteSnapshotHasBlockingResourceFailure(snapshot) {
+						err = wrapPlatformSiteStage("资源同步", ErrPlatformSiteResource)
 					}
 				}
 			} else if session != nil && session.CredentialUpdate != nil {
@@ -1175,12 +1355,17 @@ func syncPlatformSite(ctx context.Context, channelID int) error {
 			"consecutive_failures": account.ConsecutiveFailures + 1,
 			"auth_status_reason":   account.LastSyncError,
 		}
-		if errors.Is(err, ErrPlatformSiteSecurity) ||
+		if platformSiteSessionLimit(err) {
+			account.AuthStatus = model.PlatformSiteAuthStatusSessionLimit
+			failureUpdates["auth_status"] = account.AuthStatus
+		} else if errors.Is(err, ErrPlatformSiteSecurity) ||
 			errors.Is(err, ErrSub2APILoginInteractive) ||
 			platformSiteErrorCategoryOf(err) == platformSiteErrorCategoryInteractive ||
 			platformSiteErrorCategoryOf(err) == platformSiteErrorCategoryWAF {
 			account.AuthStatus = model.PlatformSiteAuthStatusSecureVerificationRequired
 			failureUpdates["auth_status"] = account.AuthStatus
+		} else if errors.Is(err, ErrPlatformSiteResource) {
+			// 资源权限或分页失败不等同于站点凭据失效，状态由资源同步表记录。
 		} else if errors.Is(err, ErrPlatformSiteCredentials) ||
 			errors.Is(err, ErrSub2APILoginEmail) {
 			account.AuthStatus = model.PlatformSiteAuthStatusCredentialsInvalid
@@ -1207,6 +1392,130 @@ func syncPlatformSite(ctx context.Context, channelID int) error {
 	}
 	model.InitChannelCache()
 	return nil
+}
+
+func platformSiteSnapshotHasData(snapshot PlatformSiteSnapshot) bool {
+	return snapshot.BalanceSet ||
+		snapshot.Identity != nil ||
+		snapshot.UsedQuotaSet ||
+		len(snapshot.ResourceSyncs) > 0 ||
+		len(snapshot.Keys) > 0 ||
+		snapshot.GroupsLoaded ||
+		snapshot.Endpoint != nil
+}
+
+func normalizePlatformSiteResourceSyncs(snapshot *PlatformSiteSnapshot) {
+	if snapshot == nil || len(snapshot.ResourceSyncs) < 2 {
+		return
+	}
+	indexes := make(map[string]int, len(snapshot.ResourceSyncs))
+	merged := make([]PlatformSiteResourceSyncSnapshot, 0, len(snapshot.ResourceSyncs))
+	for _, resource := range snapshot.ResourceSyncs {
+		if strings.TrimSpace(resource.ResourceType) == "" {
+			continue
+		}
+		index, exists := indexes[resource.ResourceType]
+		if !exists {
+			indexes[resource.ResourceType] = len(merged)
+			merged = append(merged, resource)
+			continue
+		}
+		current := &merged[index]
+		current.SourceEndpoint = mergePlatformSiteResourceSources(
+			current.SourceEndpoint,
+			resource.SourceEndpoint,
+		)
+		current.RecordCount = max(current.RecordCount, resource.RecordCount)
+		current.FailureReason = mergePlatformSiteResourceReasons(
+			current.FailureReason,
+			resource.FailureReason,
+		)
+		current.Partial = current.Partial || resource.Partial
+		current.RequiresSecurityVerification =
+			current.RequiresSecurityVerification || resource.RequiresSecurityVerification
+		current.Status = mergePlatformSiteResourceStatus(
+			resource.ResourceType,
+			current.Status,
+			resource.Status,
+		)
+	}
+	snapshot.ResourceSyncs = merged
+}
+
+func mergePlatformSiteResourceStatus(resourceType, current, incoming string) string {
+	if resourceType == model.PlatformSiteResourceModels {
+		if current == model.PlatformSiteResourceStatusSuccess {
+			switch incoming {
+			case model.PlatformSiteResourceStatusStale, model.PlatformSiteResourceStatusSuccess:
+				return current
+			case model.PlatformSiteResourceStatusPartial:
+				return model.PlatformSiteResourceStatusPartial
+			case model.PlatformSiteResourceStatusFailed:
+				return model.PlatformSiteResourceStatusPartial
+			case model.PlatformSiteResourceStatusSecureVerificationRequired:
+				return model.PlatformSiteResourceStatusSecureVerificationRequired
+			}
+		}
+		if incoming == model.PlatformSiteResourceStatusSuccess {
+			switch current {
+			case model.PlatformSiteResourceStatusStale, model.PlatformSiteResourceStatusSuccess:
+				return incoming
+			case model.PlatformSiteResourceStatusPartial, model.PlatformSiteResourceStatusFailed:
+				return model.PlatformSiteResourceStatusPartial
+			case model.PlatformSiteResourceStatusSecureVerificationRequired:
+				return current
+			}
+		}
+	}
+	if platformSiteResourceStatusRank(incoming) > platformSiteResourceStatusRank(current) {
+		return incoming
+	}
+	return current
+}
+
+func platformSiteResourceStatusRank(status string) int {
+	switch status {
+	case model.PlatformSiteResourceStatusSecureVerificationRequired:
+		return 5
+	case model.PlatformSiteResourceStatusFailed:
+		return 4
+	case model.PlatformSiteResourceStatusPartial:
+		return 3
+	case model.PlatformSiteResourceStatusStale:
+		return 2
+	case model.PlatformSiteResourceStatusSuccess:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func mergePlatformSiteResourceSources(left, right string) string {
+	return strings.Join(uniqueStrings(append(
+		strings.Split(left, ","),
+		strings.Split(right, ",")...,
+	)), ",")
+}
+
+func mergePlatformSiteResourceReasons(left, right string) string {
+	return strings.Join(uniqueStrings([]string{left, right}), "；")
+}
+
+func platformSiteSnapshotHasBlockingResourceFailure(snapshot PlatformSiteSnapshot) bool {
+	for _, resource := range snapshot.ResourceSyncs {
+		if resource.ResourceType == model.PlatformSiteResourceModels &&
+			len(snapshot.Models) > 0 {
+			continue
+		}
+		status := resource.Status
+		switch status {
+		case model.PlatformSiteResourceStatusFailed,
+			model.PlatformSiteResourceStatusPartial,
+			model.PlatformSiteResourceStatusSecureVerificationRequired:
+			return true
+		}
+	}
+	return false
 }
 
 func persistPlatformSiteCredential(account *model.PlatformSiteAccount, credential model.PlatformSiteCredential) error {
@@ -1236,18 +1545,46 @@ func SafePlatformSiteError(err error) string {
 	switch {
 	case errors.Is(err, ErrPlatformSiteCredential):
 		return "平台凭据无法解密，请重新保存平台凭据"
+	case errors.Is(err, ErrPlatformSiteSessionLimit):
+		return "上游平台会话数量或签发次数已达上限" +
+			platformSiteResponseDiagnosticSuffix(err) +
+			platformSiteStageDiagnosticSuffix(err) +
+			"，请在上游站点管理面板清理旧会话后再同步"
+	case errors.Is(err, ErrPlatformSiteRefreshUncertain):
+		return "上游平台会话刷新结果不确定" +
+			platformSiteResponseDiagnosticSuffix(err) +
+			platformSiteStageDiagnosticSuffix(err) +
+			"，请重新采集或保存登录态后再同步"
+	case errors.Is(err, ErrPlatformSiteResource):
+		return "上游平台资源同步失败" +
+			platformSiteResponseDiagnosticSuffix(err) +
+			platformSiteStageDiagnosticSuffix(err) +
+			"，已保留最近成功快照"
+	case errors.Is(err, ErrPlatformSitePermission):
+		return "上游平台权限不足" +
+			platformSiteResponseDiagnosticSuffix(err) +
+			platformSiteStageDiagnosticSuffix(err)
 	case errors.Is(err, ErrSub2APILoginInteractive):
 		return "Sub2API 登录需要交互验证" +
 			platformSiteResponseDiagnosticSuffix(err) +
+			platformSiteStageDiagnosticSuffix(err) +
 			"，请先在上游站点完成验证，或使用浏览器采集登录态"
 	case errors.Is(err, ErrPlatformSiteSecurity):
-		return "上游平台要求完成安全验证" + platformSiteResponseDiagnosticSuffix(err)
+		return "上游平台要求完成安全验证" +
+			platformSiteResponseDiagnosticSuffix(err) +
+			platformSiteStageDiagnosticSuffix(err)
 	case errors.Is(err, ErrPlatformSiteTransport):
-		return "上游平台网络连接失败，已保留最近成功快照"
+		return "上游平台网络连接失败" +
+			platformSiteStageDiagnosticSuffix(err) +
+			"，已保留最近成功快照"
 	case errors.Is(err, ErrSub2APILoginEmail):
-		return "Sub2API 登录账号必须是合法邮箱，请使用上游账号邮箱或浏览器采集登录态"
+		return "Sub2API 登录账号必须是合法邮箱" +
+			platformSiteStageDiagnosticSuffix(err) +
+			"，请使用上游账号邮箱或浏览器采集登录态"
 	case errors.Is(err, ErrPlatformSiteCredentials):
-		return "上游平台账号或密码错误"
+		return "上游平台账号或密码错误" +
+			platformSiteResponseDiagnosticSuffix(err) +
+			platformSiteStageDiagnosticSuffix(err)
 	case errors.Is(err, ErrSub2APILoginRequest):
 		return "Sub2API 登录请求失败"
 	case errors.Is(err, ErrSub2APILoginHTTPStatus):
@@ -1255,13 +1592,14 @@ func SafePlatformSiteError(err error) string {
 			return fmt.Sprintf(
 				"Sub2API 登录 HTTP 状态失败（HTTP %d%s）",
 				statusCode,
-				platformSiteResponseDiagnosticSuffix(err),
+				platformSiteResponseDiagnosticSuffix(err)+platformSiteStageDiagnosticSuffix(err),
 			)
 		}
-		return "Sub2API 登录 HTTP 状态失败"
+		return "Sub2API 登录 HTTP 状态失败" + platformSiteStageDiagnosticSuffix(err)
 	case errors.Is(err, ErrSub2APILoginResponse):
 		return "Sub2API 登录响应格式错误" +
 			platformSiteResponseDiagnosticSuffix(err) +
+			platformSiteStageDiagnosticSuffix(err) +
 			"，请检查管理端 URL、反向代理和登录 API 路径"
 	case errors.Is(err, ErrSub2APILoginToken):
 		return "Sub2API 登录未返回访问令牌"
@@ -1314,13 +1652,25 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 			return fmt.Errorf("%w: 密钥额度数据无效", ErrPlatformSiteResponse)
 		}
 	}
-	usedQuota := snapshot.UsedQuota
-	if !snapshot.UsedQuotaSet && snapshot.UsedQuota == 0 {
+	balance := account.Balance
+	balanceSet := snapshot.BalanceSet || snapshot.Balance != 0
+	if balanceSet {
+		balance = snapshot.Balance
+	}
+	usedQuota := account.UsedQuota
+	usedQuotaSet := snapshot.UsedQuotaSet
+	if snapshot.UsedQuotaSet {
+		usedQuota = snapshot.UsedQuota
+	} else if snapshot.UsedQuota == 0 && len(snapshot.Keys) > 0 {
 		var err error
 		usedQuota, err = sumUpstreamKeyUsedQuota(snapshot.Keys)
 		if err != nil {
 			return fmt.Errorf("%w: %v", ErrPlatformSiteResponse, err)
 		}
+		usedQuotaSet = true
+	} else if snapshot.UsedQuota != 0 {
+		usedQuota = snapshot.UsedQuota
+		usedQuotaSet = true
 	}
 	if usedQuota < 0 {
 		return fmt.Errorf("%w: 站点额度数据无效", ErrPlatformSiteResponse)
@@ -1500,21 +1850,27 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 				})
 			}
 		}
-		channel.Balance = snapshot.Balance
+		channel.Balance = balance
 		channel.UsedQuota = usedQuota
 		if err := model.RebuildPlatformSiteChannelModels(tx, account.ChannelID); err != nil {
 			return err
 		}
-		if err := tx.Model(&channel).Select("balance", "used_quota", "balance_updated_time").Updates(map[string]any{
-			"balance":              snapshot.Balance,
-			"used_quota":           usedQuota,
-			"balance_updated_time": now,
-		}).Error; err != nil {
+		channelUpdates := map[string]any{"balance_updated_time": now}
+		if balanceSet {
+			channelUpdates["balance"] = balance
+		}
+		if usedQuotaSet {
+			channelUpdates["used_quota"] = usedQuota
+		}
+		if err := tx.Model(&channel).Select("balance", "used_quota", "balance_updated_time").Updates(channelUpdates).Error; err != nil {
 			return err
 		}
-		accountUpdates := map[string]any{
-			"balance":    snapshot.Balance,
-			"used_quota": usedQuota,
+		accountUpdates := make(map[string]any)
+		if balanceSet {
+			accountUpdates["balance"] = balance
+		}
+		if usedQuotaSet {
+			accountUpdates["used_quota"] = usedQuota
 		}
 		if snapshot.AuthStatus != "" {
 			accountUpdates["auth_status"] = snapshot.AuthStatus
@@ -1544,6 +1900,8 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 		if err := tx.Model(account).Updates(accountUpdates).Error; err != nil {
 			return err
 		}
+		snapshot.Balance = balance
+		snapshot.UsedQuota = usedQuota
 		if err := persistPlatformSiteResources(tx, account, snapshot, now); err != nil {
 			return err
 		}

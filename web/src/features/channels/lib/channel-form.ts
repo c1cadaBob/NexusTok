@@ -227,6 +227,10 @@ export const channelFormSchema = z
     platform_site_username: z.string().optional(),
     platform_site_password: z.string().optional(),
     platform_site_access_token: z.string().optional(),
+    platform_site_token_expires_at: z.number().int().min(0).optional(),
+    platform_site_token_type: z.string().optional(),
+    platform_site_session_id: z.string().optional(),
+    platform_site_session_current: z.boolean().optional(),
     platform_site_admin_key: z.string().optional(),
     platform_site_cookie: z.string().optional(),
     platform_site_recharge_amount: z.number().min(0).default(0),
@@ -480,6 +484,10 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   platform_site_username: '',
   platform_site_password: '',
   platform_site_access_token: '',
+  platform_site_token_expires_at: undefined,
+  platform_site_token_type: '',
+  platform_site_session_id: '',
+  platform_site_session_current: false,
   platform_site_admin_key: '',
   platform_site_cookie: '',
   platform_site_recharge_amount: 0,
@@ -652,6 +660,10 @@ export function transformChannelToFormDefaults(
     platform_site_username: '',
     platform_site_password: '',
     platform_site_access_token: '',
+    platform_site_token_expires_at: undefined,
+    platform_site_token_type: '',
+    platform_site_session_id: '',
+    platform_site_session_current: false,
     platform_site_admin_key: '',
     platform_site_cookie: '',
     platform_site_recharge_amount: 0,
@@ -902,7 +914,18 @@ function buildPlatformSitePayload(
   if (formData.platform_site_auth_type === 'auto') {
     payload.capture_id = formData.platform_site_capture_id?.trim() || undefined
   } else if (formData.platform_site_auth_type === 'access_token') {
-    payload.access_token = formData.platform_site_access_token
+    payload.access_token =
+      formData.platform_site_access_token?.trim() || undefined
+    payload.cookie = formData.platform_site_cookie?.trim() || undefined
+    payload.session_id = formData.platform_site_session_id?.trim() || undefined
+    payload.token_type = formData.platform_site_token_type?.trim() || undefined
+    if (
+      typeof formData.platform_site_token_expires_at === 'number' &&
+      formData.platform_site_token_expires_at > 0
+    ) {
+      payload.token_expires_at = formData.platform_site_token_expires_at
+    }
+    payload.session_current = formData.platform_site_session_current === true
   } else if (formData.platform_site_auth_type === 'admin_key') {
     payload.admin_key = formData.platform_site_admin_key
   } else if (formData.platform_site_auth_type === 'cookie') {

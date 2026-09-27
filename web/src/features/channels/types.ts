@@ -445,6 +445,10 @@ export interface PlatformSiteInput {
   user_id?: string
   access_token?: string
   refresh_token?: string
+  token_expires_at?: number
+  token_type?: string
+  session_id?: string
+  session_current?: boolean
   admin_key?: string
   cookie?: string
   recharge_amount: number

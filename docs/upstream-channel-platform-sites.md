@@ -470,21 +470,24 @@ POST  /api/channel/:id/upstream-resources/sync
 - 普通用户响应、普通用户日志和错误信息不暴露上游站点与密钥。
 - 敏感查看、凭据替换、同步、禁用和倍率修改都要记录管理员审计事件。
 
-实现和测试按照 OWASP ASVS 5.0.0（2025-05 最新稳定版）的认证、会话、授权、密码学、安全通信、配置和安全日志要求执行。适用控制项记录为：
+实现和测试参考 OWASP ASVS 5.0.0（2025-05 发布）以及认证、会话、密码存储、
+CSRF、日志、密码学存储和 SSRF Prevention Cheat Sheet。2026-09-27 复核时，本次
+功能只确认了与平台站点凭据、Dashboard 会话、管理员资源权限、外部站点请求和安全
+诊断直接相关的控制主题，未将未经逐条核对的 requirement ID 写入本文，也不宣称覆盖
+ASVS 全部要求：
 
-- `v5.0.0-3.*`：会话令牌、刷新令牌、Cookie 与凭据生命周期；
-- `v5.0.0-4.*`：管理员接口授权、渠道权限和敏感操作保护；
-- `v5.0.0-6.*`：平台凭据、刷新令牌和上游 API Key 加密保存；
-- `v5.0.0-9.*`：站点 URL、HTTPS、重定向与 SSRF 防护；
-- `v5.0.0-10.*`：响应大小、依赖与配置安全边界；
-- `v5.0.0-14.*`：管理员审计日志脱敏和安全事件可追踪。
+- 认证失败、重新认证和旧凭据失效时的有限回退；
+- Session ID、Refresh Cookie、Bearer Token 的轮换、生命周期和加密保存；
+- 管理员资源授权、安全验证 step-up、权限错误与认证错误的区分；
+- 管理地址 URL 校验、HTTPS/重定向边界、响应大小和 SSRF 防护；
+- 管理员诊断、审计和错误信息中的敏感字段脱敏。
 
 同时参考 OWASP Authentication、Session Management、Password Storage、OAuth、CSRF、Logging、Cryptographic Storage 和 Server Side Request Forgery Prevention Cheat Sheet。审计事件只记录站点 ID、渠道 ID、平台类型、操作类型、结果、操作者、请求 ID 和脱敏错误，不记录密码、Cookie、令牌、Admin Key、刷新令牌或实际密钥。
 
-2026-09-17 复核时通过 OWASP 官方项目页和 ASVS 仓库确认 ASVS 最新稳定版本
-仍为 `5.0.0`，发布日期为 2025-05；安全核对范围仅覆盖本功能涉及的平台凭据
-保存、管理员操作、外部站点请求边界、脱敏错误和审计日志，不宣称覆盖项目全部
-认证/会话实现。
+2026-09-27 复核时通过 OWASP 官方项目页和 ASVS 仓库确认 ASVS 稳定版本仍为
+`5.0.0`，发布日期为 2025-05；安全核对范围仅覆盖本功能涉及的平台凭据保存、
+管理员操作、外部站点请求边界、脱敏错误和审计日志，不宣称覆盖项目全部认证/会话
+实现。
 
 ## 8. 前端交互
 
@@ -714,6 +717,39 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
 401 凭据错误、404/405 兼容路径、网络超时和失败同步快照保留。真实站点验证只记录
 脱敏请求路径、HTTP 状态、Content-Type、响应类别和页面状态。
 
+### 9.3 2026-09-27 NewAPI Dashboard Session 与资源失败边界
+
+**变更前**
+
+- NewAPI Dashboard Refresh 主要依赖显式 Cookie、Session ID 和 Bearer Token，但
+  CookieJar 中的轮换 Cookie 可能与显式 `Cookie` 头重复，且轮换值不一定回写到持久化
+  凭据；
+- 登录、刷新和认证流程入口对现代 Dashboard Auth Bundle 的判断不完全一致，结构不完整
+  的响应存在落入旧 Token 协议兜底的风险；
+- `/api/token/` 分页或密钥明文读取失败时，身份和余额快照可能无法与资源失败分开保存；
+- 管理地址、Relay 地址和带路径前缀的站点地址边界不清晰，错误信息难以判断最终请求地址。
+
+**变更后**
+
+- `BaseURL` 对 NewAPI 类平台表示管理 API 根地址，只去除末尾 `/`，保留用户填写的路径
+  前缀；不会把 Relay 地址、`/v1` 地址或其它候选地址猜测为管理地址。兼容资源路径仅在
+  明确收到 HTTP 404 或 405 时回退；
+- NewAPI Dashboard Refresh 使用 `POST /api/user/auth/refresh`，以
+  `new_api_refresh` Cookie、`X-Auth-Session` 和当前 Bearer Token 组成会话请求，不把
+  Refresh Cookie 放入 JSON body。CookieJar 中同名 Cookie 优先，显式头只保留 Jar 中没有
+  的其它 Cookie，响应 `Set-Cookie` 的轮换值回写加密凭据；
+- 现代 Bundle 必须同时满足 `success`、`data.access_token`、`data.token_type`、
+  `data.access_expires_at`、当前 `data.session.sid/current` 和 `data.user` 身份字段。
+  已出现现代结构标志但结构不完整时重新认证或标记刷新不确定，不降级旧协议；密码模式
+  成功后仍保留密码认证类型，Access Token、Session ID、Token 类型和过期时间只作为会话
+  状态保存；
+- 认证成功后，身份、余额/用量和分组等已成功资源可以先写入；Token 分页、明文 Key、
+  单密钥模型或 Admin 资源失败时写入资源级失败/安全验证状态，保留最近成功密钥、模型、
+  倍率、权重和能力，不执行缺失判定，不覆盖 `last_sync_at`；
+- 管理员诊断只保留同步阶段、脱敏最终 URL、HTTP 状态、Content-Type、响应类型、错误码、
+  资源状态、快照回退和人工安全验证标记，不记录密码、Cookie、Access Token、Refresh
+  Token 或完整响应正文。
+
 ## 与架构文档的关系
 
 本文保留平台站点、账号同步、子密钥字段、倍率/权重公式、权限、SSRF 和测试验收等详细规则；架构文档描述平台站点如何进入渠道过滤、Routing Key 和 Relay 转发。新增平台类型或调整同步/路由语义时，必须同时更新本文、能力矩阵和偏差表。
@@ -724,3 +760,4 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 补充架构索引与元信息 | 已有平台站点详细设计没有统一事实基线和架构入口 | 增加事实基线、代码来源、架构分工和变更记录；保留同步、倍率、权重和兼容性细节 | NewAPI、Sub2API、平台账号、上游密钥和路由 | `model/upstream_channel.go`、`model/routing_key.go`、`service/upstream_site.go` 静态核对 |
 | 2026-09-26 | 修复渠道 2、4、5 同步回归 | 上游 HTML/安全验证/HTTP 200 业务失败和网络错误可能被归为响应格式错误或覆盖同步状态；密码登录存在兼容字段漂移 | 固定 New API/Sub2API 登录 DTO，恢复脱敏响应诊断和错误分类，限制 404/405 回退，失败保留最近成功快照并区分凭据错误与安全验证 | 平台站点认证、资源同步、快照、管理员诊断和路由可用性 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`、本机三套参考源核对 |
+| 2026-09-27 | 修复 NewAPI 类平台会话与资源同步 | Refresh Cookie、Session ID 和 Bearer Token 的真实 Dashboard 契约未在所有入口统一；Cookie 轮换、资源失败和管理/Relay 地址边界可能导致渠道 4、5 同步失败 | 统一 CookieJar/显式 Cookie 优先级和轮换持久化，严格区分现代 Bundle，按资源保存部分快照并限制 404/405 回退，诊断显示脱敏最终地址和资源状态 | NewAPI 及派生平台认证、刷新、身份/余额、密钥、模型、路由快照和管理员诊断 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go`、New API/Sub2API/all-api-hub 参考源 |
