@@ -78,8 +78,14 @@
 
 | 平台 | 认证与刷新 | 资源来源 | 端点与模型能力 | 失败回退 |
 | --- | --- | --- | --- | --- |
-| New API 平台站点 | 账号密码、自动配置、Access Token、Admin Key、Cookie；支持 `/api/user/login/2fa`、`/api/user/login/verify`；传统刷新与 Dashboard Auth Bundle 均需按结构校验 | `/api/status`、`/api/user/self`、用户组、`/api/pricing`、Token 分页/Key 详情、必要时 Admin API | `/v1/models` 按单个密钥确认；`supported_endpoint` 等 pricing 数据进入端点能力诊断 | 2FA、安全验证、Bundle 不完整或 Admin 资源拒绝只影响对应资源状态，保留最近成功快照 |
-| Sub2API 平台站点 | 账号密码、自动配置、Access Token、Admin Key、Cookie；支持 `/api/v1/auth/login/2fa`；Refresh Token 必须完整轮换 | `/api/v1/auth/me`、profile、usage、groups、keys；Admin Key 额外读取 admin accounts/data | `/v1/models` 按单个密钥确认；页面 `api_base_url` 分离管理和 Relay 地址 | Refresh 轮换不确定时不重放旧令牌；step-up 拒绝不当作密钥不存在，保留旧快照 |
+| New API 平台站点 | 账号密码、自动配置、Access Token、Admin Key、Cookie；支持 `/api/user/login/2fa`、`/api/user/login/verify`；传统刷新与 Dashboard Auth Bundle 均需按结构校验 | 管理面读取 `/api/status`、当前用户、分组/倍率、价格、Token 分页和完整 Key；Admin 资源按权限读取 | Relay `/v1/models` 按单个完整 Key 确认；`supported_endpoint`/pricing 只进入端点诊断，账号级模型不能复制给所有 Key | 2FA、安全验证、Bundle 不完整、Admin 资源拒绝或部分分页只影响对应资源状态，保留最近成功快照 |
+| Sub2API 平台站点 | 账号密码、自动配置、Access Token、Admin Key、Cookie；支持 `/api/v1/auth/login/2fa`；Refresh Token 必须完整轮换 | 管理面读取 `/api/v1/auth/me`、profile、usage、groups、keys；Admin Key 额外读取 accounts/data；参考平台还有 `/api/v1/user/platform-quotas`，当前适配器未调用 | Relay `/v1/models` 或兼容 `/models` 按单个完整 Key 确认；页面 `api_base_url` 分离管理和 Relay 地址；当前无独立账号级模型实现 | Refresh 轮换不确定、step-up、权限不足、WAF 或分页失败不当作密钥不存在，保留最近成功快照 |
+
+这里的“模型获取”列只描述当前实际进入路由的能力来源：New API 的账号模型、价格或
+Admin channel 模型用于诊断和展示，不能替代单 Key 能力；Sub2API 当前
+`fetchSub2APIModels` 直接返回 `nil`，主要依赖每条完整 Key 请求 Relay `/v1/models`
+或 `/models` 探测。参考平台的 Sub2API `/api/v1/user/platform-quotas` 目前不在
+NexusTok 适配器请求清单中，因此平台窗口额度仍属于未完整覆盖能力。
 
 ## 3. 维护解释
 
@@ -96,6 +102,7 @@
 | 2026-09-26 | 平台站点资源能力补充 | NewAPI/Sub2API 仅以渠道类型和适配器入口描述，未区分登录、刷新、资源和失败回退 | 以参考源真实路由登记 2FA、Bundle/轮换、身份/额度/分组/端点/密钥/模型资源及快照回退 | 平台站点管理与路由前置资源同步 | 参考项目路由、DTO、权限和失败语义静态核对 |
 | 2026-09-27 | NewAPI 类平台认证与资源能力校准 | Dashboard Refresh Cookie、Session ID 和管理/Relay 地址边界未列入矩阵；资源权限失败可能被误判为凭据失败 | 列明真实 Refresh 请求契约、CookieJar 轮换优先级、现代 Bundle 拒绝降级、资源级状态和最近成功快照保留规则 | NewAPI 派生平台管理面、子密钥路由模型能力和同步诊断 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`、本机参考源 |
 | 2026-09-27 | 平台站点渠道代理接入 | 管理面请求、密码登录和 2FA 未使用渠道代理，客户端合并可能改变会话安全策略 | 按渠道配置复用代理 Transport，保留 CookieJar、超时和重定向策略，并在矩阵中区分代理配置错误、认证错误、网络错误、安全验证和资源权限失败 | NewAPI/Sub2API 管理面、渠道同步和 Auth Flow | `service/upstream_site.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go` |
+| 2026-09-29 | 校准平台站点管理面、Relay 面和模型边界 | 矩阵只按渠道类型描述平台能力，Sub2API 平台窗口额度、账号级模型和单 Key 模型来源边界不够明确 | 明确管理接口与 Relay 接口分层；Sub2API `/api/v1/user/platform-quotas` 为参考平台存在但当前未调用；New API 账号级模型不得复制给所有 Key；当前主要以单 Key Relay 模型探测作为路由能力依据；权限/分页失败保留快照 | New API/Sub2API 资源同步、模型能力、Admin 资源和失败回退 | `service/upstream_site_adapters.go`、`controller/upstream_channel.go`、`model/platform_site_resources.go`、本机参考源和[`平台站点资源获取比较`](../platform-site-resource-acquisition-comparison.md) |
 
 ### 3.2 2026-09-26 实现校准
 

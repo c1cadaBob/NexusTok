@@ -104,6 +104,19 @@ Admin Key step-up 拒绝读取密钥时保留旧密钥和模型快照，平台�
 快照。资源查询接口读取规范化资源表和现有 `UpstreamKey` 路由主数据，不把短期认证
 流程或任何敏感凭据写入缓存响应。
 
+旧版预览流程另有短期缓存边界：`upstream-account-preview` 默认 TTL 为 10 分钟，
+预览创建的完整 Key 只在后端缓存和创建阶段使用，前端预览响应只返回脱敏 Key；前端
+最终只提交 `preview_id`，一次性消费后不能重复创建。当前实现不复用该预览缓存，而是
+将平台账号凭据和完整子 Key 分别加密保存，并用凭据指纹、Key HMAC 指纹和外部 ID/地址
+进行刷新匹配。手动同步、排队同步和系统任务后台同步都经过同一站点锁和
+`SyncUpstreamSite`，资源表记录本次尝试与最近成功时间。
+
+平台站点资源表、`UpstreamKey`、`UpstreamKeyAbility` 和渠道模型索引构成当前路由快照；
+`PlatformSiteResourceSync.UsingSnapshot=true` 或父站点 `failed/running` 但存在
+`LastSyncAt` 时，表示当前读取失败而仍使用最近成功值。权限不足、step-up、安全验证、
+WAF、分页中途失败或单 Key 模型探测失败不能清空旧 Key、额度、过期时间、模型和能力
+快照；只有完整分页、权限有效和必要 Key 详情完成后，才允许把未返回 Key 标记为缺失。
+
 ## 9. 维护时需要同步的关联模块
 
 修改数据库 DSN、GORM 模型、迁移、锁、缓存键/TTL、Redis 回退、日志字段、后台任务 Type/interval/lease、任务调度或多节点职责时，必须同步本文档、系统总览、任务/插件文档、鉴权/限流专项文档和偏差登记。数据库变更还要按根目录规则完成三数据库验证并记录版本与结果。
@@ -116,6 +129,7 @@ Admin Key step-up 拒绝读取密钥时保留旧密钥和模型快照，平台�
 | 2026-09-26 | 平台资源同步补充 | 平台站点同步主要以单个总快照和站点状态表示 | 增加资源类型独立状态、最近成功快照保留、完整分页缺失判定和安全验证失败回退基线 | 平台站点缓存、同步任务、资源查询 | `service/upstream_site.go` 当前快照逻辑与新增资源模型设计核对 |
 | 2026-09-27 | NewAPI 类平台资源失败持久化 | 认证成功后的 Token 分页失败可能阻断身份/余额保存，Cookie 轮换和资源失败状态无法稳定写入；失败轮次与最近成功时间边界不清晰 | 先保存认证轮换凭据，再按身份、用量、密钥和模型写入可用部分快照；分页/权限/安全验证失败保留旧密钥和能力，不执行缺失判定，不更新 `last_sync_at`，资源表保留最近成功时间和本次失败状态 | 平台站点数据库快照、后台同步、渠道缓存和路由模型索引 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`model/platform_site_resources.go`、SQLite 回归测试 |
 | 2026-09-27 | 平台站点代理出站与快照边界 | 平台站点同步没有使用渠道代理，代理导致的网络失败无法与资源快照状态分开核对 | 同步、认证和 2FA 使用渠道 Transport；代理配置错误在同步阶段单独记录，认证成功后的资源失败仍按资源类型落库并保留最近成功快照；不修改资源表结构 | 渠道 4 代理同步、渠道 5 认证诊断、平台站点资源缓存和后台任务 | `service/upstream_site.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go` |
+| 2026-09-29 | 补充旧版预览缓存与当前平台资源快照关系 | 文档只描述当前资源表和失败回退，未把旧版 `upstream-account-preview`、完整 Key 临时边界、加密存储、HMAC 指纹与后台同步方式放在同一条缓存链路中 | 明确旧版预览缓存 10 分钟 TTL 和一次性消费；当前凭据/完整 Key 加密保存并以指纹和外部 ID 匹配；手动、排队、后台同步共用站点锁；资源失败保留最近成功 Key、额度、过期时间、模型和能力快照 | 平台站点缓存、资源查询、路由候选和系统任务 | `service/upstream_site.go`、`model/upstream_channel.go`、`model/platform_site_resources.go`、旧版 `service/upstreamaccount/`、[`平台站点资源获取比较`](../platform-site-resource-acquisition-comparison.md) |
 
 ### 9.1 2026-09-26 实现校准
 

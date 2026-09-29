@@ -3,7 +3,7 @@
 > 文档状态：代码事实基线
 > 事实基线日期：2026-09-27
 > 主要代码来源：`model/routing_key.go`、`model/upstream_routing.go`、`middleware/distributor.go`、`service/channel_select.go`、`controller/channel-test.go`、`model/channel_cache.go`
-> 关联架构文档：[`docs/architecture/relay-routing-and-conversion.md`](architecture/relay-routing-and-conversion.md)、[`docs/architecture/provider-capability-matrix.md`](architecture/provider-capability-matrix.md)、[`docs/architecture/implementation-deviations.md`](architecture/implementation-deviations.md)
+> 关联架构文档：[`docs/architecture/relay-routing-and-conversion.md`](architecture/relay-routing-and-conversion.md)、[`docs/architecture/provider-capability-matrix.md`](architecture/provider-capability-matrix.md)、[`docs/architecture/implementation-deviations.md`](architecture/implementation-deviations.md)、[`平台站点资源获取比较`](platform-site-resource-acquisition-comparison.md)
 
 本文档整理 NexusTok 当前密钥调度策略、迁移前历史行为、统一 `key_id` 后的候选选择、重试切换、固定渠道/显式密钥测试、模型获取与管理员密钥配置，以及使用日志中密钥诊断字段的可见性。
 
@@ -338,6 +338,13 @@ Admin Key step-up 拒绝只标记资源为 `secure_verification_required`，不�
 为缺失；只有完整分页成功后才执行缺失判定。资源接口只返回掩码和管理员可见诊断
 字段，使用日志继续通过 `other.admin_info` 保持普通用户不可见。
 
+`GET /api/channel/:id/upstream-keys` 的当前实际响应还包含每条 Key 的 `UsedQuota`、
+`RemainQuota`、`ExpiresAt`、`Models`、`ModelsSynced`、`Status`、可路由状态和不可用
+原因；`KeyPreview` 仅为脱敏展示，完整 Secret 不返回。Sub2API 参考平台的
+`/api/v1/user/platform-quotas` 尚未被当前适配器调用，账号级模型也不能复制为所有
+子 Key；当前路由模型能力主要来自每条完整 Key 的 Relay `/v1/models` 或 `/models`
+探测和 Key 自身明确的模型限制。
+
 平台站点可以使用 `http://`、`localhost`、回环地址、私有 IPv4/IPv6 和内网 DNS
 地址。私有地址和 HTTP 仅由平台站点专用同步客户端放行，其他用户可控 URL 仍受
 全局 SSRF 规则约束。Sub2API 的管理地址与转发地址分开保存：管理接口使用
@@ -435,6 +442,7 @@ Admin Key step-up 拒绝只标记资源为 `secure_verification_required`，不�
 | 2026-09-26 | 平台站点资源同步补充 | 调度文档只描述站点总快照和子密钥能力，未记录资源来源与部分失败处理 | 补充 New API/Sub2API 资源接口、端点来源、管理/Relay 分离、安全验证失败和旧快照保留规则 | 平台站点同步、路由过滤、管理员诊断 | 参考项目路由、`service/upstream_site_adapters.go` 与资源模型设计核对 |
 | 2026-09-27 | NewAPI 类平台会话与资源失败回退 | Cookie 轮换、刷新会话和资源权限失败的调度影响未明确；部分分页失败可能被误解为密钥缺失 | 统一 CookieJar 优先级和 Dashboard Refresh 契约，认证成功后保存部分快照，完整分页前禁止缺失判定，并明确 `last_sync_at` 与管理员诊断边界 | NewAPI 派生平台密钥候选、模型能力、同步回退和日志可观测性 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`、平台站点专项文档 |
 | 2026-09-27 | 平台站点渠道代理出站 | 平台站点认证和资源同步未读取渠道代理，代理网络失败可能被误判为密钥不可用 | NewAPI/Sub2API 的管理面请求按渠道配置复用 Transport；认证成功后的资源失败继续保留最近成功密钥、模型、倍率和权重快照，代理配置错误单独诊断 | 渠道 4 代理同步、渠道 5 认证、平台站点路由候选和管理员可见错误 | `service/upstream_site.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go` |
+| 2026-09-29 | 校准平台站点 Key 资源与上游用量路由边界 | 文档没有集中说明管理端 `upstream-keys` 的额度/过期/模型字段、Sub2API 窗口额度缺口、账号级模型边界和父渠道 `UsedQuota` 来源 | 明确管理端返回 `UsedQuota`、`RemainQuota`、`ExpiresAt`、`Models`、`Status` 和脱敏 `KeyPreview`；完整 Secret 仍不返回；Sub2API 平台窗口额度未接入，账号级模型不能复制给所有 Key；父渠道 `UsedQuota` 来自平台同步上游累计用量 | 平台站点子密钥过滤、模型能力、额度展示、快照回退和路由调度 | `controller/upstream_channel.go`、`service/upstream_site.go`、`service/upstream_site_adapters.go`、[`平台站点资源获取比较`](platform-site-resource-acquisition-comparison.md) |
 
 ### 14.1 2026-09-26 实现校准
 

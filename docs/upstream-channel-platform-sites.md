@@ -3,7 +3,7 @@
 > 文档状态：代码事实基线
 > 事实基线日期：2026-09-27
 > 主要代码来源：`model/upstream_channel.go`、`model/routing_key.go`、`service/upstream_site.go`、`controller/upstream_channel.go`、`controller/channel-test.go`
-> 关联架构文档：[`docs/architecture/relay-routing-and-conversion.md`](architecture/relay-routing-and-conversion.md)、[`docs/architecture/provider-capability-matrix.md`](architecture/provider-capability-matrix.md)、[`docs/architecture/data-cache-and-background-jobs.md`](architecture/data-cache-and-background-jobs.md)
+> 关联架构文档：[`docs/architecture/relay-routing-and-conversion.md`](architecture/relay-routing-and-conversion.md)、[`docs/architecture/provider-capability-matrix.md`](architecture/provider-capability-matrix.md)、[`docs/architecture/data-cache-and-background-jobs.md`](architecture/data-cache-and-background-jobs.md)、[`平台站点资源获取比较`](platform-site-resource-acquisition-comparison.md)
 
 ## 1. 目标与范围
 
@@ -421,7 +421,7 @@ POST  /api/channel/:id/upstream-resources/sync
 
 不允许同时提交 `conversion_ratio` 和 `clear_conversion_ratio`。免费倍率密钥不允许设置权重覆盖；如果提交 `clear_weight` 或清除倍率覆盖后恢复为免费倍率，后端会自动清除不适用的权重覆盖并将权重固定为 `2000`。
 
-`GET /api/channel/:id/upstream-keys` 只返回管理员管理所需的脱敏字段：密钥 ID、父渠道 ID、外部 ID、名称、脱敏预览、模型列表、模型能力同步状态、密钥优先级、上游原始倍率、生效倍率、倍率覆盖、有效权重、自动权重、权重覆盖、状态、禁用摘要和同步时间。真实密钥、剩余额度、过期时间和最近使用时间不返回；这些字段只保留在后端模型中参与路由过滤。管理端模型列成功同步时只展示模型列表；模型尚未同步时显示不可用提示，不额外显示 `Synced`。
+`GET /api/channel/:id/upstream-keys` 返回管理员管理和资源诊断所需的字段：密钥 ID、父渠道 ID、外部 ID、名称、脱敏 `KeyPreview`、`Models`、`ModelsSynced`、`UsedQuota`、`RemainQuota`、`ExpiresAt`、优先级、上游原始倍率、生效倍率、倍率覆盖、有效权重、自动权重、权重覆盖、`Status`、禁用摘要、同步时间、最近使用时间、可路由状态和不可用原因。真实完整 Secret 不返回；`KeyPreview` 只用于脱敏展示，不能作为上游请求凭据。管理端模型列成功同步时只展示模型列表；模型尚未同步时显示不可用提示，不额外显示 `Synced`。
 
 `GET /api/channel/update_balance/:id` 对平台站点复用完整只读同步，保持顶层
 `success` 和 `balance` 兼容，并额外返回：
@@ -830,3 +830,4 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
 | 2026-09-26 | 修复渠道 2、4、5 同步回归 | 上游 HTML/安全验证/HTTP 200 业务失败和网络错误可能被归为响应格式错误或覆盖同步状态；密码登录存在兼容字段漂移 | 固定 New API/Sub2API 登录 DTO，恢复脱敏响应诊断和错误分类，限制 404/405 回退，失败保留最近成功快照并区分凭据错误与安全验证 | 平台站点认证、资源同步、快照、管理员诊断和路由可用性 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`、本机三套参考源核对 |
 | 2026-09-27 | 修复 NewAPI 类平台会话与资源同步 | Refresh Cookie、Session ID 和 Bearer Token 的真实 Dashboard 契约未在所有入口统一；Cookie 轮换、资源失败和管理/Relay 地址边界可能导致渠道 4、5 同步失败 | 统一 CookieJar/显式 Cookie 优先级和轮换持久化，严格区分现代 Bundle，按资源保存部分快照并限制 404/405 回退，诊断显示脱敏最终地址和资源状态 | NewAPI 及派生平台认证、刷新、身份/余额、密钥、模型、路由快照和管理员诊断 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go`、New API/Sub2API/all-api-hub 参考源 |
 | 2026-09-27 | 接入渠道代理与 NewAPI 错误分类 | 平台站点同步、密码登录和 2FA 没有读取渠道代理；通用客户端注入可能覆盖平台会话 CookieJar、超时和重定向策略；真实账号错误消息分类不完整 | 按渠道配置复用代理 Transport，保留平台会话策略和 Cookie 轮换；同步与 Auth Flow 统一使用代理；识别 `username or password`/封禁消息并保持认证、网络、安全验证和资源失败分层 | 渠道 4 代理同步、渠道 5 认证诊断、NewAPI/Sub2API 平台站点认证和资源请求 | `service/upstream_site.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go`；代理、CookieJar、Auth Flow 和同步回归 |
+| 2026-09-29 | 平台站点资源获取比较文档与管理端字段校准 | 专项文档将 `GET /api/channel/:id/upstream-keys` 描述为不返回额度、过期时间和最近使用时间，且没有链接旧版/参考源/当前实现的完整资源链路比较 | 明确该接口实际返回 `UsedQuota`、`RemainQuota`、`ExpiresAt`、`Models`、`ModelsSynced`、`Status`、可路由诊断和脱敏 `KeyPreview`；完整 Secret 仍不返回，并增加完整比较文档入口 | 平台站点资源查询、管理员诊断、额度和模型能力边界 | `controller/upstream_channel.go:75-104`、`controller/upstream_channel.go:667-710`、[`docs/platform-site-resource-acquisition-comparison.md`](platform-site-resource-acquisition-comparison.md) |

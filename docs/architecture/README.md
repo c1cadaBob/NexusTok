@@ -20,7 +20,8 @@
 5. [`tasks-and-plugins.md`](./tasks-and-plugins.md)：异步任务与 Sobek 插件边界。
 6. [`data-cache-and-background-jobs.md`](./data-cache-and-background-jobs.md)：数据库、缓存和后台任务。
 7. [`provider-capability-matrix.md`](./provider-capability-matrix.md)：渠道注册、Adaptor 和 Endpoint 能力矩阵。
-8. [`implementation-deviations.md`](./implementation-deviations.md)：可由代码直接证明的缺口和偏差登记。
+8. [`../platform-site-resource-acquisition-comparison.md`](../platform-site-resource-acquisition-comparison.md)：旧版备份、Sub2API/New API 参考源和当前 NexusTok 的平台站点资源获取链路与差异。
+9. [`implementation-deviations.md`](./implementation-deviations.md)：可由代码直接证明的缺口和偏差登记。
 
 ## 功能到文档的映射
 
@@ -30,6 +31,7 @@
 | 登录、Session、Token、OAuth、Passkey、TOTP | [`authentication-and-authorization.md`](./authentication-and-authorization.md) | [`authentication.md`](../authentication.md)、`middleware/`、`service/auth*`、`model/user_session.go` |
 | IP/用户/模型限流和并发 | [`authentication-and-authorization.md`](./authentication-and-authorization.md) | [`rate-limiting.md`](../rate-limiting.md)、`middleware/*limit*` |
 | 渠道、密钥、模型获取和路由 | [`relay-routing-and-conversion.md`](./relay-routing-and-conversion.md) | [`key-routing-strategy.md`](../key-routing-strategy.md)、[`upstream-channel-platform-sites.md`](../upstream-channel-platform-sites.md)、`middleware/distributor.go`、`model/upstream_routing.go` |
+| New API/Sub2API 平台站点资源链路 | [`../platform-site-resource-acquisition-comparison.md`](../platform-site-resource-acquisition-comparison.md) | [`upstream-channel-platform-sites.md`](../upstream-channel-platform-sites.md)、`service/upstream_site.go`、`service/upstream_site_adapters.go`、`controller/upstream_channel.go`、本机参考源和旧版备份 |
 | 新 Relay Format、Endpoint、请求转换 | [`relay-routing-and-conversion.md`](./relay-routing-and-conversion.md) | `router/relay-router.go`、`relaykit/`、`relay/channel/` |
 | 价格、倍率、表达式、额度 | [`billing-and-quota.md`](./billing-and-quota.md) | `pkg/billingexpr/expr.md`、`service/billing*.go`、`common/quota_math.go` |
 | 视频、音乐、异步任务和任务产物 | [`tasks-and-plugins.md`](./tasks-and-plugins.md) | `service/task_polling.go`、`model/task.go`、`router/task-router.go`、`router/video-router.go` |
@@ -92,3 +94,4 @@
 | 2026-09-27 | NewAPI 类平台渠道同步修复 | Dashboard Refresh Cookie、Session ID、Bearer Token、管理地址边界和资源失败回退未在索引中统一登记，渠道 4、5 的失败难以区分认证与资源权限 | 登记 CookieJar 优先级、现代 Bundle 严格校验、仅 404/405 兼容回退、认证成功后保存身份/余额及最近成功资源快照，并链接实现偏差和路由文档 | NewAPI 派生平台认证、资源同步、快照、路由和管理员诊断 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`docs/upstream-channel-platform-sites.md`、`docs/architecture/implementation-deviations.md` |
 | 2026-09-27 | 平台站点渠道代理接入 | 平台站点同步和 Auth Flow 未读取渠道代理，通用客户端注入可能覆盖平台会话 CookieJar、超时和重定向边界 | NewAPI/Sub2API 按渠道 `setting.proxy`、HTTP 协议和连接分片复用 Transport；平台会话策略保持不变，认证、网络、安全验证和资源失败继续分层 | 渠道 4 局域网代理同步、渠道 5 认证诊断、平台站点管理面请求 | `service/upstream_site.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go`、`docs/upstream-channel-platform-sites.md` |
 | 2026-09-27 | 按旧版协议校准 NewAPI 同步 | 当前 NewAPI Token 主分页使用零起始参数，旧版主请求顺序、批量 Key 补偿和核心成功边界未在总索引中明确 | 固定 `p=1&page_size=100` 一基分页、旧版登录字段和 status/self/groups/ratio/token/key 顺序；只在 404/405 回退，部分资源失败保留最近成功快照，账号级模型不复制给子密钥 | NewAPI 及派生平台站点同步、渠道状态和路由模型能力 | `service/upstream_site_adapters.go`、`service/upstream_site.go`、`service/upstream_site_test.go`、`docs/upstream-channel-platform-sites.md` |
+| 2026-09-29 | 增加平台站点资源获取链路索引 | 架构总索引只有平台站点专项设计和能力矩阵，无法直接定位旧版备份、参考平台真实路由与当前资源快照的逐项比较 | 增加平台站点资源获取比较文档，明确参考平台、旧版 NexusTok 和当前实现三类证据，并说明管理端额度、Key 模型和失败回退边界 | 平台站点认证、资源同步、Key 生命周期、模型能力和路由快照 | [`../platform-site-resource-acquisition-comparison.md`](../platform-site-resource-acquisition-comparison.md)、`service/upstream_site.go`、`controller/upstream_channel.go`、本机参考源静态核对 |
