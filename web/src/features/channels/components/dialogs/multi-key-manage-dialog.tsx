@@ -68,9 +68,9 @@ import {
 } from '../../lib'
 import type { KeyStatus, MultiKeyConfirmAction } from '../../types'
 import { useChannels } from '../channels-provider'
+import { NumericSpinnerInput } from '../numeric-spinner-input'
 import { StatisticsCard } from './multi-key-statistics-card'
 import { MultiKeyTableRowActions } from './multi-key-table-row-actions'
-import { NumericSpinnerInput } from '../numeric-spinner-input'
 
 type MultiKeyManageDialogProps = {
   open: boolean
@@ -217,11 +217,7 @@ function MultiKeySettingsDialog(props: MultiKeySettingsDialogProps) {
     if (!keyStatus) {
       return
     }
-    if (
-      !Number.isInteger(keyPriority) ||
-      keyPriority < 0 ||
-      keyPriority > 99
-    ) {
+    if (!Number.isInteger(keyPriority) || keyPriority < 0 || keyPriority > 99) {
       toast.error(t('Key priority must be between 0 and 99'))
       return
     }

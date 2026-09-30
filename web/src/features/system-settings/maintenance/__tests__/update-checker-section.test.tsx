@@ -237,7 +237,9 @@ describe('UpdateCheckerSection', () => {
     await waitFor(() => expect(mocks.applySystemUpdate).toHaveBeenCalledOnce())
     expect(await screen.findByText('42%')).toBeVisible()
 
-    expect(await screen.findByText('100%', {}, { timeout: 4_000 })).toBeVisible()
+    expect(
+      await screen.findByText('100%', {}, { timeout: 4_000 })
+    ).toBeVisible()
     expect(
       screen.getByText('Updated to v1.1.0. Restart required.')
     ).toBeVisible()
@@ -307,9 +309,7 @@ describe('UpdateCheckerSection', () => {
     expect(screen.getByText(/docker pull c1cadabob/)).toBeVisible()
     expect(screen.getByText(/SESSION_SECRET_FILE/)).toBeVisible()
     expect(screen.queryByText('hidden-value')).not.toBeInTheDocument()
-    expect(
-      screen.getByRole('button', { name: 'Apply update' })
-    ).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Apply update' })).toBeDisabled()
   })
 
   it('probes the shared status query after a scheduled restart', async () => {
@@ -332,11 +332,12 @@ describe('UpdateCheckerSection', () => {
     await user.click(
       within(dialog).getByRole('button', { name: 'Restart service' })
     )
-    await waitFor(() => expect(mocks.restartSystemUpdate).toHaveBeenCalledOnce())
-
-    await waitFor(
-      () => expect(mocks.statusQueryFn).toHaveBeenCalled(),
-      { timeout: 4_000 }
+    await waitFor(() =>
+      expect(mocks.restartSystemUpdate).toHaveBeenCalledOnce()
     )
+
+    await waitFor(() => expect(mocks.statusQueryFn).toHaveBeenCalled(), {
+      timeout: 4_000,
+    })
   })
 })

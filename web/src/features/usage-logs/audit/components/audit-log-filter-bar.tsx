@@ -1,3 +1,6 @@
+import type { Table } from '@tanstack/react-table'
+import { useTranslation } from 'react-i18next'
+
 /*
 Copyright (C) 2023-2026 c1cadaBob
 
@@ -17,10 +20,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cadabob.dev
 */
 import { Combobox } from '@/components/ui/combobox'
-import type { Table } from '@tanstack/react-table'
-import { useTranslation } from 'react-i18next'
-
-
 
 import { CompactDateTimeRangePicker } from '../../components/compact-date-time-range-picker'
 import {
@@ -39,14 +38,14 @@ function AuditFilterSelect(props: {
   return (
     <LogsFilterField>
       <Combobox
-options={props.options}
-value={props.value}
-onValueChange={(value) => {
+        options={props.options}
+        value={props.value}
+        onValueChange={(value) => {
           if (value !== null) props.onChange(value)
         }}
-aria-label={props.label}
-className='w-full'
-/>
+        aria-label={props.label}
+        className='w-full'
+      />
     </LogsFilterField>
   )
 }

@@ -10,22 +10,19 @@ import {
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
-import { EmptyState } from '@/components/empty-state'
-import { ErrorState } from '@/components/error-state'
-import { LoadingState } from '@/components/loading-state'
 import {
   StaticDataTable,
   type StaticDataTableColumn,
 } from '@/components/data-table'
+import { EmptyState } from '@/components/empty-state'
+import { ErrorState } from '@/components/error-state'
+import { LoadingState } from '@/components/loading-state'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import { handleServerError } from '@/lib/handle-server-error'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
-import {
-  getPlatformSiteResources,
-  syncPlatformSiteResources,
-} from '../api'
+import { getPlatformSiteResources, syncPlatformSiteResources } from '../api'
 import type {
   PlatformSiteResourceEndpointCapability,
   PlatformSiteResourceGroup,
@@ -75,9 +72,7 @@ function keyStatusLabel(key: UpstreamKey, t: (key: string) => string): string {
   return key.disabled_reason || t('Unavailable')
 }
 
-function ResourceSyncList(props: {
-  syncs: PlatformSiteResourceSync[]
-}) {
+function ResourceSyncList(props: { syncs: PlatformSiteResourceSync[] }) {
   const { t } = useTranslation()
   if (props.syncs.length === 0) return null
 
@@ -271,9 +266,7 @@ function EndpointCapabilityTable(props: {
         header: t('Supported'),
         cell: (capability) => (
           <StatusBadge
-            label={
-              capability.supported ? t('Supported') : t('Unsupported')
-            }
+            label={capability.supported ? t('Supported') : t('Unsupported')}
             variant={capability.supported ? 'success' : 'neutral'}
             copyable={false}
           />
@@ -283,7 +276,7 @@ function EndpointCapabilityTable(props: {
         id: 'source',
         header: t('Source data'),
         cell: (capability) => (
-          <span className='break-all text-xs'>
+          <span className='text-xs break-all'>
             {capability.source_data || '-'}
           </span>
         ),
@@ -316,7 +309,10 @@ export function PlatformSiteResourcesPanel(
     mutationFn: () => syncPlatformSiteResources(props.channelId),
     onSuccess: async (response) => {
       if (!response.success) {
-        handleServerError(response, t('Failed to synchronize platform resources'))
+        handleServerError(
+          response,
+          t('Failed to synchronize platform resources')
+        )
         return
       }
       await Promise.all([
@@ -349,7 +345,9 @@ export function PlatformSiteResourcesPanel(
 
   const resources = resourcesQuery.data?.data
   if (!resources) {
-    return <EmptyState className='min-h-0 py-8' title={t('No platform resources')} />
+    return (
+      <EmptyState className='min-h-0 py-8' title={t('No platform resources')} />
+    )
   }
 
   return (
@@ -360,7 +358,8 @@ export function PlatformSiteResourcesPanel(
           <div className='min-w-0'>
             <h3 className='font-medium'>{t('Platform resources')}</h3>
             <p className='text-muted-foreground text-xs'>
-              {t('Last successful sync')}: {formatTimestamp(resources.last_sync_at)}
+              {t('Last successful sync')}:{' '}
+              {formatTimestamp(resources.last_sync_at)}
             </p>
           </div>
         </div>
@@ -416,7 +415,9 @@ export function PlatformSiteResourcesPanel(
           </p>
         </div>
         <div>
-          <span className='text-muted-foreground text-xs'>{t('Sync status')}</span>
+          <span className='text-muted-foreground text-xs'>
+            {t('Sync status')}
+          </span>
           <StatusBadge
             label={resources.sync_status}
             variant={statusVariant(resources.sync_status)}
@@ -425,18 +426,21 @@ export function PlatformSiteResourcesPanel(
         </div>
       </div>
 
-      {resources.auth_status &&
-        resources.auth_status !== 'authenticated' && (
-          <div className='border-warning/40 bg-warning/10 flex gap-2 rounded-md border p-3 text-sm'>
-            <ShieldAlert className='text-warning size-4 shrink-0' aria-hidden='true' />
-            <div>
-              <p className='font-medium'>{resources.auth_status}</p>
-              <p className='text-muted-foreground text-xs'>
-                {resources.auth_status_reason || t('Reauthentication is required.')}
-              </p>
-            </div>
+      {resources.auth_status && resources.auth_status !== 'authenticated' && (
+        <div className='border-warning/40 bg-warning/10 flex gap-2 rounded-md border p-3 text-sm'>
+          <ShieldAlert
+            className='text-warning size-4 shrink-0'
+            aria-hidden='true'
+          />
+          <div>
+            <p className='font-medium'>{resources.auth_status}</p>
+            <p className='text-muted-foreground text-xs'>
+              {resources.auth_status_reason ||
+                t('Reauthentication is required.')}
+            </p>
           </div>
-        )}
+        </div>
+      )}
 
       {resources.identity && (
         <div className='grid gap-2'>
@@ -444,8 +448,14 @@ export function PlatformSiteResourcesPanel(
             {t('Platform identity')}
           </h4>
           <div className='grid gap-2 text-sm sm:grid-cols-3'>
-            <span>{resources.identity.display_name || resources.identity.username || '-'}</span>
-            <span>{resources.identity.email || resources.identity.username || '-'}</span>
+            <span>
+              {resources.identity.display_name ||
+                resources.identity.username ||
+                '-'}
+            </span>
+            <span>
+              {resources.identity.email || resources.identity.username || '-'}
+            </span>
             <span>
               {resources.identity.current_group || '-'}{' '}
               {resources.identity.quota_unit
@@ -471,7 +481,10 @@ export function PlatformSiteResourcesPanel(
 
       <div className='grid gap-2'>
         <div className='flex items-center gap-2'>
-          <KeyRound className='text-muted-foreground size-4' aria-hidden='true' />
+          <KeyRound
+            className='text-muted-foreground size-4'
+            aria-hidden='true'
+          />
           <h4 className='text-muted-foreground text-xs font-medium tracking-wide uppercase'>
             {t('Upstream keys')}
           </h4>
@@ -495,7 +508,10 @@ export function PlatformSiteResourcesPanel(
               [t('Admin'), resources.endpoint.admin_url],
             ].map(([label, value]) => (
               <div key={label} className='flex min-w-0 items-start gap-2'>
-                <ExternalLink className='text-muted-foreground mt-0.5 size-3 shrink-0' aria-hidden='true' />
+                <ExternalLink
+                  className='text-muted-foreground mt-0.5 size-3 shrink-0'
+                  aria-hidden='true'
+                />
                 <span className='text-muted-foreground'>{label}:</span>
                 <span className='min-w-0 break-all'>{value || '-'}</span>
               </div>
@@ -504,7 +520,8 @@ export function PlatformSiteResourcesPanel(
           {resources.endpoint.capabilities.length > 0 && (
             <div className='grid gap-2'>
               <div className='text-muted-foreground text-xs'>
-                {t('Endpoint capabilities')}: {resources.endpoint.capabilities.length}
+                {t('Endpoint capabilities')}:{' '}
+                {resources.endpoint.capabilities.length}
               </div>
               <EndpointCapabilityTable
                 capabilities={resources.endpoint.capabilities}

@@ -262,13 +262,19 @@ it('keeps cancellations silent even after wrapping them in another error', () =>
 
 it('does not treat the active-session limit as an internal server error', () => {
   const client = createAppQueryClient()
-  const sessionLimit = new AxiosError('Conflict', 'ERR_BAD_REQUEST', undefined, undefined, {
-    data: { code: 'AUTH_SESSION_LIMIT' },
-    status: 409,
-    statusText: 'Conflict',
-    headers: {},
-    config: { headers: new AxiosHeaders() },
-  })
+  const sessionLimit = new AxiosError(
+    'Conflict',
+    'ERR_BAD_REQUEST',
+    undefined,
+    undefined,
+    {
+      data: { code: 'AUTH_SESSION_LIMIT' },
+      status: 409,
+      statusText: 'Conflict',
+      headers: {},
+      config: { headers: new AxiosHeaders() },
+    }
+  )
 
   const query = client.getQueryCache().build(client, {
     queryKey: ['auth-session-limit'],

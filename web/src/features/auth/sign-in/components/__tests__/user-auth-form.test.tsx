@@ -95,8 +95,10 @@ describe('UserAuthForm', () => {
   })
 
   it('快速连续提交时只发送一次登录请求', async () => {
-    let resolveLogin: (value: { success: boolean; data: object }) => void =
-      () => undefined
+    let resolveLogin: (value: {
+      success: boolean
+      data: object
+    }) => void = () => undefined
     login.mockReturnValue(
       new Promise((resolve) => {
         resolveLogin = resolve

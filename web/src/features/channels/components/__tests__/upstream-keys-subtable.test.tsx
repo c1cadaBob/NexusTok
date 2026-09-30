@@ -194,9 +194,7 @@ test('平台站点子密钥紧凑展示密钥相关列并隐藏权重括号', ()
     'min-w-[334.95px]',
     'max-w-[334.95px]'
   )
-  const modelsColumn = document.querySelector(
-    'col[data-column-id="models"]'
-  )
+  const modelsColumn = document.querySelector('col[data-column-id="models"]')
   expect(modelsColumn).not.toBeNull()
   expect(modelsColumn).toHaveStyle({
     width: '334.95px',

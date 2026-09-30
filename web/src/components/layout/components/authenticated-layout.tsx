@@ -1,3 +1,4 @@
+import { CommandMenu } from '@/components/command-menu'
 /*
 Copyright (C) 2023-2026 c1cadaBob
 
@@ -37,6 +38,7 @@ export function AuthenticatedLayout(props: AuthenticatedLayoutProps) {
   return (
     <LayoutProvider>
       <SearchProvider>
+        <CommandMenu />
         <SidebarProvider defaultOpen={defaultOpen} className='flex-col'>
           <SkipToMain />
           <AppHeader />

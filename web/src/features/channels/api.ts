@@ -271,10 +271,7 @@ export async function patchUpstreamKey(
   channelId: number,
   keyId: number,
   data: Partial<
-    Pick<
-      UpstreamKey,
-      'key_priority' | 'conversion_ratio' | 'weight_override'
-    >
+    Pick<UpstreamKey, 'key_priority' | 'conversion_ratio' | 'weight_override'>
   > & {
     clear_conversion_ratio?: boolean
     clear_weight?: boolean

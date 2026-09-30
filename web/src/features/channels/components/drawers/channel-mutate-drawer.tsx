@@ -190,7 +190,6 @@ import {
   nextTaskPluginBaseUrl,
 } from '../../lib/task-plugin-base-url'
 import type { Channel } from '../../types'
-import { PlatformSiteResourcesPanel } from '../platform-site-resources-panel'
 import { ChannelTypeLogo } from '../channel-type-badge'
 import { useChannels } from '../channels-provider'
 import { AdvancedCustomEditorDialog } from '../dialogs/advanced-custom-editor-dialog'
@@ -202,6 +201,7 @@ import {
 import { ParamOverrideEditorDialog } from '../dialogs/param-override-editor-dialog'
 import { StatusCodeRiskDialog } from '../dialogs/status-code-risk-dialog'
 import { ModelMappingEditor } from '../model-mapping-editor'
+import { PlatformSiteResourcesPanel } from '../platform-site-resources-panel'
 import { PlatformSiteFields } from './platform-site-fields'
 import {
   ChannelAdvancedSection,
@@ -999,8 +999,9 @@ export function ChannelMutateDrawer({
     (!providerRequiresOther || currentOther?.trim())
   )
   const modelsComplete = Boolean(
-    (currentUpstreamKind === 'platform_site' || currentModelsArray.length > 0) &&
-      currentGroups?.length
+    (currentUpstreamKind === 'platform_site' ||
+      currentModelsArray.length > 0) &&
+    currentGroups?.length
   )
   const requiredCompletedCount = [
     identityComplete,
@@ -1484,13 +1485,7 @@ export function ChannelMutateDrawer({
 
     setCurrentUpstreamKey(null)
     setFetchModelsDialogOpen(true)
-  }, [
-    isEditing,
-    canEditSensitive,
-    form,
-    setCurrentUpstreamKey,
-    t,
-  ])
+  }, [isEditing, canEditSensitive, form, setCurrentUpstreamKey, t])
 
   const formPreviewFetcher = useCallback(async (): Promise<string[]> => {
     if (!canEditSensitive) {
@@ -2358,9 +2353,7 @@ export function ChannelMutateDrawer({
                         {isEditing &&
                           currentUpstreamKind === 'platform_site' &&
                           channelId && (
-                            <PlatformSiteResourcesPanel
-                              channelId={channelId}
-                            />
+                            <PlatformSiteResourcesPanel channelId={channelId} />
                           )}
 
                         <div

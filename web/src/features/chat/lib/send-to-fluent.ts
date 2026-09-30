@@ -21,7 +21,7 @@ export function sendToFluent(apiKey: string, serverAddress?: string): boolean {
     return false
   }
 
-  const container = document.getElementById('fluent-nexustok-container')
+  const container = document.querySelector('#fluent-nexustok-container')
   if (!container) {
     return false
   }

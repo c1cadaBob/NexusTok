@@ -1,4 +1,3 @@
-import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import {
   ChevronDown,
@@ -8,10 +7,12 @@ import {
   RefreshCw,
   ShieldCheck,
 } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 import { useFormContext, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { Button } from '@/components/ui/button'
 import {
   FormControl,
   FormDescription,
@@ -21,7 +22,6 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
-import { Button } from '@/components/ui/button'
 import {
   Select,
   SelectContent,
@@ -292,7 +292,9 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
         shouldValidate: true,
       })
       authFlowRef.current = flow.flow_id
-      setAuthFlowStatus(flow.status === 'two_factor_required' ? flow.status : 'authenticated')
+      setAuthFlowStatus(
+        flow.status === 'two_factor_required' ? flow.status : 'authenticated'
+      )
       form.setValue('platform_site_username', '')
       form.setValue('platform_site_password', '')
       if (flow.status === 'two_factor_required') {
@@ -354,7 +356,11 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
   }, [captureStatus, onCaptureCompleted, t])
 
   function handleStartCapture() {
-    if (props.disabled || captureMutation.isPending || !(baseURL || '').trim()) {
+    if (
+      props.disabled ||
+      captureMutation.isPending ||
+      !(baseURL || '').trim()
+    ) {
       return
     }
     try {
@@ -719,10 +725,7 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
                 }
               >
                 {verifyAuthFlowMutation.isPending && (
-                  <Loader2
-                    className='size-4 animate-spin'
-                    aria-hidden='true'
-                  />
+                  <Loader2 className='size-4 animate-spin' aria-hidden='true' />
                 )}
                 {t('Verify two-factor code')}
               </Button>
@@ -767,17 +770,18 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
               )}
               {t('Capture upstream login state')}
             </Button>
-            {showHandoffFallback && (handoffURL || captureStatus?.handoff_url) && (
-              <Button
-                type='button'
-                variant='outline'
-                size='sm'
-                onClick={handleOpenHandoff}
-              >
-                <ExternalLink className='size-4' aria-hidden='true' />
-                {t('Open upstream capture page')}
-              </Button>
-            )}
+            {showHandoffFallback &&
+              (handoffURL || captureStatus?.handoff_url) && (
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='sm'
+                  onClick={handleOpenHandoff}
+                >
+                  <ExternalLink className='size-4' aria-hidden='true' />
+                  {t('Open upstream capture page')}
+                </Button>
+              )}
             {captureStatus?.helper_install_url && (
               <Button
                 type='button'
@@ -803,17 +807,15 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
                 onClick={() => void captureStatusQuery.refetch()}
                 disabled={captureStatusQuery.isFetching}
               >
-                <RefreshCw
-                  className='size-4'
-                  aria-hidden='true'
-                />
+                <RefreshCw className='size-4' aria-hidden='true' />
                 {t('Refresh capture status')}
               </Button>
             )}
           </div>
           {captureStatus?.status === 'failed' && (
             <p className='text-destructive text-xs'>
-              {captureStatus.message || t('Upstream login state capture failed')}
+              {captureStatus.message ||
+                t('Upstream login state capture failed')}
             </p>
           )}
           {captureStatus?.summary && (
@@ -824,7 +826,8 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
               </span>
               {captureStatus.summary.access_token_masked && (
                 <span>
-                  {t('Access token')}: {captureStatus.summary.access_token_masked}
+                  {t('Access token')}:{' '}
+                  {captureStatus.summary.access_token_masked}
                 </span>
               )}
               {captureStatus.summary.refresh_token_present && (
@@ -838,7 +841,8 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
               )}
               {captureStatus.summary.token_expires_at && (
                 <span>
-                  {t('Token expires')}: {new Date(
+                  {t('Token expires')}:{' '}
+                  {new Date(
                     captureStatus.summary.token_expires_at * 1000
                   ).toLocaleString()}
                 </span>

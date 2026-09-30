@@ -378,7 +378,9 @@ test('提交时仅在手动覆盖后发送平台转换倍率', async () => {
 test('高级访问令牌认证显示令牌输入框而不是脚本采集入口', () => {
   render(<PlatformSiteForm authType='access_token' />)
 
-  expect(screen.queryByText('Browser login state capture')).not.toBeInTheDocument()
+  expect(
+    screen.queryByText('Browser login state capture')
+  ).not.toBeInTheDocument()
   expect(screen.getByLabelText('Access token')).toBeInTheDocument()
   expect(screen.getByLabelText('Dashboard Session ID')).toBeInTheDocument()
   expect(screen.getByLabelText('Cookie')).toBeInTheDocument()

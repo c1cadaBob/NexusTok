@@ -68,9 +68,7 @@ function response(
   return { success: true, data }
 }
 
-function upstreamKey(
-  overrides: Partial<UpstreamKey> = {}
-): UpstreamKey {
+function upstreamKey(overrides: Partial<UpstreamKey> = {}): UpstreamKey {
   return {
     id: 7,
     key_id: 1007,
@@ -269,10 +267,10 @@ test('安全验证状态显示管理员提示且同步按钮在 pending 时禁�
 
   renderPanel()
 
-  const syncButton = await screen.findByRole('button', { name: 'Sync resources' })
-  expect(
-    screen.getByText('secure_verification_required')
-  ).toBeInTheDocument()
+  const syncButton = await screen.findByRole('button', {
+    name: 'Sync resources',
+  })
+  expect(screen.getByText('secure_verification_required')).toBeInTheDocument()
   await user.click(syncButton)
   expect(syncButton).toBeDisabled()
 
@@ -286,17 +284,15 @@ test('资源为空列表时仍保留表格可访问表头和空内容', async ()
     throw new Error('endpoint fixture is required')
   }
   vi.mocked(channelsApi.getPlatformSiteResources).mockResolvedValue(
-    response(
-      {
-        ...baseResources,
-        groups: [],
-        keys: [],
-        endpoint: {
-          ...baseResources.endpoint,
-          capabilities: [],
-        },
-      }
-    )
+    response({
+      ...baseResources,
+      groups: [],
+      keys: [],
+      endpoint: {
+        ...baseResources.endpoint,
+        capabilities: [],
+      },
+    })
   )
 
   renderPanel()

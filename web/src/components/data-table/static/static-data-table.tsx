@@ -28,9 +28,7 @@ import {
 } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
 
-import {
-  getPinnedColumnClassName,
-} from '../core/column-pinning'
+import { getPinnedColumnClassName } from '../core/column-pinning'
 import { TruncatedCell } from '../core/truncated-cell'
 import type { DataTablePinnedColumn } from '../core/types'
 import { staticDataTableClassNames } from './static-data-table-classnames'

@@ -1,22 +1,3 @@
-/*
-Copyright (C) 2023-2026 c1cadaBob
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU Affero General Public License as
-published by the Free Software Foundation, either version 3 of the
-License, or (at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU Affero General Public License for more details.
-
-You should have received a copy of the GNU Affero General Public License
-along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-For commercial licensing, please contact support@c1cadabob.dev
-*/
-import { Combobox } from '@/components/ui/combobox'
 import {
   ArrowDown,
   ArrowDownToLine,
@@ -49,6 +30,25 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
+/*
+Copyright (C) 2023-2026 c1cadaBob
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@c1cadabob.dev
+*/
+import { Combobox } from '@/components/ui/combobox'
 import { Input } from '@/components/ui/input'
 import {
   Popover,
@@ -58,7 +58,14 @@ import {
   PopoverTitle,
   PopoverTrigger,
 } from '@/components/ui/popover'
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
@@ -718,15 +725,15 @@ export function AdvancedCustomEditorDialog({
             </div>
             <div className='flex flex-wrap gap-2'>
               <Combobox
-options={availableIncomingPathOptions}
-value=''
-onValueChange={(incomingPath) => {
+                options={availableIncomingPathOptions}
+                value=''
+                onValueChange={(incomingPath) => {
                   if (typeof incomingPath === 'string') addRoute(incomingPath)
                 }}
-disabled={availableIncomingPathOptions.length === 0}
-className='w-full'
-placeholder={t('Add route')}
-/>
+                disabled={availableIncomingPathOptions.length === 0}
+                className='w-full'
+                placeholder={t('Add route')}
+              />
               <Select
                 value={null}
                 onValueChange={(value) => {
@@ -1169,16 +1176,19 @@ function RouteGroupEditor({
               ) : null}
             </div>
             <Combobox
-options={ADVANCED_CUSTOM_INCOMING_PATH_OPTIONS.map((option) => ({
-  ...option,
-  description: option.value,
-  disabled: (option.value !== incomingPath && usedIncomingPaths.has(option.value)) ||
-    (option.value === ADVANCED_CUSTOM_MODEL_LIST_PATH && group.routeRows.length > 1),
-}))}
-value={incomingPath}
-onValueChange={onIncomingPathChange}
-className='h-9 max-w-full lg:max-w-[420px]'
-/>
+              options={ADVANCED_CUSTOM_INCOMING_PATH_OPTIONS.map((option) => ({
+                ...option,
+                description: option.value,
+                disabled:
+                  (option.value !== incomingPath &&
+                    usedIncomingPaths.has(option.value)) ||
+                  (option.value === ADVANCED_CUSTOM_MODEL_LIST_PATH &&
+                    group.routeRows.length > 1),
+              }))}
+              value={incomingPath}
+              onValueChange={onIncomingPathChange}
+              className='h-9 max-w-full lg:max-w-[420px]'
+            />
           </div>
         </div>
       ) : null}

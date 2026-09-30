@@ -52,11 +52,7 @@ import {
   rollbackSystemUpdate,
 } from '../api'
 import { SettingsSection } from '../components/settings-section'
-import type {
-  SystemTask,
-  SystemUpdateInfo,
-  SystemUpdateTask,
-} from '../types'
+import type { SystemTask, SystemUpdateInfo, SystemUpdateTask } from '../types'
 import {
   getSystemUpdatePhaseLabel,
   getSystemUpdateProgress,
@@ -78,9 +74,7 @@ const RESTART_PROBE_TIMEOUT_MS = 60_000
 export function UpdateCheckerSection(props: UpdateCheckerSectionProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
-  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(
-    null
-  )
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null)
   const [releaseDialogOpen, setReleaseDialogOpen] = useState(false)
   const [trackedTaskId, setTrackedTaskId] = useState<string | null>(null)
   const [restartProbing, setRestartProbing] = useState(false)
@@ -102,9 +96,8 @@ export function UpdateCheckerSection(props: UpdateCheckerSectionProps) {
   const currentUpdateTaskQuery = useQuery({
     queryKey: ['system-update', 'current-task', 'system_update'],
     queryFn: async () => {
-      const response = await getCurrentSystemTask<SystemUpdateTask>(
-        'system_update'
-      )
+      const response =
+        await getCurrentSystemTask<SystemUpdateTask>('system_update')
       if (!response.success) {
         throw new Error(response.message || t('Failed to load system tasks'))
       }
@@ -118,9 +111,8 @@ export function UpdateCheckerSection(props: UpdateCheckerSectionProps) {
   const currentRollbackTaskQuery = useQuery({
     queryKey: ['system-update', 'current-task', 'system_rollback'],
     queryFn: async () => {
-      const response = await getCurrentSystemTask<SystemUpdateTask>(
-        'system_rollback'
-      )
+      const response =
+        await getCurrentSystemTask<SystemUpdateTask>('system_rollback')
       if (!response.success) {
         throw new Error(response.message || t('Failed to load system tasks'))
       }
@@ -242,7 +234,9 @@ export function UpdateCheckerSection(props: UpdateCheckerSectionProps) {
   async function invalidateSystemUpdateQueries() {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['system-update'] }),
-      queryClient.invalidateQueries({ queryKey: ['system-info', 'system-tasks'] }),
+      queryClient.invalidateQueries({
+        queryKey: ['system-info', 'system-tasks'],
+      }),
     ])
   }
 
@@ -289,7 +283,9 @@ export function UpdateCheckerSection(props: UpdateCheckerSectionProps) {
     }
     void Promise.all([
       queryClient.invalidateQueries({ queryKey: ['system-update'] }),
-      queryClient.invalidateQueries({ queryKey: ['system-info', 'system-tasks'] }),
+      queryClient.invalidateQueries({
+        queryKey: ['system-info', 'system-tasks'],
+      }),
     ])
   }, [currentTask, queryClient, t, taskActive])
 
@@ -302,7 +298,9 @@ export function UpdateCheckerSection(props: UpdateCheckerSectionProps) {
     info?.release_status === 'none'
       ? t('No release published')
       : info?.latest_version || t('Unknown')
-  const uptime = props.startTime ? formatTimestamp(props.startTime) : t('Unknown')
+  const uptime = props.startTime
+    ? formatTimestamp(props.startTime)
+    : t('Unknown')
   const statusLabel = getUpdateStatusLabel(info, t)
   const statusVariant = getStatusBadgeVariant(info)
   const releaseNotesAvailable = Boolean(info?.release_info?.body)
@@ -407,7 +405,10 @@ export function UpdateCheckerSection(props: UpdateCheckerSectionProps) {
                   {checkMutation.isPending ? (
                     <Spinner data-icon='inline-start' aria-hidden='true' />
                   ) : (
-                    <RefreshCcwIcon data-icon='inline-start' aria-hidden='true' />
+                    <RefreshCcwIcon
+                      data-icon='inline-start'
+                      aria-hidden='true'
+                    />
                   )}
                   {checkMutation.isPending
                     ? t('Checking updates...')
@@ -447,7 +448,9 @@ export function UpdateCheckerSection(props: UpdateCheckerSectionProps) {
                   ) : (
                     <PowerIcon data-icon='inline-start' aria-hidden='true' />
                   )}
-                  {restartProbing ? t('Waiting for restart') : t('Restart service')}
+                  {restartProbing
+                    ? t('Waiting for restart')
+                    : t('Restart service')}
                 </Button>
               </div>
             </div>
@@ -625,9 +628,7 @@ function TaskProgressPanel(props: {
               {props.task.task_id}
             </div>
           </div>
-          <Badge
-            variant={getTaskStatusVariant(props.task.status)}
-          >
+          <Badge variant={getTaskStatusVariant(props.task.status)}>
             {props.t(props.task.status)}
           </Badge>
         </div>
@@ -644,7 +645,9 @@ function TaskProgressPanel(props: {
           {state?.downloaded_bytes ? (
             <div className='text-muted-foreground text-xs'>
               {formatBytes(state.downloaded_bytes)}
-              {state.total_bytes ? ` / ${formatBytes(state.total_bytes)}` : null}
+              {state.total_bytes
+                ? ` / ${formatBytes(state.total_bytes)}`
+                : null}
             </div>
           ) : null}
         </div>
@@ -672,7 +675,7 @@ function ManualCommandPanel(props: {
   t: ReturnType<typeof useTranslation>['t']
 }) {
   return (
-    <div className='mt-4 rounded-lg border bg-muted/30 p-4'>
+    <div className='bg-muted/30 mt-4 rounded-lg border p-4'>
       <div className='flex items-center justify-between gap-3'>
         <div className='text-sm font-medium'>{props.title}</div>
         <CopyButton
@@ -682,7 +685,7 @@ function ManualCommandPanel(props: {
           aria-label={props.t('Copy command')}
         />
       </div>
-      <pre className='mt-3 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md bg-background p-3 font-mono text-xs'>
+      <pre className='bg-background mt-3 max-h-72 overflow-auto rounded-md p-3 font-mono text-xs break-words whitespace-pre-wrap'>
         {props.command}
       </pre>
     </div>

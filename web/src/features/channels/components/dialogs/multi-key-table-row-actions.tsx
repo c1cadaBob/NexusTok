@@ -1,3 +1,4 @@
+import { Pencil } from 'lucide-react'
 /*
 Copyright (C) 2023-2026 c1cadaBob
 
@@ -17,7 +18,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@c1cadabob.dev
 */
 import { useTranslation } from 'react-i18next'
-import { Pencil } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 

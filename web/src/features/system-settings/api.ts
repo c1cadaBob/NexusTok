@@ -81,9 +81,9 @@ export async function getSystemTask(taskId: string) {
   return res.data
 }
 
-export async function getCurrentSystemTask<TTask extends SystemTask = SystemTask>(
-  taskType: string
-) {
+export async function getCurrentSystemTask<
+  TTask extends SystemTask = SystemTask,
+>(taskType: string) {
   const res = await api.get<SystemTaskResponse<TTask | null>>(
     '/api/system-task/current',
     {

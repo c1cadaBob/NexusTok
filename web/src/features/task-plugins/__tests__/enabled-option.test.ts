@@ -18,10 +18,7 @@ For commercial licensing, please contact support@c1cadabob.dev
 */
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
-import {
-  getTaskPluginEnabledOption,
-  setTaskPluginEnabledOption,
-} from '../api'
+import { getTaskPluginEnabledOption, setTaskPluginEnabledOption } from '../api'
 
 const { get, put } = vi.hoisted(() => ({
   get: vi.fn(),
