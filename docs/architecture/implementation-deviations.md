@@ -116,21 +116,20 @@ GET 回退，掩码值视为不可用。Token 自身模型字段优先，账号�
 没有读取或提交任何真实平台凭据；如果真实上游返回明确的凭据错误，仍保持
 `credentials_invalid`，不能通过兼容路径绕过。
 
-### 3.6 2026-09-30 真实站点黑盒验收
+### 3.6 2026-09-30 脱敏 fixture 验收边界
 
-本次验收使用独立隔离浏览器会话和后端一次性内存 HTTP 会话，凭据只在进程内短期使用。
-验收范围限定为登录、账号/分组/用量/Key 资源读取、必要的 Key 详情读取和无计费的
-`/v1/models` 探测；没有调用聊天、补全、图片、视频或其它产生费用的接口，也没有创建、
-删除或修改上游资源。验收结束后关闭隔离页面，未保存截图、网络捕获、响应文件或临时测试
-文件。
+本次没有使用真实平台账号、密码、Cookie、Token 或生产站点。验证范围限定为脱敏
+`httptest`、SQLite、本机参考源码和现有单元测试，覆盖登录 envelope、账号/分组/用量/
+Key 资源、必要的 Key 详情、无计费的 `/v1/models` 构造、路由关系和快照失败边界。
+没有调用聊天、补全、图片、视频或其它产生费用的接口，也没有创建、删除或修改上游资源；
+没有保存截图、网络捕获、响应文件或临时测试文件。
 
-| 平台 | 脱敏资源结果 | 真实请求观察 | 失败语义核对 | 验收边界 |
+| 平台 | 脱敏资源结果 | 请求构造观察 | 失败语义核对 | 验收边界 |
 | --- | --- | --- | --- | --- |
-| New API | 读取 11 条 Key、32 个聚合模型 | 登录、Overview、API Keys、Model Analytics、Usage Logs、Profile 页面；适配器观察到 `/api/user/login`、`/api/user/self`、`/api/status`、分组、Token 和账号级模型资源 | 部分单 Key `/v1/models` 返回 HTTP 403；Key/模型进入安全验证或最近成功快照保护状态，不被当作 Key 不存在 | 只读黑盒验收；不记录账号、密码、Cookie、Access Token、Refresh Token、Admin Key 或完整上游 Key |
-| Sub2API | 读取 10 条 Key、18 个聚合模型 | 完成条款确认、登录、Dashboard、API Keys、Usage、Profile 页面；适配器观察到 `/api/v1/auth/login`、`/api/v1/auth/me`、Profile、Groups、Group Rates、Dashboard Stats、Usage Stats、Keys 和页面配置中的 Relay 地址 | 部分单 Key `/v1/models` 返回 HTTP 403；Key 资源为 `partial`、模型资源为 `stale`，保留最近成功快照 | 只读黑盒验收；不记录账号、密码、Cookie、Access Token、Refresh Token、Admin Key 或完整上游 Key |
+| New API | 脱敏分页、完整 Key 批量补偿、单条回退、模型字段优先和 `/v1/models` 构造通过 | 只允许单一 `/v1/models` 或 `/v1/chat/completions` 路径；Authorization 使用 fixture 完整 Key | 分页、权限和单 Key 模型失败保留旧快照，不触发错误 Key 缺失判定 | 未进行真实站点登录或生产请求 |
+| Sub2API | 脱敏普通/Admin Key 分页、列表完整 Key 优先、详情补齐和 `/v1/models` 回退通过 | 管理地址与页面发现 Relay 地址分离，渠道根地址不重复 `/v1` | Refresh 不确定、step-up、权限和单 Key 模型失败保留旧快照 | 未进行真实站点登录或生产请求 |
 
-上述真实站点结果仅作为 2026-09-30 的人工/黑盒验收证据，不作为 CI 输入；后续仍需在
-不同上游部署版本和大规模分页数据上持续验证容量与兼容性。
+上述结果仅作为本地自动化验证证据，不作为真实站点或 CI 外部网络验收结论。
 
 ### 3.7 2026-09-30 系统维护更新与可重复回滚
 

@@ -832,7 +832,7 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
   Refresh 继续同时使用 `new_api_refresh` Cookie、`X-Auth-Session` 和 Bearer Token，
   CookieJar 轮换值加密回写凭据。
 
-### 9.6 2026-09-30 旧版资源同步迁移与真实站点验收
+### 9.6 2026-09-30 旧版资源同步迁移与脱敏验收
 
 **变更前**
 
@@ -840,7 +840,8 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
   可能无法完整同步；
 - New API 和 Sub2API 登录主体、Sub2API 资源请求顺序、完整 Key 详情依赖和模型能力
   来源没有完整复刻旧版；
-- 真实站点验收没有将浏览器请求、适配器请求和只读模型探测结果集中记录。
+- 本次范围不使用真实平台账号或真实站点请求，旧版兼容行为缺少集中化的脱敏
+  HTTP fixture、路由和地址回归记录。
 
 **变更后**
 
@@ -852,10 +853,13 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
 - 凭据加密、Sub2API Refresh Token 完整轮换、Bundle 完整性、安全验证分类和最近成功
   快照保留规则继续生效；Sub2API 平台窗口额度、Key 5 小时/日/7 日窗口字段和账号级
   模型目录仍未进入当前数据模型；
-- 2026-09-30 脱敏真实站点验收：New API 读取 11 条 Key、32 个聚合模型，部分
-  `/v1/models` 为 HTTP 403，资源状态进入安全验证/快照保护；Sub2API 读取 10 条 Key、
-  18 个聚合模型，部分 `/v1/models` 为 HTTP 403，Key 为 partial、模型为 stale。
-  两站点均未调用计费接口，验收完成后关闭隔离浏览器页面且未生成临时捕获文件。
+- 平台站点规范 `key_id` 使用 `RoutingKey.ID`；历史 `UpstreamKey.ID` 只允许同渠道
+  兼容回退。NewAPI 和 Sub2API 的管理 `BaseURL`、发现的 `RelayBaseURL` 与渠道
+  Relay 根地址分离保存，渠道请求根地址去除末尾 `/v1`，避免生成 `/v1/v1/...`；
+- 本次只完成脱敏 `httptest` 的登录/资源 envelope、Key 详情、`/v1/models` 请求
+  路径、Bearer 完整 Secret、模型映射和快照边界回归；未使用真实账号、密码、Cookie、
+  Access Token、Refresh Token、Admin Key、完整上游 Key、网络捕获或截图，未调用
+  任何计费接口。
 
 ## 与架构文档的关系
 

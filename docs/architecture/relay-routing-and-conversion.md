@@ -95,6 +95,26 @@ Relay 层通常按以下阶段处理请求：
 - 某些 Adaptor 的单个转换方法显式返回 `not implemented`，只能记录为具体方法能力缺口，不能推出整个供应商不可用。
 - 传统 Midjourney、视频、音乐和新 Task Plugin 的任务能力由 Task Plugin/任务平台映射决定，和普通同步聊天 Adaptor 是不同入口。
 
+### 8.1 2026-09-30 平台站点 NewAPI 路由与地址边界
+
+平台站点渠道在进入 Relay Adaptor 前先完成父渠道、`RoutingKey` 和上游子密钥选择。
+NewAPI 与 Sub2API 的管理地址和 Relay 地址分开保存：
+
+- 账号 `BaseURL` 只用于管理面认证、资源读取和会话刷新；
+- 账号 `RelayBaseURL` 保存页面或快照发现的 OpenAI 兼容地址；
+- 渠道 `BaseURL` 使用统一规范化的 Relay 根地址，移除末尾 `/v1`，因此
+  `/v1/models`、`/v1/chat/completions` 等请求不会形成重复 `/v1`；
+- Relay 请求认证使用解密后的完整 `UpstreamKey.Secret`，以
+  `Authorization: Bearer <上游子密钥>` 发送，禁止使用管理账号密码、Cookie、
+  Dashboard Token 或掩码值；
+- 平台站点规范 `key_id` 是 `RoutingKey.ID`。历史 `UpstreamKey.ID` 仅在同渠道、
+  平台来源和来源记录关系均匹配时兼容，跨渠道 ID 直接拒绝；
+- 渠道模型映射先把下游别名解析为真实上游模型，自动路由、显式 `key_id` 和显式
+  历史子密钥 ID 使用同一能力判断。
+
+本次验证使用脱敏 `httptest` 和 SQLite；只检查最终路径、Host、Authorization、
+模型映射和快照边界，不使用真实平台账号或生产站点，也不调用计费模型接口。
+
 ## 9. 维护时需要同步的关联模块
 
 修改路由、Relay Format、模型字段、渠道约束、亲和、优先级/权重、Routing Key、平台站点同步、参数/Header 覆盖、流式、Usage、错误重试或模型获取时，必须同步本文档、[`key-routing-strategy.md`](../key-routing-strategy.md)、[`upstream-channel-platform-sites.md`](../upstream-channel-platform-sites.md)、能力矩阵和偏差表。修改计费入口时还要同步[`billing-and-quota.md`](./billing-and-quota.md)。
@@ -104,3 +124,4 @@ Relay 层通常按以下阶段处理请求：
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 建立入口、分发、密钥选择、转换、流式和 Usage 的实现说明 | `router/`、`middleware/distributor.go`、`model/*routing*`、`relay/`、`relaykit/` | 路由、Adaptor 注册、流式列表和路由选择代码静态核对 |
+| 2026-09-30 | 平台站点 NewAPI 路由与地址校准 | 平台站点 `key_id`、错误 RoutingKey 关系、管理/Relay 地址和别名模型判断边界不统一，存在错误 Key 或重复 `/v1` 的风险 | 以 `RoutingKey.ID` 为规范身份并按渠道/来源/来源记录修复关系；兼容同渠道历史 `UpstreamKey.ID`；管理/Relay 地址分离并规范化 Relay 根地址；模型映射后统一判断真实上游能力；使用完整子密钥 Bearer 认证 | `model/routing_key.go`、`model/upstream_channel.go`、`model/channel.go`、`service/upstream_site.go`、NewAPI/Sub2API 平台站点 | `go test ./model ./controller ./service ./relay/channel/newapi ./relay/common`、脱敏 HTTP fixture 和 SQLite |

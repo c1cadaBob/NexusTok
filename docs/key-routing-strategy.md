@@ -448,7 +448,7 @@ username。其它认证统一通过“自动配置”
 | 2026-09-27 | NewAPI 类平台会话与资源失败回退 | Cookie 轮换、刷新会话和资源权限失败的调度影响未明确；部分分页失败可能被误解为密钥缺失 | 统一 CookieJar 优先级和 Dashboard Refresh 契约，认证成功后保存部分快照，完整分页前禁止缺失判定，并明确 `last_sync_at` 与管理员诊断边界 | NewAPI 派生平台密钥候选、模型能力、同步回退和日志可观测性 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`、平台站点专项文档 |
 | 2026-09-27 | 平台站点渠道代理出站 | 平台站点认证和资源同步未读取渠道代理，代理网络失败可能被误判为密钥不可用 | NewAPI/Sub2API 的管理面请求按渠道配置复用 Transport；认证成功后的资源失败继续保留最近成功密钥、模型、倍率和权重快照，代理配置错误单独诊断 | 渠道 4 代理同步、渠道 5 认证、平台站点路由候选和管理员可见错误 | `service/upstream_site.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go` |
 | 2026-09-29 | 校准平台站点 Key 资源与上游用量路由边界 | 文档没有集中说明管理端 `upstream-keys` 的额度/过期/模型字段、Sub2API 窗口额度缺口、账号级模型边界和父渠道 `UsedQuota` 来源 | 明确管理端返回 `UsedQuota`、`RemainQuota`、`ExpiresAt`、`Models`、`Status` 和脱敏 `KeyPreview`；完整 Secret 仍不返回；Sub2API 平台窗口额度未接入，账号级模型不能复制给所有 Key；父渠道 `UsedQuota` 来自平台同步上游累计用量 | 平台站点子密钥过滤、模型能力、额度展示、快照回退和路由调度 | `controller/upstream_channel.go`、`service/upstream_site.go`、`service/upstream_site_adapters.go`、[`平台站点资源获取比较`](platform-site-resource-acquisition-comparison.md) |
-| 2026-09-30 | 旧版资源同步迁移与真实站点验收 | New API/Sub2API 资源分页上限、登录主体兼容、Sub2API 读取顺序和完整 Key 优先级未与旧版完全对齐 | 三类 Key 资源恢复独立 1000 页；恢复受限主体兼容、New API 批量 Key 补偿、Sub2API 列表优先/详情补齐、单 Key 模型探测和失败快照边界；记录 New API 11 条 Key/32 个模型、Sub2API 10 条 Key/18 个模型的脱敏验收 | 路由候选、Key 模型能力、额度和资源状态 | `service/upstream_site_adapters.go`、`service/upstream_site_test.go`、两个站点隔离浏览器 MCP；未调用计费接口 |
+| 2026-09-30 | 旧版资源同步迁移与脱敏 fixture 验收 | New API/Sub2API 资源分页上限、登录主体兼容、Sub2API 读取顺序和完整 Key 优先级未与旧版完全对齐 | 三类 Key 资源恢复独立 1000 页；恢复受限主体兼容、New API 批量 Key 补偿、Sub2API 列表优先/详情补齐、单 Key 模型探测和失败快照边界；使用脱敏 fixture 验证路由与资源边界 | 路由候选、Key 模型能力、额度和资源状态 | `service/upstream_site_adapters.go`、`service/upstream_site_test.go`、脱敏 HTTP fixture 和 SQLite；未使用真实账号或站点 |
 
 ### 14.1 2026-09-26 实现校准
 
@@ -549,3 +549,28 @@ CookieJar、Cookie 轮换、30 秒超时和重定向校验保持不变。代理�
 - NewAPI Dashboard Refresh 继续使用 `new_api_refresh`、`X-Auth-Session` 和 Bearer
   Token；渠道代理读取 `setting.proxy`，不进入路由文档中的固定地址或源码常量。当前
   前端页面和资源展示模型保持不变。
+
+### 14.6 2026-09-30 NewAPI 站点路由身份与 Relay 地址
+
+**变更前**：平台站点前端可能把 `UpstreamKey.ID` 当作规范 `key_id`，已有错误、
+跨渠道或来源不匹配的 `RoutingKey` 也可能被继续使用；NewAPI 站点的管理地址、
+Relay 地址和渠道请求根地址没有统一校验，模型别名判断可能直接拿下游名称匹配
+上游子密钥。
+
+**变更后**：
+
+- 平台站点规范 `key_id` 是 `RoutingKey.ID`。历史前端或旧数据传入
+  `UpstreamKey.ID` 时，仅在同一渠道、`source=platform_site` 且
+  `source_ref_id=UpstreamKey.ID` 成立时兼容回退；跨渠道、错误来源、错误引用或
+  已删除关系返回密钥失效错误，不跨渠道复用路由身份；
+- 所有平台站点 Key 在启动迁移、资源查询和路由选择时都执行关系校验。缺失、错误或
+  跨渠道关系按当前渠道和当前 `UpstreamKey` 查找或创建新的 `RoutingKey`，错误的
+  旧记录保留但不再被当前 Key 使用；
+- NewAPI 和 Sub2API 账号 `BaseURL` 保存管理地址，`RelayBaseURL` 保存实际 Relay
+  地址，渠道 `BaseURL` 保存去除末尾 `/v1` 的 Relay 根地址。请求最终只追加一次
+  `/v1`，不使用管理密码、Cookie、Dashboard Token 或掩码值作为 Relay Key；
+- 自动路由、显式 `key_id` 和历史 `upstream_key_id` 使用同一模型映射判断：先把
+  渠道下游别名解析成真实上游模型，再检查该子密钥已确认的模型能力。完整 Secret
+  只在服务端临时内存中解密使用；
+- 本次回归只使用脱敏 `httptest`、SQLite 和本地源码静态核对，未使用真实平台账号、
+  密码、Cookie、Token、网络捕获或截图，也未执行真实上游计费请求。
