@@ -132,6 +132,36 @@ GET 回退，掩码值视为不可用。Token 自身模型字段优先，账号�
 上述真实站点结果仅作为 2026-09-30 的人工/黑盒验收证据，不作为 CI 输入；后续仍需在
 不同上游部署版本和大规模分页数据上持续验证容量与兼容性。
 
+### 3.7 2026-09-30 系统维护更新与可重复回滚
+
+**变更前**：维护页面由浏览器直接请求 GitHub Release，只能展示版本说明和客户端可见的
+发布信息；后端没有统一的版本检查、更新、回滚、重启或 Docker 容器管理任务。旧版裸机
+回滚会直接消耗 `.backup`，一次回滚后无法可靠地继续切换到上一个版本。
+
+**变更后**：维护页面通过 Root 专属后端接口读取 GitHub Release，并由 `SystemTask`
+执行更新、回滚和重启。后端使用约 20 分钟缓存，支持 `v` 前缀、预发布和构建元数据的
+语义版本比较，按运行平台匹配发布资产，校验 HTTPS/GitHub 官方资产域名、文件大小和
+SHA256 checksum；GitHub 404 转换为无已发布版本，不把原始响应体交给管理页面。源码或
+开发构建、Windows 正在运行的二进制、缺少匹配资产或 checksum 的场景保持手动更新提示。
+
+裸机更新在当前可执行文件同目录的临时目录内下载和校验，提交时使用临时交换文件保留
+稳定的 `<executable>.backup`。回滚同样交换当前文件和 `.backup`，成功后备份仍存在，
+因此可以连续执行回滚或版本切换；任一重命名失败都尝试恢复交换前状态。旧版“把
+`.backup` 直接改名为当前文件并消耗备份”的行为不再保留。
+
+Docker 更新和回滚通过 Docker Engine socket 及独立 `system-update-helper` 执行，保留
+当前容器的环境、挂载、网络、端口、入口参数、重启策略和 Compose 标签。候选容器使用
+唯一 staging/failed 名称，更新前不覆盖稳定备份；有 Healthcheck 时必须达到 `healthy`，
+没有 Healthcheck 时只确认容器保持运行并标记降级。主容器停止前转移系统任务租约，helper
+启动失败时尝试转回原 runner；候选创建、启动、探活或回滚失败时恢复原容器并写入失败终态。
+未挂载 Docker socket 时仅展示脱敏的手动命令提示。
+
+本次不新增数据库字段或迁移；更新、回滚共用 `system_binary_update` ActiveKey，RootAuth、
+管理审计、确认对话框和服务端校验仍然有效。管理响应、任务错误、日志、helper 参数和
+手动 Docker 命令不得包含 `SESSION_SECRET`、数据库 DSN、Redis 连接串、Cookie、Token、
+Admin Key 或完整上游 Key。尚未执行真实生产 Docker 容器切换，source/development build
+也不承诺从维护页面自动替换。
+
 ## 4. 维护规则
 
 新发现偏差必须先确认“预期来源”与“代码实际行为”都能引用，再新增编号。代码修复时在同一功能提交中：
@@ -152,3 +182,4 @@ GET 回退，掩码值视为不可用。Token 自身模型字段优先，账号�
 | 2026-09-27 | 平台站点渠道代理偏差关闭 | 平台站点管理请求未应用渠道代理，导致代理网络和直连网络行为不一致 | 新增 DEV-017 并完成代码、代理/CookieJar/Auth Flow 回归；保留真实上游站点待核验状态，不把本地网络限制当作代码失败 | NewAPI/Sub2API 管理面、渠道 4/5 同步与管理员诊断 | `service/upstream_site.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go`、渠道代理 fixture |
 | 2026-09-29 | 旧版与当前平台站点资源差异登记 | 偏差表已有认证、刷新、代理和失败回退记录，但没有单独登记数据模型、父渠道额度写入、Sub2API 平台窗口额度、账号级模型和分页上限差异 | 新增 DEV-018 至 DEV-022，明确当前实现与旧版/参考平台的事实差异；已修复的旧版协议偏差继续保持“已实现/待真实站点持续核验”，不把静态核对写成真实站点验证 | 平台站点资源模型、额度、Key 生命周期、模型能力和缺失判定 | `docs/platform-site-resource-acquisition-comparison.md`、`service/upstream_site.go`、`service/upstream_site_adapters.go`、`model/upstream_channel.go`、本机参考源静态核对 |
 | 2026-09-30 | 旧版资源同步迁移与真实站点黑盒验收 | New API/Sub2API 三类 Key 资源仍受 100 页上限影响，偏差表未记录迁移后的容量边界和真实站点只读结果 | 三类 Key 资源独立恢复最多 1000 页；补充 New API 11 条 Key/32 个聚合模型、Sub2API 10 条 Key/18 个聚合模型的脱敏验收结果，并明确部分 `/v1/models` 的 HTTP 403 只进入安全验证、partial 或 stale 快照状态 | 平台站点分页、完整 Key 读取、模型能力、资源快照和安全交付 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`、隔离浏览器 DevTools MCP；未调用计费接口 |
+| 2026-09-30 | 系统维护更新与可重复回滚 | 维护页直连 GitHub，只能查看 Release；没有 Root 后端更新、回滚、重启任务，旧版回滚会消耗唯一 `.backup` | 增加 RootAuth 后端版本检查、SystemTask 更新、回滚、重启、GitHub 缓存与 checksum 校验；裸机和 Docker 均使用稳定备份交换并支持重复回滚；失败时恢复原状态并记录脱敏终态 | 维护页面、Root 管理、系统任务、裸机文件、Docker helper、管理审计和错误日志 | `controller/system_update.go`、`service/system_update.go`、`service/system_update_docker.go`、`model/system_task.go`、前端维护测试；SQLite、MySQL 8.2.0、PostgreSQL 15.19 系统任务兼容性用例通过；未单独验证最低版本和真实生产 Docker 切换 |

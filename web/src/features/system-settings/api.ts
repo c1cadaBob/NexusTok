@@ -23,8 +23,12 @@ import type {
   FetchUpstreamRatiosRequest,
   LogCleanupTask,
   SystemOptionsResponse,
+  SystemRestartResponse,
+  SystemTask,
   SystemTaskListResponse,
   SystemTaskResponse,
+  SystemUpdateInfoResponse,
+  SystemUpdateTask,
   UpdateOptionRequest,
   UpdateOptionResponse,
   UpstreamChannelsResponse,
@@ -77,6 +81,25 @@ export async function getSystemTask(taskId: string) {
   return res.data
 }
 
+export async function getCurrentSystemTask<TTask extends SystemTask = SystemTask>(
+  taskType: string
+) {
+  const res = await api.get<SystemTaskResponse<TTask | null>>(
+    '/api/system-task/current',
+    {
+      params: { type: taskType },
+    }
+  )
+  return res.data
+}
+
+export async function getSystemUpdateTask(taskId: string) {
+  const res = await api.get<SystemTaskResponse<SystemUpdateTask>>(
+    `/api/system-task/${taskId}`
+  )
+  return res.data
+}
+
 export async function listSystemTasks(limit = 20) {
   const res = await api.get<SystemTaskListResponse>('/api/system-task/list', {
     params: { limit },
@@ -102,6 +125,37 @@ export async function fetchUpstreamRatios(request: FetchUpstreamRatiosRequest) {
   const res = await api.post<UpstreamRatiosResponse>(
     '/api/ratio_sync/fetch',
     request
+  )
+  return res.data
+}
+
+export async function getLatestSystemUpdate(force = false) {
+  const res = await api.get<SystemUpdateInfoResponse>(
+    '/api/system-update/latest',
+    {
+      params: { force },
+    }
+  )
+  return res.data
+}
+
+export async function applySystemUpdate() {
+  const res = await api.post<SystemTaskResponse<SystemUpdateTask>>(
+    '/api/system-update/apply'
+  )
+  return res.data
+}
+
+export async function rollbackSystemUpdate() {
+  const res = await api.post<SystemTaskResponse<SystemUpdateTask>>(
+    '/api/system-update/rollback'
+  )
+  return res.data
+}
+
+export async function restartSystemUpdate() {
+  const res = await api.post<SystemRestartResponse>(
+    '/api/system-update/restart'
   )
   return res.data
 }

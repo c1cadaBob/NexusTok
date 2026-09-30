@@ -64,7 +64,14 @@ Redis 由 `common.InitRedisClient` 初始化，未配置 `REDIS_CONN_STRING` 时
 4. 通过数据库租约和锁续租执行 Handler；
 5. 写入进度、成功/失败结果和终态。
 
-系统任务的 Type、Payload、State、Result 和 active key 由 `model.SystemTask` 持久化。单一类型已有 active 任务时通常不会重复创建；上游站点同步等任务可使用 `type:channel_id` 作为 active key。
+系统任务的 Type、Payload、State、Result 和 active key 由 `model.SystemTask` 持久化。单一类型已有 active 任务时通常不会重复创建；上游站点同步等任务可使用 `type:channel_id` 作为 active key。系统更新和回滚分别使用
+`system_update`、`system_rollback` 类型，但共享 `system_binary_update` active key，
+因此两者不能并发执行，且并发请求会复用同一条活动任务。
+
+系统维护任务的更新、回滚和 Docker helper 都通过同一条数据库租约推进。主容器停止前，
+更新 runner 创建唯一名称的 helper 容器并调用 `TransferSystemTaskLock` 转移租约；helper
+启动失败时将租约转回原 runner，helper 结束时写入 `succeeded` 或 `failed` 终态。租约
+丢失时旧 runner 不能继续覆盖进度或结果。
 
 ## 6. 当前已接入的后台任务
 
@@ -79,6 +86,7 @@ Redis 由 `common.InitRedisClient` 初始化，未配置 `REDIS_CONN_STRING` 时
 - Codex 凭据每 10 分钟检查，在临近过期时刷新；
 - 渠道缓存、选项、插件、授权策略和系统节点状态同步；
 - 可选的批量更新、性能监控和 pprof。
+- 系统维护版本检查、二进制更新、可重复回滚、Docker 更新/回滚和 helper 接管。
 
 每个任务是否启用、运行间隔、Master 限制和失败重试由各自 Handler 的 `Enabled`、配置和系统任务实现决定，不能只根据任务名称判断正在运行。
 
@@ -94,6 +102,11 @@ Redis 由 `common.InitRedisClient` 初始化，未配置 `REDIS_CONN_STRING` 时
 - Redis 缺失时不止一种回退：有的功能回数据库，有的只在进程内工作，有的功能会被关闭；必须按模块核查。
 - 系统任务 Runner 的数据库锁和 Handler 的业务幂等是两层保护，锁丢失或重复唤醒不能被当作绝对的单次执行保证。
 - 日志库支持 ClickHouse 不代表主业务库支持 ClickHouse。
+- GitHub Release 检查结果仅在进程内缓存约 20 分钟，`force=true` 才会强制刷新；缓存不是
+  发布事实，网络失败时只在存在最近检查结果时返回带警告的缓存。
+- 系统维护不新增数据库字段或迁移。任务仍复用 `SystemTask` 的 Payload、State、Result、
+  ActiveKey 和租约字段；本次涉及的 ActiveKey 幂等、租约转移和终态写入需要按现有
+  SQLite/MySQL/PostgreSQL 兼容规则验证。
 
 ### 8.1 平台站点资源快照（2026-09-26）
 
@@ -124,6 +137,30 @@ WAF、分页中途失败或单 Key 模型探测失败不能清空旧 Key、额�
 能力并保留最近成功值。该改动不新增数据库模型、字段或迁移，因此本次未新增三数据库
 实例迁移矩阵；既有数据库兼容记录不能当作本次新运行结果。
 
+### 8.2 系统维护更新缓存与租约（2026-09-30）
+
+变更前维护页直接读取 GitHub Release，浏览器承担网络、CORS 和限流风险；系统任务没有
+更新/回滚专用类型，旧版回滚会消耗唯一的 `.backup` 文件。
+
+变更后版本检查由后端访问 `api.github.com`，默认仓库为 `c1cadaBob/NexusTok`，
+支持 `SYSTEM_UPDATE_GITHUB_REPO` 覆盖，缓存约 20 分钟并返回语义版本比较、平台资产、
+checksum 和脱敏警告。更新文件先写入当前可执行文件同目录的临时目录，校验大小、权限和
+SHA256 后再进行事务式交换；`.backup` 保持为稳定回滚槽位，回滚通过交换当前文件和
+`.backup`，成功后仍可继续回滚。
+
+Docker 模式使用 Engine socket 和独立 helper，不启动第二个 HTTP/Redis runner。候选容器
+使用唯一 staging/failed 名称，旧 backup 在候选容器通过健康检查前不覆盖；存在
+Healthcheck 时必须为 `healthy`，没有 Healthcheck 时只确认容器持续运行并标记降级。Docker
+更新和回滚失败会删除候选容器、恢复原容器并再次确认其运行状态。helper、runner 和任务
+终态都只保存脱敏错误，不保存敏感环境变量值。source/development build、Windows 正在
+运行的二进制和未挂载 Docker socket 的部署继续显示手动更新提示，真实生产容器切换尚未执行。
+
+本次系统任务兼容性验证（2026-09-30）执行：
+`TEST_MYSQL_DSN='<临时测试 DSN>' TEST_POSTGRES_DSN='<临时测试 DSN>' go test ./model -run '^TestSystemTaskDatabaseCompatibility$' -count=1 -v`。
+SQLite、MySQL 8.2.0 和 PostgreSQL 15.19 均通过 AutoMigrate 二次执行、ActiveKey 并发租约、
+租约转移、状态更新、终态写入和清理验证。MySQL 5.7.8、PostgreSQL 9.6 及独立日志库本次
+未单独启动，不能将本次结果解释为这些最低版本或日志数据库的实测。
+
 ## 9. 维护时需要同步的关联模块
 
 修改数据库 DSN、GORM 模型、迁移、锁、缓存键/TTL、Redis 回退、日志字段、后台任务 Type/interval/lease、任务调度或多节点职责时，必须同步本文档、系统总览、任务/插件文档、鉴权/限流专项文档和偏差登记。数据库变更还要按根目录规则完成三数据库验证并记录版本与结果。
@@ -138,6 +175,7 @@ WAF、分页中途失败或单 Key 模型探测失败不能清空旧 Key、额�
 | 2026-09-27 | 平台站点代理出站与快照边界 | 平台站点同步没有使用渠道代理，代理导致的网络失败无法与资源快照状态分开核对 | 同步、认证和 2FA 使用渠道 Transport；代理配置错误在同步阶段单独记录，认证成功后的资源失败仍按资源类型落库并保留最近成功快照；不修改资源表结构 | 渠道 4 代理同步、渠道 5 认证诊断、平台站点资源缓存和后台任务 | `service/upstream_site.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go` |
 | 2026-09-29 | 补充旧版预览缓存与当前平台资源快照关系 | 文档只描述当前资源表和失败回退，未把旧版 `upstream-account-preview`、完整 Key 临时边界、加密存储、HMAC 指纹与后台同步方式放在同一条缓存链路中 | 明确旧版预览缓存 10 分钟 TTL 和一次性消费；当前凭据/完整 Key 加密保存并以指纹和外部 ID 匹配；手动、排队、后台同步共用站点锁；资源失败保留最近成功 Key、额度、过期时间、模型和能力快照 | 平台站点缓存、资源查询、路由候选和系统任务 | `service/upstream_site.go`、`model/upstream_channel.go`、`model/platform_site_resources.go`、旧版 `service/upstreamaccount/`、[`平台站点资源获取比较`](../platform-site-resource-acquisition-comparison.md) |
 | 2026-09-30 | 旧版资源分页与真实验收边界 | New API/Sub2API Key 资源最多 100 页，完整 Key 详情和分页失败边界未完全记录；真实站点测试结果未纳入缓存快照说明 | 三类 Key 资源恢复独立 1000 页上限；完整列表优先、缺失详情补齐、资源失败保留最近成功快照；记录 New API 11 条 Key/32 个模型、Sub2API 10 条 Key/18 个模型的脱敏黑盒验收；不写入凭据或临时捕获文件 | 平台资源缓存、后台同步、路由快照和安全交付 | `service/upstream_site_adapters.go`、`service/upstream_site_test.go`、隔离浏览器 MCP；无数据库结构变更 |
+| 2026-09-30 | 系统维护任务与缓存边界 | 维护页直连 GitHub，未有更新/回滚任务，旧版回滚会消耗 `.backup`；Docker helper 和租约接管未登记 | 后端缓存 Release 并经 Root 任务执行更新、回滚和重启；裸机稳定 `.backup` 可重复交换，Docker 使用 socket/helper、唯一候选容器和健康检查；不修改 SystemTask 表字段或新增迁移 | GitHub 缓存、SystemTask、任务租约、裸机文件交换、Docker 容器生命周期 | `service/system_update.go`、`service/system_update_docker.go`、`model/system_task.go`、`service/system_update_test.go`；未执行真实生产容器切换 |
 
 ### 9.1 2026-09-26 实现校准
 
@@ -206,3 +244,12 @@ TTL 为 5 分钟，取消、过期、失败和消费后均不能继续读取。
 - 父渠道只有在本轮至少有一个完整 Secret 且模型能力已确认时才标记成功。没有可用
   Key/模型时保持 failed，但不清理身份、余额和最近成功快照。当前前端资源模型和
   数据库表结构不变，渠道代理仍复用已有 `setting.proxy` 配置。
+
+### 9.5 2026-09-30 系统维护任务与缓存边界
+
+**变更前**：维护页直连 GitHub，未有更新/回滚任务，旧版回滚会消耗 `.backup`；Docker
+helper 和租约接管未登记。
+
+**变更后**：后端缓存 Release 并经 Root 任务执行更新、回滚和重启；裸机稳定 `.backup`
+可重复交换，Docker 使用 socket/helper、唯一候选容器和健康检查；不修改 SystemTask 表
+字段或新增迁移。真实生产 Docker 容器切换尚未执行。

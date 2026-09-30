@@ -1,7 +1,7 @@
 # NexusTok 功能原理与实现偏差文档
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-27
+> 事实基线日期：2026-09-30
 > 主要代码来源：`main.go`、`router/`、`middleware/`、`controller/`、`service/`、`model/`、`relay/`、`pkg/`、`constant/`
 > 关联详细文档：[`docs/authentication.md`](../authentication.md)、[`docs/rate-limiting.md`](../rate-limiting.md)、[`docs/key-routing-strategy.md`](../key-routing-strategy.md)、[`docs/upstream-channel-platform-sites.md`](../upstream-channel-platform-sites.md)、[`docs/plugin-api/`](../plugin-api/)
 
@@ -37,6 +37,7 @@
 | 视频、音乐、异步任务和任务产物 | [`tasks-and-plugins.md`](./tasks-and-plugins.md) | `service/task_polling.go`、`model/task.go`、`router/task-router.go`、`router/video-router.go` |
 | Sobek 插件、协议和插件版本 | [`tasks-and-plugins.md`](./tasks-and-plugins.md) | [`plugin-api/README.md`](../plugin-api/README.md)、[`plugin-api/v1.md`](../plugin-api/v1.md)、`pkg/jsplugin/` |
 | 数据库、缓存、迁移、后台任务 | [`data-cache-and-background-jobs.md`](./data-cache-and-background-jobs.md) | `model/main.go`、`common/redis.go`、`service/system_task.go` |
+| 系统维护、版本更新与可重复回滚 | [`system-overview.md`](./system-overview.md)、[`tasks-and-plugins.md`](./tasks-and-plugins.md) | `controller/system_update.go`、`service/system_update.go`、`service/system_update_docker.go`、`model/system_task.go`、维护页面 |
 | 新增或调整渠道能力 | [`provider-capability-matrix.md`](./provider-capability-matrix.md) | `constant/channel.go`、`common/api_type.go`、`relay/relay_adaptor.go` |
 | 已确认的未实现或行为不一致 | [`implementation-deviations.md`](./implementation-deviations.md) | 具体路由、Adaptor 方法和测试证据 |
 
@@ -53,6 +54,8 @@
 - `pkg/jsplugin/`、`plugins/tasks/`：插件运行时、注册表、路由声明和内置任务插件。
 - `constant/`、`common/`、`setting/`、`types/`：类型、配置、倍率、公共安全和账务约束。
 - `web/`、`electron/`：管理面板和桌面封装；它们调用 Go 网关，不拥有后端鉴权、计费或数据库权威。
+- `controller/system_update.go`、`service/system_update*.go`：Root 维护接口、GitHub Release
+  检查、裸机二进制交换、Docker Engine helper、重启探活和任务终态。
 
 本次登录会话变更的代码事实入口为 `service/auth_session.go`、`service/login_verification.go`、
 `model/user_session.go`、`model/login_verification.go`、`controller/user.go` 和
@@ -95,3 +98,4 @@
 | 2026-09-27 | 平台站点渠道代理接入 | 平台站点同步和 Auth Flow 未读取渠道代理，通用客户端注入可能覆盖平台会话 CookieJar、超时和重定向边界 | NewAPI/Sub2API 按渠道 `setting.proxy`、HTTP 协议和连接分片复用 Transport；平台会话策略保持不变，认证、网络、安全验证和资源失败继续分层 | 渠道 4 局域网代理同步、渠道 5 认证诊断、平台站点管理面请求 | `service/upstream_site.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go`、`docs/upstream-channel-platform-sites.md` |
 | 2026-09-27 | 按旧版协议校准 NewAPI 同步 | 当前 NewAPI Token 主分页使用零起始参数，旧版主请求顺序、批量 Key 补偿和核心成功边界未在总索引中明确 | 固定 `p=1&page_size=100` 一基分页、旧版登录字段和 status/self/groups/ratio/token/key 顺序；只在 404/405 回退，部分资源失败保留最近成功快照，账号级模型不复制给子密钥 | NewAPI 及派生平台站点同步、渠道状态和路由模型能力 | `service/upstream_site_adapters.go`、`service/upstream_site.go`、`service/upstream_site_test.go`、`docs/upstream-channel-platform-sites.md` |
 | 2026-09-29 | 增加平台站点资源获取链路索引 | 架构总索引只有平台站点专项设计和能力矩阵，无法直接定位旧版备份、参考平台真实路由与当前资源快照的逐项比较 | 增加平台站点资源获取比较文档，明确参考平台、旧版 NexusTok 和当前实现三类证据，并说明管理端额度、Key 模型和失败回退边界 | 平台站点认证、资源同步、Key 生命周期、模型能力和路由快照 | [`../platform-site-resource-acquisition-comparison.md`](../platform-site-resource-acquisition-comparison.md)、`service/upstream_site.go`、`controller/upstream_channel.go`、本机参考源静态核对 |
+| 2026-09-30 | 恢复系统维护更新与可重复回滚 | 维护页面直接从浏览器请求 GitHub Release，只能查看说明；没有后端更新、回滚、重启任务边界，旧版回滚会消耗 `.backup` | 后端经 RootAuth 检查 Release 并通过 SystemTask 应用更新、回滚、重启；裸机使用稳定 `.backup` 交换，Docker 使用 socket/helper 和健康检查；未修改数据库结构 | Root 管理、版本检查、二进制/Docker 更新、任务租约、审计和前端维护面板 | `controller/system_update.go`、`service/system_update.go`、`service/system_update_docker.go`、`model/system_task.go`、维护页测试；未进行生产容器切换 |

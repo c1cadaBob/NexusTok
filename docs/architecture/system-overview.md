@@ -1,7 +1,7 @@
 # 系统总览与请求生命周期
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-25
+> 事实基线日期：2026-09-30
 > 主要代码来源：`main.go`、`router/main.go`、`router/`、`middleware/`、`controller/`、`service/`、`model/main.go`、`common/`
 > 关联详细文档：[`README.md`](./README.md)、[`authentication-and-authorization.md`](./authentication-and-authorization.md)、[`data-cache-and-background-jobs.md`](./data-cache-and-background-jobs.md)
 
@@ -21,8 +21,12 @@ NexusTok 是一个 Go AI API Gateway。Go 进程对外提供管理 API、统一 
 4. 初始化选项、日志数据库、Redis、性能指标、系统监控和 i18n。
 5. 启动鉴权产物清理、渠道缓存、选项同步、插件同步、授权策略同步、数据看板。
 6. 按配置启动渠道自动更新、Codex 凭据刷新、订阅额度重置、节点状态上报。
-7. 注册渠道检测、上游模型更新和异步任务轮询等系统任务，启动 `service.StartSystemTaskRunner`。
-8. 创建 Gin Server，配置可信代理、Request ID、版本、i18n、日志和静态前端，再由 `router.SetRouter` 安装路由。
+7. 注册渠道检测、上游模型更新、异步任务轮询和系统维护更新/回滚等系统任务，启动
+   `service.StartSystemTaskRunner`。
+8. 创建 Gin Server，配置可信代理、Request ID、版本、i18n、日志和静态前端，再由
+   `router.SetRouter` 安装路由。以 `system-update-helper` 子命令启动时走最小初始化路径，
+   只为 Docker 更新 helper 准备数据库、任务租约和 Docker 操作，不启动 HTTP、Redis
+   runner 或其它后台服务。
 
 主节点和从节点的职责由 `common.IsMasterNode` 及各个任务实现共同控制。系统任务 Runner 只在 Master 节点启动；从节点可以提供请求服务，但不能被文档理解为拥有独立的迁移、调度或账务权威。
 
@@ -33,7 +37,7 @@ NexusTok 是一个 Go AI API Gateway。Go 进程对外提供管理 API、统一 
 | `router/` | 声明路径、HTTP 方法、中间件顺序和协议入口 | 不负责最终鉴权、渠道选择或结算 |
 | `middleware/` | CORS、解压、请求体保护、Token/Session、限流、分发、插件 pinning | 不替代 Controller 的参数业务校验 |
 | `controller/` | 解析请求、组装 DTO、调用 Relay/Service、写 HTTP 响应 | 不应被视为上游协议实现本身 |
-| `service/` | 计费、鉴权会话、任务轮询、系统任务和跨模型业务流程 | 不直接改变 Relay DTO 的协议语义 |
+| `service/` | 计费、鉴权会话、任务轮询、系统任务、系统更新和跨模型业务流程 | 不直接改变 Relay DTO 的协议语义 |
 | `model/` | GORM 模型、数据库查询、迁移、锁、缓存索引和持久化状态 | 缓存不是数据库最终权威 |
 | `relay/` | Relay 生命周期、Adaptor 调用、协议转换、流式处理、Usage 和错误映射 | 不拥有数据库连接或插件持久化权限 |
 | `relaykit/` | DTO、Relay Format、转换器和独立公共类型 | 不依赖根模块的数据库、配置、鉴权或计费 |
@@ -102,6 +106,9 @@ HTTP
 - 动态插件协议：`router/task-plugin-protocol-router.go`、`router/plugin-router.go`。
 - Web 静态资源：`router/web-router.go` 和 `web/dist` 嵌入资源。
 - 主数据模型：`model/*.go`，数据库类型和迁移入口在 `model/main.go`。
+- 系统维护接口：`/api/system-update/latest`、`/api/system-update/apply`、
+  `/api/system-update/rollback`、`/api/system-update/restart`；均由 `RootAuth()` 保护，
+  使用现有 `SystemTask` 表，不新增数据库字段或迁移。
 - 请求上下文和单次请求数据：`RelayInfo`、Gin Context keys、`model.Channel`、`model.Token`、`model.Task`、`model.SystemTask`。
 - 运行配置：`common.InitEnv`、`setting/`、环境变量和管理端 Option。
 
@@ -112,6 +119,28 @@ HTTP
 - 独立 Redis、内存缓存和多节点部署会影响限流、缓存传播和插件生成观察窗口，不能只根据单节点测试判断集群语义。
 - `relaykit/` 必须独立构建，根模块的配置、数据库和计费不能下沉到该模块。
 
+### 7.1 系统维护更新边界（2026-09-30）
+
+**变更前**：维护页面在浏览器中直接请求 GitHub Release API，只能显示版本说明；
+后端没有统一的更新、回滚、重启和任务进度入口，旧版裸机回滚会把唯一 `.backup`
+重命名为当前文件，成功后回滚槽位消失。
+
+**变更后**：Root 管理员通过后端检查默认仓库 `c1cadaBob/NexusTok`，也可用
+`SYSTEM_UPDATE_GITHUB_REPO` 覆盖。Release 检查缓存约 20 分钟，强制检查可绕过缓存；
+版本比较支持 `v` 前缀、预发布和构建元数据。资产只接受 HTTPS 的 GitHub 官方域名，
+下载和 checksum 有大小上限，二进制替换前必须完成 SHA256 校验。
+
+裸机更新先在当前可执行文件同目录的临时目录下载和验证，再以临时交换文件提交当前
+文件与稳定 `<executable>.backup`；回滚交换两者而不是消耗备份，因此可以连续切换。
+源码/开发构建和 Windows 正在运行的二进制不强行自动替换，页面返回手动更新提示。
+
+Docker 部署通过 Docker Engine socket 和独立 helper 重建候选容器，保存环境、挂载、
+端口、网络、重启策略、入口参数和 Compose 标签；候选容器必须通过 `healthy`，没有
+Healthcheck 时至少确认持续 `Running` 并标记降级。helper 在主容器停止前接管系统任务
+租约，启动失败时把租约转回原 runner。管理响应、任务错误、日志和手动命令不包含
+`SESSION_SECRET`、`SQL_DSN`、`REDIS_CONN_STRING`、Cookie、Token 或完整 Key。
+截至 2026-09-30 尚未进行真实生产 Docker 容器切换。
+
 ## 8. 维护时需要同步的关联模块
 
 修改启动顺序、节点职责、路由安装或中间件顺序时，必须同步 `main.go`、`router/main.go`、对应路由和本文档。修改数据库/Redis/日志边界时同步 `model/main.go`、`common/redis.go`、缓存模型和[`data-cache-and-background-jobs.md`](./data-cache-and-background-jobs.md)。修改用户请求链路时同步鉴权、路由、计费和能力矩阵文档。
@@ -121,3 +150,4 @@ HTTP
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 建立启动、分层、请求链路、部署边界和限制说明 | `main.go`、`router/`、`middleware/`、`model/`、`service/`、`relay/` | `main.go`、`model/main.go`、`router/` 静态核对 |
+| 2026-09-30 | 系统维护更新与回滚 | 前端直连 GitHub 且没有后端运维任务；旧版回滚会消耗唯一备份 | 增加 RootAuth 维护接口、SystemTask 进度、GitHub 缓存/checksum、裸机稳定备份交换、Docker helper/健康检查和重启探活 | `router/api-router.go`、`controller/system_update.go`、`service/system_update*.go`、`main.go`、维护页 | `go test ./service ./model ./controller ./router`、前端定向测试；未进行生产容器切换 |

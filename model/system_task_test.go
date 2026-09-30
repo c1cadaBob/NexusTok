@@ -1,12 +1,20 @@
 package model
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/c1cadaBob/NexusTok/common"
 
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 type testSystemTaskPayload struct {
@@ -32,6 +40,364 @@ func createLegacyPendingSystemTask(t *testing.T, taskType string) *SystemTask {
 	}
 	require.NoError(t, DB.Create(task).Error)
 	return task
+}
+
+func setupIsolatedSystemTaskDB(t *testing.T) {
+	t.Helper()
+	previousDB := DB
+	previousLogDB := LOG_DB
+	db, err := gorm.Open(
+		sqlite.Open("file:system_task_isolated_"+common.GetUUID()+"?mode=memory&cache=shared&_busy_timeout=5000"),
+		&gorm.Config{},
+	)
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&SystemTask{}, &SystemTaskLock{}))
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(8)
+	DB = db
+	LOG_DB = db
+	t.Cleanup(func() {
+		_ = sqlDB.Close()
+		DB = previousDB
+		LOG_DB = previousLogDB
+	})
+}
+
+func TestCreateSystemTaskWithActiveKeyIfAbsentHandlesConcurrentCompetition(t *testing.T) {
+	setupIsolatedSystemTaskDB(t)
+
+	const workers = 8
+	start := make(chan struct{})
+	results := make(chan struct {
+		task    *SystemTask
+		created bool
+		err     error
+	}, workers)
+	var waitGroup sync.WaitGroup
+	for range workers {
+		waitGroup.Go(func() {
+			<-start
+			task, created, err := CreateSystemTaskWithActiveKeyIfAbsent(
+				SystemTaskTypeSystemUpdate,
+				"system_binary_update",
+				nil,
+				nil,
+			)
+			results <- struct {
+				task    *SystemTask
+				created bool
+				err     error
+			}{task: task, created: created, err: err}
+		})
+	}
+	close(start)
+	waitGroup.Wait()
+	close(results)
+
+	var taskID string
+	createdCount := 0
+	for result := range results {
+		require.NoError(t, result.err)
+		require.NotNil(t, result.task)
+		if result.created {
+			createdCount++
+		}
+		if taskID == "" {
+			taskID = result.task.TaskID
+		}
+		assert.Equal(t, taskID, result.task.TaskID)
+	}
+	assert.Equal(t, 1, createdCount)
+
+	var count int64
+	require.NoError(t, DB.Model(&SystemTask{}).
+		Where("active_key = ? AND status IN ?", "system_binary_update", activeSystemTaskStatuses()).
+		Count(&count).Error)
+	assert.Equal(t, int64(1), count)
+}
+
+func TestSystemUpdateAndRollbackActiveKeysAreMutuallyExclusive(t *testing.T) {
+	setupIsolatedSystemTaskDB(t)
+
+	updateTask, created, err := CreateSystemTaskWithActiveKeyIfAbsent(
+		SystemTaskTypeSystemUpdate,
+		"system_binary_update",
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+	require.True(t, created)
+
+	rollbackTask, created, err := CreateSystemTaskWithActiveKeyIfAbsent(
+		SystemTaskTypeSystemRollback,
+		"system_binary_update",
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+	require.False(t, created)
+	require.Equal(t, updateTask.TaskID, rollbackTask.TaskID)
+}
+
+func TestTransferSystemTaskLockSupportsHelperHandoffAndRollsBackOnLoss(t *testing.T) {
+	setupIsolatedSystemTaskDB(t)
+
+	task, err := CreateSystemTask(SystemTaskTypeSystemUpdate, nil, nil)
+	require.NoError(t, err)
+	claimed, ok, err := ClaimSystemTask(
+		task.ID,
+		SystemTaskTypeSystemUpdate,
+		"runner-a",
+		common.GetTimestamp()+60,
+	)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	require.NoError(t, TransferSystemTaskLock(
+		claimed.TaskID,
+		claimed.Type,
+		"runner-a",
+		"helper-a",
+		common.GetTimestamp()+600,
+	))
+	reloaded, err := GetSystemTaskByTaskID(claimed.TaskID)
+	require.NoError(t, err)
+	require.NotNil(t, reloaded)
+	assert.Equal(t, "helper-a", reloaded.LockedBy)
+	assert.ErrorIs(t, RenewSystemTaskLock(claimed.TaskID, "runner-a", common.GetTimestamp()+600), ErrSystemTaskLockLost)
+
+	require.NoError(t, TransferSystemTaskLock(
+		claimed.TaskID,
+		claimed.Type,
+		"helper-a",
+		"runner-a",
+		common.GetTimestamp()+600,
+	))
+
+	require.NoError(t, DB.Where("task_id = ?", claimed.TaskID).Delete(&SystemTaskLock{}).Error)
+	assert.ErrorIs(t, TransferSystemTaskLock(
+		claimed.TaskID,
+		claimed.Type,
+		"runner-a",
+		"helper-a",
+		common.GetTimestamp()+600,
+	), ErrSystemTaskLockLost)
+
+	reloaded, err = GetSystemTaskByTaskID(claimed.TaskID)
+	require.NoError(t, err)
+	require.NotNil(t, reloaded)
+	assert.Equal(t, "runner-a", reloaded.LockedBy)
+	assert.Equal(t, SystemTaskStatusRunning, reloaded.Status)
+}
+
+func TestTransferSystemTaskLockRejectsExpiredLeaseWithoutChangingRunner(t *testing.T) {
+	setupIsolatedSystemTaskDB(t)
+
+	task, err := CreateSystemTask(SystemTaskTypeSystemUpdate, nil, nil)
+	require.NoError(t, err)
+	claimed, ok, err := ClaimSystemTask(
+		task.ID,
+		SystemTaskTypeSystemUpdate,
+		"runner-a",
+		common.GetTimestamp()+60,
+	)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NoError(t, DB.Model(&SystemTaskLock{}).
+		Where("task_id = ?", claimed.TaskID).
+		Updates(map[string]any{"locked_until": common.GetTimestamp() - 1}).Error)
+
+	err = TransferSystemTaskLock(
+		claimed.TaskID,
+		claimed.Type,
+		"runner-a",
+		"helper-a",
+		common.GetTimestamp()+600,
+	)
+
+	assert.ErrorIs(t, err, ErrSystemTaskLockLost)
+	reloaded, queryErr := GetSystemTaskByTaskID(claimed.TaskID)
+	require.NoError(t, queryErr)
+	require.NotNil(t, reloaded)
+	assert.Equal(t, "runner-a", reloaded.LockedBy)
+	var lock SystemTaskLock
+	require.NoError(t, DB.Where("task_id = ?", claimed.TaskID).First(&lock).Error)
+	assert.Equal(t, "runner-a", lock.LockedBy)
+	assert.Less(t, lock.LockedUntil, common.GetTimestamp())
+}
+
+func TestSystemUpdateTaskResponseMasksSensitivePayloadStateResultAndError(t *testing.T) {
+	task := &SystemTask{
+		TaskID:  "system-update-sensitive",
+		Type:    SystemTaskTypeSystemUpdate,
+		Status:  SystemTaskStatusFailed,
+		Payload: `{"target_version":"v1.2.3","key":"sk-sensitive","env":{"SESSION_SECRET":"session-secret","SQL_DSN":"postgres://user:password@example.test/db"}}`,
+		State:   `{"phase":"checking","authorization":"Bearer access-secret","cookie":"refresh-secret"}`,
+		Result:  `{"target_version":"v1.2.3","admin_key":"admin-secret","backup_path":"/tmp/nexustok.backup","new_container_id":"container-secret"}`,
+		Error:   "update failed: REDIS_CONN_STRING=redis://user:password@example.test/0",
+	}
+
+	response := task.ToResponse()
+	encoded, err := common.Marshal(response)
+	require.NoError(t, err)
+	text := string(encoded)
+	assert.NotContains(t, text, "sk-sensitive")
+	assert.NotContains(t, text, "session-secret")
+	assert.NotContains(t, text, "access-secret")
+	assert.NotContains(t, text, "refresh-secret")
+	assert.NotContains(t, text, "admin-secret")
+	assert.NotContains(t, text, "redis://user:password@example.test")
+	assert.NotContains(t, text, "/tmp/nexustok.backup")
+	assert.NotContains(t, text, "container-secret")
+	assert.Contains(t, text, "v1.2.3")
+	assert.Contains(t, text, "checking")
+	assert.Contains(t, text, "***")
+}
+
+func TestSystemTaskDatabaseCompatibility(t *testing.T) {
+	tests := []struct {
+		name      string
+		env       string
+		dialector func(string) gorm.Dialector
+		dsn       func(*testing.T) string
+	}{
+		{
+			name: "sqlite",
+			dialector: func(dsn string) gorm.Dialector {
+				return sqlite.Open(dsn)
+			},
+			dsn: func(t *testing.T) string {
+				return filepath.Join(t.TempDir(), "system-task.db")
+			},
+		},
+		{
+			name: "mysql",
+			env:  "TEST_MYSQL_DSN",
+			dialector: func(dsn string) gorm.Dialector {
+				return mysql.Open(dsn)
+			},
+		},
+		{
+			name: "postgres",
+			env:  "TEST_POSTGRES_DSN",
+			dialector: func(dsn string) gorm.Dialector {
+				return postgres.New(postgres.Config{
+					DSN:                  dsn,
+					PreferSimpleProtocol: true,
+				})
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dsn := ""
+			if test.env != "" {
+				dsn = strings.TrimSpace(os.Getenv(test.env))
+				if dsn == "" {
+					t.Skip(test.env + " is not configured")
+				}
+			} else {
+				dsn = test.dsn(t)
+			}
+
+			db, err := gorm.Open(test.dialector(dsn), &gorm.Config{})
+			require.NoError(t, err)
+			sqlDB, err := db.DB()
+			require.NoError(t, err)
+			sqlDB.SetMaxOpenConns(4)
+			t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+			require.NoError(t, db.AutoMigrate(&SystemTask{}, &SystemTaskLock{}))
+			require.NoError(t, db.AutoMigrate(&SystemTask{}, &SystemTaskLock{}))
+			require.NoError(t, db.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&SystemTaskLock{}).Error)
+			require.NoError(t, db.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&SystemTask{}).Error)
+
+			previousDB := DB
+			previousLogDB := LOG_DB
+			DB = db
+			LOG_DB = db
+			t.Cleanup(func() {
+				DB = previousDB
+				LOG_DB = previousLogDB
+			})
+
+			task, err := CreateSystemTaskWithActiveKey(
+				SystemTaskTypeSystemUpdate,
+				"system_binary_update",
+				nil,
+				nil,
+			)
+			require.NoError(t, err)
+			claimed, ok, err := ClaimSystemTask(
+				task.ID,
+				SystemTaskTypeSystemUpdate,
+				"runner-a",
+				common.GetTimestamp()+60,
+			)
+			require.NoError(t, err)
+			require.True(t, ok)
+			require.NoError(t, TransferSystemTaskLock(
+				claimed.TaskID,
+				claimed.Type,
+				"runner-a",
+				"helper-a",
+				common.GetTimestamp()+600,
+			))
+			require.NoError(t, UpdateSystemTaskState(
+				claimed.TaskID,
+				"helper-a",
+				map[string]any{"progress": 50},
+			))
+			require.NoError(t, FinishSystemTask(
+				claimed.TaskID,
+				"helper-a",
+				SystemTaskStatusSucceeded,
+				map[string]any{"completed": true},
+				"",
+			))
+
+			reloaded, err := GetSystemTaskByTaskID(claimed.TaskID)
+			require.NoError(t, err)
+			require.NotNil(t, reloaded)
+			assert.Equal(t, SystemTaskStatusSucceeded, reloaded.Status)
+			assert.Nil(t, reloaded.ActiveKey)
+			var lockCount int64
+			require.NoError(t, db.Model(&SystemTaskLock{}).
+				Where("task_id = ?", claimed.TaskID).
+				Count(&lockCount).Error)
+			assert.Zero(t, lockCount)
+		})
+	}
+}
+
+func TestFinishSystemTaskPersistsMaskedError(t *testing.T) {
+	setupIsolatedSystemTaskDB(t)
+
+	task, err := CreateSystemTask(SystemTaskTypeSystemUpdate, nil, nil)
+	require.NoError(t, err)
+	claimed, ok, err := ClaimSystemTask(
+		task.ID,
+		SystemTaskTypeSystemUpdate,
+		"runner-secret",
+		common.GetTimestamp()+60,
+	)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	require.NoError(t, FinishSystemTask(
+		claimed.TaskID,
+		"runner-secret",
+		SystemTaskStatusFailed,
+		nil,
+		"update failed: SESSION_SECRET=hidden-value",
+	))
+
+	reloaded, err := GetSystemTaskByTaskID(claimed.TaskID)
+	require.NoError(t, err)
+	require.NotNil(t, reloaded)
+	assert.NotContains(t, reloaded.Error, "hidden-value")
+	assert.Contains(t, reloaded.Error, "***")
 }
 
 func TestSystemTaskCreateAndActiveLifecycle(t *testing.T) {

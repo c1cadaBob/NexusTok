@@ -47,6 +47,10 @@ var buildFS embed.FS
 var indexPage []byte
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "system-update-helper" {
+		runSystemUpdateHelper()
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "plugin" {
 		os.Exit(jsplugin.RunCLI(os.Args[2:], os.Stdout, os.Stderr))
 	}
@@ -284,6 +288,32 @@ func InjectGoogleAnalytics() {
 	analyticsInject := []byte(analyticsInjectBuilder.String())
 	placeholder := []byte("<!--Google Analytics-->\n")
 	indexPage = bytes.ReplaceAll(indexPage, placeholder, analyticsInject)
+}
+
+// runSystemUpdateHelper 运行 Docker 自动更新 helper 子命令。
+//
+// helper 只初始化数据库和更新服务所需的最小配置，不启动 HTTP 服务、Redis、
+// 系统任务 runner 或其它后台任务。主容器停止后，helper 使用同一份数据库和数据卷
+// 写回任务终态。
+func runSystemUpdateHelper() {
+	os.Args = []string{os.Args[0]}
+	_ = godotenv.Load(".env")
+	common.InitEnv()
+	logger.SetupLogger()
+	ratio_setting.InitRatioSettings()
+	service.InitHttpClient()
+	if err := model.InitDB(); err != nil {
+		common.FatalLog("failed to initialize helper database: " + service.SystemUpdateErrorMessage(err))
+		return
+	}
+	defer func() {
+		if err := model.CloseDB(); err != nil {
+			common.SysLog("failed to close helper database: " + err.Error())
+		}
+	}()
+	if err := service.RunSystemUpdateDockerHelper(context.Background()); err != nil {
+		common.FatalLog("Docker system update helper failed: " + service.SystemUpdateErrorMessage(err))
+	}
 }
 
 func InitResources() error {

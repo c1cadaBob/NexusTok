@@ -94,6 +94,116 @@ export type LogCleanupTask = SystemTask<
   LogCleanupTaskResult
 >
 
+export type SystemUpdateAsset = {
+  name: string
+  download_url: string
+  size: number
+}
+
+export type SystemUpdateReleaseInfo = {
+  tag_name: string
+  name?: string
+  body?: string
+  html_url?: string
+  published_at?: string
+  assets?: SystemUpdateAsset[]
+}
+
+export type SystemUpdateRuntime = {
+  goos: string
+  goarch: string
+  is_running_in_container: boolean
+}
+
+export type SystemUpdateDockerInfo = {
+  container_name?: string
+  current_image?: string
+  current_image_id?: string
+  target_image?: string
+  socket_available: boolean
+  one_time_enable_command?: string
+  manual_update_command?: string
+  health_status?: string
+  healthcheck_available: boolean
+  healthcheck_degraded: boolean
+}
+
+export type SystemUpdateInfo = {
+  current_version: string
+  latest_version: string
+  has_update: boolean
+  cached: boolean
+  release_info?: SystemUpdateReleaseInfo
+  matched_asset?: SystemUpdateAsset
+  checksum_asset?: SystemUpdateAsset
+  runtime: SystemUpdateRuntime
+  build_type: string
+  deployment_mode: string
+  comparison_status: 'newer' | 'latest' | 'older' | 'unknown'
+  update_method: string
+  target_image?: string
+  docker?: SystemUpdateDockerInfo
+  docker_control_available: boolean
+  can_apply: boolean
+  apply_disabled_reason?: string
+  rollback_available: boolean
+  warning?: string
+  release_status: string
+  manual_update_hint?: string
+}
+
+export type SystemUpdateTaskState = {
+  phase?: string
+  progress?: number
+  downloaded_bytes?: number
+  total_bytes?: number
+  target_version?: string
+  asset_name?: string
+  mode?: string
+  target_image?: string
+  health_status?: string
+  healthcheck_available?: boolean
+  healthcheck_degraded?: boolean
+}
+
+export type SystemUpdateTaskResult = {
+  current_version?: string
+  target_version?: string
+  asset_name?: string
+  restart_required?: boolean
+  rollback_available?: boolean
+  mode?: string
+  target_image?: string
+  health_status?: string
+  healthcheck_available?: boolean
+  healthcheck_degraded?: boolean
+}
+
+export type SystemUpdateTask = SystemTask<
+  Record<string, unknown>,
+  SystemUpdateTaskState,
+  SystemUpdateTaskResult
+>
+
+export type SystemUpdateInfoResponse = {
+  success: boolean
+  message: string
+  data?: SystemUpdateInfo
+}
+
+export type SystemRestartResult = {
+  restart_supported: boolean
+  restart_scheduled: boolean
+  manual_required: boolean
+  message: string
+}
+
+export type SystemRestartResponse = {
+  success: boolean
+  message: string
+  data?: SystemRestartResult
+}
+
 export type SystemTaskResponse<TTask = SystemTask | null> = {
   success: boolean
   message: string

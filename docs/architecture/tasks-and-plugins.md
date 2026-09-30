@@ -1,8 +1,8 @@
 # 异步任务与 Sobek 插件原理
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-25
-> 主要代码来源：`pkg/jsplugin/engine.go`、`pkg/jsplugin/registry.go`、`pkg/jsplugin/routing.go`、`controller/task_plugin.go`、`controller/plugin_protocol.go`、`service/task_polling.go`、`service/task_plugin_audit.go`、`model/task.go`、`model/task_plugin.go`、`relay/plugin_protocol.go`、`router/task-router.go`、`router/task-plugin-protocol-router.go`
+> 事实基线日期：2026-09-30
+> 主要代码来源：`pkg/jsplugin/engine.go`、`pkg/jsplugin/registry.go`、`pkg/jsplugin/routing.go`、`controller/task_plugin.go`、`controller/plugin_protocol.go`、`service/task_polling.go`、`service/task_plugin_audit.go`、`service/system_task.go`、`service/system_update.go`、`service/system_update_docker.go`、`model/task.go`、`model/system_task.go`、`model/task_plugin.go`、`relay/plugin_protocol.go`、`router/task-router.go`、`router/task-plugin-protocol-router.go`
 > 关联详细文档：[`../plugin-api/README.md`](../plugin-api/README.md)、[`../plugin-api/v1.md`](../plugin-api/v1.md)、[`../plugin-api/v1.schema.json`](../plugin-api/v1.schema.json)、[`../plugin-api/v1.d.ts`](../plugin-api/v1.d.ts)、[`billing-and-quota.md`](./billing-and-quota.md)
 
 ## 1. 功能目标和边界
@@ -23,6 +23,13 @@
 | 产物 | `/v1/tasks/:key/artifacts`、`.../content`、Video content | Capability 校验、所有者/插件/任务检查、代理下载 |
 
 异步任务的状态更新使用条件更新/CAS 思路，避免过期轮询结果覆盖较新的终态。系统任务 Runner 通过数据库租约执行批量轮询，失败分类和重试阈值以 `service/task_polling.go` 为准。
+
+系统维护另有 Root 专属的系统任务链路：`system_update` 和 `system_rollback` 共享
+`system_binary_update` ActiveKey，更新/回滚只能存在一条活动任务。任务 Handler 负责将
+版本检查、下载、checksum、文件交换或 Docker 候选容器状态写入 State，并在成功或失败
+时写入 Result/Error 终态。Docker 更新在主容器停止前创建 helper 并转移租约，helper
+只初始化数据库、租约和 Docker Engine 操作，不启动 HTTP 服务、Redis runner 或插件。
+该链路与普通用户异步任务的计费、Artifact 和插件状态无关。
 
 ## 3. 插件编译、校验和注册
 
@@ -75,6 +82,8 @@ Capability URL 不是上游 URL。读取时 Host 仍要加载任务、用户和�
 - 任务状态：`model/task.go`、私有任务数据和 Artifact 投影。
 - 插件契约：[`plugin-api/v1.md`](../plugin-api/v1.md)、Schema 和 TypeScript 声明。
 - 并发和 Origin：`controller/plugin_protocol_limiter.go`、任务 Artifact 中间件及相关环境变量。
+- 系统维护任务：`controller/system_update.go`、`service/system_update.go`、
+  `service/system_update_docker.go`、`model/system_task.go`。
 
 ## 8. 当前限制和实际偏差
 
@@ -82,6 +91,9 @@ Capability URL 不是上游 URL。读取时 Host 仍要加载任务、用户和�
 - Generation number 是节点本地值；诊断跨节点时还要比较数据库 revision 和插件重建结果。
 - 产物 Capability 没有普通 URL 的短期过期语义，但 `CRYPTO_SECRET` 轮换和任务/所有者/插件校验仍可使其不可用。
 - 历史任务平台映射和新 Task Plugin 路径并存，不能根据某一个平台 key 推断所有任务操作都支持。
+- 系统维护自动更新只支持具备可验证 Release/checksum 的裸机发布构建或挂载 Docker socket
+  的容器；source/development build、Windows 正在运行的二进制和无 socket 容器只提供
+  手动提示。真实生产 Docker 切换尚未执行。
 
 ## 9. 维护时需要同步的关联模块
 
@@ -92,3 +104,4 @@ Capability URL 不是上游 URL。读取时 Host 仍要加载任务、用户和�
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 建立任务生命周期、插件边界、协议、轮询、Generation Pinning 和 Artifact 说明 | `pkg/jsplugin/`、`plugins/tasks/`、`service/task_polling.go`、`router/`、`model/task*` | 插件 API 详细文档、任务路由和轮询代码静态核对 |
+| 2026-09-30 | 系统维护任务链路 | 维护页面只能读取 Release 说明，系统任务文档没有更新、回滚、helper 和可重复回滚语义 | 增加 Root 维护任务类型、ActiveKey 互斥、任务进度/终态、Docker helper 租约接管；裸机和 Docker 回滚均交换当前版本与稳定备份而不消耗备份 | `service/system_task.go`、`service/system_update.go`、`service/system_update_docker.go`、`model/system_task.go`、维护页 | `service/system_update_test.go`、`model/system_task_test.go`；未执行真实生产 Docker 切换 |

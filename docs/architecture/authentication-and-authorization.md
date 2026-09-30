@@ -87,6 +87,8 @@ Token 限制不是前端 UI 的提示，而是在服务端分发和预扣/扣减
 - 已有详细文档描述了大量安全契约，本架构文档不重复定义所有 Cookie 属性和接口字段；两者冲突时应以代码和最新专项契约核对。
 - 频繁重新登录同一浏览器不会新增 `user_sessions` 行，但每次认证仍会轮换 SID 和 Refresh Secret 摘要；这不是延长旧凭据有效期的豁免。
 - OAuth、Passkey、TOTP、PAT 和 Security Proof 的端到端组合场景不能由单个入口文件证明；尚未覆盖的组合场景应标记“待核查”，不能据名称推断。
+- 系统维护更新、回滚和重启是 Root 专属敏感操作，不能由普通 Admin 或前端状态判断替代
+  服务端鉴权；二次确认只用于降低误操作，最终权限边界仍由 `RootAuth()` 执行。
 
 ### 8.1 平台站点认证边界（2026-09-26）
 
@@ -124,6 +126,7 @@ Cookie、Token、Refresh Token 和 Session ID 不写入日志、审计字段、U
 | 2026-09-27 | NewAPI Dashboard 会话刷新 | 平台站点 Refresh Cookie、Session ID、Bearer Token 的组合和轮换持久化未统一；非 401 刷新失败可能被理解为可重试凭据错误 | 严格发送 `new_api_refresh` Cookie、`X-Auth-Session` 和旧 Bearer Token，Jar 轮换值优先持久化；现代 Bundle 不完整时拒绝旧协议降级，只有确认 401 凭据失效才允许密码回退，网络/WAF/安全验证/非 401 结果标记不确定 | 平台站点密码、Access Token、Cookie、Auth Flow 和凭据加密保存 | `service/upstream_site_adapters.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go`、OWASP ASVS 5.0.0、Authentication/Session Management Cheat Sheet |
 | 2026-09-27 | 平台站点渠道代理认证 | 平台站点密码登录、2FA 和资源请求没有读取渠道代理，客户端合并可能覆盖平台 CookieJar、超时或重定向校验 | 所有后台同步和 Auth Flow 按 `channel_id` 复用渠道 Transport；只替换底层 Transport，保留 CookieJar、30 秒超时、管理站点重定向校验和 Cookie 轮换；代理配置、网络、凭据、安全验证和资源失败分层 | NewAPI/Sub2API 平台站点认证、Refresh、资源同步和敏感凭据保护 | `service/upstream_site.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go`、OWASP 认证/会话与 SSRF 指引 |
 | 2026-09-30 | 旧版平台登录主体与真实站点黑盒验收 | 上游登录主体兼容顺序与旧版不一致，真实站点资源验收结果未在鉴权架构记录 | 恢复受限主体兼容；New API 11 条 Key/32 个聚合模型、Sub2API 10 条 Key/18 个聚合模型的脱敏只读验收结果写入专项文档；保留 Refresh 轮换、Bundle 完整性、安全验证和快照边界 | NewAPI/Sub2API 上游认证、资源读取和安全审计 | `service/upstream_site_adapters.go`、`service/upstream_site_test.go`、隔离浏览器 MCP 黑盒验收；未调用计费接口 |
+| 2026-09-30 | 系统维护 Root 敏感操作 | 维护页只有浏览器侧 GitHub 读取，更新、回滚和重启没有 Root/审计/脱敏边界 | 后端经 `RootAuth()` 检查 Release 并创建系统任务，更新、回滚、重启沿用管理审计；管理响应、任务、日志和 helper 边界不输出敏感环境或认证值 | 系统维护接口、Root 权限、管理审计、任务响应和 Docker helper | `router/api-router.go`、`middleware/audit.go`、`controller/system_update.go`、`model/system_task.go`、OWASP ASVS 5.0.0 与认证/会话/日志 Cheat Sheet |
 
 ### 9.1 2026-09-26 实现校准
 
@@ -204,3 +207,21 @@ Token 分页参数、兼容回退和现代 Dashboard 会话刷新容易被宽泛
 - Auth Flow 开始、2FA 验证和后台同步按 `ChannelID` 读取渠道代理；代理配置错误
   单独分类，平台会话仍保留 CookieJar、30 秒超时和管理站点重定向校验。密码、Cookie、
   Token、Refresh Token 和验证码不进入认证审计事件。
+
+### 9.5 2026-09-30 系统维护敏感操作边界
+
+**变更前**：维护页面直接从浏览器请求 GitHub Release，只能显示版本说明；没有后端更新、
+回滚、重启入口，也没有统一的 Root 权限和操作审计边界。
+
+**变更后**：`/api/system-update/latest`、`/api/system-update/apply`、
+`/api/system-update/rollback` 和 `/api/system-update/restart` 均挂载在
+`RootAuth()` 下。前端 ConfirmDialog 是误操作保护，服务端仍会重新检查 Release、
+资产、checksum、当前部署方式、Docker socket 和回滚槽位。POST 操作沿用管理审计中间件，
+记录 action、操作者、结果、路由和非秘密上下文，不新增 Casbin 权限类别。
+
+系统任务响应只返回版本、镜像摘要、阶段、进度、结果摘要和脱敏错误；密码、Cookie、
+Session Secret、数据库 DSN、Redis 连接串、Access/Refresh Token、Admin Key 和完整
+上游 Key 不进入管理响应、审计参数、任务错误或日志。helper 只在进程内继承更新所需环境，
+不会把环境变量值放入手动命令或对外响应。安全核对依据为 OWASP ASVS 5.0.0、
+Authentication Cheat Sheet、Session Management Cheat Sheet 和 Logging Cheat Sheet；
+本次未改变 NexusTok 面板 Session、Refresh Token 或 CSRF 边界。
