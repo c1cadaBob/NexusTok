@@ -825,6 +825,118 @@ func TestNewAPITokenPaginationDoesNotUseZeroBasedPrimaryRequest(t *testing.T) {
 	assert.Equal(t, "17", firstString(tokens[0], "id"))
 }
 
+func TestNewAPITokensUseIndependentThousandPageLimit(t *testing.T) {
+	requestedPages := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		require.Equal(t, "/api/token/", request.URL.Path)
+		page := request.URL.Query().Get("p")
+		if page == "1001" {
+			t.Fatalf("NewAPI 密钥分页不应请求第 1001 页")
+		}
+		requestedPages++
+		_, _ = fmt.Fprintf(
+			writer,
+			`{"success":true,"data":{"page":%s,"page_size":1,"total":1000,"items":[{"id":"key-%s","key":"sk-%s","models":["gpt-4o"]}]}}`,
+			page,
+			page,
+			page,
+		)
+	}))
+	defer server.Close()
+
+	session, err := newPlatformSiteSession(server.URL, nil)
+	require.NoError(t, err)
+	session.Client = server.Client()
+	tokens, err := fetchNewAPITokens(context.Background(), session)
+	require.NoError(t, err)
+	assert.Equal(t, 1000, requestedPages)
+	require.Len(t, tokens, 1000)
+	assert.Equal(t, "key-1000", firstString(tokens[len(tokens)-1], "id"))
+}
+
+func TestNewAPILoginTriesCompatibleIdentityBodiesOnlyForCredentialErrors(t *testing.T) {
+	loginBodies := make([]string, 0, 3)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/user/login":
+			body, readErr := io.ReadAll(request.Body)
+			require.NoError(t, readErr)
+			loginBodies = append(loginBodies, string(body))
+			if len(loginBodies) < 3 {
+				_, _ = writer.Write([]byte(`{"success":false,"message":"invalid username or password"}`))
+				return
+			}
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"token":"newapi-session"}}`))
+		case "/api/user/self":
+			assert.Equal(t, "Bearer newapi-session", request.Header.Get("Authorization"))
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"id":17,"quota":1}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	_, err := NewNewAPIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType: model.UpstreamAuthPassword,
+			Username: "operator@example.com",
+			Password: "synthetic-password",
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, loginBodies, 3)
+	assert.Contains(t, loginBodies[0], `"username":"operator@example.com"`)
+	assert.NotContains(t, loginBodies[0], `"email"`)
+	assert.Contains(t, loginBodies[1], `"email":"operator@example.com"`)
+	assert.NotContains(t, loginBodies[1], `"username"`)
+	assert.Contains(t, loginBodies[2], `"username":"operator@example.com"`)
+	assert.Contains(t, loginBodies[2], `"email":"operator@example.com"`)
+}
+
+func TestNewAPIStatusFailureUsesDefaultQuotaAndStillSyncsTokens(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/user/login":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"token":"newapi-session"}}`))
+		case "/api/status":
+			writer.WriteHeader(http.StatusBadGateway)
+			_, _ = writer.Write([]byte(`{"success":false,"message":"status unavailable"}`))
+		case "/api/user/self":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"id":17,"quota":5000000,"used_quota":2000000}}`))
+		case "/api/token/":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"page":1,"page_size":100,"total":1,"items":[{"id":"key-1","key":"sk-newapi","models":["gpt-4o"],"quota":4}]}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	session, err := NewNewAPIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType: model.UpstreamAuthPassword,
+			Username: "operator",
+			Password: "synthetic-password",
+		},
+	)
+	require.NoError(t, err)
+	snapshot, err := NewNewAPIAdapter(server.Client()).FetchSnapshot(context.Background(), session)
+	require.NoError(t, err)
+	assert.Equal(t, 10.0, snapshot.Balance)
+	assert.Equal(t, int64(2000000), snapshot.UsedQuota)
+	assert.Equal(t, server.URL, snapshot.ManagementBaseURL)
+	assert.Equal(t, server.URL, snapshot.RelayBaseURL)
+	require.Len(t, snapshot.Keys, 1)
+	assert.Equal(t, "sk-newapi", snapshot.Keys[0].Secret)
+	assert.Equal(t, []string{"gpt-4o"}, snapshot.Keys[0].Models)
+}
+
 func TestNewAPIAdapterModelsFallbackOnlyOnMissingRoute(t *testing.T) {
 	t.Run("兼容模型路由", func(t *testing.T) {
 		requestedPaths := make([]string, 0, 3)
@@ -2594,6 +2706,8 @@ func TestSub2APIAdapterAdminKeyReadsNestedCredentialAndPagination(t *testing.T) 
 		case "/api/v1/auth/me":
 			assert.Equal(t, "admin-secret", request.Header.Get("x-api-key"))
 			_, _ = writer.Write([]byte(`{"data":{"balance":4,"used_quota":1}}`))
+		case "/api/v1/groups/available":
+			_, _ = writer.Write([]byte(`{"data":[{"id":"default","name":"default","rate_multiplier":0.5}]}`))
 		case "/api/v1/groups/rates":
 			_, _ = writer.Write([]byte(`{"data":{"default":0.5}}`))
 		case "/v1/models":
@@ -2857,6 +2971,346 @@ func TestSub2APIAdapterDiscoversRelayModelsAndTreatsZeroQuotaAsUnlimited(t *test
 	assert.Equal(t, 1, modelRequests)
 }
 
+func TestSub2APILoginTriesEmailThenUsernameBody(t *testing.T) {
+	loginBodies := make([]string, 0, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v1/auth/login":
+			body, readErr := io.ReadAll(request.Body)
+			require.NoError(t, readErr)
+			loginBodies = append(loginBodies, string(body))
+			if len(loginBodies) == 1 {
+				_, _ = writer.Write([]byte(`{"code":401,"message":"invalid credentials"}`))
+				return
+			}
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"access_token":"sub2api-session"}}`))
+		case "/api/v1/auth/me":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"balance":1}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	session, err := NewSub2APIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType: model.UpstreamAuthPassword,
+			Username: "operator@example.com",
+			Password: "synthetic-password",
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, loginBodies, 2)
+	assert.Contains(t, loginBodies[0], `"email":"operator@example.com"`)
+	assert.NotContains(t, loginBodies[0], `"username"`)
+	assert.Contains(t, loginBodies[1], `"username":"operator@example.com"`)
+	assert.NotContains(t, loginBodies[1], `"email"`)
+	assert.Equal(t, "Bearer sub2api-session", session.Headers.Get("Authorization"))
+}
+
+func TestSub2APILoginStopsOnSecurityVerification(t *testing.T) {
+	loginRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodPost && request.URL.Path == "/api/v1/auth/login" {
+			loginRequests++
+			writer.Header().Set("Content-Type", "application/json")
+			writer.WriteHeader(http.StatusForbidden)
+			_, _ = writer.Write([]byte(`{"code":403,"message":"verification required"}`))
+			return
+		}
+		if request.URL.Path == "" || request.URL.Path == "/" {
+			http.NotFound(writer, request)
+			return
+		}
+		t.Fatalf("安全验证失败时不应继续请求 %s", request.URL.Path)
+	}))
+	defer server.Close()
+
+	_, err := NewSub2APIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType: model.UpstreamAuthPassword,
+			Username: "operator@example.com",
+			Password: "synthetic-password",
+		},
+	)
+	require.Error(t, err)
+	assert.Equal(t, 1, loginRequests)
+	assert.ErrorIs(t, err, ErrPlatformSiteSecurity)
+	assert.NotContains(t, SafePlatformSiteError(err), "synthetic-password")
+}
+
+func TestSub2APIUsageReadsDashboardBeforeStatsFallback(t *testing.T) {
+	requests := make([]string, 0, 16)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		requests = append(requests, request.URL.Path)
+		switch request.URL.Path {
+		case "/api/v1/auth/me":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"balance":1}}`))
+		case "/api/v1/user/profile":
+			http.NotFound(writer, request)
+		case "/api/v1/groups/available":
+			_, _ = writer.Write([]byte(`{"code":0,"data":[]}`))
+		case "/api/v1/groups/rates":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{}}`))
+		case "/api/v1/usage/dashboard/stats":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{}}`))
+		case "/api/v1/usage/stats":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"total_actual_cost":3}}`))
+		case "/api/v1/keys":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"items":[{"id":42,"key":"sk-sub2api","models":["gpt-4o"]}],"total":1,"page_size":100}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	adapter := NewSub2APIAdapter(server.Client())
+	session, err := adapter.Authenticate(context.Background(), server.URL, model.PlatformSiteCredential{
+		AuthType:    model.UpstreamAuthAccessToken,
+		AccessToken: "session-token",
+	})
+	require.NoError(t, err)
+	snapshot, err := adapter.FetchSnapshot(context.Background(), session)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1500000), snapshot.UsedQuota)
+	assert.True(t, snapshot.UsedQuotaSet)
+
+	lastIndex := func(path string) int {
+		for index := len(requests) - 1; index >= 0; index-- {
+			if requests[index] == path {
+				return index
+			}
+		}
+		return -1
+	}
+	assert.Less(t, lastIndex("/api/v1/groups/available"), lastIndex("/api/v1/groups/rates"))
+	assert.Less(t, lastIndex("/api/v1/groups/rates"), lastIndex("/api/v1/usage/dashboard/stats"))
+	assert.Less(t, lastIndex("/api/v1/usage/dashboard/stats"), lastIndex("/api/v1/usage/stats"))
+	assert.Less(t, lastIndex("/api/v1/usage/stats"), lastIndex("/api/v1/keys"))
+}
+
+func TestSub2APIGroupsFailureStopsKeySynchronizationAndKeepsSnapshotData(t *testing.T) {
+	keyRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v1/auth/me":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"id":7,"balance":1}}`))
+		case "/api/v1/user/profile":
+			http.NotFound(writer, request)
+		case "/api/v1/groups/available":
+			writer.WriteHeader(http.StatusForbidden)
+			_, _ = writer.Write([]byte(`{"code":403,"message":"permission denied"}`))
+		case "/api/v1/keys":
+			keyRequests++
+			t.Fatalf("分组核心资源失败后不应读取密钥")
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	adapter := NewSub2APIAdapter(server.Client())
+	session, err := adapter.Authenticate(context.Background(), server.URL, model.PlatformSiteCredential{
+		AuthType:    model.UpstreamAuthAccessToken,
+		AccessToken: "session-token",
+	})
+	require.NoError(t, err)
+	snapshot, err := adapter.FetchSnapshot(context.Background(), session)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPlatformSiteResource)
+	assert.NotErrorIs(t, err, ErrPlatformSiteCredentials)
+	assert.Equal(t, 0, keyRequests)
+	assert.NotNil(t, snapshot.Identity)
+	assert.False(t, snapshot.KeysComplete)
+	require.Len(t, snapshot.ResourceSyncs, 2)
+	assert.Equal(t, model.PlatformSiteResourceStatusFailed, snapshot.ResourceSyncs[1].Status)
+}
+
+func TestSub2APIKeyPaginationUsesThousandPageLimitAndListModels(t *testing.T) {
+	requestedPages := 0
+	modelRequests := 0
+	detailRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v1/keys":
+			page := request.URL.Query().Get("page")
+			if page == "1001" {
+				t.Fatalf("Sub2API 普通密钥分页不应请求第 1001 页")
+			}
+			requestedPages++
+			assert.Equal(t, "100", request.URL.Query().Get("page_size"))
+			_, _ = fmt.Fprintf(
+				writer,
+				`{"code":0,"data":{"items":[{"id":"key-%s","key":"sk-%s","model_limits":"gpt-4o"}],"total":1000,"page_size":1}}`,
+				page,
+				page,
+			)
+		case "/v1/models":
+			modelRequests++
+		default:
+			if strings.HasPrefix(request.URL.Path, "/api/v1/keys/") {
+				detailRequests++
+			}
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	session, err := newPlatformSiteSession(server.URL, nil)
+	require.NoError(t, err)
+	session.Client = server.Client()
+	keys, err := fetchSub2APIKeys(context.Background(), session, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1000, requestedPages)
+	assert.Equal(t, 0, detailRequests)
+	assert.Equal(t, 0, modelRequests)
+	require.Len(t, keys, 1000)
+	assert.Equal(t, "key-1000", keys[len(keys)-1].ExternalID)
+	assert.Equal(t, "sk-1000", keys[len(keys)-1].Secret)
+	assert.Equal(t, []string{"gpt-4o"}, keys[len(keys)-1].Models)
+}
+
+func TestSub2APIAdminKeyPaginationUsesThousandPageLimitAndSkipsDataForCompleteKeys(t *testing.T) {
+	requestedPages := 0
+	dataRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v1/admin/accounts":
+			page := request.URL.Query().Get("page")
+			if page == "1001" {
+				t.Fatalf("Sub2API 管理密钥分页不应请求第 1001 页")
+			}
+			requestedPages++
+			assert.Equal(t, "100", request.URL.Query().Get("page_size"))
+			assert.Equal(t, "apikey", request.URL.Query().Get("type"))
+			_, _ = fmt.Fprintf(
+				writer,
+				`{"code":0,"data":{"accounts":[{"id":"account-%s","name":"managed","key":"sk-%s","models":["gpt-4o"]}],"total":1000,"page_size":1}}`,
+				page,
+				page,
+			)
+		case "/api/v1/admin/accounts/data":
+			dataRequests++
+			t.Fatalf("列表已返回完整 Admin Key 时不应请求 accounts/data")
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	session, err := newPlatformSiteSession(server.URL, nil)
+	require.NoError(t, err)
+	session.Client = server.Client()
+	session.Headers.Set("x-api-key", "admin-secret")
+	keys, err := fetchSub2APIAdminKeys(context.Background(), session, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1000, requestedPages)
+	assert.Equal(t, 0, dataRequests)
+	require.Len(t, keys, 1000)
+	assert.Equal(t, "account-1000", keys[len(keys)-1].ExternalID)
+	assert.Equal(t, "sk-1000", keys[len(keys)-1].Secret)
+}
+
+func TestSub2APIKeyPaginationFailureReturnsPartialSnapshot(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v1/auth/me":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"balance":1}}`))
+		case "/api/v1/user/profile":
+			http.NotFound(writer, request)
+		case "/api/v1/groups/available":
+			_, _ = writer.Write([]byte(`{"code":0,"data":[]}`))
+		case "/api/v1/groups/rates":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{}}`))
+		case "/api/v1/usage/dashboard/stats", "/api/v1/usage/stats":
+			http.NotFound(writer, request)
+		case "/api/v1/keys":
+			if request.URL.Query().Get("page") == "2" {
+				writer.WriteHeader(http.StatusBadGateway)
+				_, _ = writer.Write([]byte(`{"code":502,"message":"temporary upstream failure"}`))
+				return
+			}
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"items":[{"id":"key-1","key":"sk-one","models":["gpt-4o"]}],"total":2,"page_size":1}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	adapter := NewSub2APIAdapter(server.Client())
+	session, err := adapter.Authenticate(context.Background(), server.URL, model.PlatformSiteCredential{
+		AuthType:    model.UpstreamAuthAccessToken,
+		AccessToken: "session-token",
+	})
+	require.NoError(t, err)
+	snapshot, err := adapter.FetchSnapshot(context.Background(), session)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPlatformSiteResource)
+	assert.False(t, snapshot.KeysComplete)
+	require.Len(t, snapshot.Keys, 1)
+	assert.Equal(t, "key-1", snapshot.Keys[0].ExternalID)
+	assert.NotEmpty(t, snapshot.ResourceSyncs)
+}
+
+func TestSub2APIAdminKeyStepUpRemainsIndependentFromAuthentication(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v1/auth/me":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"balance":1}}`))
+		case "/api/v1/user/profile":
+			http.NotFound(writer, request)
+		case "/api/v1/groups/available":
+			_, _ = writer.Write([]byte(`{"code":0,"data":[]}`))
+		case "/api/v1/groups/rates":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{}}`))
+		case "/api/v1/usage/dashboard/stats", "/api/v1/usage/stats":
+			http.NotFound(writer, request)
+		case "/api/v1/admin/accounts":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"accounts":[{"id":"account-1","name":"managed"}],"total":1,"page_size":100}}`))
+		case "/api/v1/admin/accounts/data":
+			writer.WriteHeader(http.StatusForbidden)
+			_, _ = writer.Write([]byte(`{"code":403,"message":"verification required"}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	adapter := NewSub2APIAdapter(server.Client())
+	session, err := adapter.Authenticate(context.Background(), server.URL, model.PlatformSiteCredential{
+		AuthType: model.UpstreamAuthAdminKey,
+		AdminKey: "admin-secret",
+		UserID:   "",
+	})
+	require.NoError(t, err)
+	snapshot, err := adapter.FetchSnapshot(context.Background(), session)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPlatformSiteResource)
+	assert.ErrorIs(t, err, ErrPlatformSiteSecurity)
+	assert.Equal(t, model.PlatformSiteAuthStatusSecureVerificationRequired, snapshot.AuthStatus)
+	var keyResource *PlatformSiteResourceSyncSnapshot
+	for index := range snapshot.ResourceSyncs {
+		if snapshot.ResourceSyncs[index].ResourceType == model.PlatformSiteResourceKeys {
+			keyResource = &snapshot.ResourceSyncs[index]
+			break
+		}
+	}
+	require.NotNil(t, keyResource)
+	assert.Equal(t, model.PlatformSiteResourceStatusSecureVerificationRequired, keyResource.Status)
+	assert.True(t, keyResource.RequiresSecurityVerification)
+}
+
 func TestSub2APIAdapterResolvesRelativeRelayURLFromPageConfig(t *testing.T) {
 	client := &http.Client{
 		Transport: platformSiteRoundTripFunc(func(request *http.Request) (*http.Response, error) {
@@ -3102,17 +3556,29 @@ func TestPlatformSiteRequestClassifiesHTMLForbiddenAsWAF(t *testing.T) {
 	}
 }
 
-func TestSub2APILoginRejectsInvalidEmailBeforeLoginRequest(t *testing.T) {
+func TestSub2APILoginUsesUsernameBody(t *testing.T) {
 	loginRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method == http.MethodPost && request.URL.Path == "/api/v1/auth/login" {
 			loginRequests++
+			body, readErr := io.ReadAll(request.Body)
+			require.NoError(t, readErr)
+			assert.Contains(t, string(body), `"username":"operator"`)
+			assert.NotContains(t, string(body), `"email"`)
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"access_token":"username-session"}}`))
+			return
+		}
+		if request.Method == http.MethodGet && request.URL.Path == "/api/v1/auth/me" {
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"balance":1}}`))
+			return
 		}
 		http.NotFound(writer, request)
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 
-	_, err := NewSub2APIAdapter(server.Client()).Authenticate(
+	session, err := NewSub2APIAdapter(server.Client()).Authenticate(
 		context.Background(),
 		server.URL,
 		model.PlatformSiteCredential{
@@ -3121,13 +3587,10 @@ func TestSub2APILoginRejectsInvalidEmailBeforeLoginRequest(t *testing.T) {
 			Password: "synthetic-password",
 		},
 	)
-	require.Error(t, err)
-	assert.Equal(t, 0, loginRequests)
-	assert.ErrorIs(t, err, ErrSub2APILoginEmail)
-	message := SafePlatformSiteError(err)
-	assert.Contains(t, message, "合法邮箱")
-	assert.NotContains(t, message, "synthetic-password")
-	assert.NotContains(t, message, "响应格式错误")
+	require.NoError(t, err)
+	assert.Equal(t, 1, loginRequests)
+	require.NotNil(t, session)
+	assert.Equal(t, "Bearer username-session", session.Headers.Get("Authorization"))
 }
 
 func TestNewAPILoginDistinguishesHTTP200InteractiveAndCredentialFailures(t *testing.T) {
@@ -3286,6 +3749,8 @@ func TestSub2APIAdapterResolvesMaskedKeyFromKeyDetail(t *testing.T) {
 		switch request.URL.Path {
 		case "/api/v1/auth/me":
 			_, _ = writer.Write([]byte(`{"code":0,"data":{"balance":1}}`))
+		case "/api/v1/groups/available":
+			_, _ = writer.Write([]byte(`{"code":0,"data":[]}`))
 		case "/api/v1/keys":
 			_, _ = writer.Write([]byte(`{"code":0,"data":{"items":[{"id":"key-1","name":"masked","key":"sk-****"}]}}`))
 		case "/api/v1/keys/key-1":

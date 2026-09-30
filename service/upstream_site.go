@@ -25,10 +25,11 @@ import (
 )
 
 const (
-	upstreamSiteRequestTimeout = 30 * time.Second
-	upstreamSiteResponseLimit  = 2 << 20
-	upstreamSitePageSize       = 100
-	upstreamSiteMaxPages       = 100
+	upstreamSiteRequestTimeout   = 30 * time.Second
+	upstreamSiteResponseLimit    = 2 << 20
+	upstreamSitePageSize         = 100
+	upstreamSiteMaxPages         = 100
+	upstreamSiteResourceMaxPages = 1000
 )
 
 var (

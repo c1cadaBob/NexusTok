@@ -1,7 +1,7 @@
 # 实现偏差登记
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-27
+> 事实基线日期：2026-09-30
 > 主要代码来源：`router/relay-router.go`、`common/api_type.go`、`relay/relay_adaptor.go`、`relay/channel/*/adaptor.go`、`router/task-plugin-protocol-router.go`、`docs/architecture/*.md`
 > 关联详细文档：[`README.md`](./README.md)、[`relay-routing-and-conversion.md`](./relay-routing-and-conversion.md)、[`provider-capability-matrix.md`](./provider-capability-matrix.md)、[`../plugin-api/README.md`](../plugin-api/README.md)
 
@@ -54,7 +54,7 @@
 | DEV-019 | 父渠道 `UsedQuota` 写入语义 | 旧版 `CreateFromPreview` 新建父 `Channel.UsedQuota` 为 `0`，上游 Key 已用额度主要保存在 `ChannelAccount` | 当前优先写入平台账号级已用额度；缺少账号级字段时安全求和子 Key 已用额度，并同步写入 `PlatformSiteAccount`、Identity 和父 `Channel`；该字段表示最近上游累计用量，不等于本地 Relay 消费累计 | 已确认偏差 | 旧版 `service/upstreamaccount/create.go`、当前 `service/upstream_site.go:persistPlatformSiteSnapshot`、`model/upstream_channel.go` | 2026-09-29 |
 | DEV-020 | Sub2API 平台窗口额度 | 参考平台提供 `/api/v1/user/platform-quotas`，可返回时间窗口、上限、已用和剩余额度 | 旧版和当前适配器均未完整调用该接口；当前只读取账号/Key 余额与用量，5 小时、日、周、月等窗口额度未进入资源快照 | 已确认偏差 | Sub2API `router/`、`controller/`、`service/` 中 platform-quotas 路由；旧版/当前 `service/upstream_site_adapters.go` | 2026-09-29 |
 | DEV-021 | Sub2API 账号级模型 | 平台可能提供账号级模型目录，名称上容易被当作所有 Key 的能力 | 当前 `fetchSub2APIModels` 直接返回 `nil`，没有独立账号级模型能力；主要通过每条完整 Key 请求 Relay `/v1/models` 或 `/models` 探测，不能把账号级目录复制给子 Key | 已确认偏差 | `service/upstream_site_adapters.go:2571`、`model/upstream_channel.go`、`service/upstream_site.go` | 2026-09-29 |
-| DEV-022 | 平台 Key 分页上限 | 旧版 New API/Sub2API Key 分页最多尝试 1000 页，每页 100 条 | 当前统一分页上限为 100 页、每页 100 条；超大账号可能无法完整覆盖，分页未完成时必须保留旧快照而不能执行缺失判定 | 已确认偏差/待容量验证 | 旧版 `service/upstreamaccount/`、当前 `service/upstream_site_adapters.go` | 2026-09-29 |
+| DEV-022 | 平台 Key 分页上限 | 旧版 New API/Sub2API Key 分页最多尝试 1000 页，每页 100 条 | New API Token、Sub2API 普通 Key 和 Sub2API Admin Key 各自最多尝试 1000 页、每页 100 条；分页中途失败时保留最近成功快照且不执行缺失判定。New API Admin channel 等非本次迁移的管理资源继续使用原独立分页限制 | 已实现/待持续容量验证 | 旧版 `service/upstreamaccount/`、`service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go` | 2026-09-30 |
 
 ### 3.2 2026-09-26 实现核对结果
 
@@ -116,6 +116,22 @@ GET 回退，掩码值视为不可用。Token 自身模型字段优先，账号�
 没有读取或提交任何真实平台凭据；如果真实上游返回明确的凭据错误，仍保持
 `credentials_invalid`，不能通过兼容路径绕过。
 
+### 3.6 2026-09-30 真实站点黑盒验收
+
+本次验收使用独立隔离浏览器会话和后端一次性内存 HTTP 会话，凭据只在进程内短期使用。
+验收范围限定为登录、账号/分组/用量/Key 资源读取、必要的 Key 详情读取和无计费的
+`/v1/models` 探测；没有调用聊天、补全、图片、视频或其它产生费用的接口，也没有创建、
+删除或修改上游资源。验收结束后关闭隔离页面，未保存截图、网络捕获、响应文件或临时测试
+文件。
+
+| 平台 | 脱敏资源结果 | 真实请求观察 | 失败语义核对 | 验收边界 |
+| --- | --- | --- | --- | --- |
+| New API | 读取 11 条 Key、32 个聚合模型 | 登录、Overview、API Keys、Model Analytics、Usage Logs、Profile 页面；适配器观察到 `/api/user/login`、`/api/user/self`、`/api/status`、分组、Token 和账号级模型资源 | 部分单 Key `/v1/models` 返回 HTTP 403；Key/模型进入安全验证或最近成功快照保护状态，不被当作 Key 不存在 | 只读黑盒验收；不记录账号、密码、Cookie、Access Token、Refresh Token、Admin Key 或完整上游 Key |
+| Sub2API | 读取 10 条 Key、18 个聚合模型 | 完成条款确认、登录、Dashboard、API Keys、Usage、Profile 页面；适配器观察到 `/api/v1/auth/login`、`/api/v1/auth/me`、Profile、Groups、Group Rates、Dashboard Stats、Usage Stats、Keys 和页面配置中的 Relay 地址 | 部分单 Key `/v1/models` 返回 HTTP 403；Key 资源为 `partial`、模型资源为 `stale`，保留最近成功快照 | 只读黑盒验收；不记录账号、密码、Cookie、Access Token、Refresh Token、Admin Key 或完整上游 Key |
+
+上述真实站点结果仅作为 2026-09-30 的人工/黑盒验收证据，不作为 CI 输入；后续仍需在
+不同上游部署版本和大规模分页数据上持续验证容量与兼容性。
+
 ## 4. 维护规则
 
 新发现偏差必须先确认“预期来源”与“代码实际行为”都能引用，再新增编号。代码修复时在同一功能提交中：
@@ -135,3 +151,4 @@ GET 回退，掩码值视为不可用。Token 自身模型字段优先，账号�
 | 2026-09-27 | NewAPI 类平台 Dashboard 会话与资源状态偏差 | Refresh Cookie/Session ID/Bundle、管理地址边界和资源权限失败语义未在偏差表中单独登记 | 新增 DEV-016，明确 CookieJar 优先级、现代 Bundle 严格校验、401 密码回退限制、资源快照保留和真实站点待核查范围 | NewAPI 派生平台认证、密钥/模型同步、管理员诊断和路由回退 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`、本机参考源静态核对 |
 | 2026-09-27 | 平台站点渠道代理偏差关闭 | 平台站点管理请求未应用渠道代理，导致代理网络和直连网络行为不一致 | 新增 DEV-017 并完成代码、代理/CookieJar/Auth Flow 回归；保留真实上游站点待核验状态，不把本地网络限制当作代码失败 | NewAPI/Sub2API 管理面、渠道 4/5 同步与管理员诊断 | `service/upstream_site.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go`、渠道代理 fixture |
 | 2026-09-29 | 旧版与当前平台站点资源差异登记 | 偏差表已有认证、刷新、代理和失败回退记录，但没有单独登记数据模型、父渠道额度写入、Sub2API 平台窗口额度、账号级模型和分页上限差异 | 新增 DEV-018 至 DEV-022，明确当前实现与旧版/参考平台的事实差异；已修复的旧版协议偏差继续保持“已实现/待真实站点持续核验”，不把静态核对写成真实站点验证 | 平台站点资源模型、额度、Key 生命周期、模型能力和缺失判定 | `docs/platform-site-resource-acquisition-comparison.md`、`service/upstream_site.go`、`service/upstream_site_adapters.go`、`model/upstream_channel.go`、本机参考源静态核对 |
+| 2026-09-30 | 旧版资源同步迁移与真实站点黑盒验收 | New API/Sub2API 三类 Key 资源仍受 100 页上限影响，偏差表未记录迁移后的容量边界和真实站点只读结果 | 三类 Key 资源独立恢复最多 1000 页；补充 New API 11 条 Key/32 个聚合模型、Sub2API 10 条 Key/18 个聚合模型的脱敏验收结果，并明确部分 `/v1/models` 的 HTTP 403 只进入安全验证、partial 或 stale 快照状态 | 平台站点分页、完整 Key 读取、模型能力、资源快照和安全交付 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`、隔离浏览器 DevTools MCP；未调用计费接口 |

@@ -1,7 +1,7 @@
 # Sub2API 与 New API 平台站点资源获取链路分析及版本差异
 
 > 文档状态：源码事实分析
-> 分析日期：2026-09-29
+> 分析日期：2026-09-30
 > 适用范围：旧版备份、Sub2API/New API/all-api-hub 本机参考源、当前 NexusTok
 > 安全边界：本文只记录接口契约、字段语义、代码入口和失败处理，不记录任何真实密码、Cookie、Access Token、Refresh Token、Admin Key、测试账号、环境变量或完整密钥。
 
@@ -27,7 +27,9 @@
 | New API 参考源 | `/opt/project/new-api-main` | 核对真实登录、2FA、用户、Token、分组、价格、模型和渠道路由 |
 | all-api-hub 辅助参考 | `/opt/project/all-api-hub-main` | 核对 New API/Sub2API 浏览器采集、Refresh 和前端请求组合的辅助事实 |
 
-当前仓库基线包含平台站点同步修复、渠道代理接入和旧版协议校准。本文不修改运行代码，不恢复旧版明文凭据处理方式，也不把参考项目中的运行数据复制到当前项目。
+当前仓库基线包含平台站点同步修复、渠道代理接入、旧版协议校准、2026-09-30
+New API/Sub2API 旧版资源同步迁移和脱敏真实站点黑盒验收。本文不恢复旧版明文
+凭据处理方式，也不把参考项目或真实站点中的运行凭据复制到当前项目。
 
 ### 1.2 证据等级
 
@@ -282,7 +284,7 @@ quota_remaining_usd = remain_quota / quota_per_unit
 
 | 阶段 | 方法与路径 | Query | Body | 认证 Header | 读取字段和用途 | 失败语义 |
 | --- | --- | --- | --- | --- | --- | --- |
-| 密码登录 | `POST /api/v1/auth/login` | 无 | 主线 `{"email":"<email>","password":"<password>"}`；旧版兼容 username/混合字段 | 页面 Origin、Referer、Cookie Jar | `access_token`、`refresh_token`、`expires_in`、用户和 2FA 状态 | 必须是合法邮箱；认证失败与交互验证分开 |
+| 密码登录 | `POST /api/v1/auth/login` | 无 | 当输入是邮箱时依次尝试 `email/password`、`username/password`、混合字段；非邮箱输入使用 `username/password` | 页面 Origin、Referer、Cookie Jar | `access_token`、`refresh_token`、`expires_in`、用户和 2FA 状态 | 只有明确凭据错误或 HTTP 401 才尝试下一种主体；WAF、安全验证、限流、权限和网络错误立即停止 |
 | 2FA | `POST /api/v1/auth/login/2fa` | 无 | `{"temp_token":"<temp-token>","totp_code":"<totp-code>"}` | 复用临时登录 Cookie | 正式 Access Token、Refresh Token、过期时间 | challenge 失效或验证码错误不当作 Key 缺失 |
 | 刷新 | `POST /api/v1/auth/refresh` | 无 | `{"refresh_token":"<refresh-token>"}` | 可带 Cookie | 新 Access Token、新 Refresh Token、`expires_in` | 当前实现要求完整有效的 Token Pair；轮换结果不完整时标记不确定 |
 | 当前用户 | `GET /api/v1/auth/me` | 无 | 无 | `Authorization: Bearer <access-token>` | 用户 ID、邮箱、用户名、余额 | 当前主路径；仅 404/405 才回退 Profile |
@@ -291,7 +293,7 @@ quota_remaining_usd = remain_quota / quota_per_unit
 | 用户分组倍率 | `GET /api/v1/groups/rates` | 无 | 无 | Bearer | 用户实际分组倍率映射 | 可选覆盖；失败保留 available 返回的倍率 |
 | 账号用量主路径 | `GET /api/v1/usage/dashboard/stats` | 无 | 无 | Bearer | `total_actual_cost`、`total_cost`、当天用量 | 不同版本字段可能不同；缺少累计字段时 partial |
 | 账号用量兼容 | `GET /api/v1/usage/stats` | 无 | 无 | Bearer | 同上 | 旧版和当前实现按可用字段回退 |
-| Key 第 1 页 | `GET /api/v1/keys?page=1&page_size=100` | 一基 `page`、`page_size=100` | 无 | Bearer | ID、名称、完整/脱敏 Key、状态、分组、模型、`quota`、`quota_used` | 旧版安全上限 1000 页；当前安全上限 100 页 |
+| Key 第 1 页 | `GET /api/v1/keys?page=1&page_size=100` | 一基 `page`、`page_size=100` | 无 | Bearer | ID、名称、完整/脱敏 Key、状态、分组、模型、`quota`、`quota_used` | 旧版和当前资源同步安全上限均为 1000 页；中途失败保留最近成功快照 |
 | Key 详情 | `GET /api/v1/keys/<id>` | 路径 ID | 无 | Bearer | 完整 Key 或详情模型字段 | 详情失败只影响该 Key 的完整凭据/模型状态；不能清空旧 Key |
 | Relay 模型 | `GET /v1/models`，回退 `GET /models` | 无 | 无 | 使用该 Key 的 Bearer | 单 Key 模型列表 | 该 Key 探测失败标记模型不可用或 partial，保留最近成功能力 |
 
@@ -507,6 +509,11 @@ New API Handler 注释、兼容站点和真实注册路径也可能不同，核�
 - `X-Auth-Session`；
 - Admin Key 模式额外使用 `x-api-key` 和 `New-Api-Key`。
 
+2026-09-30 旧版迁移后，New API 密码登录恢复兼容主体顺序：主请求仍为
+`username/password`，当管理员输入看起来是邮箱时，只在前一轮明确属于凭据错误或
+HTTP 401 时继续尝试 `email/password` 和混合主体。安全验证、WAF、限流、权限不足、
+网络错误、非 401 HTTP 错误和普通资源失败不会触发登录主体重放。
+
 ### 8.2 Dashboard Auth Bundle 和 Refresh Cookie
 
 现代 New API Dashboard Refresh 使用：
@@ -545,10 +552,10 @@ Refresh Cookie 不放入 JSON Body。当前适配器严格要求现代 Bundle �
 3. 解析用户身份、余额和账号累计已用 quota。
 4. 读取 `/api/user/self/groups`、`/api/user/groups` 或 `/api/groupPro/selectable`。
 5. 读取 `/api/ratio_config` 和 `/api/pricing`，建立分组、价格和 `supported_endpoint` 诊断。
-6. 从 `GET /api/token/` 的 `p=1&page_size=100` 开始分页，兼容 `/api/token` 和 `/api/tokens`。
+6. 从 `GET /api/token/` 的 `p=1&page_size=100` 开始分页，兼容 `/api/token` 和 `/api/tokens`，Token 资源独立上限为 1000 页。
 7. 对缺少完整 Key 的 Token 优先批量 `POST /api/token/batch/keys`，然后逐条 `POST /api/token/<id>/key`，只有 404/405 才 `GET` 回退。
 8. Token 的 `model_limits`/`models` 优先作为该 Key 模型；没有模型时使用该 Key 调用 Relay `/v1/models` 或 `/models`。
-9. 读取账号级 `/api/user/models`，兼容 `/api/user/available_models`、`/api/user/available_model/`，只作为账号模型诊断和父资源展示。
+9. 读取账号级 `/api/user/models`，兼容 `/api/user/available_models`、`/api/user/available_model/`，只作为账号模型诊断和父资源展示，不复制给所有 Token。
 10. 对每个 Key 生成 `UpstreamKeySnapshot`，保存额度、过期、状态、分组、倍率和模型同步状态。
 11. 资源分页或单 Key 模型部分失败时，将 Key/Models 资源标为 partial、stale 或 `secure_verification_required`，不清空旧快照。
 
@@ -607,10 +614,13 @@ New API Admin Key 可以附带：
 
 ```text
 POST /api/v1/auth/login
-Body: {"email":"<email>","password":"<password>"}
+Body: {"email":"<email>","password":"<password>"} 或 {"username":"<identity>","password":"<password>"}
 ```
 
-当前实现先要求输入符合邮箱格式，再使用 `email/password`。成功后从响应中读取 Access Token；登录要求交互验证时返回安全验证错误。
+当前实现恢复旧版兼容主体顺序：当输入是邮箱时先发 `email/password`，仅在明确凭据
+错误或 HTTP 401 后尝试 `username/password`，再尝试混合主体；非邮箱输入只发
+`username/password`。成功后从响应中读取 Access Token；登录要求交互验证、安全验证、
+WAF、限流、权限拒绝或网络错误时立即停止，不把这些结果当作可继续尝试的凭据错误。
 
 Access Token：
 
@@ -638,14 +648,14 @@ Cookie：
 
 1. `GET /api/v1/auth/me`，404/405 时兼容 `/api/v1/user/profile`。
 2. 读取余额、账号身份和账号累计用量。
-3. 尝试 `GET /api/v1/user/profile` 补充余额、邮箱和用户名。
-4. 尝试 `GET /api/v1/usage/stats` 和 `/api/v1/usage/dashboard/stats` 补充累计用量。
-5. `GET /api/v1/groups/available` 和 `GET /api/v1/groups/rates` 读取分组和倍率。
-6. 普通用户使用 `GET /api/v1/keys?page=<page>&page_size=100` 分页。
-7. Admin Key 使用 `GET /api/v1/admin/accounts?page=<page>&page_size=100&sort_by=name&sort_order=asc&type=apikey`。
-8. Admin Key 对每个账号使用 `GET /api/v1/admin/accounts/data?ids=<id>&include_proxies=false` 读取完整 API Key。
-9. 如果 Key 列表没有模型字段或模型为空，使用完整 Key 请求 Relay `/v1/models`，必要时 `/models` 回退。
-10. `fetchSub2APIModels` 当前直接返回 `nil`，当前没有独立的 Sub2API 账号级模型接口实现。
+3. 尝试 `GET /api/v1/user/profile` 补充余额、邮箱、用户名和用量字段。
+4. `GET /api/v1/groups/available` 和 `GET /api/v1/groups/rates` 读取分组和倍率；`available` 失败是核心资源失败，停止 Key 同步并保留快照。
+5. 先读 `GET /api/v1/usage/dashboard/stats`，缺少累计用量字段时再按条件回退 `GET /api/v1/usage/stats`；字段缺失标记 partial，不伪造 0。
+6. 普通用户使用 `GET /api/v1/keys?page=<page>&page_size=100` 分页，资源上限为 1000 页。
+7. Admin Key 使用 `GET /api/v1/admin/accounts?page=<page>&page_size=100&sort_by=name&sort_order=asc&type=apikey`，资源上限为 1000 页。
+8. 列表已返回完整 Key 时不读取详情；缺失或掩码时普通 Key 读取 `GET /api/v1/keys/<id>`，Admin Key 读取 `GET /api/v1/admin/accounts/data?ids=<id>&include_proxies=false`。
+9. Key 列表或详情没有模型字段时，才使用完整 Key 请求 Relay `/v1/models`，必要时 `/models` 回退。
+10. `fetchSub2APIModels` 当前直接返回 `nil`，当前没有独立的 Sub2API 账号级模型接口实现，不能把账号级目录复制给所有 Key。
 11. 将 Key 级模型并入父渠道模型集合，保存为 `UpstreamKeyAbility`。
 
 ### 9.4 Sub2API Key 额度和窗口额度边界
@@ -687,10 +697,15 @@ GET /api/v1/user/platform-quotas
 | --- | ---: | ---: | --- |
 | 旧版 New API | 100 | 1000 | 返回分页错误 |
 | 旧版 Sub2API | 100 | 1000 | 返回分页错误 |
-| 当前 New API | 100 | 100 | 返回分页错误 |
-| 当前 Sub2API | 100 | 100 | 返回分页错误 |
+| 当前 New API Token 资源 | 100 | 1000 | 返回分页错误并保留最近成功快照 |
+| 当前 Sub2API 普通 Key 资源 | 100 | 1000 | 返回分页错误并保留最近成功快照 |
+| 当前 Sub2API Admin Key 资源 | 100 | 1000 | 返回分页错误并保留最近成功快照 |
+| 当前其它管理资源分页 | 100 | 100 | 按各自资源限制返回错误或停止 |
 
-当前缩短到 100 页是一个明确的旧版/当前差异。分页响应的 `total`、`pages`、`page_size` 和当前页数量共同决定是否继续，不能把第一页空列表等同于整站没有 Key，除非平台明确表示总数为零。
+2026-09-30 迁移后，Token/Key 资源已恢复旧版 1000 页独立上限；Admin channel
+等非本次 Key 资源分页继续沿用原独立限制。分页响应的 `total`、`pages`、
+`page_size` 和当前页数量共同决定是否继续，不能把第一页空列表等同于整站没有 Key，
+除非平台明确表示总数为零且分页完整。
 
 ### 10.2 完整 Key 获取优先级
 
@@ -811,9 +826,9 @@ New API `/api/token/batch/keys`、单条 Key、账号级模型或 Admin channel 
 | Sub2API 用量缺失 | Key 已用额度求和作为近似回退并标 partial | 保留该回退，并保存资源级状态和最近成功值 | 不把缺失统计伪装成 0 |
 | 平台窗口额度 | 未完整读取 `/api/v1/user/platform-quotas` | 仍未调用该接口 | 5 小时、日、周、月窗口额度未覆盖 |
 | Sub2API Key 限流窗口 | 参考平台存在 `rate_limit_*`、`usage_*`、窗口起点和重置字段，但旧版未解析 | 当前同样只读取总 quota、已用/剩余 quota、过期时间和模型；未持久化 Key 限流窗口 | 不能用 `RemainQuota` 代替 5 小时、日或 7 日窗口剩余 |
-| Key 列表 | New API/Sub2API 均最多 1000 页，单页 100 | 当前最多 100 页，单页 100 | 超大账号可能需要真实站点容量验证 |
-| New API 完整 Key | 批量 Key 后逐条补偿，单条兼容 GET | 保留该策略，掩码和空值不可写入 | 部分失败不再覆盖旧 Secret |
-| Sub2API 完整 Key | 用户 Key 详情和 Admin accounts/data | 用户 `/keys/:id`，Admin `/admin/accounts/data`，安全验证单独分类 | 权限失败不判定 Key 缺失 |
+| Key 列表 | New API/Sub2API 均最多 1000 页，单页 100 | 2026-09-30 已恢复 New API Token、Sub2API 普通 Key 和 Admin Key 资源最多 1000 页；其它管理分页继续使用独立限制 | 超大账号仍需持续容量验证 |
+| New API 完整 Key | 批量 Key 后逐条补偿，单条兼容 GET | 恢复列表完整值优先、批量 Key、缺失 ID 单条 POST、POST 404/405 后 GET 回退；掩码和空值不可写入 | 部分失败不再覆盖旧 Secret |
+| Sub2API 完整 Key | 用户 Key 详情和 Admin accounts/data | 列表完整 Key 优先；缺失或掩码时用户 `/keys/:id`、Admin `/admin/accounts/data`，安全验证单独分类 | 权限失败不判定 Key 缺失 |
 | Key 模型 | Token/Key 字段优先，缺失时逐 Key Relay `/v1/models` | 保留并落库 `UpstreamKeyAbility` | 当前路由按单 Key 能力过滤 |
 | New API 账号模型 | 可从 `/api/user/models` 读取 | 可读取，但仅账号诊断和展示 | 不能复制给所有 Key |
 | Sub2API 账号模型 | 没有完整接入 | `fetchSub2APIModels` 返回 `nil` | 当前主要依赖单 Key Relay 探测 |
@@ -864,11 +879,47 @@ New API `/api/token/batch/keys`、单条 Key、账号级模型或 Admin channel 
 - `api.` 子域名、管理域名和 Relay 域名是否满足同注册域名校验；
 - Sub2API Admin accounts/data 是否必须真人 step-up；
 - 平台不同版本的 Key 详情字段、模型字段和 unlimited 字段；
-- 100 页上限是否覆盖真实账号的全部 Key；
+- 1000 页资源上限在超大真实账号中的容量和耗时表现；
 - 代理、WAF、HTML 登录页、TLS 和跨域 Cookie 的真实行为；
 - 上游接口返回 200 业务失败时的错误码和资源影响范围。
 
 真实验证必须使用专门的测试站点、脱敏凭据和最小权限，不得把真实运行凭据写入 NexusTok 代码、文档、测试、日志或提交。
+
+### 13.3 2026-09-30 真实站点黑盒验收
+
+本次验收使用两个专用测速站点和独立隔离浏览器会话完成，只记录脱敏后的路径、状态、
+资源数量和失败分类；没有保存截图、网络捕获文件、响应正文、Cookie、Access Token、
+Refresh Token、Admin Key、完整上游 Key 或测试账号凭据。验收只执行登录、资源读取、
+Key 详情和 `/v1/models` 探测，未调用聊天、补全、图片、视频或其它会产生费用的接口。
+
+New API 站点验收结果：
+
+- 匿名入口返回 HTTP 200，响应头暴露版本 `v1.0.0-rc.19-i18nfix.2`；
+- 浏览器真实路径完成首页、登录、Overview、API Keys、Model Analytics、Usage Logs
+  和 Profile；观察到 `POST /api/user/login?turnstile=`、`GET /api/user/self`、
+  `GET /api/status`、`GET /api/user/self/groups`、`GET /api/token/?p=1&size=10`
+  和 `GET /api/user/models` 均返回 HTTP 200；
+- NexusTok 适配器只读同步认证成功，读取到 11 条 Key，聚合模型 32 个；
+- 部分单 Key `/v1/models` 返回 HTTP 403，因此 Key 和模型资源进入
+  `secure_verification_required` 或旧快照保护状态，`KeysComplete=false`，
+  但已成功读取身份、余额、分组、倍率、Token 列表、批量 Key 和可访问 Key 的模型。
+
+Sub2API 站点验收结果：
+
+- 匿名入口返回 HTTP 200，页面配置包含 `api_base_url` 指向同站 Relay 地址；页面配置
+  显示 Turnstile 未启用，Profile 页面显示当前测试会话未启用 TOTP；
+- 浏览器真实路径完成服务条款接受、登录、Dashboard、API Keys、Usage 和 Profile；
+  观察到 `POST /api/v1/auth/login`、`GET /api/v1/auth/me`、
+  `GET /api/v1/keys?page=1&page_size=100`、`GET /api/v1/groups/available`、
+  `GET /api/v1/groups/rates`、`GET /api/v1/usage/dashboard/stats`、
+  `GET /api/v1/usage/stats` 和 `GET /api/v1/user/platform-quotas` 均返回 HTTP 200；
+- NexusTok 适配器只读同步认证成功，管理地址和 Relay 地址解析一致，读取到 10 条 Key，
+  聚合模型 18 个；
+- 多条 Key 的 `/v1/models` 返回 HTTP 403，因此 Key 资源为 partial、模型资源为
+  stale；单 Key 模型失败只影响本轮该 Key 的能力，不清除旧模型、旧 Secret 或旧额度。
+
+真实站点验收是人工/黑盒验证，不作为 CI 输入，也不把专用账号、凭据、Cookie、Token
+或完整 Key 写入仓库。
 
 ## 14. 文件路径索引
 
@@ -949,3 +1000,10 @@ New API `/api/token/batch/keys`、单条 Key、账号级模型或 Admin channel 
 4. New API 账号级模型和 Admin channel 模型不能复制给所有子 Key；当前真正进入路由的模型能力必须能追溯到单 Key 字段或单 Key Relay 探测。
 5. 资源读取失败不等于 Key 删除。只有完整分页、权限有效、详情和必要模型确认完成后，才允许执行缺失判定。
 6. 当前版本增加了资源级快照、加密 Secret、HMAC 指纹、管理/Relay 地址分离、Refresh 不确定状态和管理端脱敏响应，运行行为与旧版数据模型和父渠道 `UsedQuota` 语义存在实质差异。
+
+## 16. 2026-09-30 变更记录
+
+| 日期 | 变更前 | 变更后 | 影响范围 | 验证依据 |
+| --- | --- | --- | --- | --- |
+| 2026-09-30 | 当前 New API Token、Sub2API 普通 Key 和 Admin Key 资源分页统一受 100 页上限影响；New API 登录和 Sub2API 登录主体兼容、完整 Key 补偿、资源顺序和模型来源边界与旧版不完全一致 | 迁移旧版已验证契约：三类资源分页独立恢复为最多 1000 页；New API 恢复 `username`、`email` 和混合主体的受限兼容、批量 Key 缺失补偿及单条 POST/GET 回退；Sub2API 恢复 email/username/混合主体、Profile/Groups/Usage/Keys 顺序、列表完整 Key 优先、详情补齐和单 Key Relay 模型探测；凭据加密、Refresh 轮换、安全验证分类和最近成功快照保持不变 | New API/Sub2API 认证、资源快照、Key 生命周期、模型能力和路由候选 | `service/upstream_site_adapters.go`、`service/upstream_site.go`、`service/upstream_site_test.go`；本机三套参考源；两个真实站点隔离会话黑盒验收 |
+| 2026-09-30 | 真实站点验收记录容易混入凭据或完整响应 | 只保留脱敏方法、路径、状态、资源数量和资源状态；New API 验收到 11 条 Key/32 个聚合模型，Sub2API 验收到 10 条 Key/18 个聚合模型；两站点均只执行登录、资源读取、Key 详情和 `/v1/models` 探测 | 交付文档、审计边界和后续回归 | Chrome DevTools MCP 隔离上下文；验收结束已关闭真实站点页面且未生成临时文件 |

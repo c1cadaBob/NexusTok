@@ -1,7 +1,7 @@
 # 上游渠道与平台站点设计
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-27
+> 事实基线日期：2026-09-30
 > 主要代码来源：`model/upstream_channel.go`、`model/routing_key.go`、`service/upstream_site.go`、`controller/upstream_channel.go`、`controller/channel-test.go`
 > 关联架构文档：[`docs/architecture/relay-routing-and-conversion.md`](architecture/relay-routing-and-conversion.md)、[`docs/architecture/provider-capability-matrix.md`](architecture/provider-capability-matrix.md)、[`docs/architecture/data-cache-and-background-jobs.md`](architecture/data-cache-and-background-jobs.md)、[`平台站点资源获取比较`](platform-site-resource-acquisition-comparison.md)
 
@@ -306,6 +306,12 @@ Origin、平台、认证类型和可选渠道，默认有效期 10 分钟，完�
 短期缓存中传递，最终仍使用现有整体加密字段保存。`auto` 只存在于表单和采集会话
 期间，成功后按实际采集结果持久化为 `access_token`、`admin_key` 或 `cookie`。
 
+2026-09-30 旧版资源同步迁移不改变上述凭据加密边界。New API 密码登录主请求使用
+`username/password`，当输入为邮箱时只在明确凭据错误或 HTTP 401 后依次兼容
+`email/password` 和混合主体；Sub2API 当输入为邮箱时依次尝试 `email/password`、
+`username/password` 和混合主体，非邮箱输入使用 `username/password`。安全验证、
+WAF、限流、权限拒绝、网络错误和其它非 401 结果都立即停止兼容登录。
+
 浏览器脚本只读取明确命名的 Access Token、Refresh Token、Admin Key、Cookie 和
 用户对象。Sub2API 的 `auth_token`/`refresh_token` 会在临近过期且存在刷新令牌时
 尝试刷新，并用 `/api/v1/auth/me` 或兼容接口确认登录态；NewAPI 会读取数字用户
@@ -346,7 +352,9 @@ API 地址的同协议、同主机和同端口来源时，才允许切换；验�
 `PlatformSiteSession.CredentialUpdate`。宿主同步流程只在完整快照成功后加密保存这组
 旋转后的凭据；密码模式不会持久化登录响应中的令牌，不把明文密码写入日志或响应。
 
-Sub2API 普通用户接口如果只能返回掩码密钥，不会伪造真实密钥。无法取得真实密钥的新记录会自动禁用；已有密钥保留旧密文并继续按同步状态过滤。
+Sub2API 普通用户接口如果只能返回掩码密钥，不会伪造真实密钥。列表已经返回完整
+密钥时不再请求详情；只有密钥缺失或掩码时才读取 `/api/v1/keys/{id}`。无法取得真实
+密钥的新记录会自动禁用；已有密钥保留旧密文并继续按同步状态过滤。
 
 ## 5. 同步任务
 
@@ -354,7 +362,8 @@ Sub2API 普通用户接口如果只能返回掩码密钥，不会伪造真实密
 - 默认每 15 分钟同步。
 - 同一站点使用互斥锁。
 - 支持管理员手动同步。
-- 分页全部成功后再开启数据库事务并 upsert。
+- 分组、分页和必要密钥读取满足当前完整性边界后，才执行缺失判定并开启数据库事务
+  upsert；资源部分失败仍可写入已成功的身份/用量状态，但不清理最近成功 Key。
 - 同步开始只切换为 `running`，失败时只记录 `failed`、脱敏错误和连续失败次数；
   不删除旧密钥、不清理旧模型能力、不标记旧密钥 `missing`、不覆盖旧余额，
   并继续复用最近一次成功快照。
@@ -615,9 +624,10 @@ New API Passkey/WebAuthn 和上游安全证明的自动完成能力。
   `/api/pricing`、Token 分页和 Token Key 详情，并在 Admin Key 可用时合并
   `/api/channel/`、详情和 `fetch_models` 的模型。`supported_endpoint` 仅作为端点诊断能力
   保存，不会把管理员渠道模型复制给每个子密钥；
-- Sub2API 当前读取 auth/me、profile、usage、groups、keys 和 Admin accounts/data，
-  将页面 `api_base_url` 解析为管理地址与 Relay 地址，并使用每个实际密钥请求
-  `/v1/models` 确认模型能力；
+- Sub2API 当前按 auth/me、Profile、Groups、Group Rates、Dashboard Usage、Usage Stats、
+  Keys 的顺序读取资源；Admin Key 额外读取 accounts/data。列表已经返回完整 Key 时跳过
+  详情，缺失或掩码时才补读详情，并将页面 `api_base_url` 解析为管理地址与 Relay 地址，
+  使用每个实际密钥请求 `/v1/models` 确认模型能力；
 - 资源同步按类型保存最近尝试、最近成功、来源、数量、失败原因、部分成功和安全验证状态。
   安全验证拒绝或部分分页失败时保留旧密钥、额度和模型快照，只有完整分页和校验成功后
   才能把本次未返回的密钥标记为缺失；
@@ -698,9 +708,10 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
 - `service/upstream_site.go` 保存脱敏的 HTTP 状态、最终 URL、Content-Type、响应类型、
   响应类别和有限错误码；完整响应正文、密码、Cookie、Access Token、Refresh Token 和
   临时令牌均不进入错误摘要或日志；
-- New API 密码登录固定使用 `/api/user/login?turnstile=` 的 `username/password`；
-  Sub2API 固定使用 `/api/v1/auth/login` 的 `email/password`，发送前校验合法邮箱，
-  不自动拼接虚假域名或漂移为其它字段；
+- New API 密码登录主请求使用 `/api/user/login?turnstile=` 的 `username/password`；
+  当输入为邮箱时，仅在明确凭据错误或 HTTP 401 后兼容 `email/password` 和混合主体；
+  Sub2API 使用 `/api/v1/auth/login`，邮箱输入依次兼容 `email/password`、
+  `username/password` 和混合主体，非邮箱输入使用 `username/password`；
 - 只有明确的 404/405 才继续兼容资源路径；认证失败、Turnstile/验证码、WAF、step-up
   安全验证和网络错误立即停止重复请求；
 - HTTP 200 的 `success=false`、数值错误码和 HTML/挑战页分别归类为业务认证失败、
@@ -793,9 +804,10 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
 **变更后**
 
 - NewAPI 用户态同步按旧版核心顺序处理：尽力读取 `GET /api/status`，失败时使用
-  默认额度换算并记录用量资源 warning；密码登录唯一使用
-  `POST /api/user/login?turnstile=`，JSON 仅包含 `username` 和 `password`；登录后读取
-  `/api/user/self`、`/api/user/self/groups`、`/api/ratio_config`；
+  默认额度换算并记录用量资源 warning；密码登录主请求使用
+  `POST /api/user/login?turnstile=` 的 `username/password`，邮箱输入只在明确凭据错误
+  或 HTTP 401 后兼容 email 和混合主体；登录后读取 `/api/user/self`、
+  `/api/user/self/groups`、`/api/ratio_config`；
 - Token 主分页固定从 `GET /api/token/?p=1&page_size=100` 开始，后续使用 `p=2`、
   `p=3` 等一基页码，并依据 `total`、页码、页大小和条目数判断是否完成；主路径不再
   使用 `p=0&size=100`。`/api/token` 和 `/api/tokens` 只在明确 HTTP 404 或 405 时作为
@@ -803,6 +815,8 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
 - `POST /api/token/batch/keys` 返回部分 ID 时只补偿缺失 ID；单条
   `POST /api/token/{id}/key` 只有明确 404/405 才尝试 GET。空值、空白值和包含 `*`
   的掩码值都不写入真实密钥，也不触发无意义的逐条重放；
+- Token 资源分页上限从当前旧值 100 页恢复为独立 1000 页；Sub2API 普通 Key 和
+  Admin Key 分页同样从 100 页恢复为独立 1000 页，其它管理资源继续使用自己的限制；
 - Token 记录中的 `model_limits`、`models` 等字段优先作为对应子密钥能力。只有该
   子密钥没有模型字段时，才使用该密钥独立访问 `/v1/models` 探测；账号级模型接口
   只用于管理端诊断和展示，不复制给所有子密钥；
@@ -817,6 +831,31 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
   API 根地址，保留用户填写的路径前缀，Relay 地址不参与管理路由猜测。Dashboard
   Refresh 继续同时使用 `new_api_refresh` Cookie、`X-Auth-Session` 和 Bearer Token，
   CookieJar 轮换值加密回写凭据。
+
+### 9.6 2026-09-30 旧版资源同步迁移与真实站点验收
+
+**变更前**
+
+- New API Token、Sub2API 普通 Key 和 Admin Key 资源分页统一最多 100 页，真实大账号
+  可能无法完整同步；
+- New API 和 Sub2API 登录主体、Sub2API 资源请求顺序、完整 Key 详情依赖和模型能力
+  来源没有完整复刻旧版；
+- 真实站点验收没有将浏览器请求、适配器请求和只读模型探测结果集中记录。
+
+**变更后**
+
+- New API Token、Sub2API 普通 Key 和 Admin Key 分页各自最多 1000 页，每页 100 条；
+  分页中途失败、空 envelope、权限不足或安全验证不触发 Key 缺失判定；
+- New API 恢复受限的 username/email/混合主体兼容、批量 Key 缺失补偿和单条 POST/GET
+  回退；Sub2API 恢复 email/username/混合主体兼容、Profile/Groups/Usage/Keys 顺序、
+  列表完整 Key 优先、详情补齐和缺少模型时的 Relay `/v1/models` 探测；
+- 凭据加密、Sub2API Refresh Token 完整轮换、Bundle 完整性、安全验证分类和最近成功
+  快照保留规则继续生效；Sub2API 平台窗口额度、Key 5 小时/日/7 日窗口字段和账号级
+  模型目录仍未进入当前数据模型；
+- 2026-09-30 脱敏真实站点验收：New API 读取 11 条 Key、32 个聚合模型，部分
+  `/v1/models` 为 HTTP 403，资源状态进入安全验证/快照保护；Sub2API 读取 10 条 Key、
+  18 个聚合模型，部分 `/v1/models` 为 HTTP 403，Key 为 partial、模型为 stale。
+  两站点均未调用计费接口，验收完成后关闭隔离浏览器页面且未生成临时捕获文件。
 
 ## 与架构文档的关系
 

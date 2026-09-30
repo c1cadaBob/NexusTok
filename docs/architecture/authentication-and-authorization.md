@@ -1,7 +1,7 @@
 # 鉴权、会话与授权原理
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-27
+> 事实基线日期：2026-09-30
 > 主要代码来源：`middleware/auth.go`、`middleware/token_auth.go`、`service/auth_session.go`、`model/user_session.go`、`service/authz/`、`controller/`、`oauth/`
 > 关联详细文档：[`../authentication.md`](../authentication.md)、[`../rate-limiting.md`](../rate-limiting.md)、[`system-overview.md`](./system-overview.md)
 
@@ -102,6 +102,14 @@ Cookie、Token、Refresh Token 和 Session ID 不写入日志、审计字段、U
 静默按旧协议处理。Sub2API Refresh Token 轮换响应缺少新令牌或有效过期时间时，结果
 标记为不确定，不重放旧令牌，并继续保留最近成功资源快照。
 
+2026-09-30 旧版兼容主体迁移仅作用于上游平台登录请求，不改变 NexusTok 面板 Session
+的轮换和凭据边界：New API 主体顺序为 `username/password`，邮箱输入仅在明确凭据错误
+或 HTTP 401 后兼容 `email/password` 和混合主体；Sub2API 邮箱输入依次兼容
+`email/password`、`username/password` 和混合主体，非邮箱输入使用 `username/password`。
+安全验证、WAF、限流、权限拒绝、网络错误和其它非 401 结果不触发主体重试。所有上游
+密码、Cookie、Access Token、Refresh Token、Admin Key 和完整 Key 仍不写入审计、日志、
+普通响应或文档。
+
 ## 9. 维护时需要同步的关联模块
 
 修改登录、刷新、退出、Session、用户状态、鉴权版本、授权策略、Token 模型、OAuth/OIDC、Passkey、TOTP 或安全证明时，必须同步本文档、[`authentication.md`](../authentication.md)、必要时的[`rate-limiting.md`](../rate-limiting.md)和偏差登记。修改 Redis 键、TTL、缓存回退或多节点传播时同步[`data-cache-and-background-jobs.md`](./data-cache-and-background-jobs.md)。
@@ -115,6 +123,7 @@ Cookie、Token、Refresh Token 和 Session ID 不写入日志、审计字段、U
 | 2026-09-27 | 面板登录 Session 复用 | 架构只描述统一签发，未说明重复登录会增长 Session 行和签发计数 | 增加浏览器 SID 定位 Cookie、复用条件、SID/Refresh Secret 轮换、AuthFlow 原子性和失败回退边界 | `service/auth_session.go`、`model/user_session.go`、`model/login_verification.go`、登录 Controller | 服务层回归测试、AuthFlow 事务测试、OWASP ASVS 5.0.0 与认证/会话 Cheat Sheet 核对 |
 | 2026-09-27 | NewAPI Dashboard 会话刷新 | 平台站点 Refresh Cookie、Session ID、Bearer Token 的组合和轮换持久化未统一；非 401 刷新失败可能被理解为可重试凭据错误 | 严格发送 `new_api_refresh` Cookie、`X-Auth-Session` 和旧 Bearer Token，Jar 轮换值优先持久化；现代 Bundle 不完整时拒绝旧协议降级，只有确认 401 凭据失效才允许密码回退，网络/WAF/安全验证/非 401 结果标记不确定 | 平台站点密码、Access Token、Cookie、Auth Flow 和凭据加密保存 | `service/upstream_site_adapters.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go`、OWASP ASVS 5.0.0、Authentication/Session Management Cheat Sheet |
 | 2026-09-27 | 平台站点渠道代理认证 | 平台站点密码登录、2FA 和资源请求没有读取渠道代理，客户端合并可能覆盖平台 CookieJar、超时或重定向校验 | 所有后台同步和 Auth Flow 按 `channel_id` 复用渠道 Transport；只替换底层 Transport，保留 CookieJar、30 秒超时、管理站点重定向校验和 Cookie 轮换；代理配置、网络、凭据、安全验证和资源失败分层 | NewAPI/Sub2API 平台站点认证、Refresh、资源同步和敏感凭据保护 | `service/upstream_site.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go`、OWASP 认证/会话与 SSRF 指引 |
+| 2026-09-30 | 旧版平台登录主体与真实站点黑盒验收 | 上游登录主体兼容顺序与旧版不一致，真实站点资源验收结果未在鉴权架构记录 | 恢复受限主体兼容；New API 11 条 Key/32 个聚合模型、Sub2API 10 条 Key/18 个聚合模型的脱敏只读验收结果写入专项文档；保留 Refresh 轮换、Bundle 完整性、安全验证和快照边界 | NewAPI/Sub2API 上游认证、资源读取和安全审计 | `service/upstream_site_adapters.go`、`service/upstream_site_test.go`、隔离浏览器 MCP 黑盒验收；未调用计费接口 |
 
 ### 9.1 2026-09-26 实现校准
 

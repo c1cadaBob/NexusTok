@@ -1,7 +1,7 @@
 # 渠道能力矩阵
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-27
+> 事实基线日期：2026-09-30
 > 主要代码来源：`constant/channel.go`、`constant/api_type.go`、`common/api_type.go`、`relay/relay_adaptor.go`、`relay/common/relay_info.go`、`relay/channel/*/adaptor.go`、`router/relay-router.go`、`router/task-plugin-protocol-router.go`
 > 关联详细文档：[`README.md`](./README.md)、[`relay-routing-and-conversion.md`](./relay-routing-and-conversion.md)、[`implementation-deviations.md`](./implementation-deviations.md)、[`../key-routing-strategy.md`](../key-routing-strategy.md)
 
@@ -78,8 +78,8 @@
 
 | 平台 | 认证与刷新 | 资源来源 | 端点与模型能力 | 失败回退 |
 | --- | --- | --- | --- | --- |
-| New API 平台站点 | 账号密码、自动配置、Access Token、Admin Key、Cookie；支持 `/api/user/login/2fa`、`/api/user/login/verify`；传统刷新与 Dashboard Auth Bundle 均需按结构校验 | 管理面读取 `/api/status`、当前用户、分组/倍率、价格、Token 分页和完整 Key；Admin 资源按权限读取 | Relay `/v1/models` 按单个完整 Key 确认；`supported_endpoint`/pricing 只进入端点诊断，账号级模型不能复制给所有 Key | 2FA、安全验证、Bundle 不完整、Admin 资源拒绝或部分分页只影响对应资源状态，保留最近成功快照 |
-| Sub2API 平台站点 | 账号密码、自动配置、Access Token、Admin Key、Cookie；支持 `/api/v1/auth/login/2fa`；Refresh Token 必须完整轮换 | 管理面读取 `/api/v1/auth/me`、profile、usage、groups、keys；Admin Key 额外读取 accounts/data；参考平台还有 `/api/v1/user/platform-quotas`，当前适配器未调用 | Relay `/v1/models` 或兼容 `/models` 按单个完整 Key 确认；页面 `api_base_url` 分离管理和 Relay 地址；当前无独立账号级模型实现 | Refresh 轮换不确定、step-up、权限不足、WAF 或分页失败不当作密钥不存在，保留最近成功快照 |
+| New API 平台站点 | 账号密码、自动配置、Access Token、Admin Key、Cookie；支持 `/api/user/login/2fa`、`/api/user/login/verify`；传统刷新与 Dashboard Auth Bundle 均需按结构校验；邮箱输入仅在明确 401 凭据错误后兼容 email/混合主体 | 管理面读取 `/api/status`、当前用户、分组/倍率、价格、Token 分页和完整 Key；Token 资源最多 1000 页；Admin 资源按权限读取 | Relay `/v1/models` 按单个完整 Key 确认；`supported_endpoint`/pricing 只进入端点诊断，账号级模型不能复制给所有 Key | 2FA、安全验证、Bundle 不完整、Admin 资源拒绝、部分分页或单 Key 模型失败只影响对应资源状态，保留最近成功快照 |
+| Sub2API 平台站点 | 账号密码、自动配置、Access Token、Admin Key、Cookie；支持 `/api/v1/auth/login/2fa`；邮箱/用户名主体受限兼容；Refresh Token 必须完整轮换 | 管理面按 auth/me、Profile、Groups、Group Rates、Dashboard Usage、Usage Stats、Keys 读取；普通/Admin Key 资源均最多 1000 页；Admin Key 额外读取 accounts/data；参考平台还有 `/api/v1/user/platform-quotas`，当前适配器未调用 | Relay `/v1/models` 或兼容 `/models` 按单个完整 Key 确认；页面 `api_base_url` 分离管理和 Relay 地址；当前无独立账号级模型实现 | Refresh 轮换不确定、step-up、权限不足、WAF、分页失败或单 Key 模型失败不当作密钥不存在，保留最近成功快照 |
 
 这里的“模型获取”列只描述当前实际进入路由的能力来源：New API 的账号模型、价格或
 Admin channel 模型用于诊断和展示，不能替代单 Key 能力；Sub2API 当前
@@ -103,6 +103,7 @@ NexusTok 适配器请求清单中，因此平台窗口额度仍属于未完整�
 | 2026-09-27 | NewAPI 类平台认证与资源能力校准 | Dashboard Refresh Cookie、Session ID 和管理/Relay 地址边界未列入矩阵；资源权限失败可能被误判为凭据失败 | 列明真实 Refresh 请求契约、CookieJar 轮换优先级、现代 Bundle 拒绝降级、资源级状态和最近成功快照保留规则 | NewAPI 派生平台管理面、子密钥路由模型能力和同步诊断 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`、本机参考源 |
 | 2026-09-27 | 平台站点渠道代理接入 | 管理面请求、密码登录和 2FA 未使用渠道代理，客户端合并可能改变会话安全策略 | 按渠道配置复用代理 Transport，保留 CookieJar、超时和重定向策略，并在矩阵中区分代理配置错误、认证错误、网络错误、安全验证和资源权限失败 | NewAPI/Sub2API 管理面、渠道同步和 Auth Flow | `service/upstream_site.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go` |
 | 2026-09-29 | 校准平台站点管理面、Relay 面和模型边界 | 矩阵只按渠道类型描述平台能力，Sub2API 平台窗口额度、账号级模型和单 Key 模型来源边界不够明确 | 明确管理接口与 Relay 接口分层；Sub2API `/api/v1/user/platform-quotas` 为参考平台存在但当前未调用；New API 账号级模型不得复制给所有 Key；当前主要以单 Key Relay 模型探测作为路由能力依据；权限/分页失败保留快照 | New API/Sub2API 资源同步、模型能力、Admin 资源和失败回退 | `service/upstream_site_adapters.go`、`controller/upstream_channel.go`、`model/platform_site_resources.go`、本机参考源和[`平台站点资源获取比较`](../platform-site-resource-acquisition-comparison.md) |
+| 2026-09-30 | 旧版资源同步迁移与真实站点验收 | Key 资源分页、登录主体兼容、Sub2API 资源顺序和完整 Key 读取优先级与旧版不完全一致；真实验收结果未集中记录 | New API Token、Sub2API 普通 Key/Admin Key 分页恢复独立 1000 页；主体兼容、列表完整 Key 优先、详情补齐、单 Key 模型探测和快照失败边界与旧版对齐；New API 11 条 Key/32 个模型、Sub2API 10 条 Key/18 个模型的脱敏只读验收已记录 | 平台站点管理面、路由前置资源、Key 能力和容量验证 | `service/upstream_site_adapters.go`、`service/upstream_site_test.go`、两个站点隔离浏览器 MCP；未调用计费接口 |
 
 ### 3.2 2026-09-26 实现校准
 
@@ -115,7 +116,7 @@ self、groups、user models、pricing、Token 分页/Key 详情以及可选 Admi
 accounts/data。两者均以实际密钥访问 `/v1/models` 确认子密钥模型能力，New API
 `supported_endpoint` 只进入端点能力诊断。
 
-认证矩阵现在区分 New API 传统刷新与 Dashboard Auth Bundle、Sub2API Refresh Token
+认证矩阵现在区分 New API 传统刷新与 Dashboard Auth Bundle、受限登录主体兼容、Sub2API Refresh Token
 轮换和不确定结果；资源矩阵区分身份、余额/用量、分组倍率、端点、密钥和模型资源。
 管理员资源被拒绝、安全验证未完成或分页部分失败时使用最近成功快照，不将权限错误标记为
 密钥缺失。该矩阵描述当前代码事实，不代表上游 Passkey/WebAuthn、安全证明、Turnstile

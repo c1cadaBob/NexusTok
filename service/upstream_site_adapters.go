@@ -9,7 +9,6 @@ import (
 	"math"
 	"net"
 	"net/http"
-	"net/mail"
 	"net/url"
 	"regexp"
 	"slices"
@@ -54,6 +53,25 @@ func firstSub2APIQuota(record map[string]any, keys ...string) (int64, bool, erro
 		return quota, true, nil
 	}
 	return 0, false, nil
+}
+
+func firstSub2APIUsedQuota(record map[string]any) (int64, bool, error) {
+	return firstSub2APIQuota(
+		record,
+		"used_quota",
+		"quota_used",
+		"used",
+		"usedQuota",
+		"quotaUsed",
+		"total_used",
+		"total_used_quota",
+		"totalUsedQuota",
+		"totalUsed",
+		"total_actual_cost",
+		"totalActualCost",
+		"total_cost",
+		"totalCost",
+	)
 }
 
 func firstValidatedFloat(record map[string]any, keys ...string) (float64, bool, error) {
@@ -451,11 +469,13 @@ func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *Platfo
 		usedQuotaSet = false
 	}
 	snapshot := PlatformSiteSnapshot{
-		Balance:      normalizeNewAPIQuota(balanceValue, quotaPerUnit),
-		BalanceSet:   selfErr == nil && balanceSet,
-		UsedQuota:    usedQuota,
-		UsedQuotaSet: usedQuotaSet,
-		KeysComplete: true,
+		Balance:           normalizeNewAPIQuota(balanceValue, quotaPerUnit),
+		BalanceSet:        selfErr == nil && balanceSet,
+		UsedQuota:         usedQuota,
+		UsedQuotaSet:      usedQuotaSet,
+		KeysComplete:      true,
+		ManagementBaseURL: strings.TrimRight(firstNonEmptyString(session.ManagementBaseURL, session.BaseURL), "/"),
+		RelayBaseURL:      strings.TrimRight(firstNonEmptyString(session.ModelBaseURL, session.BaseURL), "/"),
 	}
 	if selfErr == nil {
 		snapshot.Identity = platformSiteIdentityFromRecord(
@@ -899,20 +919,7 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 		return PlatformSiteSnapshot{}, wrapPlatformSiteStage("Sub2API 当前用户", err)
 	}
 	me := firstNestedRecord(mePayload, "user", "account", "profile")
-	usedQuota, usedQuotaSet, quotaErr := firstSub2APIQuota(
-		me,
-		"used_quota",
-		"quota_used",
-		"used",
-		"usedQuota",
-		"quotaUsed",
-		"total_used",
-		"total_used_quota",
-		"totalUsedQuota",
-		"totalUsed",
-		"total_actual_cost",
-		"totalActualCost",
-	)
+	usedQuota, usedQuotaSet, quotaErr := firstSub2APIUsedQuota(me)
 	if quotaErr != nil {
 		return PlatformSiteSnapshot{}, quotaErr
 	}
@@ -943,13 +950,9 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 			SourceEndpoint: "/api/v1/auth/me",
 			RecordCount:    1,
 		},
-		PlatformSiteResourceSyncSnapshot{
-			ResourceType:   model.PlatformSiteResourceUsage,
-			Status:         model.PlatformSiteResourceStatusSuccess,
-			SourceEndpoint: "/api/v1/auth/me",
-			RecordCount:    1,
-		},
 	)
+
+	var profileErr error
 	if payload, requestErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/user/profile", nil, nil); requestErr == nil {
 		profile := firstNestedRecord(payload, "profile", "user", "account")
 		if profileBalance, profileBalanceSet, profileBalanceErr := firstValidatedNonNegativeFloat(
@@ -957,144 +960,217 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 			"balance",
 			"quota",
 			"credit",
-		); profileBalanceErr != nil {
-			return PlatformSiteSnapshot{}, profileBalanceErr
-		} else if profileBalanceSet {
+		); profileBalanceErr == nil && profileBalanceSet {
 			snapshot.Balance = profileBalance
 			snapshot.BalanceSet = true
+		} else if profileBalanceErr != nil {
+			profileErr = profileBalanceErr
 		}
 		if !snapshot.UsedQuotaSet {
-			if profileUsedQuota, profileUsedQuotaSet, profileQuotaErr := firstSub2APIQuota(
-				profile,
-				"used_quota",
-				"quota_used",
-				"used",
-				"usedQuota",
-				"quotaUsed",
-				"total_used",
-				"total_used_quota",
-				"totalUsedQuota",
-				"totalUsed",
-				"total_actual_cost",
-				"totalActualCost",
-			); profileQuotaErr != nil {
-				return PlatformSiteSnapshot{}, profileQuotaErr
-			} else if profileUsedQuotaSet {
+			if profileUsedQuota, profileUsedQuotaSet, profileQuotaErr := firstSub2APIUsedQuota(profile); profileQuotaErr == nil && profileUsedQuotaSet {
 				snapshot.UsedQuota = profileUsedQuota
 				snapshot.UsedQuotaSet = true
+			} else if profileQuotaErr != nil && profileErr == nil {
+				profileErr = profileQuotaErr
 			}
 		}
+	} else {
+		profileErr = requestErr
 	}
-	usageSource := "/api/v1/usage/dashboard/stats"
-	if !snapshot.UsedQuotaSet {
-		if payload, requestErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/usage/stats", nil, nil); requestErr == nil {
-			usage := firstNestedRecord(payload, "stats", "usage", "dashboard")
-			if used, usedSet, usageQuotaErr := firstSub2APIQuota(usage, "total_actual_cost", "totalActualCost", "total_cost", "totalCost", "total_used", "totalUsed"); usageQuotaErr != nil {
-				return PlatformSiteSnapshot{}, usageQuotaErr
-			} else if usedSet {
-				snapshot.UsedQuota = used
-				snapshot.UsedQuotaSet = true
-				usageSource = "/api/v1/usage/stats"
-			}
-		}
-	}
-	if !snapshot.UsedQuotaSet {
-		if payload, requestErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/usage/dashboard/stats", nil, nil); requestErr == nil {
-			usage := firstNestedRecord(payload, "stats", "usage", "dashboard")
-			if used, usedSet, usageQuotaErr := firstSub2APIQuota(
-				usage,
-				"total_actual_cost",
-				"totalActualCost",
-				"total_cost",
-				"totalCost",
-				"total_used",
-				"total_used_quota",
-				"totalUsedQuota",
-				"totalUsed",
-				"used_quota",
-				"quota_used",
-				"quotaUsed",
-				"used",
-			); usageQuotaErr != nil {
-				return PlatformSiteSnapshot{}, usageQuotaErr
-			} else if usedSet {
-				snapshot.UsedQuota = used
-				snapshot.UsedQuotaSet = true
-			} else if used, usedSet, usageQuotaErr := firstSub2APIQuota(
-				usage,
-				"today_actual_cost",
-				"todayActualCost",
-				"today_cost",
-				"todayCost",
-			); usageQuotaErr != nil {
-				return PlatformSiteSnapshot{}, usageQuotaErr
-			} else if usedSet {
-				snapshot.UsedQuota = used
-				snapshot.UsedQuotaSet = true
-			}
-		}
-	}
-	snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, PlatformSiteResourceSyncSnapshot{
-		ResourceType:   model.PlatformSiteResourceUsage,
-		Status:         model.PlatformSiteResourceStatusSuccess,
-		SourceEndpoint: usageSource,
-		RecordCount:    1,
-	})
+
 	rates := map[string]float64{}
 	groupPayload, groupLoaded := any(nil), false
-	if payload, requestErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/groups/available", nil, nil); requestErr == nil {
+	groupErr := error(nil)
+	if payload, requestErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/groups/available", nil, nil); requestErr != nil {
+		groupErr = requestErr
+	} else {
 		groupPayload = payload
 		groupLoaded = true
 		for key, value := range parseGroupRates(payload) {
 			rates[key] = value
 		}
 	}
-	if payload, requestErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/groups/rates", nil, nil); requestErr == nil {
-		for key, value := range parseGroupRates(payload) {
-			rates[key] = value
+	groupRatesErr := error(nil)
+	if groupErr == nil {
+		if payload, requestErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/groups/rates", nil, nil); requestErr != nil {
+			groupRatesErr = requestErr
+		} else {
+			for key, value := range parseGroupRates(payload) {
+				rates[key] = value
+			}
 		}
 	}
 	snapshot.Groups = parsePlatformSiteGroups(groupPayload, "/api/v1/groups/available", rates)
 	snapshot.GroupsLoaded = groupLoaded
-	if groupLoaded {
-		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, PlatformSiteResourceSyncSnapshot{
-			ResourceType:   model.PlatformSiteResourceGroups,
-			Status:         model.PlatformSiteResourceStatusSuccess,
-			SourceEndpoint: "/api/v1/groups/available,/api/v1/groups/rates",
-			RecordCount:    len(snapshot.Groups),
-		})
-	}
-	if session.Headers.Get("x-api-key") != "" {
-		snapshot.Keys, err = fetchSub2APIAdminKeys(ctx, session, rates)
-	} else {
-		snapshot.Keys, err = fetchSub2APIKeys(ctx, session, rates)
-	}
-	if err != nil {
-		if errors.Is(err, ErrPlatformSiteSecurity) {
-			snapshot.KeysComplete = false
+	if groupErr != nil {
+		snapshot.KeysComplete = false
+		if errors.Is(groupErr, ErrPlatformSiteSecurity) {
 			snapshot.AuthStatus = model.PlatformSiteAuthStatusSecureVerificationRequired
-			snapshot.AuthStatusReason = "读取管理员密钥需要完成上游安全验证"
-			snapshot.ResourceSyncs = append(snapshot.ResourceSyncs,
-				PlatformSiteResourceSyncSnapshot{
-					ResourceType:                 model.PlatformSiteResourceKeys,
-					Status:                       model.PlatformSiteResourceStatusSecureVerificationRequired,
-					SourceEndpoint:               "/api/v1/admin/accounts,/api/v1/admin/accounts/data",
-					FailureReason:                "上游拒绝 Admin Key 的安全验证",
-					Partial:                      true,
-					RequiresSecurityVerification: true,
-				},
-				PlatformSiteResourceSyncSnapshot{
-					ResourceType:                 model.PlatformSiteResourceModels,
-					Status:                       model.PlatformSiteResourceStatusSecureVerificationRequired,
-					SourceEndpoint:               "/v1/models",
-					FailureReason:                "密钥资源未完成安全验证，保留最近成功模型快照",
-					Partial:                      true,
-					RequiresSecurityVerification: true,
-				},
-			)
-			return snapshot, nil
+			snapshot.AuthStatusReason = "读取分组需要完成上游安全验证"
 		}
-		return PlatformSiteSnapshot{}, wrapPlatformSiteStage("Sub2API 密钥分页", err)
+		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs,
+			sub2APIResourceSyncFailure(
+				model.PlatformSiteResourceGroups,
+				"/api/v1/groups/available",
+				groupErr,
+				false,
+			),
+		)
+		return snapshot, wrapPlatformSiteStage(
+			"Sub2API 分组",
+			errors.Join(ErrPlatformSiteResource, groupErr),
+		)
+	}
+	groupsStatus := model.PlatformSiteResourceStatusSuccess
+	groupsFailureReason := ""
+	groupsPartial := false
+	if groupRatesErr != nil {
+		groupsStatus = model.PlatformSiteResourceStatusPartial
+		groupsFailureReason = "分组倍率接口不可用，已保留可用分组并继续同步密钥"
+		groupsPartial = true
+		if errors.Is(groupRatesErr, ErrPlatformSiteSecurity) {
+			groupsStatus = model.PlatformSiteResourceStatusSecureVerificationRequired
+			groupsFailureReason = "分组倍率接口需要完成上游安全验证"
+			snapshot.AuthStatus = model.PlatformSiteAuthStatusSecureVerificationRequired
+			snapshot.AuthStatusReason = groupsFailureReason
+		}
+	}
+	snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, PlatformSiteResourceSyncSnapshot{
+		ResourceType:                 model.PlatformSiteResourceGroups,
+		Status:                       groupsStatus,
+		SourceEndpoint:               "/api/v1/groups/available,/api/v1/groups/rates",
+		RecordCount:                  len(snapshot.Groups),
+		FailureReason:                groupsFailureReason,
+		Partial:                      groupsPartial,
+		RequiresSecurityVerification: errors.Is(groupRatesErr, ErrPlatformSiteSecurity),
+	})
+
+	usageSource := "/api/v1/auth/me"
+	usageErrors := make([]error, 0, 3)
+	if profileErr != nil {
+		usageErrors = append(usageErrors, profileErr)
+	}
+	dashboardUsedSet := false
+	dashboardPayload, dashboardErr := platformSiteRequest(
+		ctx,
+		session,
+		http.MethodGet,
+		"/api/v1/usage/dashboard/stats",
+		nil,
+		nil,
+	)
+	if dashboardErr != nil {
+		usageErrors = append(usageErrors, dashboardErr)
+	} else {
+		usage := firstNestedRecord(dashboardPayload, "stats", "usage", "dashboard")
+		if used, usedSet, usageQuotaErr := firstSub2APIUsedQuota(usage); usageQuotaErr != nil {
+			usageErrors = append(usageErrors, usageQuotaErr)
+		} else if usedSet {
+			dashboardUsedSet = true
+			if !snapshot.UsedQuotaSet {
+				snapshot.UsedQuota = used
+				snapshot.UsedQuotaSet = true
+				usageSource = "/api/v1/usage/dashboard/stats"
+			}
+		} else {
+			usageErrors = append(usageErrors, fmt.Errorf("%w: Sub2API Dashboard 未返回累计用量", ErrPlatformSiteResponse))
+		}
+	}
+
+	shouldReadUsageStats := !dashboardUsedSet &&
+		(dashboardErr == nil || platformSiteRouteMissing(dashboardErr))
+	if shouldReadUsageStats {
+		statsPayload, statsErr := platformSiteRequest(
+			ctx,
+			session,
+			http.MethodGet,
+			"/api/v1/usage/stats",
+			nil,
+			nil,
+		)
+		if statsErr != nil {
+			usageErrors = append(usageErrors, statsErr)
+		} else {
+			usage := firstNestedRecord(statsPayload, "stats", "usage", "dashboard")
+			if used, usedSet, usageQuotaErr := firstSub2APIUsedQuota(usage); usageQuotaErr != nil {
+				usageErrors = append(usageErrors, usageQuotaErr)
+			} else if usedSet && !snapshot.UsedQuotaSet {
+				snapshot.UsedQuota = used
+				snapshot.UsedQuotaSet = true
+				usageSource = "/api/v1/usage/stats"
+			} else if !usedSet {
+				usageErrors = append(usageErrors, fmt.Errorf("%w: Sub2API Usage Stats 未返回累计用量", ErrPlatformSiteResponse))
+			}
+		}
+	}
+	usageStatus := model.PlatformSiteResourceStatusSuccess
+	usageFailureReason := ""
+	usagePartial := false
+	usageSecurityRequired := false
+	if !snapshot.UsedQuotaSet {
+		usageStatus = model.PlatformSiteResourceStatusPartial
+		usageFailureReason = "账号累计用量字段缺失，持久化阶段将按本轮密钥已用量回退"
+		usagePartial = true
+		if len(usageErrors) > 0 {
+			usageFailureReason += "：" + platformSiteResourceFailureReason(usageErrors[0])
+		}
+	}
+	for _, usageErr := range usageErrors {
+		if errors.Is(usageErr, ErrPlatformSiteSecurity) {
+			usageStatus = model.PlatformSiteResourceStatusSecureVerificationRequired
+			usageFailureReason = "账号用量接口需要完成上游安全验证"
+			usagePartial = true
+			usageSecurityRequired = true
+			snapshot.AuthStatus = model.PlatformSiteAuthStatusSecureVerificationRequired
+			snapshot.AuthStatusReason = usageFailureReason
+			break
+		}
+	}
+	snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, PlatformSiteResourceSyncSnapshot{
+		ResourceType:                 model.PlatformSiteResourceUsage,
+		Status:                       usageStatus,
+		SourceEndpoint:               usageSource + ",/api/v1/usage/dashboard/stats,/api/v1/usage/stats",
+		RecordCount:                  1,
+		FailureReason:                usageFailureReason,
+		Partial:                      usagePartial,
+		RequiresSecurityVerification: usageSecurityRequired,
+	})
+
+	var keyErr error
+	if session.Headers.Get("x-api-key") != "" {
+		snapshot.Keys, keyErr = fetchSub2APIAdminKeys(ctx, session, rates)
+	} else {
+		snapshot.Keys, keyErr = fetchSub2APIKeys(ctx, session, rates)
+	}
+	if keyErr != nil {
+		snapshot.KeysComplete = false
+		keyResourceEndpoint := "/api/v1/keys,/api/v1/keys/{id}"
+		if session.Headers.Get("x-api-key") != "" {
+			keyResourceEndpoint = "/api/v1/admin/accounts,/api/v1/admin/accounts/data"
+		}
+		keyResource := sub2APIResourceSyncFailure(
+			model.PlatformSiteResourceKeys,
+			keyResourceEndpoint,
+			keyErr,
+			len(snapshot.Keys) > 0,
+		)
+		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, keyResource)
+		if errors.Is(keyErr, ErrPlatformSiteSecurity) {
+			snapshot.AuthStatus = model.PlatformSiteAuthStatusSecureVerificationRequired
+			snapshot.AuthStatusReason = "读取密钥需要完成上游安全验证"
+			snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, PlatformSiteResourceSyncSnapshot{
+				ResourceType:                 model.PlatformSiteResourceModels,
+				Status:                       model.PlatformSiteResourceStatusSecureVerificationRequired,
+				SourceEndpoint:               "/v1/models",
+				FailureReason:                "密钥资源未完成安全验证，保留最近成功模型快照",
+				Partial:                      true,
+				RequiresSecurityVerification: true,
+			})
+		}
+		return snapshot, wrapPlatformSiteStage(
+			"Sub2API 密钥分页",
+			errors.Join(ErrPlatformSiteResource, keyErr),
+		)
 	}
 	snapshot.KeysComplete = true
 	keysResourceStatus := model.PlatformSiteResourceStatusSuccess
@@ -1144,45 +1220,126 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 }
 
 func loginNewAPIWithPassword(ctx context.Context, session *PlatformSiteSession, credential model.PlatformSiteCredential) (any, error) {
-	username := strings.TrimSpace(credential.Username)
-	if username == "" || credential.Password == "" {
+	identity := strings.TrimSpace(credential.Username)
+	password := credential.Password
+	if identity == "" || password == "" {
 		return nil, fmt.Errorf("%w: 缺少账号密码", ErrPlatformSiteAuth)
 	}
-	payload, err := platformSiteRequest(
-		ctx,
-		session,
-		http.MethodPost,
-		"/api/user/login?turnstile=",
-		nil,
-		map[string]string{"username": username, "password": credential.Password},
-	)
-	if err != nil {
-		return nil, err
+
+	email := ""
+	if strings.Contains(identity, "@") {
+		email = identity
 	}
-	return payload, nil
+	bodies := []map[string]string{{
+		"username": identity,
+		"password": password,
+	}}
+	if email != "" {
+		bodies = uniqueStringMaps(append(bodies,
+			map[string]string{
+				"email":    email,
+				"password": password,
+			},
+			map[string]string{
+				"username": identity,
+				"email":    email,
+				"password": password,
+			},
+		))
+	}
+	var lastErr error
+	for _, body := range bodies {
+		payload, err := platformSiteRequest(
+			ctx,
+			session,
+			http.MethodPost,
+			"/api/user/login?turnstile=",
+			nil,
+			body,
+		)
+		if err == nil {
+			return payload, nil
+		}
+		lastErr = err
+		if !platformSiteLoginCredentialRetryAllowed(err) {
+			return nil, err
+		}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("%w: 登录失败", ErrPlatformSiteAuth)
+	}
+	return nil, lastErr
 }
 
 func loginSub2APIWithPassword(ctx context.Context, session *PlatformSiteSession, credential model.PlatformSiteCredential) (any, error) {
-	username := strings.TrimSpace(credential.Username)
-	if username == "" || credential.Password == "" {
+	identity := strings.TrimSpace(credential.Username)
+	password := credential.Password
+	if identity == "" || password == "" {
 		return nil, fmt.Errorf("%w: 缺少账号密码", ErrPlatformSiteAuth)
 	}
-	parsedEmail, err := mail.ParseAddress(username)
-	if err != nil || parsedEmail.Address != username {
-		return nil, ErrSub2APILoginEmail
+
+	email := ""
+	if strings.Contains(identity, "@") {
+		email = identity
 	}
-	payload, requestErr := platformSiteRequest(
-		ctx,
-		session,
-		http.MethodPost,
-		"/api/v1/auth/login",
-		nil,
-		map[string]string{"email": parsedEmail.Address, "password": credential.Password},
-	)
-	if requestErr != nil {
-		return nil, classifySub2APILoginError(requestErr)
+	bodies := []map[string]string{{
+		"username": identity,
+		"password": password,
+	}}
+	if email != "" {
+		bodies = uniqueStringMaps([]map[string]string{
+			{
+				"email":    email,
+				"password": password,
+			},
+			{
+				"username": identity,
+				"password": password,
+			},
+			{
+				"email":    email,
+				"username": identity,
+				"password": password,
+			},
+		})
 	}
-	return payload, nil
+	var lastErr error
+	for _, body := range bodies {
+		payload, requestErr := platformSiteRequest(
+			ctx,
+			session,
+			http.MethodPost,
+			"/api/v1/auth/login",
+			nil,
+			body,
+		)
+		if requestErr == nil {
+			return payload, nil
+		}
+		lastErr = classifySub2APILoginError(requestErr)
+		if !platformSiteLoginCredentialRetryAllowed(lastErr) {
+			return nil, lastErr
+		}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("%w: 登录失败", ErrSub2APILoginRequest)
+	}
+	return nil, lastErr
+}
+
+func platformSiteLoginCredentialRetryAllowed(err error) bool {
+	if err == nil ||
+		!errors.Is(err, ErrPlatformSiteCredentials) ||
+		errors.Is(err, ErrPlatformSiteSecurity) ||
+		errors.Is(err, ErrPlatformSitePermission) ||
+		platformSiteSessionLimit(err) {
+		return false
+	}
+	var statusErr *platformSiteHTTPStatusError
+	if errors.As(err, &statusErr) && statusErr.statusCode != http.StatusUnauthorized {
+		return false
+	}
+	return true
 }
 
 func classifySub2APILoginError(err error) error {
@@ -1285,6 +1442,30 @@ func newAPIResourceSyncFailure(
 	}
 }
 
+func sub2APIResourceSyncFailure(
+	resourceType string,
+	sourceEndpoint string,
+	err error,
+	partial bool,
+) PlatformSiteResourceSyncSnapshot {
+	status := model.PlatformSiteResourceStatusFailed
+	if platformSiteRouteMissing(err) {
+		status = model.PlatformSiteResourceStatusStale
+	}
+	requiresSecurityVerification := errors.Is(err, ErrPlatformSiteSecurity)
+	if requiresSecurityVerification {
+		status = model.PlatformSiteResourceStatusSecureVerificationRequired
+	}
+	return PlatformSiteResourceSyncSnapshot{
+		ResourceType:                 resourceType,
+		Status:                       status,
+		SourceEndpoint:               sourceEndpoint,
+		FailureReason:                platformSiteResourceFailureReason(err),
+		Partial:                      partial,
+		RequiresSecurityVerification: requiresSecurityVerification,
+	}
+}
+
 func platformSiteResourceFailureReason(err error) string {
 	if err == nil {
 		return ""
@@ -1323,7 +1504,7 @@ func fetchNewAPIAdminChannels(
 		}
 		items := recordsFromPayload(payload)
 		channels = append(channels, items...)
-		if !platformSitePageHasMore(payload, page, len(items)) {
+		if !platformSitePageHasMore(payload, page, len(items), upstreamSiteMaxPages) {
 			return channels, nil
 		}
 	}
@@ -2846,7 +3027,7 @@ func (info newAPITokenPageInfo) hasMore(
 func fetchNewAPITokens(ctx context.Context, session *PlatformSiteSession) ([]map[string]any, error) {
 	result := make([]map[string]any, 0)
 	page := 1
-	for fetchedPages := 0; fetchedPages < upstreamSiteMaxPages; fetchedPages++ {
+	for fetchedPages := 0; fetchedPages < upstreamSiteResourceMaxPages; fetchedPages++ {
 		var payload any
 		var err error
 		for _, path := range []string{"/api/token/", "/api/token", "/api/tokens"} {
@@ -3073,19 +3254,19 @@ func newAPIRemainQuota(record map[string]any) (*int64, error) {
 
 func fetchSub2APIKeys(ctx context.Context, session *PlatformSiteSession, rates map[string]float64) ([]UpstreamKeySnapshot, error) {
 	result := make([]UpstreamKeySnapshot, 0)
-	for page := 1; page <= upstreamSiteMaxPages; page++ {
+	for page := 1; page <= upstreamSiteResourceMaxPages; page++ {
 		payload, err := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/keys", url.Values{
 			"page":      {fmt.Sprint(page)},
 			"page_size": {fmt.Sprint(upstreamSitePageSize)},
 		}, nil)
 		if err != nil {
-			return nil, err
+			return result, err
 		}
 		items := recordsFromPayload(payload)
 		for _, item := range items {
 			externalID := firstString(item, "id", "key_id")
 			if externalID == "" {
-				return nil, fmt.Errorf("%w: Sub2API 密钥缺少外部 ID", ErrPlatformSiteResponse)
+				return result, fmt.Errorf("%w: Sub2API 密钥缺少外部 ID", ErrPlatformSiteResponse)
 			}
 			groupID, groupName := sub2APIGroupIdentifiers(item)
 			ratioKeysPresent := hasAnyField(item, "rate_multiplier", "ratio", "rate", "multiplier")
@@ -3111,11 +3292,11 @@ func fetchSub2APIKeys(ctx context.Context, session *PlatformSiteSession, rates m
 				"totalUsed",
 			)
 			if quotaErr != nil {
-				return nil, quotaErr
+				return result, quotaErr
 			}
 			remainQuota, remainErr := sub2APIRemainQuota(item)
 			if remainErr != nil {
-				return nil, remainErr
+				return result, remainErr
 			}
 			keySnapshot := UpstreamKeySnapshot{
 				ExternalID:               externalID,
@@ -3133,7 +3314,10 @@ func fetchSub2APIKeys(ctx context.Context, session *PlatformSiteSession, rates m
 				ExpiresAt:                firstTime(item, "expires_at", "expired_at", "expire_at"),
 				Disabled:                 isUpstreamKeyDisabled(item),
 			}
-			secret := firstString(item, "key", "api_key", "token")
+			secret := nestedString(item, "credentials", "api_key")
+			if secret == "" {
+				secret = firstString(item, "key", "api_key", "token")
+			}
 			if secret == "" || strings.Contains(secret, "*") {
 				detail, detailErr := fetchSub2APIKeyDetail(ctx, session, externalID)
 				if detailErr == nil {
@@ -3142,6 +3326,8 @@ func fetchSub2APIKeys(ctx context.Context, session *PlatformSiteSession, rates m
 						keySnapshot.ModelsSynced = len(keySnapshot.Models) > 0
 					}
 					secret = stringFromPayload(detail)
+				} else if errors.Is(detailErr, ErrPlatformSiteSecurity) {
+					return result, detailErr
 				}
 			}
 			if secret == "" || strings.Contains(secret, "*") {
@@ -3161,11 +3347,11 @@ func fetchSub2APIKeys(ctx context.Context, session *PlatformSiteSession, rates m
 			}
 			result = append(result, keySnapshot)
 		}
-		if !platformSitePageHasMore(payload, page, len(items)) {
-			break
+		if !platformSitePageHasMore(payload, page, len(items), upstreamSiteResourceMaxPages) {
+			return result, nil
 		}
 	}
-	return result, nil
+	return result, errors.New("Sub2API 密钥分页超过安全上限")
 }
 
 func fetchSub2APIKeyDetail(
@@ -3196,7 +3382,7 @@ func fetchSub2APIKeyDetail(
 
 func fetchSub2APIAdminKeys(ctx context.Context, session *PlatformSiteSession, rates map[string]float64) ([]UpstreamKeySnapshot, error) {
 	result := make([]UpstreamKeySnapshot, 0)
-	for page := 1; page <= upstreamSiteMaxPages; page++ {
+	for page := 1; page <= upstreamSiteResourceMaxPages; page++ {
 		payload, err := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/admin/accounts", url.Values{
 			"page":       {fmt.Sprint(page)},
 			"page_size":  {fmt.Sprint(upstreamSitePageSize)},
@@ -3205,13 +3391,13 @@ func fetchSub2APIAdminKeys(ctx context.Context, session *PlatformSiteSession, ra
 			"type":       {"apikey"},
 		}, nil)
 		if err != nil {
-			return nil, err
+			return result, err
 		}
 		items := recordsFromPayload(payload)
 		for _, item := range items {
 			id := firstString(item, "id", "account_id")
 			if id == "" {
-				return nil, fmt.Errorf("%w: Sub2API 密钥缺少外部 ID", ErrPlatformSiteResponse)
+				return result, fmt.Errorf("%w: Sub2API 密钥缺少外部 ID", ErrPlatformSiteResponse)
 			}
 			groupID, groupName := sub2APIGroupIdentifiers(item)
 			ratioKeysPresent := hasAnyField(item, "rate_multiplier", "ratio", "rate", "multiplier")
@@ -3237,11 +3423,11 @@ func fetchSub2APIAdminKeys(ctx context.Context, session *PlatformSiteSession, ra
 				"totalUsed",
 			)
 			if quotaErr != nil {
-				return nil, quotaErr
+				return result, quotaErr
 			}
 			remainQuota, remainErr := sub2APIRemainQuota(item)
 			if remainErr != nil {
-				return nil, remainErr
+				return result, remainErr
 			}
 			keySnapshot := UpstreamKeySnapshot{
 				ExternalID:               id,
@@ -3259,28 +3445,28 @@ func fetchSub2APIAdminKeys(ctx context.Context, session *PlatformSiteSession, ra
 				ExpiresAt:                firstTime(item, "expires_at", "expired_at", "expire_at"),
 				Disabled:                 isUpstreamKeyDisabled(item),
 			}
-			dataPayload, dataErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/admin/accounts/data", url.Values{
-				"ids":             {id},
-				"include_proxies": {"false"},
-			}, nil)
-			if dataErr != nil {
-				if errors.Is(dataErr, ErrPlatformSiteSecurity) {
-					return nil, dataErr
-				}
-				keySnapshot.SyncError = upstreamKeySyncErrorSecretUnavailable
-				result = append(result, keySnapshot)
-				continue
-			}
-			data := firstRecord(dataPayload)
-			secret := nestedString(data, "accounts", "0", "credentials", "api_key")
-			if secret == "" {
-				secret = firstString(data, "key", "api_key", "token")
-			}
-			if secret == "" {
-				secret = nestedString(item, "credentials", "api_key")
-			}
+			secret := nestedString(item, "credentials", "api_key")
 			if secret == "" {
 				secret = firstString(item, "key", "api_key", "token")
+			}
+			if secret == "" || strings.Contains(secret, "*") {
+				dataPayload, dataErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/admin/accounts/data", url.Values{
+					"ids":             {id},
+					"include_proxies": {"false"},
+				}, nil)
+				if dataErr != nil {
+					if errors.Is(dataErr, ErrPlatformSiteSecurity) {
+						return result, dataErr
+					}
+					keySnapshot.SyncError = upstreamKeySyncErrorSecretUnavailable
+					result = append(result, keySnapshot)
+					continue
+				}
+				data := firstRecord(dataPayload)
+				secret = nestedString(data, "accounts", "0", "credentials", "api_key")
+				if secret == "" {
+					secret = firstString(data, "key", "api_key", "token")
+				}
 			}
 			if secret == "" || strings.Contains(secret, "*") {
 				keySnapshot.SyncError = upstreamKeySyncErrorSecretUnavailable
@@ -3299,11 +3485,11 @@ func fetchSub2APIAdminKeys(ctx context.Context, session *PlatformSiteSession, ra
 			}
 			result = append(result, keySnapshot)
 		}
-		if !platformSitePageHasMore(payload, page, len(items)) {
-			break
+		if !platformSitePageHasMore(payload, page, len(items), upstreamSiteResourceMaxPages) {
+			return result, nil
 		}
 	}
-	return result, nil
+	return result, errors.New("Sub2API 管理密钥分页超过安全上限")
 }
 
 func sub2APIRemainQuota(record map[string]any) (*int64, error) {
@@ -3604,12 +3790,15 @@ func registrablePlatformDomain(host string) (string, bool) {
 	return strings.ToLower(domain), true
 }
 
-func payloadPageCount(payload any) int {
+func payloadPageCount(payload any, maxPages int) int {
+	if maxPages <= 0 {
+		maxPages = upstreamSiteMaxPages
+	}
 	record := firstRecord(payload)
 	pages := firstInt64(record, "pages", "total_pages")
 	if pages > 0 {
-		if pages > int64(upstreamSiteMaxPages) {
-			return upstreamSiteMaxPages + 1
+		if pages > int64(maxPages) {
+			return maxPages + 1
 		}
 		return int(pages)
 	}
@@ -3617,20 +3806,20 @@ func payloadPageCount(payload any) int {
 	pageSize := firstInt64(record, "page_size", "pageSize", "size")
 	if total > 0 && pageSize > 0 {
 		pageCount := (total-1)/pageSize + 1
-		if pageCount > int64(upstreamSiteMaxPages) {
-			return upstreamSiteMaxPages + 1
+		if pageCount > int64(maxPages) {
+			return maxPages + 1
 		}
 		return int(pageCount)
 	}
-	return upstreamSiteMaxPages + 1
+	return maxPages + 1
 }
 
-func platformSitePageHasMore(payload any, page, itemCount int) bool {
+func platformSitePageHasMore(payload any, page, itemCount, maxPages int) bool {
 	if itemCount == 0 {
 		return false
 	}
-	pageCount := payloadPageCount(payload)
-	if pageCount <= upstreamSiteMaxPages {
+	pageCount := payloadPageCount(payload, maxPages)
+	if pageCount <= maxPages {
 		return page < pageCount
 	}
 	return itemCount >= upstreamSitePageSize

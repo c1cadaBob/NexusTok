@@ -1,7 +1,7 @@
 # 密钥调度策略与日志可观测性
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-27
+> 事实基线日期：2026-09-30
 > 主要代码来源：`model/routing_key.go`、`model/upstream_routing.go`、`middleware/distributor.go`、`service/channel_select.go`、`controller/channel-test.go`、`model/channel_cache.go`
 > 关联架构文档：[`docs/architecture/relay-routing-and-conversion.md`](architecture/relay-routing-and-conversion.md)、[`docs/architecture/provider-capability-matrix.md`](architecture/provider-capability-matrix.md)、[`docs/architecture/implementation-deviations.md`](architecture/implementation-deviations.md)、[`平台站点资源获取比较`](platform-site-resource-acquisition-comparison.md)
 
@@ -328,8 +328,9 @@ GET /api/channel/search?model=<model>&sort_by=model_ratio&sort_order=asc
 
 平台站点同步的资源来源必须能回溯到参考项目真实接口。New API 资源至少包括
 `/api/status`、`/api/user/self`、用户组、`/api/user/models`、`/api/pricing`、
-Token 分页和 `/v1/models`；Sub2API 资源至少包括 auth/me、profile、usage、
-groups、keys、admin accounts/data 和 `/v1/models`。管理地址、Relay 地址、Models
+Token 分页和 `/v1/models`；Sub2API 资源至少包括 auth/me、Profile、Groups、Group Rates、
+Dashboard Usage、Usage Stats、Keys、Admin accounts/data 和 `/v1/models`。New API Token、
+Sub2API 普通 Key 和 Admin Key 资源分页每页 100 条、最多 1000 页。管理地址、Relay 地址、Models
 地址和协议端点分别记录来源与最近确认时间；`supported_endpoint`、group ratio、
 模型限制和单密钥模型能力不能仅依据平台名称推断。
 
@@ -351,10 +352,14 @@ Admin Key step-up 拒绝只标记资源为 `secure_verification_required`，不�
 `PlatformSiteAccount.base_url`，页面配置发现的 OpenAI 兼容地址使用
 `relay_base_url`，父渠道基础地址使用实际转发地址并避免重复 `/v1`。
 
-平台站点的 `password` 认证继续手动输入用户名和密码；其他认证统一通过“自动配置”
+平台站点的 `password` 认证继续手动输入用户名和密码；New API 主体优先使用
+`username/password`，邮箱输入仅在明确 401 凭据错误时兼容 `email/password` 和混合
+主体；Sub2API 邮箱输入依次兼容 email、username 和混合主体，非邮箱输入使用
+username。其它认证统一通过“自动配置”
 入口和短期、管理员绑定、Origin 精确匹配、一次性消费的浏览器 Capture Session
 采集。采集过程中按 Access Token/Refresh Token、Admin Key、Cookie 的顺序自动选择；
-采集不到任何可用凭据时失败，不允许手动补填或静默改变认证类型。前端表单只提交
+采集不到任何可用凭据时失败，不允许手动补填或静默改变认证类型。安全验证、WAF、限流、
+权限拒绝、网络错误和其它非 401 结果不触发登录主体重试。前端表单只提交
 `capture_id`，凭据最终仍整体加密保存。同步失败继续保留最近一次成功快照。
 
 标签模式以标签内最小倍率作为标签排序值，按标签分页并返回该页标签下的全部渠道。没有有效倍率的标签排在最后。
@@ -443,6 +448,7 @@ Admin Key step-up 拒绝只标记资源为 `secure_verification_required`，不�
 | 2026-09-27 | NewAPI 类平台会话与资源失败回退 | Cookie 轮换、刷新会话和资源权限失败的调度影响未明确；部分分页失败可能被误解为密钥缺失 | 统一 CookieJar 优先级和 Dashboard Refresh 契约，认证成功后保存部分快照，完整分页前禁止缺失判定，并明确 `last_sync_at` 与管理员诊断边界 | NewAPI 派生平台密钥候选、模型能力、同步回退和日志可观测性 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`、平台站点专项文档 |
 | 2026-09-27 | 平台站点渠道代理出站 | 平台站点认证和资源同步未读取渠道代理，代理网络失败可能被误判为密钥不可用 | NewAPI/Sub2API 的管理面请求按渠道配置复用 Transport；认证成功后的资源失败继续保留最近成功密钥、模型、倍率和权重快照，代理配置错误单独诊断 | 渠道 4 代理同步、渠道 5 认证、平台站点路由候选和管理员可见错误 | `service/upstream_site.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go` |
 | 2026-09-29 | 校准平台站点 Key 资源与上游用量路由边界 | 文档没有集中说明管理端 `upstream-keys` 的额度/过期/模型字段、Sub2API 窗口额度缺口、账号级模型边界和父渠道 `UsedQuota` 来源 | 明确管理端返回 `UsedQuota`、`RemainQuota`、`ExpiresAt`、`Models`、`Status` 和脱敏 `KeyPreview`；完整 Secret 仍不返回；Sub2API 平台窗口额度未接入，账号级模型不能复制给所有 Key；父渠道 `UsedQuota` 来自平台同步上游累计用量 | 平台站点子密钥过滤、模型能力、额度展示、快照回退和路由调度 | `controller/upstream_channel.go`、`service/upstream_site.go`、`service/upstream_site_adapters.go`、[`平台站点资源获取比较`](platform-site-resource-acquisition-comparison.md) |
+| 2026-09-30 | 旧版资源同步迁移与真实站点验收 | New API/Sub2API 资源分页上限、登录主体兼容、Sub2API 读取顺序和完整 Key 优先级未与旧版完全对齐 | 三类 Key 资源恢复独立 1000 页；恢复受限主体兼容、New API 批量 Key 补偿、Sub2API 列表优先/详情补齐、单 Key 模型探测和失败快照边界；记录 New API 11 条 Key/32 个模型、Sub2API 10 条 Key/18 个模型的脱敏验收 | 路由候选、Key 模型能力、额度和资源状态 | `service/upstream_site_adapters.go`、`service/upstream_site_test.go`、两个站点隔离浏览器 MCP；未调用计费接口 |
 
 ### 14.1 2026-09-26 实现校准
 
@@ -528,8 +534,12 @@ CookieJar、Cookie 轮换、30 秒超时和重定向校验保持不变。代理�
 - NewAPI Token 列表固定从 `p=1&page_size=100` 开始，只有完整分页和 Key 集合确认
   后才把未返回的 `UpstreamKey` 标记为缺失；`KeysComplete=false` 时继续使用最近
   成功的密钥快照；
+- NewAPI Token、Sub2API 普通 Key 和 Sub2API Admin Key 资源分页上限均为 1000 页，
+  由资源类型独立控制；其它管理资源分页不因本次迁移改变；
 - `POST /api/token/batch/keys` 的部分响应只补偿缺失 ID，`POST /api/token/{id}/key`
   只有 404/405 才用 GET 回退，空值和掩码值不可路由；
+- Sub2API Key 列表已经返回完整值时跳过详情，缺失或掩码时才读取详情；缺少模型时
+  才使用该 Key 的完整 Secret 探测 `/v1/models`，失败只影响该 Key 当前轮次；
 - `model_limits`/`models` 等 Token 字段是单个 Key 的首选模型来源；没有字段时才
   用该 Key 自己访问 `/v1/models`。账号级模型、价格和 Admin channel 模型不能复制
   为所有 Key；

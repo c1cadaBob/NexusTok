@@ -1,7 +1,7 @@
 # 数据库、缓存与后台任务
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-27
+> 事实基线日期：2026-09-30
 > 主要代码来源：`model/main.go`、`common/database.go`、`common/redis.go`、`model/channel_cache.go`、`model/sync.go`、`service/system_task.go`、`service/task_polling.go`、`main.go`
 > 关联详细文档：[`system-overview.md`](./system-overview.md)、[`authentication-and-authorization.md`](./authentication-and-authorization.md)、[`tasks-and-plugins.md`](./tasks-and-plugins.md)、[`../rate-limiting.md`](../rate-limiting.md)
 
@@ -117,6 +117,13 @@ Admin Key step-up 拒绝读取密钥时保留旧密钥和模型快照，平台�
 WAF、分页中途失败或单 Key 模型探测失败不能清空旧 Key、额度、过期时间、模型和能力
 快照；只有完整分页、权限有效和必要 Key 详情完成后，才允许把未返回 Key 标记为缺失。
 
+2026-09-30 资源同步迁移后，New API Token、Sub2API 普通 Key 和 Sub2API Admin Key
+分页均使用每页 100 条、最多 1000 页；其它管理资源继续使用自己的分页限制。New API
+批量 Key 只补偿缺失 ID，Sub2API 列表已经返回完整 Key 时跳过详情，缺失或掩码时才
+读取详情。分页或详情失败不触发 missing 判定，单 Key 模型失败只影响当前轮次该 Key
+能力并保留最近成功值。该改动不新增数据库模型、字段或迁移，因此本次未新增三数据库
+实例迁移矩阵；既有数据库兼容记录不能当作本次新运行结果。
+
 ## 9. 维护时需要同步的关联模块
 
 修改数据库 DSN、GORM 模型、迁移、锁、缓存键/TTL、Redis 回退、日志字段、后台任务 Type/interval/lease、任务调度或多节点职责时，必须同步本文档、系统总览、任务/插件文档、鉴权/限流专项文档和偏差登记。数据库变更还要按根目录规则完成三数据库验证并记录版本与结果。
@@ -130,6 +137,7 @@ WAF、分页中途失败或单 Key 模型探测失败不能清空旧 Key、额�
 | 2026-09-27 | NewAPI 类平台资源失败持久化 | 认证成功后的 Token 分页失败可能阻断身份/余额保存，Cookie 轮换和资源失败状态无法稳定写入；失败轮次与最近成功时间边界不清晰 | 先保存认证轮换凭据，再按身份、用量、密钥和模型写入可用部分快照；分页/权限/安全验证失败保留旧密钥和能力，不执行缺失判定，不更新 `last_sync_at`，资源表保留最近成功时间和本次失败状态 | 平台站点数据库快照、后台同步、渠道缓存和路由模型索引 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`model/platform_site_resources.go`、SQLite 回归测试 |
 | 2026-09-27 | 平台站点代理出站与快照边界 | 平台站点同步没有使用渠道代理，代理导致的网络失败无法与资源快照状态分开核对 | 同步、认证和 2FA 使用渠道 Transport；代理配置错误在同步阶段单独记录，认证成功后的资源失败仍按资源类型落库并保留最近成功快照；不修改资源表结构 | 渠道 4 代理同步、渠道 5 认证诊断、平台站点资源缓存和后台任务 | `service/upstream_site.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go` |
 | 2026-09-29 | 补充旧版预览缓存与当前平台资源快照关系 | 文档只描述当前资源表和失败回退，未把旧版 `upstream-account-preview`、完整 Key 临时边界、加密存储、HMAC 指纹与后台同步方式放在同一条缓存链路中 | 明确旧版预览缓存 10 分钟 TTL 和一次性消费；当前凭据/完整 Key 加密保存并以指纹和外部 ID 匹配；手动、排队、后台同步共用站点锁；资源失败保留最近成功 Key、额度、过期时间、模型和能力快照 | 平台站点缓存、资源查询、路由候选和系统任务 | `service/upstream_site.go`、`model/upstream_channel.go`、`model/platform_site_resources.go`、旧版 `service/upstreamaccount/`、[`平台站点资源获取比较`](../platform-site-resource-acquisition-comparison.md) |
+| 2026-09-30 | 旧版资源分页与真实验收边界 | New API/Sub2API Key 资源最多 100 页，完整 Key 详情和分页失败边界未完全记录；真实站点测试结果未纳入缓存快照说明 | 三类 Key 资源恢复独立 1000 页上限；完整列表优先、缺失详情补齐、资源失败保留最近成功快照；记录 New API 11 条 Key/32 个模型、Sub2API 10 条 Key/18 个模型的脱敏黑盒验收；不写入凭据或临时捕获文件 | 平台资源缓存、后台同步、路由快照和安全交付 | `service/upstream_site_adapters.go`、`service/upstream_site_test.go`、隔离浏览器 MCP；无数据库结构变更 |
 
 ### 9.1 2026-09-26 实现校准
 
