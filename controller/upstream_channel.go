@@ -823,11 +823,9 @@ func GetUpstreamKeys(c *gin.Context) {
 	}
 	result := make([]UpstreamKeyResponse, 0, len(keys))
 	for index := range keys {
-		if keys[index].RoutingKeyID == 0 {
-			if err := model.EnsureRoutingKeyForUpstreamKey(nil, &keys[index]); err != nil {
-				common.ApiError(c, err)
-				return
-			}
+		if err := model.EnsureRoutingKeyForUpstreamKey(nil, &keys[index]); err != nil {
+			common.ApiError(c, err)
+			return
 		}
 		result = append(result, toPlatformSiteKeyResponse(&keys[index], &account, channel))
 	}
@@ -969,10 +967,8 @@ func platformSiteResources(channelID int) (*PlatformSiteResourcesResponse, error
 		return nil, err
 	}
 	for index := range keys {
-		if keys[index].RoutingKeyID == 0 {
-			if err := model.EnsureRoutingKeyForUpstreamKey(nil, &keys[index]); err != nil {
-				return nil, err
-			}
+		if err := model.EnsureRoutingKeyForUpstreamKey(nil, &keys[index]); err != nil {
+			return nil, err
 		}
 		key := toPlatformSiteKeyResponse(&keys[index], &account, channel)
 		response.Keys = append(response.Keys, key)

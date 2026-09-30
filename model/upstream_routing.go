@@ -238,10 +238,8 @@ func loadRoutableUpstreamKeys(channel *Channel, group, modelName string) []*Upst
 	result := make([]*UpstreamKey, 0, len(keys))
 	for index := range keys {
 		key := &keys[index]
-		if key.RoutingKeyID == 0 {
-			if err := EnsureRoutingKeyForUpstreamKey(nil, key); err != nil {
-				continue
-			}
+		if err := EnsureRoutingKeyForUpstreamKey(nil, key); err != nil {
+			continue
 		}
 		availabilityReason := key.AvailabilityReason(now)
 		if !key.ModelsSynced ||

@@ -175,10 +175,10 @@ func IsPlatformSiteAuthType(authType string) bool {
 	}
 }
 
-// NormalizeSub2APIRelayBaseURL 将页面发现的 OpenAI 兼容端点转换为转发适配器
-// 使用的渠道基础地址。转发请求路径已经包含 /v1 前缀，而 Sub2API 页面配置
-// 常见返回值本身以 /v1 结尾。
-func NormalizeSub2APIRelayBaseURL(raw string) string {
+// NormalizePlatformSiteRelayBaseURL 将平台页面发现的 OpenAI 兼容端点转换为
+// 转发适配器使用的渠道基础地址。转发请求路径已经包含 /v1 前缀，因此需要
+// 移除端点地址末尾的 /v1，避免生成重复路径。
+func NormalizePlatformSiteRelayBaseURL(raw string) string {
 	normalized := strings.TrimRight(strings.TrimSpace(raw), "/")
 	if normalized == "" {
 		return ""
@@ -198,6 +198,12 @@ func NormalizeSub2APIRelayBaseURL(raw string) string {
 	parsed.RawQuery = ""
 	parsed.Fragment = ""
 	return strings.TrimRight(parsed.String(), "/")
+}
+
+// NormalizeSub2APIRelayBaseURL 保留旧版公开函数名，实际使用统一的平台站点
+// Relay 地址规范化逻辑。
+func NormalizeSub2APIRelayBaseURL(raw string) string {
+	return NormalizePlatformSiteRelayBaseURL(raw)
 }
 
 // InferPlatformSiteAuthType 仅用于升级旧数据和修复缺少 AuthType 的记录。
@@ -480,7 +486,7 @@ func (key *UpstreamKey) LoadSecret() error {
 
 func GetRoutableUpstreamKeyByID(channelID int, keyID uint, group, modelName string, now time.Time) (*UpstreamKey, error) {
 	var channel Channel
-	if err := DB.Select("id", "status", "upstream_kind").
+	if err := DB.Select("id", "status", "upstream_kind", "model_mapping").
 		Where("id = ?", channelID).
 		First(&channel).Error; err != nil {
 		return nil, err
@@ -504,10 +510,8 @@ func GetRoutableUpstreamKeyByID(channelID int, keyID uint, group, modelName stri
 	if err := DB.Where("id = ? AND channel_id = ?", keyID, channelID).First(&key).Error; err != nil {
 		return nil, err
 	}
-	if key.RoutingKeyID == 0 {
-		if err := EnsureRoutingKeyForUpstreamKey(nil, &key); err != nil {
-			return nil, err
-		}
+	if err := EnsureRoutingKeyForUpstreamKey(nil, &key); err != nil {
+		return nil, err
 	}
 	if !key.IsRoutable(now) {
 		return nil, errors.New("upstream key is not routable")
@@ -515,7 +519,9 @@ func GetRoutableUpstreamKeyByID(channelID int, keyID uint, group, modelName stri
 	if !key.ModelsSynced {
 		return nil, errors.New("upstream key model capability is not synchronized")
 	}
-	if strings.TrimSpace(modelName) != "" && !upstreamKeySupportsModel(&key, group, modelName) {
+	upstreamModelName := resolveChannelUpstreamModelName(&channel, modelName)
+	if strings.TrimSpace(upstreamModelName) != "" &&
+		!upstreamKeySupportsModel(&key, group, upstreamModelName) {
 		return nil, errors.New("upstream key does not support the test model")
 	}
 	if err := key.LoadSecret(); err != nil {

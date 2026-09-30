@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/c1cadaBob/NexusTok/common"
+	"github.com/c1cadaBob/NexusTok/constant"
 	"github.com/glebarez/sqlite"
 
 	"github.com/stretchr/testify/assert"
@@ -84,6 +85,17 @@ func TestNormalizeSub2APIRelayBaseURLRemovesVersionSuffix(t *testing.T) {
 			assert.Equal(t, test.want, NormalizeSub2APIRelayBaseURL(test.raw))
 		})
 	}
+}
+
+func TestPlatformSiteGetBaseURLNormalizesNewAPIRelayEndpoint(t *testing.T) {
+	baseURL := "https://relay.example/openai/v1/"
+	channel := &Channel{
+		Type:         constant.ChannelTypeNewAPI,
+		UpstreamKind: UpstreamKindPlatformSite,
+		BaseURL:      &baseURL,
+	}
+
+	assert.Equal(t, "https://relay.example/openai", channel.GetBaseURL())
 }
 
 func TestCalculatePlatformKeyConversionRatio(t *testing.T) {
@@ -1605,6 +1617,148 @@ func TestSelectChannelByUpstreamKeyFallsBackWhenAllWeightsAreZero(t *testing.T) 
 		require.NotNil(t, selected)
 		assert.Contains(t, []int{301, 302}, selected.Id)
 	}
+}
+
+func TestPlatformSiteRoutingSelectionRepairsRelationsAndUsesMappedModels(t *testing.T) {
+	previousDB := DB
+	previousSecret := common.CryptoSecret
+	common.CryptoSecret = "platform-routing-selection-test-secret"
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&Channel{},
+		&RoutingKey{},
+		&PlatformSiteAccount{},
+		&UpstreamKey{},
+		&UpstreamKeyAbility{},
+	))
+	DB = db
+	t.Cleanup(func() {
+		DB = previousDB
+		common.CryptoSecret = previousSecret
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	modelMapping := `{"alias-model":"real-model"}`
+	channel := &Channel{
+		Id:           9101,
+		Name:         "mapped-platform-site",
+		Status:       common.ChannelStatusEnabled,
+		UpstreamKind: UpstreamKindPlatformSite,
+		Group:        "default",
+		Models:       "alias-model",
+		ModelMapping: &modelMapping,
+	}
+	require.NoError(t, db.Create(channel).Error)
+	require.NoError(t, db.Create(&PlatformSiteAccount{
+		ChannelID:  channel.Id,
+		Platform:   PlatformNewAPI,
+		BaseURL:    "https://management.example",
+		SyncStatus: UpstreamSiteSyncSuccess,
+	}).Error)
+
+	secretCiphertext, err := EncryptPlatformSiteCredential(
+		PlatformSiteCredential{AccessToken: "sk-platform-full"},
+	)
+	require.NoError(t, err)
+	remaining := int64(100)
+	key := &UpstreamKey{
+		ID:               1001,
+		ChannelID:        channel.Id,
+		ExternalID:       "mapped-key",
+		SecretCiphertext: secretCiphertext,
+		Models:           "real-model",
+		ModelsSynced:     true,
+		RemainQuota:      &remaining,
+		Status:           UpstreamKeyStatusEnabled,
+		ConversionRatio:  1,
+	}
+	require.NoError(t, db.Create(key).Error)
+	require.NoError(t, db.Create(&UpstreamKeyAbility{
+		UpstreamKeyID: key.ID,
+		Group:         "default",
+		Model:         "real-model",
+		Enabled:       true,
+	}).Error)
+
+	require.NoError(t, db.Create(&RoutingKey{
+		ID:          3001,
+		ChannelID:   channel.Id,
+		Source:      RoutingKeySourcePlatformSite,
+		SourceRefID: 9999,
+	}).Error)
+	require.NoError(t, db.Model(key).Update("routing_key_id", uint(3001)).Error)
+	require.NoError(t, db.Create(&RoutingKey{
+		ID:          3002,
+		ChannelID:   channel.Id,
+		Source:      RoutingKeySourcePlatformSite,
+		SourceRefID: key.ID,
+	}).Error)
+
+	var storedKey UpstreamKey
+	require.NoError(t, db.First(&storedKey, key.ID).Error)
+	require.NoError(t, EnsureRoutingKeyForUpstreamKey(db, &storedKey))
+	assert.Equal(t, uint(3002), storedKey.RoutingKeyID)
+	var persistedKey UpstreamKey
+	require.NoError(t, db.First(&persistedKey, key.ID).Error)
+	assert.Equal(t, uint(3002), persistedKey.RoutingKeyID)
+
+	byRoutingKey, err := GetRoutableKeyByID(channel, 3002, "default", "alias-model")
+	require.NoError(t, err)
+	assert.Equal(t, key.ID, byRoutingKey.UpstreamKeyID)
+	assert.Equal(t, "sk-platform-full", byRoutingKey.Secret)
+
+	byLegacyKeyID, err := GetRoutableKeyByID(channel, key.ID, "default", "alias-model")
+	require.NoError(t, err)
+	assert.Equal(t, byRoutingKey.KeyID, byLegacyKeyID.KeyID)
+	assert.Equal(t, byRoutingKey.UpstreamKeyID, byLegacyKeyID.UpstreamKeyID)
+
+	explicit, err := GetRoutableUpstreamKeyByID(channel.Id, key.ID, "default", "alias-model", time.Now())
+	require.NoError(t, err)
+	assert.Equal(t, "sk-platform-full", explicit.Secret)
+
+	automatic := SelectRoutableUpstreamKey(channel, "default", "alias-model")
+	require.NotNil(t, automatic)
+	require.NotNil(t, automatic.SelectedUpstreamKey)
+	assert.Equal(t, key.ID, automatic.SelectedUpstreamKey.ID)
+
+	crossChannel := &Channel{
+		Id:           9102,
+		Name:         "other-platform-site",
+		Status:       common.ChannelStatusEnabled,
+		UpstreamKind: UpstreamKindPlatformSite,
+		Group:        "default",
+	}
+	require.NoError(t, db.Create(crossChannel).Error)
+	require.NoError(t, db.Create(&PlatformSiteAccount{
+		ChannelID:  crossChannel.Id,
+		Platform:   PlatformNewAPI,
+		BaseURL:    "https://other-management.example",
+		SyncStatus: UpstreamSiteSyncSuccess,
+	}).Error)
+	crossSecret, err := EncryptPlatformSiteCredential(
+		PlatformSiteCredential{AccessToken: "sk-other"},
+	)
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&UpstreamKey{
+		ID:               2001,
+		ChannelID:        crossChannel.Id,
+		ExternalID:       "cross-channel-key",
+		SecretCiphertext: crossSecret,
+		Models:           "real-model",
+		ModelsSynced:     true,
+		RemainQuota:      &remaining,
+		Status:           UpstreamKeyStatusEnabled,
+		ConversionRatio:  1,
+	}).Error)
+
+	_, err = GetRoutableKeyByID(channel, 2001, "default", "alias-model")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errRoutingKeySelectionUnavailable)
 }
 
 func ptrTime(value time.Time) *time.Time {

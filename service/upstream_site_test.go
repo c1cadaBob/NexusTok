@@ -3976,7 +3976,7 @@ func TestPersistPlatformSiteSnapshotIsolatesUnavailableKeys(t *testing.T) {
 	assert.Equal(t, int64(123456), savedChannel.UsedQuota)
 }
 
-func TestPersistPlatformSiteSnapshotSeparatesSub2APIManagementAndRelayURLs(t *testing.T) {
+func TestPersistPlatformSiteSnapshotSeparatesManagementAndRelayURLs(t *testing.T) {
 	previousDB := model.DB
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
@@ -4036,6 +4036,22 @@ func TestPersistPlatformSiteSnapshotSeparatesSub2APIManagementAndRelayURLs(t *te
 	require.NotNil(t, savedChannel.BaseURL)
 	assert.Equal(t, "https://api.example.com", *savedChannel.BaseURL)
 	assert.Equal(t, int64(21), savedChannel.UsedQuota)
+
+	require.NoError(t, db.Model(account).Update("platform", model.PlatformNewAPI).Error)
+	require.NoError(t, persistPlatformSiteSnapshot(context.Background(), account, PlatformSiteSnapshot{
+		Balance:           9,
+		UsedQuota:         34,
+		UsedQuotaSet:      true,
+		ManagementBaseURL: "https://new-management.example",
+		RelayBaseURL:      "https://new-relay.example/v1",
+	}))
+
+	require.NoError(t, db.First(&savedAccount, account.ID).Error)
+	assert.Equal(t, "https://new-management.example", savedAccount.BaseURL)
+	assert.Equal(t, "https://new-relay.example/v1", savedAccount.RelayBaseURL)
+	require.NoError(t, db.First(&savedChannel, channel.Id).Error)
+	require.NotNil(t, savedChannel.BaseURL)
+	assert.Equal(t, "https://new-relay.example", *savedChannel.BaseURL)
 }
 
 func TestPersistPlatformSiteCredentialStoresOnlyEncryptedRotatedValues(t *testing.T) {

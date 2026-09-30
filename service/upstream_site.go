@@ -1915,16 +1915,22 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 			accountUpdates["auth_status_reason"] = ""
 		}
 		managementBaseURL := strings.TrimRight(strings.TrimSpace(snapshot.ManagementBaseURL), "/")
-		if managementBaseURL != "" && account.Platform == model.PlatformSub2API {
+		if managementBaseURL == "" {
+			managementBaseURL = strings.TrimRight(strings.TrimSpace(account.BaseURL), "/")
+		}
+		if managementBaseURL != "" {
 			accountUpdates["base_url"] = managementBaseURL
 		}
 		relayBaseURL := strings.TrimRight(strings.TrimSpace(snapshot.RelayBaseURL), "/")
-		if relayBaseURL == "" && account.Platform == model.PlatformSub2API {
+		if relayBaseURL == "" {
 			relayBaseURL = strings.TrimRight(strings.TrimSpace(account.RelayBaseURL), "/")
 		}
-		if relayBaseURL != "" && account.Platform == model.PlatformSub2API {
+		if relayBaseURL == "" {
+			relayBaseURL = managementBaseURL
+		}
+		if relayBaseURL != "" {
 			accountUpdates["relay_base_url"] = relayBaseURL
-			channelBaseURL := model.NormalizeSub2APIRelayBaseURL(relayBaseURL)
+			channelBaseURL := model.NormalizePlatformSiteRelayBaseURL(relayBaseURL)
 			if channelBaseURL == "" {
 				channelBaseURL = relayBaseURL
 			}

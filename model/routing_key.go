@@ -22,6 +22,8 @@ const (
 	MaxRoutingKeyPriority int64 = 99
 )
 
+var errRoutingKeySelectionUnavailable = errors.New("所选密钥已失效，请刷新密钥列表后重新选择")
+
 type RoutingKey struct {
 	ID          uint   `json:"id" gorm:"primaryKey"`
 	ChannelID   int    `json:"channel_id" gorm:"not null;index"`
@@ -151,10 +153,28 @@ func EnsureRoutingKeyForUpstreamKey(tx *gorm.DB, key *UpstreamKey) error {
 		return nil
 	}
 	if key.RoutingKeyID != 0 {
-		return nil
+		var current RoutingKey
+		err := tx.Where(
+			"id = ? AND channel_id = ? AND source = ? AND source_ref_id = ?",
+			key.RoutingKeyID,
+			key.ChannelID,
+			RoutingKeySourcePlatformSite,
+			key.ID,
+		).First(&current).Error
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
 	}
 	var routingKey RoutingKey
-	err := tx.Where("source = ? AND source_ref_id = ?", RoutingKeySourcePlatformSite, key.ID).
+	err := tx.Where(
+		"channel_id = ? AND source = ? AND source_ref_id = ?",
+		key.ChannelID,
+		RoutingKeySourcePlatformSite,
+		key.ID,
+	).
 		First(&routingKey).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		created, createErr := newRoutingKey(tx, key.ChannelID, RoutingKeySourcePlatformSite, key.ID)
@@ -166,7 +186,9 @@ func EnsureRoutingKeyForUpstreamKey(tx *gorm.DB, key *UpstreamKey) error {
 		return err
 	}
 	key.RoutingKeyID = routingKey.ID
-	return tx.Model(&UpstreamKey{}).Where("id = ?", key.ID).Update("routing_key_id", routingKey.ID).Error
+	return tx.Model(&UpstreamKey{}).
+		Where("id = ? AND channel_id = ?", key.ID, key.ChannelID).
+		Update("routing_key_id", routingKey.ID).Error
 }
 
 func createChannelKey(tx *gorm.DB, channel *Channel, secret string, keyIndex int, status int, reason string, disabledTime int64) (*ChannelKey, error) {
@@ -604,6 +626,24 @@ func GetRoutableKeyByID(channel *Channel, routingKeyID uint, group, modelName st
 	if routingKeyID == 0 {
 		return nil, errors.New("key_id is required")
 	}
+	if channel.UpstreamKind == UpstreamKindPlatformSite {
+		key, err := resolvePlatformSiteUpstreamKey(channel, routingKeyID)
+		if err != nil {
+			return nil, err
+		}
+		selected, err := GetRoutableUpstreamKeyByID(
+			channel.Id,
+			key.ID,
+			group,
+			modelName,
+			time.Now(),
+		)
+		if err != nil {
+			return nil, err
+		}
+		return upstreamKeySelection(channel, selected), nil
+	}
+
 	var routingKey RoutingKey
 	if err := DB.Where("id = ? AND channel_id = ?", routingKeyID, channel.Id).First(&routingKey).Error; err != nil {
 		return nil, err
@@ -625,15 +665,7 @@ func GetRoutableKeyByID(channel *Channel, routingKeyID uint, group, modelName st
 		}
 		return channelKeySelection(channel, &key), nil
 	case RoutingKeySourcePlatformSite:
-		var key UpstreamKey
-		if err := DB.Where("routing_key_id = ? AND channel_id = ?", routingKeyID, channel.Id).First(&key).Error; err != nil {
-			return nil, err
-		}
-		selected, err := GetRoutableUpstreamKeyByID(channel.Id, key.ID, group, modelName, time.Now())
-		if err != nil {
-			return nil, err
-		}
-		return upstreamKeySelection(channel, selected), nil
+		return nil, errRoutingKeySelectionUnavailable
 	default:
 		return nil, fmt.Errorf("unsupported routing key source %s", routingKey.Source)
 	}
@@ -646,6 +678,26 @@ func GetRoutingKeyForModelFetch(channel *Channel, routingKeyID uint) (*RoutingKe
 	if routingKeyID == 0 {
 		return nil, errors.New("key_id is required")
 	}
+	if channel.UpstreamKind == UpstreamKindPlatformSite {
+		key, err := resolvePlatformSiteUpstreamKey(channel, routingKeyID)
+		if err != nil {
+			return nil, err
+		}
+		if key.Status != UpstreamKeyStatusEnabled || key.MissingSince != 0 {
+			return nil, errors.New("upstream key is not available")
+		}
+		if key.ExpiresAt != nil && !key.ExpiresAt.After(time.Now()) {
+			return nil, errors.New("upstream key is expired")
+		}
+		if key.RemainQuota != nil && *key.RemainQuota <= 0 {
+			return nil, errors.New("upstream key quota is exhausted")
+		}
+		if err := key.LoadSecret(); err != nil {
+			return nil, errors.New("upstream key credential is unavailable")
+		}
+		return upstreamKeySelection(channel, key), nil
+	}
+
 	var routingKey RoutingKey
 	if err := DB.Where("id = ? AND channel_id = ?", routingKeyID, channel.Id).First(&routingKey).Error; err != nil {
 		return nil, err
@@ -664,26 +716,56 @@ func GetRoutingKeyForModelFetch(channel *Channel, routingKeyID uint) (*RoutingKe
 		}
 		return channelKeySelection(channel, &key), nil
 	case RoutingKeySourcePlatformSite:
-		var key UpstreamKey
-		if err := DB.Where("routing_key_id = ? AND channel_id = ?", routingKeyID, channel.Id).First(&key).Error; err != nil {
-			return nil, err
-		}
-		if key.Status != UpstreamKeyStatusEnabled || key.MissingSince != 0 {
-			return nil, errors.New("upstream key is not available")
-		}
-		if key.ExpiresAt != nil && !key.ExpiresAt.After(time.Now()) {
-			return nil, errors.New("upstream key is expired")
-		}
-		if key.RemainQuota != nil && *key.RemainQuota <= 0 {
-			return nil, errors.New("upstream key quota is exhausted")
-		}
-		if err := key.LoadSecret(); err != nil {
-			return nil, errors.New("upstream key credential is unavailable")
-		}
-		return upstreamKeySelection(channel, &key), nil
+		return nil, errRoutingKeySelectionUnavailable
 	default:
 		return nil, fmt.Errorf("unsupported routing key source %s", routingKey.Source)
 	}
+}
+
+func resolvePlatformSiteUpstreamKey(channel *Channel, identifier uint) (*UpstreamKey, error) {
+	if channel == nil || channel.UpstreamKind != UpstreamKindPlatformSite || identifier == 0 {
+		return nil, errRoutingKeySelectionUnavailable
+	}
+
+	var routingKey RoutingKey
+	routingErr := DB.Where("id = ? AND channel_id = ?", identifier, channel.Id).
+		First(&routingKey).Error
+	if routingErr == nil {
+		if routingKey.Source != RoutingKeySourcePlatformSite || routingKey.SourceRefID == 0 {
+			return nil, errRoutingKeySelectionUnavailable
+		}
+		var key UpstreamKey
+		if err := DB.Where(
+			"id = ? AND channel_id = ?",
+			routingKey.SourceRefID,
+			channel.Id,
+		).First(&key).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, errRoutingKeySelectionUnavailable
+			}
+			return nil, err
+		}
+		if err := EnsureRoutingKeyForUpstreamKey(nil, &key); err != nil {
+			return nil, err
+		}
+		return &key, nil
+	}
+	if !errors.Is(routingErr, gorm.ErrRecordNotFound) {
+		return nil, routingErr
+	}
+
+	var key UpstreamKey
+	if err := DB.Where("id = ? AND channel_id = ?", identifier, channel.Id).
+		First(&key).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errRoutingKeySelectionUnavailable
+		}
+		return nil, err
+	}
+	if err := EnsureRoutingKeyForUpstreamKey(nil, &key); err != nil {
+		return nil, err
+	}
+	return &key, nil
 }
 
 func SelectRoutableKeyByIDForRefresh(channel *Channel, routingKeyID uint) (*Channel, error) {

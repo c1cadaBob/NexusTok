@@ -871,9 +871,10 @@ func AddChannel(c *gin.Context) {
 			return
 		}
 		baseURL := strings.TrimRight(strings.TrimSpace(addChannelRequest.PlatformSite.BaseURL), "/")
-		if relayBaseURL := strings.TrimRight(strings.TrimSpace(addChannelRequest.PlatformSite.RelayBaseURL), "/"); relayBaseURL != "" {
+		if relayBaseURL := model.NormalizePlatformSiteRelayBaseURL(addChannelRequest.PlatformSite.RelayBaseURL); relayBaseURL != "" {
 			baseURL = relayBaseURL
 		}
+		baseURL = model.NormalizePlatformSiteRelayBaseURL(baseURL)
 		addChannelRequest.Channel.BaseURL = &baseURL
 		addChannelRequest.Channel.Key = ""
 		addChannelRequest.Channel.Models = ""
@@ -1360,11 +1361,15 @@ func UpdateChannel(c *gin.Context) {
 			if err := model.DB.Where("channel_id = ?", channel.Id).First(&account).Error; err == nil &&
 				strings.TrimSpace(channel.PlatformSite.RelayBaseURL) == "" &&
 				strings.TrimSpace(account.RelayBaseURL) != "" {
-				relayBaseURL := model.NormalizeSub2APIRelayBaseURL(account.RelayBaseURL)
+				relayBaseURL := model.NormalizePlatformSiteRelayBaseURL(account.RelayBaseURL)
 				channel.BaseURL = &relayBaseURL
 			}
-			if relayBaseURL := model.NormalizeSub2APIRelayBaseURL(channel.PlatformSite.RelayBaseURL); relayBaseURL != "" {
+			if relayBaseURL := model.NormalizePlatformSiteRelayBaseURL(channel.PlatformSite.RelayBaseURL); relayBaseURL != "" {
 				channel.BaseURL = &relayBaseURL
+			}
+			if channel.BaseURL != nil {
+				normalizedBaseURL := model.NormalizePlatformSiteRelayBaseURL(*channel.BaseURL)
+				channel.BaseURL = &normalizedBaseURL
 			}
 			channel.Key = ""
 		}
