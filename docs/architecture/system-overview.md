@@ -95,6 +95,30 @@ HTTP
 
 `common.InitRedisClient` 根据 `REDIS_CONN_STRING` 决定是否启用 Redis；不少缓存和限流逻辑在 Redis 不可用时回退到进程内存或数据库。共享 Redis 才能让需要全局共享的缓存/计数在节点间共享，独立 Redis 会形成节点局部状态，具体 Session 语义见[`authentication-and-authorization.md`](./authentication-and-authorization.md)。
 
+### 生产默认部署（2026-09-30）
+
+**变更前**：生产 Compose 使用浮动的 PostgreSQL/Redis 镜像标签、仓库内默认密码和相对
+数据目录；NexusTok 只等待服务启动，没有按数据库和缓存健康状态编排。单条 `docker run`
+示例容易被误解为同时提供 PostgreSQL 和 Redis。
+
+**变更后**：`docker-compose.yml` 是生产推荐入口，固定使用
+`postgres:15-alpine`、`redis:7-alpine` 和 `c1cadabob/nexustok:latest`。部署脚本首次运行
+生成权限为 `0600` 的 `.env`，保存 `POSTGRES_PASSWORD` 与 `REDIS_PASSWORD`，Compose
+据此注入 `SQL_DSN` 和 `REDIS_CONN_STRING`；已有密码不会被覆盖。PostgreSQL 和 Redis
+只加入 Compose 内部网络，NexusTok 依赖两个服务的 `service_healthy` 条件启动，生产
+对外端口统一为 `3030`。
+
+应用数据和由 `SESSION_SECRET_FILE=/data/session_secret` 自动生成的会话密钥持久化到
+`/opt/nexustok/data`，日志持久化到 `/opt/nexustok/logs`。未设置 `SQL_DSN` 或
+`REDIS_CONN_STRING` 时，代码仍分别回退到 SQLite 或关闭 Redis，以兼容裸机、测试和
+既有外部数据库部署。单条 `docker run` 不会创建 PostgreSQL/Redis，只表示 SQLite/无
+Redis 兼容模式。SQLite 文件不会自动迁移到 PostgreSQL；已有生产数据切换前必须备份，
+并单独执行经过验证的数据迁移。
+
+本次发布镜像为 `c1cadabob/nexustok:v0.2.2` 和 `c1cadabob/nexustok:latest`，Dockerfile
+通过当前 `web/` 的 Bun/Rsbuild `bun run build` 生成并嵌入新版前端，不新增路由、DTO、
+数据库模型或字段。
+
 ### Master/Slave
 
 多节点必须共享主数据库。Master 负责迁移和系统任务调度，系统任务模型通过数据库租约、Claim 和状态更新避免多个 Master 重复执行。节点报告、授权策略同步和缓存同步仍有各自的刷新周期，不能把“请求可由多个节点处理”理解为所有内存状态自动一致。
@@ -151,3 +175,4 @@ Healthcheck 时至少确认持续 `Running` 并标记降级。helper 在主容�
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 建立启动、分层、请求链路、部署边界和限制说明 | `main.go`、`router/`、`middleware/`、`model/`、`service/`、`relay/` | `main.go`、`model/main.go`、`router/` 静态核对 |
 | 2026-09-30 | 系统维护更新与回滚 | 前端直连 GitHub 且没有后端运维任务；旧版回滚会消耗唯一备份 | 增加 RootAuth 维护接口、SystemTask 进度、GitHub 缓存/checksum、裸机稳定备份交换、Docker helper/健康检查和重启探活 | `router/api-router.go`、`controller/system_update.go`、`service/system_update*.go`、`main.go`、维护页 | `go test ./service ./model ./controller ./router`、前端定向测试；未进行生产容器切换 |
+| 2026-09-30 | v0.2.2 生产默认部署 | Compose 使用浮动依赖、明文默认密码和相对目录，服务依赖未按健康状态编排；单容器示例未明确不包含外部数据库/缓存 | Compose 固定 PostgreSQL 15 + Redis 7，密码由 `.env`/部署脚本生成，应用端口为 `3030`，数据/日志使用 `/opt/nexustok` 持久化目录，单容器仅保留 SQLite/无 Redis 兼容模式 | `docker-compose.yml`、`scripts/deploy.sh`、`Dockerfile`、`VERSION`、Docker 发布工作流和中文部署文档 | `docker compose config`、`bash -n scripts/deploy.sh`、隔离三服务栈和真实 SQLite 3.50.4/MySQL 8.2.0/PostgreSQL 15.19 矩阵已通过；生产 Dockerfile 完整构建因 `proxy.golang.org` 超时未完成，远端发布以标签工作流为准 |

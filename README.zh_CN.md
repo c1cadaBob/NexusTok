@@ -115,43 +115,39 @@
 git clone https://github.com/c1cadaBob/NexusTok.git
 cd NexusTok
 
-# 编辑 docker-compose.yml 配置
-nano docker-compose.yml
-
-# 启动服务
-docker-compose up -d
+# 一键部署生产环境（PostgreSQL + Redis）
+bash scripts/deploy.sh
 ```
+
+脚本首次运行会生成权限为 `0600` 的 `.env`，写入随机的
+`POSTGRES_PASSWORD` 和 `REDIS_PASSWORD`；后续运行不会覆盖已有密码。
+生产应用端口为 `3030`，PostgreSQL 和 Redis 只加入 Compose 内部网络。
 
 <details>
 <summary><strong>使用 Docker 命令</strong></summary>
 
 ```bash
-# 拉取最新镜像
-docker pull c1cadabob/nexustok:latest
-
-# 使用 SQLite（默认）
-docker run --name NexusTok -d --restart always \
-  -p 3000:3000 \
+# 单容器兼容模式（SQLite，不含 PostgreSQL 和 Redis）
+mkdir -p /opt/nexustok/data /opt/nexustok/logs
+docker run --name nexustok -d --restart always \
+  -p 3030:3030 \
   -e TZ=Asia/Shanghai \
-  -v ./data:/data \
-  c1cadabob/nexustok:latest
-
-# 使用 MySQL
-docker run --name NexusTok -d --restart always \
-  -p 3000:3000 \
-  -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
-  -e TZ=Asia/Shanghai \
-  -v ./data:/data \
+  -e PORT=3030 \
+  -e SESSION_SECRET_FILE=/data/session_secret \
+  -v /opt/nexustok/data:/data \
+  -v /opt/nexustok/logs:/app/logs \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   c1cadabob/nexustok:latest
 ```
 
-> **💡 提示：** `-v ./data:/data` 会将数据保存在当前目录的 `data` 文件夹中，你也可以改为绝对路径如 `-v /your/custom/path:/data`
+> 单条 `docker run` 不会启动 PostgreSQL 和 Redis；完整生产部署请使用仓库中的
+> Docker Compose。SQLite 不会自动迁移到 PostgreSQL，已有数据切换前必须先备份并单独完成迁移。
 
 </details>
 
 ---
 
-🎉 部署完成后，访问 `http://localhost:3000` 即可使用！
+🎉 生产 Compose 部署完成后，访问 `http://localhost:3030` 即可使用！
 
 > [!WARNING]
 > 将本项目作为面向公众的生成式 AI 服务或 API 转售服务运营时，使用者应先完成备案、内容安全、实名、日志留存、税务、支付和上游授权等合规义务。
@@ -297,15 +293,21 @@ docker run --name NexusTok -d --restart always \
 
 > [!TIP]
 > **最新版 Docker 镜像：** `c1cadabob/nexustok:latest`
+>
+> **v0.2.2 镜像：** `c1cadabob/nexustok:v0.2.2`
 
 ### 📋 部署要求
 
 | 组件 | 要求 |
 |------|------|
-| **本地数据库** | SQLite（Docker 需挂载 `/data` 目录）|
-| **远程数据库** | MySQL ≥ 5.7.8 或 PostgreSQL ≥ 9.6 |
+| **生产默认数据库** | PostgreSQL 15（应用同时兼容 PostgreSQL ≥ 9.6） |
+| **生产默认缓存** | Redis 7（Compose 内部网络） |
+| **兼容数据库** | MySQL ≥ 5.7.8、SQLite |
 | **容器引擎** | Docker / Docker Compose |
 | **系统架构** | 仅支持 64 位系统（amd64 / arm64），不支持 32 位系统 |
+
+> Compose 是生产推荐入口。单容器命令仅代表 SQLite/无 Redis 兼容模式，
+> 不会自动提供 PostgreSQL 和 Redis；SQLite 也不会自动迁移到 PostgreSQL。
 
 ### ⚙️ 环境变量配置
 
@@ -353,11 +355,8 @@ docker run --name NexusTok -d --restart always \
 git clone https://github.com/c1cadaBob/NexusTok.git
 cd NexusTok
 
-# 编辑配置
-nano docker-compose.yml
-
-# 启动服务
-docker-compose up -d
+# 自动生成密码、拉取镜像、启动并检查 PostgreSQL、Redis 和 NexusTok
+bash scripts/deploy.sh
 ```
 
 </details>
@@ -365,28 +364,21 @@ docker-compose up -d
 <details>
 <summary><strong>方式 2：Docker 命令</strong></summary>
 
-**使用 SQLite：**
+**单容器兼容模式（SQLite，不含 PostgreSQL 和 Redis）：**
 ```bash
-docker run --name NexusTok -d --restart always \
-  -p 3000:3000 \
+mkdir -p /opt/nexustok/data /opt/nexustok/logs
+docker run --name nexustok -d --restart always \
+  -p 3030:3030 \
   -e TZ=Asia/Shanghai \
-  -v ./data:/data \
+  -e PORT=3030 \
+  -e SESSION_SECRET_FILE=/data/session_secret \
+  -v /opt/nexustok/data:/data \
+  -v /opt/nexustok/logs:/app/logs \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   c1cadabob/nexustok:latest
 ```
 
-**使用 MySQL：**
-```bash
-docker run --name NexusTok -d --restart always \
-  -p 3000:3000 \
-  -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
-  -e TZ=Asia/Shanghai \
-  -v ./data:/data \
-  c1cadabob/nexustok:latest
-```
-
-> **💡 路径说明：**
-> - `./data:/data` - 相对路径，数据保存在当前目录的 data 文件夹
-> - 也可使用绝对路径，如：`/your/custom/path:/data`
+> 需要 PostgreSQL + Redis 时必须使用 Compose 或自行管理两个外部服务并注入连接字符串。
 
 </details>
 

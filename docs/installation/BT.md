@@ -41,40 +41,30 @@
 3. 点击 **安装**
 4. 配置以下基本选项：
    - **容器名称**：可自定义，默认为 `NexusTok`
-   - **端口映射**：默认为 `3000:3000`
+   - **端口映射**：默认为 `3030:3030`
    - **环境变量**：
      - `SESSION_SECRET`：会话密钥（**必填**，多机部署时必须一致）
      - `CRYPTO_SECRET`：加密密钥（使用 Redis 时必填）
 5. 点击 **确认** 开始安装
-6. 等待安装完成后，访问 `http://您的服务器IP:3000` 即可使用
+6. 等待安装完成后，访问 `http://您的服务器IP:3030` 即可使用
+
+> 宝塔应用商店的单容器入口不会自动提供 PostgreSQL 和 Redis。
+> 完整生产部署请使用仓库中的 Docker Compose 入口。
 
 ### 方法二：使用 Docker Compose
 
 1. 在宝塔面板中创建网站目录，如 `/www/wwwroot/NexusTok`
-2. 创建 `docker-compose.yml` 文件：
-
-```yaml
-version: '3'
-services:
-  NexusTok:
-    image: c1cadabob/nexustok:latest
-    container_name: NexusTok
-    restart: always
-    ports:
-      - "3000:3000"
-    volumes:
-      - ./data:/data
-    environment:
-      - SESSION_SECRET=your_session_secret_here  # 请修改为随机字符串
-      - TZ=Asia/Shanghai
-```
-
-1. 在终端中进入目录并启动：
+2. 克隆仓库并进入项目目录：
 
 ```bash
-cd /www/wwwroot/NexusTok
-docker-compose up -d
+cd /www/wwwroot
+git clone https://github.com/c1cadaBob/NexusTok.git
+cd NexusTok
+bash scripts/deploy.sh
 ```
+
+部署脚本会生成权限为 `0600` 的 `.env`，随机设置 PostgreSQL 和 Redis 密码，
+并校验三个服务的健康状态。PostgreSQL 和 Redis 不映射宿主机端口。
 
 ***
 
@@ -103,10 +93,10 @@ head -c 16 /dev/urandom | xxd -p
 
 ## 常见问题
 
-### Q1：无法访问 3000 端口？
+### Q1：无法访问 3030 端口？
 
-1. 检查服务器防火墙是否开放 3000 端口
-2. 在宝塔面板 **安全** 中放行 3000 端口
+1. 检查服务器防火墙是否开放 3030 端口
+2. 在宝塔面板 **安全** 中放行 3030 端口
 3. 检查云服务器安全组是否开放端口
 
 ### Q2：登录后提示会话失效？
@@ -121,6 +111,10 @@ head -c 16 /dev/urandom | xxd -p
 volumes:
   - ./data:/data
 ```
+
+生产 Compose 使用 `/opt/nexustok/data` 保存应用数据和会话密钥，
+使用 `/opt/nexustok/logs` 保存日志。SQLite 不会自动迁移到 PostgreSQL，
+已有数据切换前请先备份并单独完成数据迁移。
 
 ### Q4：如何更新版本？
 
@@ -148,4 +142,3 @@ docker-compose down && docker-compose up -d
 ![宝塔面板 Docker 安装](https://github.com/user-attachments/assets/7a6fc03e-c457-45e4-b8f9-184508fc26b0)
 
 > ⚠️ 注意：密钥为环境变量 `SESSION_SECRET`，请务必设置！
-

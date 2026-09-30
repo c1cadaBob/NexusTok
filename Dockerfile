@@ -36,6 +36,6 @@ RUN apt-get update \
 
 COPY --from=builder2 /build/nexustok /
 COPY LICENSE NOTICE THIRD-PARTY-LICENSES.md /licenses/
-EXPOSE 3000
+EXPOSE 3030
 WORKDIR /data
 ENTRYPOINT ["/nexustok"]

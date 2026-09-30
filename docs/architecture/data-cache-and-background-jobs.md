@@ -30,6 +30,19 @@ NexusTok 将主业务数据库、日志数据库、Redis 和进程内缓存分�
 
 GORM 模型位于 `model/`。Master 启动时执行 AutoMigrate 和兼容迁移；SQLite 使用 `ADD COLUMN` 等可用路径，PostgreSQL 使用双引号保留字，MySQL/SQLite 使用反引号。涉及模型、索引、约束、Scanner/Valuer、日志库或锁的变更必须验证三种主数据库和适用的日志库。
 
+### 生产默认数据库拓扑（2026-09-30）
+
+**变更前**：生产 Compose 使用未固定的数据库/缓存镜像标签和仓库内默认密码，
+应用、PostgreSQL、Redis 的启动顺序没有以健康状态为条件，数据目录也不是固定的
+生产持久化路径。
+
+**变更后**：生产 Compose 默认使用 `postgres:15-alpine` 作为主库，固定通过
+`SQL_DSN=postgresql://...@postgres:5432/nexustok` 连接；Master 启动时仍由现有
+`model.InitDB` 执行 GORM 迁移。`scripts/deploy.sh` 首次生成 `.env` 中的
+`POSTGRES_PASSWORD`，后续不覆盖，数据库和 Redis 不映射宿主机端口。Compose 只负责
+全新 PostgreSQL 生产实例的初始化，不负责把现有 SQLite 文件自动转换为 PostgreSQL；
+已有数据切换必须先备份并单独执行数据迁移。
+
 ## 3. Redis 与内存缓存
 
 Redis 由 `common.InitRedisClient` 初始化，未配置 `REDIS_CONN_STRING` 时关闭。`SYNC_FREQUENCY` 控制多种缓存/同步周期，默认和非法值回退为 60 秒。Redis 可用于：
@@ -41,6 +54,14 @@ Redis 由 `common.InitRedisClient` 初始化，未配置 `REDIS_CONN_STRING` 时
 - 通知和其它短期计数。
 
 启用 Redis 时 `main.go` 同时启用内存缓存兼容路径；未启用 Redis 时部分路径只使用内存或数据库。限流、Session 和渠道缓存的回退语义不同，维护时必须分别查看对应模块。
+
+### 生产默认缓存拓扑（2026-09-30）
+
+生产 Compose 默认使用固定版本的 `redis:7-alpine`，以 `REDIS_PASSWORD` 配置
+`requirepass`，并向应用注入 `REDIS_CONN_STRING=redis://:...@redis:6379/0`。
+Redis 服务通过健康检查后才允许 NexusTok 启动。Redis 仍然是缓存和共享控制面，不能替代
+主数据库；Redis 未配置时的关闭和内存/数据库回退逻辑保持不变。单容器 `docker run`
+命令不创建 Redis，因此只表示无 Redis 兼容模式。
 
 ## 4. 主要缓存生命周期
 
@@ -176,6 +197,7 @@ SQLite、MySQL 8.2.0 和 PostgreSQL 15.19 均通过 AutoMigrate 二次执行、A
 | 2026-09-29 | 补充旧版预览缓存与当前平台资源快照关系 | 文档只描述当前资源表和失败回退，未把旧版 `upstream-account-preview`、完整 Key 临时边界、加密存储、HMAC 指纹与后台同步方式放在同一条缓存链路中 | 明确旧版预览缓存 10 分钟 TTL 和一次性消费；当前凭据/完整 Key 加密保存并以指纹和外部 ID 匹配；手动、排队、后台同步共用站点锁；资源失败保留最近成功 Key、额度、过期时间、模型和能力快照 | 平台站点缓存、资源查询、路由候选和系统任务 | `service/upstream_site.go`、`model/upstream_channel.go`、`model/platform_site_resources.go`、旧版 `service/upstreamaccount/`、[`平台站点资源获取比较`](../platform-site-resource-acquisition-comparison.md) |
 | 2026-09-30 | 旧版资源分页与脱敏 fixture 验收边界 | New API/Sub2API Key 资源最多 100 页，完整 Key 详情和分页失败边界未完全记录；脱敏资源失败和地址边界未纳入缓存快照说明 | 三类 Key 资源恢复独立 1000 页上限；完整列表优先、缺失详情补齐、资源失败保留最近成功快照；使用脱敏 fixture 验证资源状态和路由边界；不写入凭据或临时捕获文件 | 平台资源缓存、后台同步、路由快照和安全交付 | `service/upstream_site_adapters.go`、`service/upstream_site_test.go`、脱敏 HTTP fixture 和 SQLite；无数据库结构变更 |
 | 2026-09-30 | 系统维护任务与缓存边界 | 维护页直连 GitHub，未有更新/回滚任务，旧版回滚会消耗 `.backup`；Docker helper 和租约接管未登记 | 后端缓存 Release 并经 Root 任务执行更新、回滚和重启；裸机稳定 `.backup` 可重复交换，Docker 使用 socket/helper、唯一候选容器和健康检查；不修改 SystemTask 表字段或新增迁移 | GitHub 缓存、SystemTask、任务租约、裸机文件交换、Docker 容器生命周期 | `service/system_update.go`、`service/system_update_docker.go`、`model/system_task.go`、`service/system_update_test.go`；未执行真实生产容器切换 |
+| 2026-09-30 | v0.2.2 生产数据库与缓存默认值 | Compose 使用浮动 Redis/PostgreSQL 标签、默认密码和未固定的应用数据路径；单容器与完整生产拓扑边界不清晰 | Compose 固定 PostgreSQL 15 + Redis 7，密码由 `.env`/部署脚本生成，服务健康后启动应用，端口为 `3030`，SQLite/无 Redis 回退和既有数据库兼容行为保持不变 | `docker-compose.yml`、`scripts/deploy.sh`、`model/main.go`、`common/redis.go`、中文部署文档 | `docker compose config`、脚本语法检查、隔离三服务栈和真实 SQLite 3.50.4/MySQL 8.2.0/PostgreSQL 15.19 矩阵已通过；生产 Dockerfile 完整构建因 `proxy.golang.org` 超时未完成，最低版本和独立日志库矩阵未覆盖 |
 
 ### 9.1 2026-09-26 实现校准
 

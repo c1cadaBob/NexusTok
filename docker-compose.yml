@@ -1,8 +1,11 @@
-# NexusTok Docker Compose 配置
+# NexusTok 生产 Docker Compose 配置
 #
 # 快速启动：
-#   1. docker-compose up -d
+#   1. bash scripts/deploy.sh
 #   2. 访问 http://localhost:3030
+#
+# scripts/deploy.sh 首次运行会在当前目录生成权限为 0600 的 .env，
+# 写入随机的 POSTGRES_PASSWORD 和 REDIS_PASSWORD。也可以提前自行创建 .env。
 #
 # 使用 MySQL 替代 PostgreSQL：
 #   1. 注释 postgres 服务和 SQL_DSN 行
@@ -19,9 +22,7 @@
 #   - 默认挂载 /var/run/docker.sock，让 Root 管理员可以在后台拉取镜像并重建当前容器
 #   - Docker socket 等同宿主机 Docker 管理权限，只应部署在可信管理员可访问的实例中
 #
-# ⚠️  重要：生产环境部署前必须修改所有默认密码和会话密钥！
-
-version: '3.4' # For compatibility with older Docker versions
+# 重要：生产环境必须先备份数据；SQLite 不会自动迁移到 PostgreSQL。
 
 services:
   nexustok:
@@ -32,88 +33,106 @@ services:
     ports:
       - "3030:3030"
     volumes:
-      - ./data:/data
-      - ./logs:/app/logs
+      - /opt/nexustok/data:/data
+      - /opt/nexustok/logs:/app/logs
       - /var/run/docker.sock:/var/run/docker.sock # 系统维护 Docker 自动更新需要；等同宿主高权限入口
     environment:
-      - SQL_DSN=postgresql://root:123456@postgres:5432/nexustok # ⚠️ IMPORTANT: Change the password in production!
-#      - SQL_DSN=root:123456@tcp(mysql:3306)/nexustok  # Point to the mysql service, uncomment if using MySQL
-#      - LOG_SQL_DSN=clickhouse://default:123456@clickhouse:9000/nexustok_logs # OPTIONAL: high-concurrency consume logs only
-#      - LOG_SQL_CLICKHOUSE_TTL_DAYS=30 # OPTIONAL: ClickHouse log retention days; 0 disables TTL
-      - REDIS_CONN_STRING=redis://:123456@redis:6379 # ⚠️ IMPORTANT: Change the password in production!
-      - REDIS_POOL_SIZE=256 # 多节点/高并发建议从 128/256 起步压测
-      - SQL_MAX_IDLE_CONNS=100
-      - SQL_MAX_OPEN_CONNS=1000
-      - SQL_MAX_LIFETIME=60
-      - TZ=Asia/Shanghai
-      - PORT=3030
-      - ERROR_LOG_ENABLED=true # 是否启用错误日志记录 (Whether to enable error log recording)
-      - BATCH_UPDATE_ENABLED=true  # 是否启用批量更新 (Whether to enable batch update)
-      - NODE_NAME=nexustok-node-1  # 节点名称，用于审计日志中标识节点身份；多节点/容器部署时建议设置 (Node name used in audit logs; recommended when running multiple instances or in containers)
-      - SESSION_SECRET_FILE=/data/session_secret
-      - SESSION_MAX_AGE=7776000 # 默认 90 天；多节点部署仍建议显式设置 SESSION_SECRET
-#      - STREAMING_TIMEOUT=300  # 流模式无响应超时时间，单位秒，默认120秒，如果出现空补全可以尝试改为更大值 （Streaming timeout in seconds, default is 120s. Increase if experiencing empty completions）
-#      - RELAY_MAX_IDLE_CONNS=1000
-#      - RELAY_MAX_IDLE_CONNS_PER_HOST=200
-#      - RELAY_MAX_CONNS_PER_HOST=0 # 0 表示不限制；需要保护代理或上游连接数时设置为明确上限
-#      - RELAY_RESPONSE_HEADER_TIMEOUT=300 # 等待上游响应头超时；流式请求已经开始后不受此项限制
-#      - RELAY_PROXY_CLIENT_CACHE_TTL=900
-#      - RELAY_PROXY_CLIENT_CACHE_MAX_SIZE=4096
-#      - SESSION_SECRET=random_string  # 多机部署时设置，必须修改这个随机字符串！！ （multi-node deployment, set this to a random string!!!!!!!）
-#      - SYNC_FREQUENCY=60  # Uncomment if regular database syncing is needed
-#      - GOOGLE_ANALYTICS_ID=G-XXXXXXXXXX  # Google Analytics 的测量 ID (Google Analytics Measurement ID)
-#      - UMAMI_WEBSITE_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  # Umami 网站 ID (Umami Website ID)
-#      - UMAMI_SCRIPT_URL=https://analytics.umami.is/script.js  # Umami 脚本 URL，默认为官方地址 (Umami Script URL, defaults to official URL)
-
+      SQL_DSN: "postgresql://root:${POSTGRES_PASSWORD:?请先在 .env 中设置 POSTGRES_PASSWORD}@postgres:5432/nexustok"
+      REDIS_CONN_STRING: "redis://:${REDIS_PASSWORD:?请先在 .env 中设置 REDIS_PASSWORD}@redis:6379/0"
+      REDIS_POOL_SIZE: "256"
+      SQL_MAX_IDLE_CONNS: "100"
+      SQL_MAX_OPEN_CONNS: "1000"
+      SQL_MAX_LIFETIME: "60"
+      TZ: Asia/Shanghai
+      PORT: "3030"
+      ERROR_LOG_ENABLED: "true"
+      BATCH_UPDATE_ENABLED: "true"
+      NODE_NAME: nexustok-node-1
+      SESSION_SECRET_FILE: /data/session_secret
+      SESSION_MAX_AGE: "7776000"
+#      SQL_DSN: root:password@tcp(mysql:3306)/nexustok  # 使用 MySQL 时替换 PostgreSQL 配置
+#      LOG_SQL_DSN: clickhouse://default:password@clickhouse:9000/nexustok_logs # 可选的 ClickHouse 日志库
+#      LOG_SQL_CLICKHOUSE_TTL_DAYS: "30" # 可选的 ClickHouse 日志保留天数；0 表示关闭 TTL
+#      STREAMING_TIMEOUT: "300"
+#      RELAY_MAX_IDLE_CONNS: "1000"
+#      RELAY_MAX_IDLE_CONNS_PER_HOST: "200"
+#      RELAY_MAX_CONNS_PER_HOST: "0"
+#      RELAY_RESPONSE_HEADER_TIMEOUT: "300"
+#      RELAY_PROXY_CLIENT_CACHE_TTL: "900"
+#      RELAY_PROXY_CLIENT_CACHE_MAX_SIZE: "4096"
+#      SESSION_SECRET: random_string  # 多机部署时设置；单容器默认从 SESSION_SECRET_FILE 读取
+#      SYNC_FREQUENCY: "60"
+#      GOOGLE_ANALYTICS_ID: G-XXXXXXXXXX
+#      UMAMI_WEBSITE_ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+#      UMAMI_SCRIPT_URL: https://analytics.umami.is/script.js
     depends_on:
-      - redis
-      - postgres
-#      - mysql  # Uncomment if using MySQL
-#      - clickhouse  # Uncomment if using ClickHouse for LOG_SQL_DSN
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+#      mysql:  # 使用 MySQL 时替换 postgres 依赖
+#        condition: service_healthy
+#      clickhouse:  # 使用 ClickHouse 日志库时取消注释
+#        condition: service_healthy
     networks:
       - nexustok-network
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://localhost:3030/api/status | grep -o '\"success\":\\s*true' || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:3030/api/status | grep -q '\"success\":[[:space:]]*true' || exit 1"]
       interval: 30s
       timeout: 10s
-      retries: 3
+      retries: 5
+      start_period: 30s
 
   redis:
-    image: redis:latest
+    image: redis:7-alpine
     container_name: redis
     restart: always
-    command: ["redis-server", "--requirepass", "123456"]  # ⚠️ IMPORTANT: Change this password in production!
+    environment:
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?请先在 .env 中设置 REDIS_PASSWORD}"
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?请先在 .env 中设置 REDIS_PASSWORD}"]
     networks:
       - nexustok-network
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$${REDIS_PASSWORD}\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
 
   postgres:
-    image: postgres:15
+    image: postgres:15-alpine
     container_name: postgres
     restart: always
     environment:
       POSTGRES_USER: root
-      POSTGRES_PASSWORD: 123456  # ⚠️ IMPORTANT: Change this password in production!
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?请先在 .env 中设置 POSTGRES_PASSWORD}"
       POSTGRES_DB: nexustok
     volumes:
       - pg_data:/var/lib/postgresql/data
     networks:
       - nexustok-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U root -d nexustok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 #    ports:
-#      - "5432:5432"  # Uncomment if you need to access PostgreSQL from outside Docker
+#      - "5432:5432"  # 默认不暴露；仅在确有外部管理需求时临时开启
 
 #  mysql:
 #    image: mysql:8.2
 #    container_name: mysql
 #    restart: always
 #    environment:
-#      MYSQL_ROOT_PASSWORD: 123456  # ⚠️ IMPORTANT: Change this password in production!
+#      MYSQL_ROOT_PASSWORD: password
 #      MYSQL_DATABASE: nexustok
 #    volumes:
 #      - mysql_data:/var/lib/mysql
 #    networks:
 #      - nexustok-network
 #    ports:
-#      - "3306:3306"  # Uncomment if you need to access MySQL from outside Docker
+#      - "3306:3306"  # 默认不暴露
 
 #  clickhouse:
 #    image: clickhouse/clickhouse-server:24.8
@@ -122,15 +141,15 @@ services:
 #    environment:
 #      CLICKHOUSE_DB: nexustok_logs
 #      CLICKHOUSE_USER: default
-#      CLICKHOUSE_PASSWORD: 123456  # ⚠️ IMPORTANT: Change this password in production!
+#      CLICKHOUSE_PASSWORD: password
 #      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
 #    volumes:
 #      - clickhouse_data:/var/lib/clickhouse
 #    networks:
 #      - nexustok-network
 #    ports:
-#      - "8123:8123"  # HTTP interface, uncomment if you need external access
-#      - "9000:9000"  # Native interface used by LOG_SQL_DSN above
+#      - "8123:8123"  # HTTP 接口，默认不暴露
+#      - "9000:9000"  # LOG_SQL_DSN 使用的 Native 接口，默认不暴露
 
 volumes:
   pg_data:

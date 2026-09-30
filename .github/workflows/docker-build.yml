@@ -71,7 +71,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
-          images: calciumion/NexusTok
+          images: c1cadabob/nexustok
 
       - name: Build & push
         id: build
@@ -81,8 +81,8 @@ jobs:
           platforms: ${{ matrix.platform }}
           push: true
           tags: |
-            calciumion/NexusTok:${{ env.TAG }}-${{ matrix.arch }}
-            calciumion/NexusTok:latest-${{ matrix.arch }}
+            c1cadabob/nexustok:${{ env.TAG }}-${{ matrix.arch }}
+            c1cadabob/nexustok:latest-${{ matrix.arch }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -93,13 +93,13 @@ jobs:
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
       - name: Sign image with cosign
-        run: cosign sign --yes calciumion/NexusTok@${{ steps.build.outputs.digest }}
+        run: cosign sign --yes c1cadabob/nexustok@${{ steps.build.outputs.digest }}
 
       - name: Image summary
         run: |
           echo "### Docker Image Digest (${{ matrix.arch }})" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "calciumion/NexusTok:${TAG}-${{ matrix.arch }}" >> $GITHUB_STEP_SUMMARY
+          echo "c1cadabob/nexustok:${TAG}-${{ matrix.arch }}" >> $GITHUB_STEP_SUMMARY
           echo "${{ steps.build.outputs.digest }}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
@@ -125,28 +125,28 @@ jobs:
       - name: Create & push manifest (version)
         run: |
           docker buildx imagetools create \
-            -t calciumion/NexusTok:${TAG} \
-            calciumion/NexusTok:${TAG}-amd64 \
-            calciumion/NexusTok:${TAG}-arm64
+            -t c1cadabob/nexustok:${TAG} \
+            c1cadabob/nexustok:${TAG}-amd64 \
+            c1cadabob/nexustok:${TAG}-arm64
 
       - name: Create & push manifest (latest)
         run: |
           docker buildx imagetools create \
-            -t calciumion/NexusTok:latest \
-            calciumion/NexusTok:latest-amd64 \
-            calciumion/NexusTok:latest-arm64
+            -t c1cadabob/nexustok:latest \
+            c1cadabob/nexustok:latest-amd64 \
+            c1cadabob/nexustok:latest-arm64
 
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
 
       - name: Sign manifests with cosign
         run: |
-          cosign sign --yes calciumion/NexusTok:${TAG}
-          cosign sign --yes calciumion/NexusTok:latest
+          cosign sign --yes c1cadabob/nexustok:${TAG}
+          cosign sign --yes c1cadabob/nexustok:latest
 
       - name: Manifest summary
         run: |
           echo "### Multi-arch Manifest" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          docker buildx imagetools inspect calciumion/NexusTok:${TAG} >> $GITHUB_STEP_SUMMARY
+          docker buildx imagetools inspect c1cadabob/nexustok:${TAG} >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
