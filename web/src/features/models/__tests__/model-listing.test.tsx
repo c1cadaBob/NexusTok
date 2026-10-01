@@ -450,11 +450,11 @@ it('uses backend square states for success, warning, hidden, and partial rows in
   await act(async () => {
     await i18n.changeLanguage('zhCN')
   })
-  expect(screen.getByText('无法展示')).toBeVisible()
+  expect(screen.getByText('不可用')).toBeVisible()
   expect(screen.getByText('部分展示')).toBeVisible()
   expect(screen.getAllByText('正常展示')).toHaveLength(2)
   expect(screen.getAllByText('已隐藏')).toHaveLength(2)
-  for (const label of ['无法展示', '部分展示']) {
+  for (const label of ['不可用', '部分展示']) {
     expect(screen.getByText(label)).toHaveClass('truncate')
   }
 })
