@@ -76,6 +76,25 @@ Redis、独立 Redis 和关闭 Redis 的 Session/限流差异继续按现有代�
 依赖修复只涉及 web/Electron 依赖；未修改 GORM、数据库驱动、数据库连接、模型、迁移、
 索引、约束或日志数据库边界，因此不新增数据库兼容性结论。
 
+### v0.2.4 部署故障修复与数据清理边界（2026-10-01）
+
+**变更前**：已有 PostgreSQL named volume 使用旧密码时，修改 `.env` 只会改变新容器
+注入的连接密码，不会改变数据库角色密码；旧版部署脚本可能先启动 NexusTok 并进入
+重启循环。Redis 使用容器匿名数据卷时，重建会丢失缓存和临时 Session/限流状态，容易
+被误认为数据库数据仍然存在。
+
+**变更后**：`docker-compose.yml` 的 PostgreSQL 健康检查使用当前环境变量执行 TCP
+认证和 `SELECT 1`；`scripts/deploy.sh` 先启动 PostgreSQL/Redis，执行 Compose 网络
+认证，认证失败时停止且不启动应用，再等待 PostgreSQL 健康后启动 NexusTok。`.env`、
+`/opt/nexustok/data`、`/opt/nexustok/logs`、PostgreSQL named volume 与 Redis 缓存的
+备份和生命周期边界在部署文档中明确。全新部署只能删除已核对的 NexusTok 容器、卷、
+网络和目录，不得使用 `docker system prune -a`、`docker volume prune` 或误删其它监控
+资源的清理方式。
+
+本次新增的 PostgreSQL 兼容迁移只转换订阅预消费 `request_id` 的已知历史唯一对象，
+不新增模型、字段或业务协议。真实 SQLite、MySQL 和 PostgreSQL 实例的版本、命令和
+结果必须单独记录；未完成矩阵前不宣称三数据库兼容验证完成。
+
 ## 4. 主要缓存生命周期
 
 | 状态 | 权威来源 | 缓存/索引 | 失效或刷新方式 |
@@ -213,6 +232,7 @@ SQLite、MySQL 8.2.0 和 PostgreSQL 15.19 均通过 AutoMigrate 二次执行、A
 | 2026-09-30 | v0.2.2 生产数据库与缓存默认值 | Compose 使用浮动 Redis/PostgreSQL 标签、默认密码和未固定的应用数据路径；单容器与完整生产拓扑边界不清晰 | Compose 固定 PostgreSQL 15 + Redis 7，密码由 `.env`/部署脚本生成，服务健康后启动应用，端口为 `3030`，SQLite/无 Redis 回退和既有数据库兼容行为保持不变 | `docker-compose.yml`、`scripts/deploy.sh`、`model/main.go`、`common/redis.go`、中文部署文档 | `docker compose config`、脚本语法检查、隔离三服务栈和真实 SQLite 3.50.4/MySQL 8.2.0/PostgreSQL 15.19 矩阵已通过；生产 Dockerfile 完整构建因 `proxy.golang.org` 超时未完成，最低版本和独立日志库矩阵未覆盖 |
 | 2026-10-01 | v0.2.3 部署文档与依赖边界 | 文档没有完整记录单机/多机的共享服务、健康检查、备份和故障边界；Secret 名称与项目执行环境不一致 | 文档明确 Compose 生产默认、外部多机 DSN/Redis、主从任务职责、Redis 拓扑差异和数据迁移限制；Docker 工作流改用 `DOCKER_USERNAME`/`DOCKER_PASSWORD`；web/Electron 依赖最小安全升级不改变缓存、任务和数据库代码 | `README*.md`、`docs/installation/BT.md`、`.github/workflows/docker-*.yml`、web/Electron lockfile | Bun/npm 审计、govulncheck 和隔离 Compose 三服务健康检查已通过；未修改 GORM、数据库驱动、迁移或缓存代码；推送反馈仍有 1 条中等级 Dependabot 警报，认证 API、发布镜像和多架构 manifest 待验证 |
 | 2026-10-01 | v0.2.3 发布收尾 | 一次性 Dependabot 处理工作流仍在仓库，缓存与后台任务文档仍记录 #107 开放及正式发布待验证 | 删除一次性工作流；GitHub 远端安全页面确认 #107 已完成处理且没有开放警报；本次只保留发布后镜像、Release 和 Electron 工作流核验，不改变 Redis、Session、任务租约或数据库兼容行为 | `.github/release-notes/v0.2.3.md`、`.github/workflows/dependabot-v023-release.yml`、发布工作流 | 远端安全页面无开放 Dependabot 警报；正式标签推送后核验多架构 manifest、Cosign、Release 产物和镜像运行状态；未修改缓存代码、后台任务代码或数据库 Schema |
+| 2026-10-01 | v0.2.4 部署故障修复 | `.env` 密码变化与已有数据库角色密码的差异可能在应用启动后才暴露；Redis 临时卷、应用数据、日志和数据库卷的清理边界不够明确 | 部署前通过 Compose 网络完成 PostgreSQL 密码认证；Redis 仍是缓存/控制面，重建时明确会丢失临时状态；文档区分 `/opt/nexustok/data`、`/opt/nexustok/logs`、PostgreSQL named volume 和 Redis 数据；全新清理不使用全局 prune 且保留非 NexusTok 资源 | `docker-compose.yml`、`scripts/deploy.sh`、`README*.md`、`docs/installation/BT.md` | SQLite、MySQL 8.2、PostgreSQL 15 的实际迁移测试、Compose 配置和脚本验证按 v0.2.4 发布报告记录；最低版本、发布工作流和远端清理未完成前不作完成声明 |
 
 ### 9.1 2026-09-26 实现校准
 

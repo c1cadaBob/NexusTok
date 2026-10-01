@@ -170,7 +170,7 @@ docker run --name NexusTok -d --restart always \
 > [!TIP]
 > **Latest Docker image:** `c1cadabob/nexustok:latest`
 >
-> **v0.2.3 image:** `c1cadabob/nexustok:v0.2.3`
+> **v0.2.4 image:** `c1cadabob/nexustok:v0.2.4`
 
 ### 📋 Deployment Requirements
 
@@ -237,8 +237,9 @@ bash scripts/deploy.sh
 
 On the first run the script creates a `.env` with mode `0600` and random
 `POSTGRES_PASSWORD` and `REDIS_PASSWORD` values. Existing passwords are preserved. The script
-validates `docker compose config`, pulls the image, starts PostgreSQL, Redis and NexusTok, and
-waits for all three health checks.
+validates `docker compose config`, pulls the image, starts PostgreSQL and Redis, performs a real
+password-authenticated check over the Compose network before starting NexusTok, and waits for all
+three health checks.
 
 ```bash
 docker compose ps
@@ -264,7 +265,7 @@ docker run --name nexustok -d --restart always \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  c1cadabob/nexustok:v0.2.3
+  c1cadabob/nexustok:v0.2.4
 ```
 
 It does not start PostgreSQL or Redis. Before an upgrade, back up `.env`,
@@ -283,11 +284,20 @@ For rollback, pin the NexusTok service to the previously verified release image,
 delete the PostgreSQL named volume. Existing SQLite data requires a separate, verified migration
 before switching to PostgreSQL.
 
+Changing `POSTGRES_PASSWORD` in `.env` does not change the database role password inside an
+existing PostgreSQL named volume. If the script reports a network authentication failure, restore
+the original `.env` value or synchronize the database role password after taking a logical backup;
+do not delete a production volume just to change a password.
+
 Common problems include port `3030` conflicts, unhealthy PostgreSQL/Redis containers
 (`docker compose logs postgres redis`), changed or empty `.env` passwords, filesystem
 permissions or SELinux/AppArmor denials, amd64/arm64 image mismatches, and reverse-proxy
-timeouts or missing Upgrade headers for SSE/WebSocket. The Docker socket grants host-level Docker
-management and should only be mounted on a trusted administrator-controlled server.
+timeouts or missing Upgrade headers for SSE/WebSocket. A fresh deployment reset must first have a
+verified backup, then remove only NexusTok containers, volumes and `/opt/nexustok/data` and
+`/opt/nexustok/logs`. Do not use `docker system prune -a`, `docker volume prune`, or an
+unscoped `docker compose down -v`; preserve Komari and other non-NexusTok resources. The Docker
+socket grants host-level Docker management and should only be mounted on a trusted
+administrator-controlled server.
 
 Troubleshooting reference: [FAQ](https://docs.nexustok.ai/en/docs/support/faq).
 
@@ -313,7 +323,7 @@ docker run --name nexustok-node-1 -d --restart always \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  c1cadabob/nexustok:v0.2.3
+  c1cadabob/nexustok:v0.2.4
 ```
 
 `node.env` must contain at least `SQL_DSN`, `REDIS_CONN_STRING`, `SESSION_SECRET` and

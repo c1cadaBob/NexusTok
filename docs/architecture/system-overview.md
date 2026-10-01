@@ -115,7 +115,7 @@ HTTP
 Redis 兼容模式。SQLite 文件不会自动迁移到 PostgreSQL；已有生产数据切换前必须备份，
 并单独执行经过验证的数据迁移。
 
-本次发布镜像为 `c1cadabob/nexustok:v0.2.3` 和 `c1cadabob/nexustok:latest`，Dockerfile
+本次发布镜像为 `c1cadabob/nexustok:v0.2.4` 和 `c1cadabob/nexustok:latest`，Dockerfile
 通过当前 `web/` 的 Bun/Rsbuild `bun run build` 生成并嵌入新版前端，不新增路由、DTO、
 数据库模型或字段。
 
@@ -126,7 +126,7 @@ Redis 兼容模式。SQLite 文件不会自动迁移到 PostgreSQL；已有生�
 反向代理和 Docker socket 风险。Docker Hub 工作流使用的 Secret 名称也与执行环境不一致。
 
 **变更后**：README 和宝塔部署文档统一以 `3030`、Compose、PostgreSQL 15、Redis 7、
-`.env` 中的随机密码和 `c1cadabob/nexustok:v0.2.3`/`latest` 为生产事实基线；单容器
+`.env` 中的随机密码和 `c1cadabob/nexustok:v0.2.4`/`latest` 为生产事实基线；单容器
 命令明确为 SQLite/无 Redis 兼容模式。多机文档要求共享 `SQL_DSN`、`REDIS_CONN_STRING`、
 `SESSION_SECRET`、`CRYPTO_SECRET`，使用唯一 `NODE_NAME`，主节点负责迁移和系统任务，
 从节点使用 `NODE_TYPE=slave`。反向代理、SSE/WebSocket、可信代理、Cookie 安全、备份、
@@ -146,6 +146,24 @@ Docker 多架构发布和真实生产切换仍以 GitHub Actions 结果和实际
 **变更后**：删除一次性工作流；根据 GitHub 远端安全页面确认 #107 已完成处理且没有
 开放警报。正式发布通过 `v0.2.3` 标签触发 Docker 多架构、GitHub Release 和 Electron
 工作流，发布后继续核验镜像 manifest、Cosign、Release 产物和独立端口运行状态。
+
+### v0.2.4 部署故障修复与全新部署边界（2026-10-01）
+
+**变更前**：PostgreSQL 历史唯一约束可能以 `idx_subscription_pre_consume_records_request_id`、
+`uni_subscription_pre_consume_records_request_id` 或 PostgreSQL 默认名称存在，GORM
+启动迁移可能尝试删除不存在的约束并以 `SQLSTATE 42704` 失败。部署脚本会先启动应用，
+已有 PostgreSQL named volume 与 `.env` 密码不一致时，应用可能反复重启。
+
+**变更后**：主库 `AutoMigrate` 前只对 PostgreSQL 检查订阅预消费 `request_id` 的已知
+历史唯一对象，在锁表事务中安全转换为独立唯一索引；未知、复合、部分、表达式、延迟或
+未验证对象直接报错，不猜测删除。Compose PostgreSQL 健康检查和部署脚本都执行 TCP
+密码认证，认证失败时应用不会启动，并提示恢复原密码、先同步数据库密码或执行全新
+清理。全新清理只允许精确删除 NexusTok 容器、卷、网络和 `/opt/nexustok/data`、
+`/opt/nexustok/logs`，不得使用无范围的 Docker prune，也不得影响 Komari 等其它资源。
+
+本版本未新增数据库模型、字段、API 路由、DTO、Token 格式或前端路由契约。发布镜像为
+`c1cadabob/nexustok:v0.2.4` 和 `c1cadabob/nexustok:latest`；用户需要在清理后自行
+重新克隆仓库并执行 `bash scripts/deploy.sh`，本次不会自动部署。
 
 ### Master/Slave
 
@@ -205,3 +223,4 @@ Healthcheck 时至少确认持续 `Running` 并标记降级。helper 在主容�
 | 2026-09-30 | 系统维护更新与回滚 | 前端直连 GitHub 且没有后端运维任务；旧版回滚会消耗唯一备份 | 增加 RootAuth 维护接口、SystemTask 进度、GitHub 缓存/checksum、裸机稳定备份交换、Docker helper/健康检查和重启探活 | `router/api-router.go`、`controller/system_update.go`、`service/system_update*.go`、`main.go`、维护页 | `go test ./service ./model ./controller ./router`、前端定向测试；未进行生产容器切换 |
 | 2026-09-30 | v0.2.2 生产默认部署 | Compose 使用浮动依赖、明文默认密码和相对目录，服务依赖未按健康状态编排；单容器示例未明确不包含外部数据库/缓存 | Compose 固定 PostgreSQL 15 + Redis 7，密码由 `.env`/部署脚本生成，应用端口为 `3030`，数据/日志使用 `/opt/nexustok` 持久化目录，单容器仅保留 SQLite/无 Redis 兼容模式 | `docker-compose.yml`、`scripts/deploy.sh`、`Dockerfile`、`VERSION`、Docker 发布工作流和中文部署文档 | `docker compose config`、`bash -n scripts/deploy.sh`、隔离三服务栈和真实 SQLite 3.50.4/MySQL 8.2.0/PostgreSQL 15.19 矩阵已通过；生产 Dockerfile 完整构建因 `proxy.golang.org` 超时未完成，远端发布以标签工作流为准 |
 | 2026-10-01 | v0.2.3 安全依赖与部署发布 | README 多语言存在旧端口、旧镜像和宣传栏目；发布工作流 Secret 名称不匹配；部署文档未完整覆盖单机、多机、备份和故障边界 | 统一六种 README、宝塔文档和架构事实为 `3030`、Compose、PostgreSQL 15 + Redis 7；补充多机共享外部服务、主从职责、代理和回滚；工作流使用 `DOCKER_USERNAME`/`DOCKER_PASSWORD`；前端/Electron 依赖按本地审计结果最小升级，数据库代码和 Schema 未修改 | `README*.md`、`docs/installation/BT.md`、`.github/workflows/docker-*.yml`、web/Electron 依赖 | Bun/npm 审计、govulncheck、前端全量回归、Go vet/build/test、relaykit 构建、Compose 配置和隔离三服务健康检查已通过；推送反馈仍有 1 条中等级 Dependabot 警报，认证 API、v0.2.3 镜像、多架构 manifest、Cosign 和远端 Release 待验证 |
+| 2026-10-01 | v0.2.4 部署故障修复与发布准备 | PostgreSQL 历史唯一约束可能导致启动迁移以 `SQLSTATE 42704` 失败；部署脚本可能先启动应用再暴露 `.env` 密码不一致；全新部署清理边界未集中记录 | 已知历史唯一对象在 `AutoMigrate` 前转换为独立唯一索引；Compose 健康检查和部署脚本先执行真实 TCP 密码认证，失败时不启动应用；补充 named volume、Redis 临时状态、数据/日志路径、备份、精确清理和 Komari 保护边界；发布目标为 `v0.2.4` 与 `latest` | `model/subscription_pre_consume_migration.go`、`docker-compose.yml`、`scripts/deploy.sh`、部署文档和发布说明 | SQLite 定向迁移测试、Compose 配置和脚本语法待本次完成；真实 PostgreSQL/MySQL 矩阵、发布工作流和远端全量清理结果按最终报告记录，未完成前不宣称三数据库兼容验证完成 |

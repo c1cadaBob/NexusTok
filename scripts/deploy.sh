@@ -133,40 +133,125 @@ echo "拉取生产镜像..."
 docker compose pull
 echo -e "${GREEN}✓${NC} 镜像拉取完成"
 
-echo "启动服务..."
-docker compose up -d
-echo -e "${GREEN}✓${NC} 服务启动命令已完成"
+echo "停止 NexusTok 应用容器，先校验数据库和缓存..."
+docker compose stop nexustok >/dev/null 2>&1 || true
+
+echo "启动 PostgreSQL 和 Redis..."
+docker compose up -d postgres redis
+echo -e "${GREEN}✓${NC} PostgreSQL 和 Redis 启动命令已完成"
+
+service_container_id() {
+    local service="$1"
+    docker compose ps -q "$service"
+}
+
+service_is_running() {
+    local service="$1"
+    local container_id
+
+    container_id="$(service_container_id "$service")"
+    [ -n "$container_id" ] || return 1
+    [ "$(docker inspect -f '{{.State.Status}}' "$container_id")" = "running" ]
+}
 
 service_is_healthy() {
     local service="$1"
     local container_id
-    local state
-    local health
 
-    container_id="$(docker compose ps -q "$service")"
+    container_id="$(service_container_id "$service")"
     [ -n "$container_id" ] || return 1
-    state="$(docker inspect -f '{{.State.Status}}' "$container_id")"
-    health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container_id")"
-    [ "$state" = "running" ] && [ "$health" = "healthy" ]
+    [ "$(docker inspect -f '{{.State.Status}}' "$container_id")" = "running" ] &&
+        [ "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container_id")" = "healthy" ]
 }
 
-echo "等待 postgres、redis 和 nexustok 健康..."
-max_retries=60
-retry_count=0
-while [ "$retry_count" -lt "$max_retries" ]; do
-    if service_is_healthy postgres && service_is_healthy redis && service_is_healthy nexustok; then
+wait_for_service_running() {
+    local service="$1"
+    local description="$2"
+    local retries="${3:-60}"
+
+    echo "等待 ${description} 运行..."
+    for ((retry_count = 0; retry_count < retries; retry_count++)); do
+        if service_is_running "$service"; then
+            echo -e "${GREEN}✓${NC} ${description}已运行"
+            return 0
+        fi
+        printf '.'
+        sleep 2
+    done
+    echo ""
+    return 1
+}
+
+wait_for_service_healthy() {
+    local service="$1"
+    local description="$2"
+    local retries="${3:-60}"
+
+    echo "等待 ${description}健康..."
+    for ((retry_count = 0; retry_count < retries; retry_count++)); do
+        if service_is_healthy "$service"; then
+            echo -e "${GREEN}✓${NC} ${description}已健康"
+            return 0
+        fi
+        printf '.'
+        sleep 2
+    done
+    echo ""
+    return 1
+}
+
+check_postgres_network_auth() {
+    docker compose exec -T postgres sh -ec \
+        'PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "SELECT 1" >/dev/null'
+}
+
+if ! wait_for_service_running postgres "PostgreSQL" 60; then
+    echo -e "${RED}错误: PostgreSQL 容器未能正常运行${NC}"
+    docker compose ps
+    exit 1
+fi
+
+if ! wait_for_service_healthy redis "Redis" 60; then
+    echo -e "${RED}错误: Redis 健康检查超时${NC}"
+    docker compose ps
+    exit 1
+fi
+
+echo "执行 PostgreSQL 网络密码认证检查..."
+auth_retries=30
+auth_success=false
+for ((retry_count = 0; retry_count < auth_retries; retry_count++)); do
+    if check_postgres_network_auth >/dev/null 2>&1; then
+        auth_success=true
         break
     fi
-    printf '.'
     sleep 2
-    retry_count=$((retry_count + 1))
 done
-echo ""
 
-if [ "$retry_count" -eq "$max_retries" ]; then
-    echo -e "${RED}错误: 服务健康检查超时${NC}"
+if [ "$auth_success" != true ]; then
+    echo -e "${RED}错误: PostgreSQL 网络密码认证失败${NC}"
+    echo "当前 .env 密码与已有 PostgreSQL 数据库密码不一致，或数据库尚未完成初始化。"
+    echo "请恢复原密码、先完成数据库密码同步，或执行全新部署清理流程。"
+    echo "脚本已停止，未启动 NexusTok 应用容器。"
     docker compose ps
-    docker compose logs --tail=80 nexustok postgres redis
+    exit 1
+fi
+
+if ! wait_for_service_healthy postgres "PostgreSQL" 30; then
+    echo -e "${RED}错误: PostgreSQL 健康检查超时${NC}"
+    echo "网络密码认证已通过，但 PostgreSQL 健康状态未能稳定为 healthy。"
+    docker compose ps
+    exit 1
+fi
+
+echo "启动 NexusTok 应用..."
+docker compose up -d nexustok
+echo -e "${GREEN}✓${NC} NexusTok 启动命令已完成"
+
+if ! wait_for_service_healthy nexustok "NexusTok" 60; then
+    echo -e "${RED}错误: NexusTok 健康检查超时${NC}"
+    docker compose ps
+    echo "请使用 docker compose logs --tail=120 nexustok 查看已脱敏的应用日志。"
     exit 1
 fi
 

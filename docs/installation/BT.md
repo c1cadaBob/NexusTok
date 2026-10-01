@@ -59,9 +59,10 @@ bash scripts/deploy.sh
 - `POSTGRES_PASSWORD`
 - `REDIS_PASSWORD`
 
-后续运行不会覆盖已有密码。脚本会依次执行 `docker compose config`、镜像拉取、服务
-启动和健康检查。Compose 会使用 `c1cadabob/nexustok:latest`、`postgres:15-alpine`
-和 `redis:7-alpine`，并把应用映射到宿主机 `3030`。
+后续运行不会覆盖已有密码。脚本会依次执行 `docker compose config`、镜像拉取、启动
+PostgreSQL 和 Redis、真实网络密码认证、启动应用和健康检查。Compose 会使用
+`c1cadabob/nexustok:latest`、`postgres:15-alpine` 和 `redis:7-alpine`，并把应用映射到
+宿主机 `3030`。
 
 如果要在执行脚本前预置密码，直接创建普通文件 `.env`，不要使用符号链接：
 
@@ -122,7 +123,7 @@ docker run --name nexustok -d --restart always \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  c1cadabob/nexustok:v0.2.3
+  c1cadabob/nexustok:v0.2.4
 ```
 
 `/var/run/docker.sock` 等同授予容器宿主机 Docker 管理权限，只能在可信管理员可访问的
@@ -209,7 +210,11 @@ docker compose config
 ```
 
 检查 `.env` 中密码不为空、没有出现多个同名变量，确认磁盘空间和 Docker 网络正常。
-密码修改后必须同步重建对应服务；不要在未备份数据库的情况下随意删除 named volume。
+修改 `.env` 中的 `POSTGRES_PASSWORD` 不会自动修改已有 PostgreSQL named volume 中的
+数据库角色密码。脚本会在启动应用前执行真实网络认证；认证失败时请恢复原密码，或
+先完成逻辑备份再单独同步数据库角色密码。不要在未备份数据库的情况下删除 PostgreSQL
+named volume。Redis 当前没有独立 named volume，重建 Redis 会丢失缓存和临时 Session、
+限流状态。
 
 ### `.env` 权限或密码问题
 
@@ -221,6 +226,18 @@ chmod 600 .env
 脚本拒绝符号链接 `.env`，这是为了避免把密码写入非预期位置。修改数据库或 Redis 密码
 前先规划数据迁移和服务重建，并确认所有连接字符串一致。
 
+### 全新部署清理
+
+全量重置前必须确认 PostgreSQL 逻辑备份可恢复，并停止所有 NexusTok 应用请求。只删除
+已核对属于 NexusTok 的容器、PostgreSQL named volume、Redis 容器的匿名数据卷、
+Compose 网络以及 `/opt/nexustok/data` 和 `/opt/nexustok/logs`。保留 `.env` 的受控备份，
+不要删除其它项目的容器、卷、网络或 `komari-agent`。
+
+不要执行 `docker system prune -a`、`docker volume prune` 或未确认范围的
+`docker compose down -v`。这些命令可能删除其它项目资源或生产数据库。清理完成后由
+管理员重新克隆仓库，检查 `VERSION`/标签，再自行运行 `bash scripts/deploy.sh`；本项目
+不会从清理脚本自动恢复仓库或执行部署。
+
 ### 反向代理访问异常
 
 检查 HTTPS 证书、`X-Forwarded-*`、SSE 缓冲、WebSocket Upgrade、读取超时和
@@ -231,7 +248,7 @@ chmod 600 .env
 
 ```bash
 uname -m
-docker image inspect c1cadabob/nexustok:v0.2.3 --format '{{.Architecture}}'
+docker image inspect c1cadabob/nexustok:v0.2.4 --format '{{.Architecture}}'
 ```
 
 主机应为 `x86_64`/`amd64` 或 `aarch64`/`arm64`。老旧 CPU、32 位系统和受限的镜像仓库

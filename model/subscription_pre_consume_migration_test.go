@@ -146,7 +146,8 @@ func TestMigrateSubscriptionPreConsumeUniquenessPostgreSQL(t *testing.T) {
 					clause.Column{Name: subscriptionPreConsumeRequestIDColumn},
 				).Error)
 			},
-			expectedError: "未知唯一约束",
+			expectedError:      "未知唯一约束",
+			expectedConstraint: "keep_subscription_request_id_unique",
 		},
 		{
 			name: "composite_constraint_rejected",
@@ -161,7 +162,8 @@ func TestMigrateSubscriptionPreConsumeUniquenessPostgreSQL(t *testing.T) {
 					clause.Column{Name: "user_id"},
 				).Error)
 			},
-			expectedError: "复合唯一约束",
+			expectedError:      "复合唯一约束",
+			expectedConstraint: "subscription_request_user_unique",
 		},
 	}
 
@@ -191,7 +193,7 @@ func TestMigrateSubscriptionPreConsumeUniquenessPostgreSQL(t *testing.T) {
 				err := migrateSubscriptionPreConsumeUniqueness(tx)
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), test.expectedError)
-				requireSubscriptionPreConsumeConstraint(t, tx, "subscription_pre_consume_records", "keep_subscription_request_id_unique")
+				requireSubscriptionPreConsumeConstraint(t, tx, "subscription_pre_consume_records", test.expectedConstraint)
 				return
 			}
 

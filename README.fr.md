@@ -163,7 +163,7 @@ docker run --name NexusTok -d --restart always \
 > [!TIP]
 > **Dernière image Docker:** `c1cadabob/nexustok:latest`
 >
-> **Image v0.2.3:** `c1cadabob/nexustok:v0.2.3`
+> **Image v0.2.4:** `c1cadabob/nexustok:v0.2.4`
 
 ### 📋 Exigences de déploiement
 
@@ -230,8 +230,8 @@ bash scripts/deploy.sh
 
 Au premier lancement, le script crée un `.env` en mode `0600` et génère
 `POSTGRES_PASSWORD` et `REDIS_PASSWORD`. Les mots de passe existants sont conservés. Le script
-valide `docker compose config`, télécharge l'image, démarre PostgreSQL, Redis et NexusTok, puis
-attend les trois contrôles de santé.
+valide `docker compose config`, télécharge l'image, démarre PostgreSQL et Redis, vérifie le mot de
+passe sur le réseau Compose avant de démarrer NexusTok, puis attend les trois contrôles de santé.
 
 ```bash
 docker compose ps
@@ -257,7 +257,7 @@ docker run --name nexustok -d --restart always \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  c1cadabob/nexustok:v0.2.3
+  c1cadabob/nexustok:v0.2.4
 ```
 
 Elle ne démarre ni PostgreSQL ni Redis. Avant une mise à niveau, sauvegardez `.env`,
@@ -275,11 +275,20 @@ Pour revenir en arrière, épinglez l'image à la version vérifiée précédent
 PostgreSQL. SQLite n'est pas migré automatiquement vers PostgreSQL : les données existantes
 doivent être sauvegardées et migrées séparément avec une procédure vérifiée.
 
+Modifier `POSTGRES_PASSWORD` dans `.env` ne modifie pas le mot de passe du rôle dans un volume
+PostgreSQL existant. En cas d'échec d'authentification réseau, restaurez la valeur précédente ou
+synchronisez le mot de passe après une sauvegarde logique ; ne supprimez pas un volume de
+production pour changer un mot de passe.
+
 Problèmes fréquents : port `3030` occupé, PostgreSQL/Redis non sains
 (`docker compose logs postgres redis`), mot de passe `.env` vide ou modifié, permissions ou
 SELinux/AppArmor, image amd64/arm64 incompatible, délais du proxy inverse ou en-têtes Upgrade
-manquants pour SSE/WebSocket. Le socket Docker donne un contrôle du moteur de l'hôte et ne doit
-être monté que sur une machine administrée de confiance.
+manquants pour SSE/WebSocket. Pour une remise à zéro, vérifiez d'abord la sauvegarde, puis ne
+supprimez que les conteneurs, volumes et répertoires NexusTok (`/opt/nexustok/data` et
+`/opt/nexustok/logs`). N'utilisez pas `docker system prune -a`, `docker volume prune` ou
+`docker compose down -v` sans portée vérifiée ; conservez Komari et les autres ressources.
+Le socket Docker donne un contrôle du moteur de l'hôte et ne doit être monté que sur une machine
+administrée de confiance.
 
 Référence de dépannage : [FAQ](https://docs.nexustok.ai/en/docs/support/faq).
 
@@ -303,7 +312,7 @@ docker run --name nexustok-node-1 -d --restart always \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  c1cadabob/nexustok:v0.2.3
+  c1cadabob/nexustok:v0.2.4
 ```
 
 `node.env` doit au minimum contenir `SQL_DSN`, `REDIS_CONN_STRING`, `SESSION_SECRET` et

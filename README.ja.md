@@ -165,7 +165,7 @@ docker run --name NexusTok -d --restart always \
 > [!TIP]
 > **最新のDockerイメージ:** `c1cadabob/nexustok:latest`
 >
-> **v0.2.3イメージ:** `c1cadabob/nexustok:v0.2.3`
+> **v0.2.4イメージ:** `c1cadabob/nexustok:v0.2.4`
 
 ### 📋 デプロイ要件
 
@@ -232,8 +232,9 @@ bash scripts/deploy.sh
 
 初回実行時、スクリプトは権限 `0600` の `.env` を作成し、ランダムな
 `POSTGRES_PASSWORD` と `REDIS_PASSWORD` を生成します。既存の値は上書きしません。
-`docker compose config` で検証してからイメージを取得し、PostgreSQL、Redis、NexusTok
-を起動し、3 サービスのヘルスチェックを待機します。
+`docker compose config` で検証してからイメージを取得し、PostgreSQL と Redis を起動します。
+NexusTok の起動前に Compose ネットワーク上で実際のパスワード認証を確認し、その後 3
+サービスのヘルスチェックを待機します。
 
 ```bash
 docker compose ps
@@ -260,7 +261,7 @@ docker run --name nexustok -d --restart always \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  c1cadabob/nexustok:v0.2.3
+  c1cadabob/nexustok:v0.2.4
 ```
 
 PostgreSQL と Redis は起動しません。更新前に `.env`、`/opt/nexustok/data`、
@@ -278,11 +279,21 @@ PostgreSQL named volume は削除しないでください。
 SQLite は PostgreSQL に自動移行されないため、既存データはバックアップ後に別途検証済み
 の移行を行う必要があります。
 
+`.env` の `POSTGRES_PASSWORD` を変更しても、既存の PostgreSQL named volume 内のロール
+パスワードは変更されません。ネットワーク認証に失敗した場合は以前の値へ戻すか、
+論理バックアップ後にデータベース側のパスワードを別途同期してください。パスワードを
+変更するためだけに本番 volume を削除しないでください。
+
 よくある問題は、`3030` の競合、PostgreSQL/Redis の unhealthy 状態
 （`docker compose logs postgres redis`）、空または変更された `.env` パスワード、
 データディレクトリの権限、SELinux/AppArmor、amd64/arm64 の不一致、プロキシのタイム
-アウトや SSE/WebSocket の Upgrade ヘッダー不足です。Docker socket はホストの Docker
-管理権限に相当するため、信頼できる管理者専用の環境でのみマウントしてください。
+アウトや SSE/WebSocket の Upgrade ヘッダー不足です。全新規デプロイのリセットでは、
+バックアップを確認してから NexusTok のコンテナ、volume、
+`/opt/nexustok/data`、`/opt/nexustok/logs` だけを削除してください。
+`docker system prune -a`、`docker volume prune`、範囲未確認の
+`docker compose down -v` は使わず、Komari など他のリソースを残してください。
+Docker socket はホストの Docker 管理権限に相当するため、信頼できる管理者専用の環境で
+のみマウントしてください。
 
 トラブルシューティング：[FAQ](https://docs.nexustok.ai/ja/docs/support/faq)。
 
@@ -306,7 +317,7 @@ docker run --name nexustok-node-1 -d --restart always \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  c1cadabob/nexustok:v0.2.3
+  c1cadabob/nexustok:v0.2.4
 ```
 
 `node.env` には少なくとも `SQL_DSN`、`REDIS_CONN_STRING`、`SESSION_SECRET`、

@@ -29,6 +29,8 @@ type subscriptionPreConsumeUniqueIndex struct {
 	ColumnCount      int
 	Partial          bool
 	Expression       bool
+	Valid            bool
+	Ready            bool
 	ConstraintBacked bool
 }
 
@@ -62,6 +64,8 @@ SELECT index_class.relname AS name,
        index_meta.indnatts AS column_count,
        index_meta.indpred IS NOT NULL AS partial,
        index_meta.indexprs IS NOT NULL AS expression,
+       index_meta.indisvalid AS valid,
+       index_meta.indisready AS ready,
        EXISTS (
            SELECT 1
            FROM pg_catalog.pg_constraint AS constraint_meta
@@ -121,6 +125,9 @@ func validateSubscriptionPreConsumeUniqueness(
 		}
 	}
 	for _, index := range indexes {
+		if !index.Valid || !index.Ready {
+			return fmt.Errorf("订阅预消费 request_id 唯一索引 %q 尚未验证或未就绪，无法自动迁移", index.Name)
+		}
 		if index.ConstraintBacked {
 			continue
 		}
@@ -206,7 +213,9 @@ func migrateSubscriptionPreConsumeUniqueness(db *gorm.DB) error {
 				!index.ConstraintBacked &&
 				index.ColumnCount == 1 &&
 				!index.Partial &&
-				!index.Expression {
+				!index.Expression &&
+				index.Valid &&
+				index.Ready {
 				targetExists = true
 				break
 			}

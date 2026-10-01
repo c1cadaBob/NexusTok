@@ -163,7 +163,7 @@ docker run --name NexusTok -d --restart always \
 > [!TIP]
 > **最新版 Docker 鏡像：** `c1cadabob/nexustok:latest`
 >
-> **v0.2.3 鏡像：** `c1cadabob/nexustok:v0.2.3`
+> **v0.2.4 鏡像：** `c1cadabob/nexustok:v0.2.4`
 
 ### 📋 部署要求
 
@@ -228,7 +228,8 @@ bash scripts/deploy.sh
 
 首次執行會建立權限為 `0600` 的 `.env`，隨機產生 `POSTGRES_PASSWORD` 和
 `REDIS_PASSWORD`；後續執行不會覆蓋既有密碼。腳本會先執行 `docker compose config`，
-再拉取映像、啟動 PostgreSQL、Redis 和 NexusTok，並等待三個健康檢查通過。
+再拉取映像、啟動 PostgreSQL、Redis，並在啟動 NexusTok 前透過 Compose 網路執行真實
+密碼驗證，隨後等待三個健康檢查通過。
 
 ```bash
 docker compose ps
@@ -253,7 +254,7 @@ docker run --name nexustok -d --restart always \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  c1cadabob/nexustok:v0.2.3
+  c1cadabob/nexustok:v0.2.4
 ```
 
 升級前備份 `.env`、`/opt/nexustok/data`、`/opt/nexustok/logs` 和 PostgreSQL named
@@ -271,10 +272,18 @@ docker compose up -d
 SQLite 檔案不會自動遷移到 PostgreSQL；既有生產資料切換前必須備份並單獨完成驗證過的
 資料遷移。
 
+修改 `.env` 中的 `POSTGRES_PASSWORD` 不會修改既有 PostgreSQL named volume 中的資料庫
+角色密碼。若腳本提示網路密碼驗證失敗，請先恢復原 `.env` 密碼，或在完成邏輯備份後
+單獨同步資料庫角色密碼；不要只為了改密碼就刪除生產 volume。
+
 常見問題包括 `3030` 被占用、PostgreSQL/Redis 不健康（查看
 `docker compose logs postgres redis`）、`.env` 密碼被改動或為空、資料目錄權限或
 SELinux/AppArmor 拒絕、amd64/arm64 映像不匹配，以及反向代理超時或未轉發 Upgrade 標頭。
-Docker socket 等同主機 Docker 管理權限，只應在可信的管理伺服器掛載。
+全新部署清理前必須完成可用備份，只能精確刪除 NexusTok 的容器、volume、
+`/opt/nexustok/data` 和 `/opt/nexustok/logs`。不要使用
+`docker system prune -a`、`docker volume prune` 或未確認範圍的 `docker compose down -v`，
+並保留 Komari 與其它非 NexusTok 資源。Docker socket 等同主機 Docker 管理權限，只應在
+可信的管理伺服器掛載。
 
 故障排除參考：[常見問題](https://docs.nexustok.ai/zh/docs/support/faq)。
 
@@ -297,7 +306,7 @@ docker run --name nexustok-node-1 -d --restart always \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  c1cadabob/nexustok:v0.2.3
+  c1cadabob/nexustok:v0.2.4
 ```
 
 `node.env` 至少包含 `SQL_DSN`、`REDIS_CONN_STRING`、`SESSION_SECRET` 和

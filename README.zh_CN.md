@@ -172,7 +172,7 @@ docker run --name nexustok -d --restart always \
 > [!TIP]
 > **最新版 Docker 镜像：** `c1cadabob/nexustok:latest`
 >
-> **v0.2.3 镜像：** `c1cadabob/nexustok:v0.2.3`
+> **v0.2.4 镜像：** `c1cadabob/nexustok:v0.2.4`
 
 ### 📋 部署要求
 
@@ -237,8 +237,8 @@ bash scripts/deploy.sh
 
 首次执行会创建权限为 `0600` 的 `.env`，随机生成 `POSTGRES_PASSWORD` 和
 `REDIS_PASSWORD`；后续执行不会覆盖已有密码。脚本先执行 `docker compose config`，
-再拉取 `c1cadabob/nexustok:latest`，启动 PostgreSQL、Redis 和 NexusTok，并等待三个
-健康检查通过。
+再拉取 `c1cadabob/nexustok:latest`，启动 PostgreSQL、Redis，并在启动 NexusTok 前
+通过 Compose 网络执行真实密码认证检查，随后等待三个健康检查通过。
 
 ```bash
 docker compose ps
@@ -264,7 +264,7 @@ docker run --name nexustok -d --restart always \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  c1cadabob/nexustok:v0.2.3
+  c1cadabob/nexustok:v0.2.4
 ```
 
 升级前备份 `.env`、`/opt/nexustok/data`、`/opt/nexustok/logs` 和 PostgreSQL named
@@ -282,11 +282,20 @@ docker compose up -d
 删除 PostgreSQL named volume。SQLite 文件不会自动迁移到 PostgreSQL；已有生产数据
 切换前必须备份，并单独完成经过验证的数据迁移。
 
+修改 `.env` 中的 `POSTGRES_PASSWORD` 不会修改已有 PostgreSQL named volume 中的
+数据库角色密码。若脚本提示网络密码认证失败，请先恢复原 `.env` 密码，或在完成逻辑
+备份后单独同步数据库角色密码；不要为了“重置密码”直接删除生产卷。
+
 常见问题：`3030` 被占用时停止冲突进程或修改反向代理入口；PostgreSQL/Redis 不健康
 时查看 `docker compose logs postgres redis`，检查 `.env` 密码是否为空或被改动；
 权限不足时检查 `/opt/nexustok/data`、`/opt/nexustok/logs` 的属主和 SELinux/AppArmor；
 镜像架构不匹配时确认主机为 `amd64` 或 `arm64`；SSE/WebSocket 断开时检查代理超时和
 Upgrade 头；Docker socket 等同宿主机 Docker 管理权限，只应在可信管理员实例中挂载。
+
+全新部署清理必须先确认已完成备份，再精确停止并删除 NexusTok 的容器、PostgreSQL
+named volume、Redis 容器数据、`/opt/nexustok/data` 和 `/opt/nexustok/logs`。不要在
+生产服务器执行 `docker system prune -a`、`docker volume prune` 或未确认范围的
+`docker compose down -v`；Komari 等非 NexusTok 容器、卷和网络必须保留。
 
 故障排查参考：[常见问题](https://docs.nexustok.ai/zh/docs/support/faq)。
 
@@ -311,7 +320,7 @@ docker run --name nexustok-node-1 -d --restart always \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  c1cadabob/nexustok:v0.2.3
+  c1cadabob/nexustok:v0.2.4
 ```
 
 `node.env` 至少包含 `SQL_DSN`、`REDIS_CONN_STRING`、`SESSION_SECRET` 和
