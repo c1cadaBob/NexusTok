@@ -1,7 +1,7 @@
 # 数据库、缓存与后台任务
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-30
+> 事实基线日期：2026-10-01
 > 主要代码来源：`model/main.go`、`common/database.go`、`common/redis.go`、`model/channel_cache.go`、`model/sync.go`、`service/system_task.go`、`service/task_polling.go`、`main.go`
 > 关联详细文档：[`system-overview.md`](./system-overview.md)、[`authentication-and-authorization.md`](./authentication-and-authorization.md)、[`tasks-and-plugins.md`](./tasks-and-plugins.md)、[`../rate-limiting.md`](../rate-limiting.md)
 
@@ -62,6 +62,19 @@ Redis 由 `common.InitRedisClient` 初始化，未配置 `REDIS_CONN_STRING` 时
 Redis 服务通过健康检查后才允许 NexusTok 启动。Redis 仍然是缓存和共享控制面，不能替代
 主数据库；Redis 未配置时的关闭和内存/数据库回退逻辑保持不变。单容器 `docker run`
 命令不创建 Redis，因此只表示无 Redis 兼容模式。
+
+### v0.2.3 部署文档与依赖边界（2026-10-01）
+
+**变更前**：多语言 README 的生产端口、镜像和单容器边界不一致，单机与多机的
+PostgreSQL/Redis、Session、限流、备份和滚动升级说明不完整；发布工作流 Secret 名称
+仍使用旧接口。
+
+**变更后**：部署文档统一说明 Compose 的 PostgreSQL 15 + Redis 7 默认拓扑、内部网络
+访问、`.env` 随机密码、`3030` 健康检查、named volume/逻辑备份、SQLite 不自动迁移、
+多机共享外部数据库与 Redis、主节点迁移/系统任务和从节点 `NODE_TYPE=slave`。共享
+Redis、独立 Redis 和关闭 Redis 的 Session/限流差异继续按现有代码事实描述。v0.2.3
+依赖修复只涉及 web/Electron 依赖；未修改 GORM、数据库驱动、数据库连接、模型、迁移、
+索引、约束或日志数据库边界，因此不新增数据库兼容性结论。
 
 ## 4. 主要缓存生命周期
 
@@ -198,6 +211,7 @@ SQLite、MySQL 8.2.0 和 PostgreSQL 15.19 均通过 AutoMigrate 二次执行、A
 | 2026-09-30 | 旧版资源分页与脱敏 fixture 验收边界 | New API/Sub2API Key 资源最多 100 页，完整 Key 详情和分页失败边界未完全记录；脱敏资源失败和地址边界未纳入缓存快照说明 | 三类 Key 资源恢复独立 1000 页上限；完整列表优先、缺失详情补齐、资源失败保留最近成功快照；使用脱敏 fixture 验证资源状态和路由边界；不写入凭据或临时捕获文件 | 平台资源缓存、后台同步、路由快照和安全交付 | `service/upstream_site_adapters.go`、`service/upstream_site_test.go`、脱敏 HTTP fixture 和 SQLite；无数据库结构变更 |
 | 2026-09-30 | 系统维护任务与缓存边界 | 维护页直连 GitHub，未有更新/回滚任务，旧版回滚会消耗 `.backup`；Docker helper 和租约接管未登记 | 后端缓存 Release 并经 Root 任务执行更新、回滚和重启；裸机稳定 `.backup` 可重复交换，Docker 使用 socket/helper、唯一候选容器和健康检查；不修改 SystemTask 表字段或新增迁移 | GitHub 缓存、SystemTask、任务租约、裸机文件交换、Docker 容器生命周期 | `service/system_update.go`、`service/system_update_docker.go`、`model/system_task.go`、`service/system_update_test.go`；未执行真实生产容器切换 |
 | 2026-09-30 | v0.2.2 生产数据库与缓存默认值 | Compose 使用浮动 Redis/PostgreSQL 标签、默认密码和未固定的应用数据路径；单容器与完整生产拓扑边界不清晰 | Compose 固定 PostgreSQL 15 + Redis 7，密码由 `.env`/部署脚本生成，服务健康后启动应用，端口为 `3030`，SQLite/无 Redis 回退和既有数据库兼容行为保持不变 | `docker-compose.yml`、`scripts/deploy.sh`、`model/main.go`、`common/redis.go`、中文部署文档 | `docker compose config`、脚本语法检查、隔离三服务栈和真实 SQLite 3.50.4/MySQL 8.2.0/PostgreSQL 15.19 矩阵已通过；生产 Dockerfile 完整构建因 `proxy.golang.org` 超时未完成，最低版本和独立日志库矩阵未覆盖 |
+| 2026-10-01 | v0.2.3 部署文档与依赖边界 | 文档没有完整记录单机/多机的共享服务、健康检查、备份和故障边界；Secret 名称与项目执行环境不一致 | 文档明确 Compose 生产默认、外部多机 DSN/Redis、主从任务职责、Redis 拓扑差异和数据迁移限制；Docker 工作流改用 `DOCKER_USERNAME`/`DOCKER_PASSWORD`；web/Electron 依赖最小安全升级不改变缓存、任务和数据库代码 | `README*.md`、`docs/installation/BT.md`、`.github/workflows/docker-*.yml`、web/Electron lockfile | 本地 Bun/npm 审计和文档静态核对已完成；远端 Dependabot、三服务发布镜像和多架构 manifest 需认证 API/Actions 验证 |
 
 ### 9.1 2026-09-26 实现校准
 

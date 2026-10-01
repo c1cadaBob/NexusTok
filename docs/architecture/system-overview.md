@@ -1,7 +1,7 @@
 # 系统总览与请求生命周期
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-30
+> 事实基线日期：2026-10-01
 > 主要代码来源：`main.go`、`router/main.go`、`router/`、`middleware/`、`controller/`、`service/`、`model/main.go`、`common/`
 > 关联详细文档：[`README.md`](./README.md)、[`authentication-and-authorization.md`](./authentication-and-authorization.md)、[`data-cache-and-background-jobs.md`](./data-cache-and-background-jobs.md)
 
@@ -115,9 +115,27 @@ HTTP
 Redis 兼容模式。SQLite 文件不会自动迁移到 PostgreSQL；已有生产数据切换前必须备份，
 并单独执行经过验证的数据迁移。
 
-本次发布镜像为 `c1cadabob/nexustok:v0.2.2` 和 `c1cadabob/nexustok:latest`，Dockerfile
+本次发布镜像为 `c1cadabob/nexustok:v0.2.3` 和 `c1cadabob/nexustok:latest`，Dockerfile
 通过当前 `web/` 的 Bun/Rsbuild `bun run build` 生成并嵌入新版前端，不新增路由、DTO、
 数据库模型或字段。
+
+### v0.2.3 部署文档与发布边界（2026-10-01）
+
+**变更前**：六种 README 的部署内容不一致，部分语言仍使用 `3000`、旧版镜像或
+明文 MySQL 示例；独立文档没有完整说明 Compose 单机拓扑、多机共享服务、备份回滚、
+反向代理和 Docker socket 风险。Docker Hub 工作流使用的 Secret 名称也与执行环境不一致。
+
+**变更后**：README 和宝塔部署文档统一以 `3030`、Compose、PostgreSQL 15、Redis 7、
+`.env` 中的随机密码和 `c1cadabob/nexustok:v0.2.3`/`latest` 为生产事实基线；单容器
+命令明确为 SQLite/无 Redis 兼容模式。多机文档要求共享 `SQL_DSN`、`REDIS_CONN_STRING`、
+`SESSION_SECRET`、`CRYPTO_SECRET`，使用唯一 `NODE_NAME`，主节点负责迁移和系统任务，
+从节点使用 `NODE_TYPE=slave`。反向代理、SSE/WebSocket、可信代理、Cookie 安全、备份、
+滚动升级和故障摘除边界均记录在部署文档中。Docker 工作流统一读取
+`DOCKER_USERNAME`/`DOCKER_PASSWORD`。
+
+本版本只修改 web/Electron 依赖、发布工作流和文档，没有修改数据库代码、GORM、数据库
+驱动、Schema、迁移、路由、DTO 或 API 契约；因此不新增数据库兼容性结论。远端
+Dependabot、Docker 多架构发布和真实生产切换仍以认证 API 与 GitHub Actions 结果为准。
 
 ### Master/Slave
 
@@ -176,3 +194,4 @@ Healthcheck 时至少确认持续 `Running` 并标记降级。helper 在主容�
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 建立启动、分层、请求链路、部署边界和限制说明 | `main.go`、`router/`、`middleware/`、`model/`、`service/`、`relay/` | `main.go`、`model/main.go`、`router/` 静态核对 |
 | 2026-09-30 | 系统维护更新与回滚 | 前端直连 GitHub 且没有后端运维任务；旧版回滚会消耗唯一备份 | 增加 RootAuth 维护接口、SystemTask 进度、GitHub 缓存/checksum、裸机稳定备份交换、Docker helper/健康检查和重启探活 | `router/api-router.go`、`controller/system_update.go`、`service/system_update*.go`、`main.go`、维护页 | `go test ./service ./model ./controller ./router`、前端定向测试；未进行生产容器切换 |
 | 2026-09-30 | v0.2.2 生产默认部署 | Compose 使用浮动依赖、明文默认密码和相对目录，服务依赖未按健康状态编排；单容器示例未明确不包含外部数据库/缓存 | Compose 固定 PostgreSQL 15 + Redis 7，密码由 `.env`/部署脚本生成，应用端口为 `3030`，数据/日志使用 `/opt/nexustok` 持久化目录，单容器仅保留 SQLite/无 Redis 兼容模式 | `docker-compose.yml`、`scripts/deploy.sh`、`Dockerfile`、`VERSION`、Docker 发布工作流和中文部署文档 | `docker compose config`、`bash -n scripts/deploy.sh`、隔离三服务栈和真实 SQLite 3.50.4/MySQL 8.2.0/PostgreSQL 15.19 矩阵已通过；生产 Dockerfile 完整构建因 `proxy.golang.org` 超时未完成，远端发布以标签工作流为准 |
+| 2026-10-01 | v0.2.3 安全依赖与部署发布 | README 多语言存在旧端口、旧镜像和宣传栏目；发布工作流 Secret 名称不匹配；部署文档未完整覆盖单机、多机、备份和故障边界 | 统一六种 README、宝塔文档和架构事实为 `3030`、Compose、PostgreSQL 15 + Redis 7；补充多机共享外部服务、主从职责、代理和回滚；工作流使用 `DOCKER_USERNAME`/`DOCKER_PASSWORD`；前端/Electron 依赖按本地审计结果最小升级，数据库代码和 Schema 未修改 | `README*.md`、`docs/installation/BT.md`、`.github/workflows/docker-*.yml`、web/Electron 依赖 | 本地 Bun/npm 审计和前端聚焦测试已完成；无认证令牌时无法确认 GitHub Dependabot 全量状态，三服务发布镜像、多架构 manifest 和远端 Release 待工作流验证 |

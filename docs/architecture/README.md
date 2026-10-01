@@ -1,7 +1,7 @@
 # NexusTok 功能原理与实现偏差文档
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-30
+> 事实基线日期：2026-10-01
 > 主要代码来源：`main.go`、`router/`、`middleware/`、`controller/`、`service/`、`model/`、`relay/`、`pkg/`、`constant/`
 > 关联详细文档：[`docs/authentication.md`](../authentication.md)、[`docs/rate-limiting.md`](../rate-limiting.md)、[`docs/key-routing-strategy.md`](../key-routing-strategy.md)、[`docs/upstream-channel-platform-sites.md`](../upstream-channel-platform-sites.md)、[`docs/plugin-api/`](../plugin-api/)
 
@@ -100,3 +100,4 @@
 | 2026-09-29 | 增加平台站点资源获取链路索引 | 架构总索引只有平台站点专项设计和能力矩阵，无法直接定位旧版备份、参考平台真实路由与当前资源快照的逐项比较 | 增加平台站点资源获取比较文档，明确参考平台、旧版 NexusTok 和当前实现三类证据，并说明管理端额度、Key 模型和失败回退边界 | 平台站点认证、资源同步、Key 生命周期、模型能力和路由快照 | [`../platform-site-resource-acquisition-comparison.md`](../platform-site-resource-acquisition-comparison.md)、`service/upstream_site.go`、`controller/upstream_channel.go`、本机参考源静态核对 |
 | 2026-09-30 | 恢复系统维护更新与可重复回滚 | 维护页面直接从浏览器请求 GitHub Release，只能查看说明；没有后端更新、回滚、重启任务边界，旧版回滚会消耗 `.backup` | 后端经 RootAuth 检查 Release 并通过 SystemTask 应用更新、回滚、重启；裸机使用稳定 `.backup` 交换，Docker 使用 socket/helper 和健康检查；未修改数据库结构 | Root 管理、版本检查、二进制/Docker 更新、任务租约、审计和前端维护面板 | `controller/system_update.go`、`service/system_update.go`、`service/system_update_docker.go`、`model/system_task.go`、维护页测试；未进行生产容器切换 |
 | 2026-09-30 | v0.2.2 生产默认部署与发布入口 | 生产 Compose 的数据库/缓存版本、密码和对外端口不够明确，单容器示例没有说明不包含外部数据库/缓存 | 生产推荐入口固定为 Compose，默认 PostgreSQL 15 + Redis 7，应用端口 `3030`，密码由 `.env`/部署脚本生成，发布镜像为 `c1cadabob/nexustok:v0.2.2` 与 `latest`；SQLite/无 Redis 回退和旧前端路由兼容逻辑保持不变 | `docker-compose.yml`、`scripts/deploy.sh`、`Dockerfile`、`.github/workflows/docker-*.yml`、中文部署文档 | `docker compose config`、脚本语法检查、隔离三服务栈和真实 SQLite 3.50.4/MySQL 8.2.0/PostgreSQL 15.19 矩阵已通过；完整生产 Dockerfile 构建因 `proxy.golang.org` 超时未完成，最低版本、独立日志库和远端发布待标签工作流验证 |
+| 2026-10-01 | v0.2.3 安全依赖、部署文档与发布入口 | README 多语言仍包含独立宣传栏目和过时的单容器部署说明；Docker Hub Secret 名称与当前项目环境变量不一致；安全依赖修复和发布验证边界未集中记录 | 六种 README 删除指定宣传栏目/图片并保留部署必需链接；补充单机、多机、宝塔、备份、回滚和故障排查边界；工作流统一使用 `DOCKER_USERNAME`/`DOCKER_PASSWORD`；前端和 Electron 直接依赖按本地审计结果做最小升级；发布目标为 `c1cadabob/nexustok:v0.2.3` 和 `latest`，未新增数据库模型、字段、迁移或业务 API | `README*.md`、`docs/installation/BT.md`、`.github/workflows/docker-*.yml`、`web/package.json`、`electron/package.json`、发布说明 | 已完成本地 Bun/npm 审计和前端聚焦回归；远端 Dependabot 需要认证 API，真实开放警报、三服务生产镜像拉取、多架构 manifest 和 Docker Hub 发布待环境凭据/工作流验证 |

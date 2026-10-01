@@ -24,30 +24,12 @@
   <a href="https://hub.docker.com/r/c1cadabob/nexustok">
     <img src="https://img.shields.io/badge/docker-dockerHub-blue" alt="docker">
   </a>
-  <a href="https://atomgit.com/c1cadaBob/NexusTok" target="_blank">
-    <img alt="AtomGit G-Star" src="https://atomgit.com/c1cadaBob/NexusTok/star/badge.svg"/>
-  </a>
-</p>
-
-<p align="center">
-  <a href="https://trendshift.io/repositories/20180" target="_blank">
-    <img src="https://trendshift.io/api/badge/repositories/20180" alt="c1cadaBob%2FNexusTok | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/>
-  </a>
-  <br>
-  <a href="https://hellogithub.com/repository/c1cadaBob/NexusTok" target="_blank">
-    <img src="https://api.hellogithub.com/v1/widgets/recommend.svg?rid=539ac4217e69431684ad4a0bab768811&claim_uid=tbFPfKIDHpc4TzR" alt="Featured｜HelloGitHub" style="width: 250px; height: 54px;" width="250" height="54" />
-  </a>
-  <a href="https://atomgit.com/c1cadaBob/NexusTok" target="_blank">
-    <img alt="AtomGit G-Star" src="https://atomgit.com/c1cadaBob/NexusTok/star/new_badge.svg" width="250" height="55" />
-  </a>
 </p>
 
 <p align="center">
   <a href="#-快速開始">快速開始</a> •
   <a href="#-主要特性">主要特性</a> •
-  <a href="#-部署">部署</a> •
-  <a href="#-文件">文件</a> •
-  <a href="#-幫助支援">幫助</a>
+  <a href="#-部署">部署</a>
 </p>
 
 </div>
@@ -60,124 +42,46 @@
 > - 使用者應確保其使用方式符合上游服務條款及適用法律法規。
 > - 面向公眾提供生成式人工智慧服務時，使用者應遵守[《生成式人工智慧服務管理暫行辦法》](http://www.cac.gov.cn/2023-07/13/c_1690898327029107.htm)等監管要求，自行完成所在司法轄區要求的備案、許可、內容安全、實名、日誌留存、稅務和上游授權等合規義務。
 
----
-
-## 🤝 我們信任的合作伙伴
-
-<p align="center">
-  <em>排名不分先後</em>
-</p>
-
-<p align="center">
-  <a href="https://www.cherry-ai.com/" target="_blank">
-    <img src="./docs/images/cherry-studio.png" alt="Cherry Studio" height="80" />
-  </a><!--
-  --><a href="https://github.com/iOfficeAI/AionUi/" target="_blank">
-    <img src="./docs/images/aionui.png" alt="Aion UI" height="80" />
-  </a><!--
-  --><a href="https://bda.pku.edu.cn/" target="_blank">
-    <img src="./docs/images/pku.png" alt="北京大學" height="80" />
-  </a><!--
-  --><a href="https://www.compshare.cn/?ytag=GPU_yy_gh_nexustok" target="_blank">
-    <img src="./docs/images/ucloud.png" alt="UCloud 優刻得" height="80" />
-  </a><!--
-  --><a href="https://www.aliyun.com/" target="_blank">
-    <img src="./docs/images/aliyun.png" alt="阿里雲" height="80" />
-  </a><!--
-  --><a href="https://io.net/" target="_blank">
-    <img src="./docs/images/io-net.png" alt="IO.NET" height="80" />
-  </a>
-</p>
-
----
-
-## 🙏 特別鳴謝
-
-<p align="center">
-  <a href="https://www.jetbrains.com/?from=NexusTok" target="_blank">
-    <img src="https://resources.jetbrains.com/storage/products/company/brand/logos/jb_beam.png" alt="JetBrains Logo" width="120" />
-  </a>
-</p>
-
-<p align="center">
-  <strong>感謝 <a href="https://www.jetbrains.com/?from=NexusTok">JetBrains</a> 為本項目提供免費的開源開發許可證</strong>
-</p>
-
----
-
 ## 🚀 快速開始
 
 ### 使用 Docker Compose（推薦）
 
 ```bash
-# 複製項目
+# 複製項目並執行生產部署
 git clone https://github.com/c1cadaBob/NexusTok.git
 cd NexusTok
-
-# 編輯 docker-compose.yml 配置
-nano docker-compose.yml
-
-# 啟動服務
-docker-compose up -d
+bash scripts/deploy.sh
 ```
 
 <details>
 <summary><strong>使用 Docker 命令</strong></summary>
 
 ```bash
-# 拉取最新鏡像
-docker pull c1cadabob/nexustok:latest
-
-# 使用 SQLite（預設）
+# 單容器相容模式（SQLite，不含 PostgreSQL 和 Redis）
 docker run --name NexusTok -d --restart always \
-  -p 3000:3000 \
+  -p 3030:3030 \
   -e TZ=Asia/Shanghai \
+  -e PORT=3030 \
+  -e SESSION_SECRET_FILE=/data/session_secret \
   -v ./data:/data \
-  c1cadabob/nexustok:latest
-
-# 使用 MySQL
-docker run --name NexusTok -d --restart always \
-  -p 3000:3000 \
-  -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
-  -e TZ=Asia/Shanghai \
-  -v ./data:/data \
+  -v ./logs:/app/logs \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   c1cadabob/nexustok:latest
 ```
 
-> **💡 提示：** `-v ./data:/data` 會將數據保存在當前目錄的 `data` 資料夾中，你也可以改為絕對路徑如 `-v /your/custom/path:/data`
+> 單容器命令不會啟動 PostgreSQL 和 Redis；完整生產部署請使用 Compose。
+> SQLite 不會自動遷移到 PostgreSQL。
 
 </details>
 
 ---
 
-🎉 部署完成後，訪問 `http://localhost:3000` 即可使用！
+🎉 部署完成後，訪問 `http://localhost:3030` 即可使用！
 
 > [!WARNING]
 > 將本專案作為面向公眾的生成式 AI 服務或 API 轉售服務運營時，使用者應先完成備案、內容安全、實名、日誌留存、稅務、支付和上游授權等合規義務。
 
 📖 更多部署方式請參考 [部署指南](https://docs.nexustok.ai/zh/docs/installation)
-
----
-
-## 📚 文件
-
-<div align="center">
-
-### 📖 [官方文件](https://docs.nexustok.ai/zh/docs) | [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/c1cadaBob/NexusTok)
-
-</div>
-
-**快速導航：**
-
-| 分類 | 連結 |
-|------|------|
-| 🚀 部署指南 | [安裝文件](https://docs.nexustok.ai/zh/docs/installation) |
-| ⚙️ 環境配置 | [環境變數](https://docs.nexustok.ai/zh/docs/installation/config-maintenance/environment-variables) |
-| 📡 接口文件 | [API 文件](https://docs.nexustok.ai/zh/docs/api) |
-| ❓ 常見問題 | [FAQ](https://docs.nexustok.ai/zh/docs/support/faq) |
-| 💬 社群交流 | [交流管道](https://docs.nexustok.ai/zh/docs/support/community-interaction) |
-
----
 
 ## ✨ 主要特性
 
@@ -254,57 +158,25 @@ docker run --name NexusTok -d --restart always \
 
 </details>
 
----
-
-## 🤖 模型支援
-
-> 詳情請參考 [接口文件 - 閘道接口](https://docs.nexustok.ai/zh/docs/api)
-
-| 模型類型 | 說明 | 文件 |
-|---------|------|------|
-| 🤖 OpenAI-Compatible | OpenAI 兼容模型 | [文件](https://docs.nexustok.ai/zh/docs/api/ai-model/chat/openai/createchatcompletion) |
-| 🤖 OpenAI Responses | OpenAI Responses 格式 | [文件](https://docs.nexustok.ai/zh/docs/api/ai-model/chat/openai/createresponse) |
-| 🎨 Midjourney-Proxy | [Midjourney-Proxy(Plus)](https://github.com/novicezk/midjourney-proxy) | [文件](https://docs.nexustok.ai/api/midjourney-proxy-image) |
-| 🎵 Suno-API | [Suno API](https://github.com/Suno-API/Suno-API) | [文件](https://docs.nexustok.ai/api/suno-music) |
-| 🔄 Rerank | Cohere、Jina | [文件](https://docs.nexustok.ai/zh/docs/api/ai-model/rerank/create-rerank) |
-| 💬 Claude | Messages 格式 | [文件](https://docs.nexustok.ai/zh/docs/api/ai-model/chat/createmessage) |
-| 🌐 Gemini | Google Gemini 格式 | [文件](https://docs.nexustok.ai/zh/docs/api/ai-model/chat/gemini/geminirelayv1beta) |
-| 🔧 Dify | ChatFlow 模式 | - |
-| 🎯 自訂上游 | 支援配置合法授權的上游介面位址 | - |
-
-### 📡 支援的接口
-
-<details>
-<summary>查看完整接口列表</summary>
-
-- [聊天接口 (Chat Completions)](https://docs.nexustok.ai/zh/docs/api/ai-model/chat/openai/createchatcompletion)
-- [響應接口 (Responses)](https://docs.nexustok.ai/zh/docs/api/ai-model/chat/openai/createresponse)
-- [圖像接口 (Image)](https://docs.nexustok.ai/zh/docs/api/ai-model/images/openai/post-v1-images-generations)
-- [音訊接口 (Audio)](https://docs.nexustok.ai/zh/docs/api/ai-model/audio/openai/create-transcription)
-- [影片接口 (Video)](https://docs.nexustok.ai/zh/docs/api/ai-model/videos/sora/createvideo)
-- [嵌入接口 (Embeddings)](https://docs.nexustok.ai/zh/docs/api/ai-model/embeddings/createembedding)
-- [重排序接口 (Rerank)](https://docs.nexustok.ai/zh/docs/api/ai-model/rerank/creatererank)
-- [即時對話 (Realtime)](https://docs.nexustok.ai/zh/docs/api/ai-model/realtime/createrealtimesession)
-- [Claude 聊天](https://docs.nexustok.ai/zh/docs/api/ai-model/chat/createmessage)
-- [Google Gemini 聊天](https://docs.nexustok.ai/zh/docs/api/ai-model/chat/gemini/geminirelayv1beta)
-
-</details>
-
----
-
 ## 🚢 部署
 
 > [!TIP]
 > **最新版 Docker 鏡像：** `c1cadabob/nexustok:latest`
+>
+> **v0.2.3 鏡像：** `c1cadabob/nexustok:v0.2.3`
 
 ### 📋 部署要求
 
 | 組件 | 要求 |
 |------|------|
-| **本地資料庫** | SQLite（Docker 需掛載 `/data` 目錄）|
-| **遠端資料庫** | MySQL ≥ 5.7.8 或 PostgreSQL ≥ 9.6 |
+| **生產預設資料庫** | PostgreSQL 15（應用同時支援 PostgreSQL ≥ 9.6） |
+| **生產預設快取** | Redis 7（Compose 內部網路） |
+| **相容資料庫** | MySQL ≥ 5.7.8、SQLite |
 | **容器引擎** | Docker / Docker Compose |
 | **系統架構** | 僅支援 64 位元系統（amd64 / arm64），不支援 32 位元系統 |
+
+> Compose 是生產推薦入口。單容器命令僅代表 SQLite／無 Redis 相容模式，不會自動提供
+> PostgreSQL 和 Redis；SQLite 也不會自動遷移到 PostgreSQL。
 
 ### ⚙️ 環境變數配置
 
@@ -342,81 +214,101 @@ docker run --name NexusTok -d --restart always \
 
 </details>
 
-### 🔧 部署方式
+### 🖥️ 單機部署（PostgreSQL + Redis）
 
-<details>
-<summary><strong>方式 1：Docker Compose（推薦）</strong></summary>
+準備一台 64 位元 Linux 主機，以及 Docker Engine、Docker Compose v2、Git 和 `curl`。
+防火牆只開放 `3030`；若使用 HTTPS 反向代理，則只開放代理使用的 `80/443`。
+PostgreSQL `5432` 和 Redis `6379` 預設只在 Compose 內部網路存取，不應開放到公網。
 
 ```bash
-# 複製項目
 git clone https://github.com/c1cadaBob/NexusTok.git
 cd NexusTok
-
-# 編輯配置
-nano docker-compose.yml
-
-# 啟動服務
-docker-compose up -d
+bash scripts/deploy.sh
 ```
 
-</details>
+首次執行會建立權限為 `0600` 的 `.env`，隨機產生 `POSTGRES_PASSWORD` 和
+`REDIS_PASSWORD`；後續執行不會覆蓋既有密碼。腳本會先執行 `docker compose config`，
+再拉取映像、啟動 PostgreSQL、Redis 和 NexusTok，並等待三個健康檢查通過。
 
-<details>
-<summary><strong>方式 2：Docker 命令</strong></summary>
-
-**使用 SQLite：**
 ```bash
-docker run --name NexusTok -d --restart always \
-  -p 3000:3000 \
-  -e TZ=Asia/Shanghai \
-  -v ./data:/data \
-  c1cadabob/nexustok:latest
+docker compose ps
+curl http://127.0.0.1:3030/api/status
+curl http://127.0.0.1:3030/api/setup
 ```
 
-**使用 MySQL：**
+確認狀態介面成功後，訪問 `http://伺服器位址:3030`，依設定精靈完成初始化並建立管理員
+帳戶。反向代理必須轉發 SSE、WebSocket、長連線和 `X-Forwarded-*` 標頭。使用 HTTPS
+時設定 `SESSION_COOKIE_SECURE=true`，並將 `SESSION_COOKIE_TRUSTED_URL` 設為實際 HTTPS
+Origin；`TRUSTED_PROXIES` 只填寫可信反向代理的 IP/CIDR。
+
+以下單容器命令只代表相容模式，不會啟動 PostgreSQL 或 Redis：
+
 ```bash
-docker run --name NexusTok -d --restart always \
-  -p 3000:3000 \
-  -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
+mkdir -p /opt/nexustok/data /opt/nexustok/logs
+docker run --name nexustok -d --restart always \
+  -p 3030:3030 \
   -e TZ=Asia/Shanghai \
-  -v ./data:/data \
-  c1cadabob/nexustok:latest
+  -e PORT=3030 \
+  -e SESSION_SECRET_FILE=/data/session_secret \
+  -v /opt/nexustok/data:/data \
+  -v /opt/nexustok/logs:/app/logs \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  c1cadabob/nexustok:v0.2.3
 ```
 
-> **💡 路徑說明：**
-> - `./data:/data` - 相對路徑，數據保存在當前目錄的 data 資料夾
-> - 也可使用絕對路徑，如：`/your/custom/path:/data`
+升級前備份 `.env`、`/opt/nexustok/data`、`/opt/nexustok/logs` 和 PostgreSQL named
+volume，並優先匯出一致性資料庫備份：
 
-</details>
+```bash
+docker compose exec -T postgres pg_dump -U root nexustok > nexustok-$(date +%F).sql
+cp .env /secure-backup/nexustok.env
+docker compose pull
+docker compose up -d
+```
 
-<details>
-<summary><strong>方式 3：寶塔面板</strong></summary>
+回滾時將 NexusTok 映像固定為上一個已驗證的版本，執行 `docker compose up -d`，
+並保留資料庫備份。不要刪除 PostgreSQL named volume。
+SQLite 檔案不會自動遷移到 PostgreSQL；既有生產資料切換前必須備份並單獨完成驗證過的
+資料遷移。
 
-1. 安裝寶塔面板（≥ 9.2.0 版本）
-2. 在應用商店搜尋 **NexusTok**
-3. 一鍵安裝
+常見問題包括 `3030` 被占用、PostgreSQL/Redis 不健康（查看
+`docker compose logs postgres redis`）、`.env` 密碼被改動或為空、資料目錄權限或
+SELinux/AppArmor 拒絕、amd64/arm64 映像不匹配，以及反向代理超時或未轉發 Upgrade 標頭。
+Docker socket 等同主機 Docker 管理權限，只應在可信的管理伺服器掛載。
 
-📖 [圖文教學](./docs/BT.md)
+故障排除參考：[常見問題](https://docs.nexustok.ai/zh/docs/support/faq)。
 
-</details>
+### 🌐 多機部署
 
-### ⚠️ 多機部署注意事項
+多機部署不要在每個應用節點啟動本文件內置的 PostgreSQL 和 Redis。應準備一套受內網
+存取控制保護的共用 PostgreSQL 和共用 Redis，並為外部連線啟用 TLS。所有節點使用相同
+的 `SQL_DSN`、`REDIS_CONN_STRING`、`SESSION_SECRET` 和 `CRYPTO_SECRET`，但
+`NODE_NAME` 必須唯一。
 
-> [!WARNING]
-> - 所有節點必須使用同一個主資料庫，並設定相同的 `SESSION_SECRET`；否則 Access Token、Refresh 工作階段和臨時鑑權流程無法一致驗證。
-> - 連線至同一個 Redis 的節點還必須設定相同的 `CRYPTO_SECRET`，否則節點產生的快取鍵摘要不一致，無法正確共用快取。
+主節點不設定 `NODE_TYPE=slave`，負責資料庫遷移和系統任務；從節點設定
+`NODE_TYPE=slave`，只提供請求服務。所有節點保持時鐘同步，負載平衡器或反向代理使用
+`/api/status` 做健康檢查，不健康節點應先摘除。
 
-登入 Session 和單一使用者的活躍數／簽發數限制均以資料庫為權威。Redis 中的 Session 僅為短期快取，TTL 跟隨 `SYNC_FREQUENCY`（預設 60 秒），且不會超過 Session 的剩餘有效期。
+```bash
+docker run --name nexustok-node-1 -d --restart always \
+  -p 3030:3030 \
+  --env-file /etc/nexustok/node.env \
+  -e NODE_NAME=node-1 \
+  -v /opt/nexustok/data:/data \
+  -v /opt/nexustok/logs:/app/logs \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  c1cadabob/nexustok:v0.2.3
+```
 
-| Redis 拓撲 | Session 狀態傳播 | 限流語義 |
-| --- | --- | --- |
-| 所有節點共用 Redis | 撤銷和版本發布通常即時傳播 | Redis 限流額度在節點間共用 |
-| 每個節點使用獨立 Redis | 最遲在有效 `SYNC_FREQUENCY` 內回源資料庫並收斂；版本輪換後，新 Token 在持有舊快取的節點上可能短暫傳回 401 | 每個節點獨立計數，叢集總額度最壞約為單一節點門檻乘以節點數 |
-| 不使用 Redis | 每次 Session 驗證都直接讀取資料庫 | 各節點使用獨立的記憶體限流額度 |
+`node.env` 至少包含 `SQL_DSN`、`REDIS_CONN_STRING`、`SESSION_SECRET` 和
+`CRYPTO_SECRET`；從節點再加入 `NODE_TYPE=slave`。主節點完成遷移並通過健康檢查後，
+依序摘除從節點、更新、檢查並重新加入負載平衡器，最後在維護窗口處理主節點。回滾前
+確認應用版本和資料庫遷移相容，並準備可用的 PostgreSQL 還原備份。
 
-縮短 `SYNC_FREQUENCY` 可減少獨立 Redis 的陳舊視窗，但每個活躍 SID 在每個節點上會依該 TTL 增加一次資料庫主鍵查詢。上述保證只讓 Session 鑑權在不同拓撲下維持有界陳舊；限流和其他 Redis 控制面快取仍受拓撲影響。
-
-Token、Origin 驗證和 PAT 契約請參閱[使用者鑑權與登入工作階段](./docs/authentication.md)。
+共用 Redis 可共用 Session、限流和快取控制面；每節點獨立 Redis 會造成狀態傳播延遲和
+節點級限流；不使用 Redis 時 Session 回源資料庫、限流退回程序記憶體，叢集不具備全域
+一致的限流計數。Docker socket、節點本地日誌和 `/data` 不會自動成為跨節點共用儲存，
+集中日誌、共用檔案或任務產物必須另行設計。
 
 ### 🔄 管道重試與快取
 
@@ -426,48 +318,6 @@ Token、Origin 驗證和 PAT 契約請參閱[使用者鑑權與登入工作階�
 - `REDIS_CONN_STRING`：Redis 快取（推薦）
 - `MEMORY_CACHE_ENABLED`：記憶體快取
 
----
-
-## 🔗 相關項目
-
-### 上游項目
-
-| 項目 | 說明 |
-|------|------|
-| [One API](https://github.com/songquanpeng/one-api) | 原版項目基礎 |
-| [Midjourney-Proxy](https://github.com/novicezk/midjourney-proxy) | Midjourney 接口支援 |
-
-### 配套工具
-
-| 項目 | 說明 |
-|------|------|
-| [NexusTok-key-tool](https://github.com/c1cadabob/nexustok-key-tool) | Key 額度查詢工具 |
-| [NexusTok-horizon](https://github.com/c1cadabob/nexustok-horizon) | NexusTok 高性能優化版 |
-
----
-
-## 💬 幫助支援
-
-### 📖 文件資源
-
-| 資源 | 連結 |
-|------|------|
-| 📘 常見問題 | [FAQ](https://docs.nexustok.ai/zh/docs/support/faq) |
-| 💬 社群交流 | [交流管道](https://docs.nexustok.ai/zh/docs/support/community-interaction) |
-| 🐛 回饋問題 | [問題回饋](https://docs.nexustok.ai/zh/docs/support/feedback-issues) |
-| 📚 完整文件 | [官方文件](https://docs.nexustok.ai/zh/docs) |
-
-### 🤝 貢獻指南
-
-歡迎各種形式的貢獻！
-
-- 🐛 報告 Bug
-- 💡 提出新功能
-- 📝 改進文件
-- 🔧 提交程式碼
-
----
-
 ## 📜 許可證
 
 本項目採用 [GNU Affero 通用公共許可證 v3.0 (AGPLv3)](./LICENSE) 授權。
@@ -476,25 +326,13 @@ Token、Origin 驗證和 PAT 契約請參閱[使用者鑑權與登入工作階�
 
 如果您所在的組織政策不允許使用 AGPLv3 許可的軟體，或您希望規避 AGPLv3 的開源義務，請發送郵件至：[support@c1cadabob.dev](mailto:support@c1cadabob.dev)
 
----
-
-## 🌟 Star History
-
-<div align="center">
-
-[![Star History Chart](https://api.star-history.com/svg?repos=c1cadabob/nexustok&type=Date)](https://star-history.com/#c1cadabob/nexustok&Date)
-
-</div>
-
----
-
 <div align="center">
 
 ### 💖 感謝使用 NexusTok
 
 如果這個項目對你有幫助，歡迎給我們一個 ⭐️ Star！
 
-**[官方文件](https://docs.nexustok.ai/zh/docs)** • **[問題回饋](https://github.com/c1cadabob/nexustok/issues)** • **[最新發布](https://github.com/c1cadabob/nexustok/releases)**
+**[問題回饋](https://github.com/c1cadabob/nexustok/issues)** • **[最新發布](https://github.com/c1cadabob/nexustok/releases)**
 
 <sub>Built with ❤️ by c1cadaBob</sub>
 

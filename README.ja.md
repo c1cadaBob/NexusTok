@@ -24,31 +24,12 @@
   --><a href="https://hub.docker.com/r/c1cadabob/nexustok">
     <img src="https://img.shields.io/badge/docker-dockerHub-blue" alt="docker">
   </a>
-  <a href="https://atomgit.com/c1cadaBob/NexusTok" target="_blank">
-    <img alt="AtomGit G-Star" src="https://atomgit.com/c1cadaBob/NexusTok/star/badge.svg"/>
-  </a>
-</p>
-
-<p align="center">
-  <a href="https://trendshift.io/repositories/20180" target="_blank">
-    <img src="https://trendshift.io/api/badge/repositories/20180" alt="c1cadaBob%2FNexusTok | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/>
-  </a>
-  <br>
-  <a href="https://hellogithub.com/repository/c1cadaBob/NexusTok" target="_blank">
-    <img src="https://api.hellogithub.com/v1/widgets/recommend.svg?rid=539ac4217e69431684ad4a0bab768811&claim_uid=tbFPfKIDHpc4TzR" alt="Featured｜HelloGitHub" style="width: 250px; height: 54px;" width="250" height="54" />
-  </a><!--
-  -->
-  <a href="https://atomgit.com/c1cadaBob/NexusTok" target="_blank">
-    <img alt="AtomGit G-Star" src="https://atomgit.com/c1cadaBob/NexusTok/star/new_badge.svg" width="250" height="55" />
-  </a>
 </p>
 
 <p align="center">
   <a href="#-クイックスタート">クイックスタート</a> •
   <a href="#-主な機能">主な機能</a> •
-  <a href="#-デプロイ">デプロイ</a> •
-  <a href="#-ドキュメント">ドキュメント</a> •
-  <a href="#-ヘルプサポート">ヘルプ</a>
+  <a href="#-デプロイ">デプロイ</a>
 </p>
 
 </div>
@@ -61,124 +42,46 @@
 > - ユーザーは、利用方法が上流のサービス利用規約および適用される法律法規に準拠していることを確認してください。
 > - 生成 AI サービスを公衆に提供する場合、ユーザーは適用される規制要件を遵守し、管轄区域で求められる届出、ライセンス、コンテンツセキュリティ、本人確認、ログ保持、税務、上流認可などのすべての義務を履行してください。
 
----
-
-## 🤝 信頼できるパートナー
-
-<p align="center">
-  <em>順不同</em>
-</p>
-
-<p align="center">
-  <a href="https://www.cherry-ai.com/" target="_blank">
-    <img src="./docs/images/cherry-studio.png" alt="Cherry Studio" height="80" />
-  </a><!--
-  --><a href="https://github.com/iOfficeAI/AionUi/" target="_blank">
-    <img src="./docs/images/aionui.png" alt="Aion UI" height="80" />
-  </a><!--
-  --><a href="https://bda.pku.edu.cn/" target="_blank">
-    <img src="./docs/images/pku.png" alt="北京大学" height="80" />
-  </a><!--
-  --><a href="https://www.compshare.cn/?ytag=GPU_yy_gh_nexustok" target="_blank">
-    <img src="./docs/images/ucloud.png" alt="UCloud 優刻得" height="80" />
-  </a><!--
-  --><a href="https://www.aliyun.com/" target="_blank">
-    <img src="./docs/images/aliyun.png" alt="Alibaba Cloud" height="80" />
-  </a><!--
-  --><a href="https://io.net/" target="_blank">
-    <img src="./docs/images/io-net.png" alt="IO.NET" height="80" />
-  </a>
-</p>
-
----
-
-## 🙏 特別な感謝
-
-<p align="center">
-  <a href="https://www.jetbrains.com/?from=NexusTok" target="_blank">
-    <img src="https://resources.jetbrains.com/storage/products/company/brand/logos/jb_beam.png" alt="JetBrains Logo" width="120" />
-  </a>
-</p>
-
-<p align="center">
-  <strong>感謝 <a href="https://www.jetbrains.com/?from=NexusTok">JetBrains</a> が本プロジェクトに無料のオープンソース開発ライセンスを提供してくれたことに感謝します</strong>
-</p>
-
----
-
 ## 🚀 クイックスタート
 
 ### Docker Composeを使用（推奨）
 
 ```bash
-# プロジェクトをクローン
+# プロジェクトをクローンして本番デプロイを実行
 git clone https://github.com/c1cadaBob/NexusTok.git
 cd NexusTok
-
-# docker-compose.yml 設定を編集
-nano docker-compose.yml
-
-# サービスを起動
-docker-compose up -d
+bash scripts/deploy.sh
 ```
 
 <details>
 <summary><strong>Dockerコマンドを使用</strong></summary>
 
 ```bash
-# 最新のイメージをプル
-docker pull c1cadabob/nexustok:latest
-
-# SQLiteを使用（デフォルト）
+# 単一コンテナ互換モード（PostgreSQLとRedisなしのSQLite）
 docker run --name NexusTok -d --restart always \
-  -p 3000:3000 \
+  -p 3030:3030 \
   -e TZ=Asia/Shanghai \
+  -e PORT=3030 \
+  -e SESSION_SECRET_FILE=/data/session_secret \
   -v ./data:/data \
-  c1cadabob/nexustok:latest
-
-# MySQLを使用
-docker run --name NexusTok -d --restart always \
-  -p 3000:3000 \
-  -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
-  -e TZ=Asia/Shanghai \
-  -v ./data:/data \
+  -v ./logs:/app/logs \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   c1cadabob/nexustok:latest
 ```
 
-> **💡 ヒント:** `-v ./data:/data` は現在のディレクトリの `data` フォルダにデータを保存します。絶対パスに変更することもできます：`-v /your/custom/path:/data`
+> このコマンドは PostgreSQL と Redis を起動しません。完全な本番構成には Compose を
+> 使用してください。SQLite は PostgreSQL に自動移行されません。
 
 </details>
 
 ---
 
-🎉 デプロイが完了したら、`http://localhost:3000` にアクセスして使用を開始してください！
+🎉 デプロイが完了したら、`http://localhost:3030` にアクセスして使用を開始してください！
 
 > [!WARNING]
 > 本プロジェクトを公衆向け生成 AI サービスまたは API 再販サービスとして運営する場合、ユーザーは届出、コンテンツセキュリティ、本人確認、ログ保持、税務、決済、上流認可などの必要なコンプライアンス義務を先に完了してください。
 
 📖 その他のデプロイ方法については[デプロイガイド](https://docs.nexustok.ai/ja/docs/installation)を参照してください。
-
----
-
-## 📚 ドキュメント
-
-<div align="center">
-
-### 📖 [公式ドキュメント](https://docs.nexustok.ai/ja/docs) | [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/c1cadaBob/NexusTok)
-
-</div>
-
-**クイックナビゲーション:**
-
-| カテゴリ | リンク |
-|------|------|
-| 🚀 デプロイガイド | [インストールドキュメント](https://docs.nexustok.ai/ja/docs/installation) |
-| ⚙️ 環境設定 | [環境変数](https://docs.nexustok.ai/ja/docs/installation/config-maintenance/environment-variables) |
-| 📡 APIドキュメント | [APIドキュメント](https://docs.nexustok.ai/ja/docs/api) |
-| ❓ よくある質問 | [FAQ](https://docs.nexustok.ai/ja/docs/support/faq) |
-| 💬 コミュニティ交流 | [交流チャネル](https://docs.nexustok.ai/ja/docs/support/community-interaction) |
-
----
 
 ## ✨ 主な機能
 
@@ -257,57 +160,26 @@ docker run --name NexusTok -d --restart always \
 
 </details>
 
----
-
-## 🤖 モデルサポート
-
-> 詳細については[APIドキュメント - ゲートウェイインターフェース](https://docs.nexustok.ai/ja/docs/api)
-
-| モデルタイプ | 説明 | ドキュメント |
-|---------|------|------|
-| 🤖 OpenAI-Compatible | OpenAI互換モデル | [ドキュメント](https://docs.nexustok.ai/ja/docs/api/ai-model/chat/openai/createchatcompletion) |
-| 🤖 OpenAI Responses | OpenAI Responsesフォーマット | [ドキュメント](https://docs.nexustok.ai/ja/docs/api/ai-model/chat/openai/createresponse) |
-| 🎨 Midjourney-Proxy | [Midjourney-Proxy(Plus)](https://github.com/novicezk/midjourney-proxy) | [ドキュメント](https://docs.nexustok.ai/api/midjourney-proxy-image) |
-| 🎵 Suno-API | [Suno API](https://github.com/Suno-API/Suno-API) | [ドキュメント](https://docs.nexustok.ai/api/suno-music) |
-| 🔄 Rerank | Cohere、Jina | [ドキュメント](https://docs.nexustok.ai/ja/docs/api/ai-model/rerank/creatererank) |
-| 💬 Claude | Messagesフォーマット | [ドキュメント](https://docs.nexustok.ai/ja/docs/api/ai-model/chat/createmessage) |
-| 🌐 Gemini | Google Geminiフォーマット | [ドキュメント](https://docs.nexustok.ai/ja/docs/api/ai-model/chat/gemini/geminirelayv1beta) |
-| 🔧 Dify | ChatFlowモード | - |
-| 🎯 カスタム上流 | 合法的に許可された上流エンドポイントの設定をサポート | - |
-
-### 📡 サポートされているインターフェース
-
-<details>
-<summary>完全なインターフェースリストを表示</summary>
-
-- [チャットインターフェース (Chat Completions)](https://docs.nexustok.ai/ja/docs/api/ai-model/chat/openai/createchatcompletion)
-- [レスポンスインターフェース (Responses)](https://docs.nexustok.ai/ja/docs/api/ai-model/chat/openai/createresponse)
-- [イメージインターフェース (Image)](https://docs.nexustok.ai/ja/docs/api/ai-model/images/openai/post-v1-images-generations)
-- [オーディオインターフェース (Audio)](https://docs.nexustok.ai/ja/docs/api/ai-model/audio/openai/create-transcription)
-- [ビデオインターフェース (Video)](https://docs.nexustok.ai/ja/docs/api/ai-model/videos/sora/createvideo)
-- [エンベッドインターフェース (Embeddings)](https://docs.nexustok.ai/ja/docs/api/ai-model/embeddings/createembedding)
-- [再ランク付けインターフェース (Rerank)](https://docs.nexustok.ai/ja/docs/api/ai-model/rerank/creatererank)
-- [リアルタイム対話インターフェース (Realtime)](https://docs.nexustok.ai/ja/docs/api/ai-model/realtime/createrealtimesession)
-- [Claudeチャット](https://docs.nexustok.ai/ja/docs/api/ai-model/chat/createmessage)
-- [Google Geminiチャット](https://docs.nexustok.ai/ja/docs/api/ai-model/chat/gemini/geminirelayv1beta)
-
-</details>
-
----
-
 ## 🚢 デプロイ
 
 > [!TIP]
 > **最新のDockerイメージ:** `c1cadabob/nexustok:latest`
+>
+> **v0.2.3イメージ:** `c1cadabob/nexustok:v0.2.3`
 
 ### 📋 デプロイ要件
 
 | コンポーネント | 要件 |
 |------|------|
-| **ローカルデータベース** | SQLite（Dockerは `/data` ディレクトリをマウントする必要があります）|
-| **リモートデータベース** | MySQL ≥ 5.7.8 または PostgreSQL ≥ 9.6 |
+| **本番データベース** | PostgreSQL 15（アプリケーションは PostgreSQL ≥ 9.6 もサポート） |
+| **本番キャッシュ** | Redis 7（Compose 内部ネットワーク） |
+| **互換データベース** | MySQL ≥ 5.7.8、SQLite |
 | **コンテナエンジン** | Docker / Docker Compose |
 | **システムアーキテクチャ** | 64ビットのみ対応（amd64 / arm64）。32ビットシステムは非対応 |
+
+> Compose が本番環境の推奨入口です。単一コンテナコマンドは SQLite／Redis なしの互換
+> モードのみで、PostgreSQL と Redis は自動作成されません。既存の SQLite ファイルも
+> PostgreSQL へ自動移行されません。
 
 ### ⚙️ 環境変数設定
 
@@ -345,79 +217,109 @@ docker run --name NexusTok -d --restart always \
 
 </details>
 
-### 🔧 デプロイ方法
+### 🖥️ 単一マシンへのデプロイ（PostgreSQL + Redis）
 
-<details>
-<summary><strong>方法 1: Docker Compose（推奨）</strong></summary>
+64 ビット Linux ホストに Docker Engine、Docker Compose v2、Git、`curl` を準備します。
+ファイアウォールは `3030` のみを開放し、HTTPS リバースプロキシを使う場合はプロキシ
+用の `80/443` のみを開放します。PostgreSQL `5432` と Redis `6379` は Compose 内部
+ネットワークだけで利用し、公開しないでください。
 
 ```bash
-# プロジェクトをクローン
 git clone https://github.com/c1cadaBob/NexusTok.git
 cd NexusTok
-
-# 設定を編集
-nano docker-compose.yml
-
-# サービスを起動
-docker-compose up -d
+bash scripts/deploy.sh
 ```
 
-</details>
+初回実行時、スクリプトは権限 `0600` の `.env` を作成し、ランダムな
+`POSTGRES_PASSWORD` と `REDIS_PASSWORD` を生成します。既存の値は上書きしません。
+`docker compose config` で検証してからイメージを取得し、PostgreSQL、Redis、NexusTok
+を起動し、3 サービスのヘルスチェックを待機します。
 
-<details>
-<summary><strong>方法 2: Dockerコマンド</strong></summary>
-
-**SQLiteを使用:**
 ```bash
-docker run --name NexusTok -d --restart always \
-  -p 3000:3000 \
-  -e TZ=Asia/Shanghai \
-  -v ./data:/data \
-  c1cadabob/nexustok:latest
+docker compose ps
+curl http://127.0.0.1:3030/api/status
+curl http://127.0.0.1:3030/api/setup
 ```
 
-**MySQLを使用:**
+状態 API が成功したら `http://サーバーアドレス:3030` を開き、セットアップウィザードで
+初期化と管理者アカウント作成を行います。リバースプロキシは SSE、WebSocket、長時間
+接続、`X-Forwarded-*` ヘッダーを転送してください。HTTPS では
+`SESSION_COOKIE_SECURE=true` と、実際の HTTPS Origin を
+`SESSION_COOKIE_TRUSTED_URL` に設定します。`TRUSTED_PROXIES` には信頼できるプロキシの
+IP/CIDR だけを指定してください。
+
+次の単一コンテナコマンドは互換モードのみです。
+
 ```bash
-docker run --name NexusTok -d --restart always \
-  -p 3000:3000 \
-  -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
+mkdir -p /opt/nexustok/data /opt/nexustok/logs
+docker run --name nexustok -d --restart always \
+  -p 3030:3030 \
   -e TZ=Asia/Shanghai \
-  -v ./data:/data \
-  c1cadabob/nexustok:latest
+  -e PORT=3030 \
+  -e SESSION_SECRET_FILE=/data/session_secret \
+  -v /opt/nexustok/data:/data \
+  -v /opt/nexustok/logs:/app/logs \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  c1cadabob/nexustok:v0.2.3
 ```
 
-> **💡 パス説明:**
-> - `./data:/data` - 相対パス、データは現在のディレクトリのdataフォルダに保存されます
-> - 絶対パスを使用することもできます：`/your/custom/path:/data`
+PostgreSQL と Redis は起動しません。更新前に `.env`、`/opt/nexustok/data`、
+`/opt/nexustok/logs`、PostgreSQL named volume をバックアップしてください。
 
-</details>
+```bash
+docker compose exec -T postgres pg_dump -U root nexustok > nexustok-$(date +%F).sql
+cp .env /secure-backup/nexustok.env
+docker compose pull
+docker compose up -d
+```
 
-<details>
-<summary><strong>方法 3: 宝塔パネル</strong></summary>
+ロールバックでは直前に検証したバージョンに固定して `docker compose up -d` を実行します。
+PostgreSQL named volume は削除しないでください。
+SQLite は PostgreSQL に自動移行されないため、既存データはバックアップ後に別途検証済み
+の移行を行う必要があります。
 
-1. 宝塔パネル（**9.2.0バージョン**以上）をインストールし、アプリケーションストアで**NexusTok**を検索してインストールします。
+よくある問題は、`3030` の競合、PostgreSQL/Redis の unhealthy 状態
+（`docker compose logs postgres redis`）、空または変更された `.env` パスワード、
+データディレクトリの権限、SELinux/AppArmor、amd64/arm64 の不一致、プロキシのタイム
+アウトや SSE/WebSocket の Upgrade ヘッダー不足です。Docker socket はホストの Docker
+管理権限に相当するため、信頼できる管理者専用の環境でのみマウントしてください。
 
-📖 [画像付きチュートリアル](./docs/BT.md)
+トラブルシューティング：[FAQ](https://docs.nexustok.ai/ja/docs/support/faq)。
 
-</details>
+### 🌐 複数マシンへのデプロイ
 
-### ⚠️ マルチマシンデプロイの注意事項
+各アプリケーションノードで内蔵 PostgreSQL と Redis を起動しないでください。内部
+ネットワーク、アクセス制御、TLS で保護した共有 PostgreSQL と共有 Redis を用意します。
+全ノードで `SQL_DSN`、`REDIS_CONN_STRING`、`SESSION_SECRET`、`CRYPTO_SECRET` を同じ
+値にし、`NODE_NAME` はノードごとに一意にします。
 
-> [!WARNING]
-> - すべてのノードで同じプライマリデータベースと同じ `SESSION_SECRET` を使用してください。異なる場合、Access Token、Refresh セッション、一時認証フローを一貫して検証できません。
-> - 同じ Redis に接続するノードでは同じ `CRYPTO_SECRET` も設定してください。異なる場合、キャッシュキーのダイジェストが一致せず、共有エントリを正しく再利用できません。
+主ノードは `NODE_TYPE` を設定せず、データベース移行とシステムタスクを担当します。
+従属ノードは `NODE_TYPE=slave` を設定し、リクエスト処理のみを行います。全ノードの
+時刻を同期し、ロードバランサーのヘルスチェックに `/api/status` を使用してください。
+不健康なノードは作業前にロードバランサーから除外します。
 
-ログイン Session とユーザー単位の有効数／発行数制限では、データベースが信頼できる唯一の情報源です。Redis の Session エントリは短期キャッシュであり、TTL は `SYNC_FREQUENCY`（デフォルト 60 秒）に従い、Session の残り有効期間を超えません。
+```bash
+docker run --name nexustok-node-1 -d --restart always \
+  -p 3030:3030 \
+  --env-file /etc/nexustok/node.env \
+  -e NODE_NAME=node-1 \
+  -v /opt/nexustok/data:/data \
+  -v /opt/nexustok/logs:/app/logs \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  c1cadabob/nexustok:v0.2.3
+```
 
-| Redis トポロジー | Session 状態の伝播 | レート制限 |
-| --- | --- | --- |
-| すべてのノードで Redis を共有 | 取り消しとバージョン更新は通常即時に伝播 | Redis の制限枠はノード間で共有 |
-| ノードごとに独立した Redis | 有効な `SYNC_FREQUENCY` 以内にデータベースへフォールバックして収束。バージョンローテーション直後の新しい Token は、古いキャッシュを持つノードで一時的に 401 になる場合があります | ノードごとに独立して計数するため、クラスター全体では設定値の約ノード数倍まで許可される可能性があります |
-| Redis なし | Session の検証ごとにデータベースを直接参照 | メモリ内の制限枠はノードごとに独立 |
+`node.env` には少なくとも `SQL_DSN`、`REDIS_CONN_STRING`、`SESSION_SECRET`、
+`CRYPTO_SECRET` を記載し、従属ノードには `NODE_TYPE=slave` を追加します。主ノードの
+移行とヘルスチェック完了後、従属ノードを一台ずつ除外、更新、確認、再参加させ、最後
+にメンテナンス時間帯で主ノードを更新します。ロールバック前にデータベース移行との
+互換性を確認し、復元テスト済みの PostgreSQL バックアップを用意してください。
 
-`SYNC_FREQUENCY` を短くすると独立 Redis のキャッシュ陳腐化時間は短くなりますが、有効な SID ごと、ノードごと、TTL ごとにデータベースへの主キー照会が 1 回増えます。この保証は Session 認証の陳腐化時間を限定するものです。レート制限や Redis を使うその他のコントロールプレーンキャッシュは、引き続きトポロジーに依存します。
-
-Token、Origin 検証、PAT の契約については[ユーザー認証とログインセッション](./docs/authentication.md)を参照してください。
+共有 Redis では Session、レート制限、キャッシュ制御面を共有できます。ノードごとに
+独立した Redis を使うと伝播遅延とノード単位の制限になります。Redis を使わない場合は
+Session がデータベースへフォールバックし、レート制限はプロセス単位です。Docker
+socket、ノードのログ、`/data` は自動的に共有ストレージにはならないため、集中ログや
+共有ファイルは別途設計してください。
 
 ### 🔄 チャネルリトライとキャッシュ
 
@@ -427,48 +329,6 @@ Token、Origin 検証、PAT の契約については[ユーザー認証とログ
 - `REDIS_CONN_STRING`：Redisキャッシュ（推奨）
 - `MEMORY_CACHE_ENABLED`：メモリキャッシュ
 
----
-
-## 🔗 関連プロジェクト
-
-### 上流プロジェクト
-
-| プロジェクト | 説明 |
-|------|------|
-| [One API](https://github.com/songquanpeng/one-api) | オリジナルプロジェクトベース |
-| [Midjourney-Proxy](https://github.com/novicezk/midjourney-proxy) | Midjourneyインターフェースサポート |
-
-### 補助ツール
-
-| プロジェクト | 説明 |
-|------|------|
-| [NexusTok-key-tool](https://github.com/c1cadabob/nexustok-key-tool) | キー使用量クォータ照会ツール |
-| [NexusTok-horizon](https://github.com/c1cadabob/nexustok-horizon) | NexusTok高性能最適化版 |
-
----
-
-## 💬 ヘルプサポート
-
-### 📖 ドキュメントリソース
-
-| リソース | リンク |
-|------|------|
-| 📘 よくある質問 | [FAQ](https://docs.nexustok.ai/ja/docs/support/faq) |
-| 💬 コミュニティ交流 | [交流チャネル](https://docs.nexustok.ai/ja/docs/support/community-interaction) |
-| 🐛 問題のフィードバック | [問題フィードバック](https://docs.nexustok.ai/ja/docs/support/feedback-issues) |
-| 📚 完全なドキュメント | [公式ドキュメント](https://docs.nexustok.ai/ja/docs) |
-
-### 🤝 貢献ガイド
-
-あらゆる形の貢献を歓迎します！
-
-- 🐛 バグを報告する
-- 💡 新しい機能を提案する
-- 📝 ドキュメントを改善する
-- 🔧 コードを提出する
-
----
-
 ## 📜 ライセンス
 
 このプロジェクトは [GNU Affero General Public License v3.0 (AGPLv3)](./LICENSE) の下でライセンスされています。
@@ -477,25 +337,13 @@ Token、Origin 検証、PAT の契約については[ユーザー認証とログ
 
 お客様の組織のポリシーがAGPLv3ライセンスのソフトウェアの使用を許可していない場合、またはAGPLv3のオープンソース義務を回避したい場合は、こちらまでお問い合わせください：[support@c1cadabob.dev](mailto:support@c1cadabob.dev)
 
----
-
-## 🌟 スター履歴
-
-<div align="center">
-
-[![スター履歴チャート](https://api.star-history.com/svg?repos=c1cadabob/nexustok&type=Date)](https://star-history.com/#c1cadabob/nexustok&Date)
-
-</div>
-
----
-
 <div align="center">
 
 ### 💖 NexusTokをご利用いただきありがとうございます
 
 このプロジェクトがあなたのお役に立てたなら、ぜひ ⭐️ スターをください！
 
-**[公式ドキュメント](https://docs.nexustok.ai/ja/docs)** • **[問題フィードバック](https://github.com/c1cadabob/nexustok/issues)** • **[最新リリース](https://github.com/c1cadabob/nexustok/releases)**
+**[問題フィードバック](https://github.com/c1cadabob/nexustok/issues)** • **[最新リリース](https://github.com/c1cadabob/nexustok/releases)**
 
 <sub>❤️ で構築された c1cadaBob</sub>
 

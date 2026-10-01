@@ -26,30 +26,12 @@
   <a href="https://hub.docker.com/r/c1cadabob/nexustok">
     <img src="https://img.shields.io/badge/docker-dockerHub-blue" alt="docker">
   </a>
-  <a href="https://atomgit.com/c1cadaBob/NexusTok" target="_blank">
-    <img alt="AtomGit G-Star" src="https://atomgit.com/c1cadaBob/NexusTok/star/badge.svg"/>
-  </a>
-</p>
-
-<p align="center">
-  <a href="https://trendshift.io/repositories/20180" target="_blank">
-    <img src="https://trendshift.io/api/badge/repositories/20180" alt="c1cadaBob%2FNexusTok | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/>
-  </a>
-  <br>
-  <a href="https://hellogithub.com/repository/c1cadaBob/NexusTok" target="_blank">
-    <img src="https://api.hellogithub.com/v1/widgets/recommend.svg?rid=539ac4217e69431684ad4a0bab768811&claim_uid=tbFPfKIDHpc4TzR" alt="Featured｜HelloGitHub" style="width: 250px; height: 54px;" width="250" height="54" />
-  </a>
-  <a href="https://atomgit.com/c1cadaBob/NexusTok" target="_blank">
-    <img alt="AtomGit G-Star" src="https://atomgit.com/c1cadaBob/NexusTok/star/new_badge.svg" width="250" height="55" />
-  </a>
 </p>
 
 <p align="center">
   <a href="#-quick-start">Quick Start</a> •
   <a href="#-key-features">Key Features</a> •
-  <a href="#-deployment">Deployment</a> •
-  <a href="#-documentation">Documentation</a> •
-  <a href="#-help-support">Help</a>
+  <a href="#-deployment">Deployment</a>
 </p>
 
 </div>
@@ -65,62 +47,15 @@
 > - Users should ensure their use complies with upstream terms of service and applicable laws and regulations.
 > - When providing generative AI services to the public, users should comply with applicable regulatory requirements and fulfill all filing, licensing, content safety, real-name verification, log retention, tax, and upstream authorization obligations required by their jurisdiction.
 
----
-
-## 🤝 Trusted Partners
-
-<p align="center">
-  <em>No particular order</em>
-</p>
-
-<p align="center">
-  <a href="https://www.cherry-ai.com/" target="_blank">
-    <img src="./docs/images/cherry-studio.png" alt="Cherry Studio" height="80" />
-  </a>
-  <a href="https://bda.pku.edu.cn/" target="_blank">
-    <img src="./docs/images/pku.png" alt="Peking University" height="80" />
-  </a>
-  <a href="https://www.compshare.cn/?ytag=GPU_yy_gh_nexustok" target="_blank">
-    <img src="./docs/images/ucloud.png" alt="UCloud" height="80" />
-  </a>
-  <a href="https://www.aliyun.com/" target="_blank">
-    <img src="./docs/images/aliyun.png" alt="Alibaba Cloud" height="80" />
-  </a>
-  <a href="https://io.net/" target="_blank">
-    <img src="./docs/images/io-net.png" alt="IO.NET" height="80" />
-  </a>
-</p>
-
----
-
-## 🙏 Special Thanks
-
-<p align="center">
-  <a href="https://www.jetbrains.com/?from=NexusTok" target="_blank">
-    <img src="https://resources.jetbrains.com/storage/products/company/brand/logos/jb_beam.png" alt="JetBrains Logo" width="120" />
-  </a>
-</p>
-
-<p align="center">
-  <strong>Thanks to <a href="https://www.jetbrains.com/?from=NexusTok">JetBrains</a> for providing free open-source development license for this project</strong>
-</p>
-
----
-
 ## 🚀 Quick Start
 
 ### Using Docker Compose (Recommended)
 
 ```bash
-# Clone the project
+# Clone the project and run the production deployment
 git clone https://github.com/c1cadaBob/NexusTok.git
 cd NexusTok
-
-# Edit docker-compose.yml configuration
-nano docker-compose.yml
-
-# Start the service
-docker-compose up -d
+bash scripts/deploy.sh
 ```
 
 <details>
@@ -130,56 +65,31 @@ docker-compose up -d
 # Pull the latest image
 docker pull c1cadabob/nexustok:latest
 
-# Using SQLite (default)
+# Single-container compatibility mode (SQLite, without PostgreSQL or Redis)
 docker run --name NexusTok -d --restart always \
-  -p 3000:3000 \
+  -p 3030:3030 \
   -e TZ=Asia/Shanghai \
+  -e PORT=3030 \
+  -e SESSION_SECRET_FILE=/data/session_secret \
   -v ./data:/data \
-  c1cadabob/nexustok:latest
-
-# Using MySQL
-docker run --name NexusTok -d --restart always \
-  -p 3000:3000 \
-  -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
-  -e TZ=Asia/Shanghai \
-  -v ./data:/data \
+  -v ./logs:/app/logs \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   c1cadabob/nexustok:latest
 ```
 
-> **💡 Tip:** `-v ./data:/data` will save data in the `data` folder of the current directory, you can also change it to an absolute path like `-v /your/custom/path:/data`
+> **Tip:** The single-container command does not start PostgreSQL or Redis. Use Compose
+> for the complete production topology. SQLite is not migrated to PostgreSQL automatically.
 
 </details>
 
 ---
 
-🎉 After deployment is complete, visit `http://localhost:3000` to start using!
+🎉 After deployment is complete, visit `http://localhost:3030` to start using!
 
 > [!WARNING]
 > When operating this project as a public generative AI service or API resale service, users should first complete all required filing, licensing, content safety, real-name verification, log retention, tax, payment, and upstream authorization obligations.
 
 📖 For more deployment methods, please refer to [Deployment Guide](https://docs.nexustok.ai/en/docs/installation)
-
----
-
-## 📚 Documentation
-
-<div align="center">
-
-### 📖 [Official Documentation](https://docs.nexustok.ai/en/docs) | [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/c1cadaBob/NexusTok)
-
-</div>
-
-**Quick Navigation:**
-
-| Category | Link |
-|------|------|
-| 🚀 Deployment Guide | [Installation Documentation](https://docs.nexustok.ai/en/docs/installation) |
-| ⚙️ Environment Configuration | [Environment Variables](https://docs.nexustok.ai/en/docs/installation/config-maintenance/environment-variables) |
-| 📡 API Documentation | [API Documentation](https://docs.nexustok.ai/en/docs/api) |
-| ❓ FAQ | [FAQ](https://docs.nexustok.ai/en/docs/support/faq) |
-| 💬 Community Interaction | [Communication Channels](https://docs.nexustok.ai/en/docs/support/community-interaction) |
-
----
 
 ## ✨ Key Features
 
@@ -255,56 +165,26 @@ docker run --name NexusTok -d --restart always \
 
 </details>
 
----
-
-## 🤖 Model Support
-
-> For details, please refer to [API Documentation - Gateway Interface](https://docs.nexustok.ai/en/docs/api)
-
-| Model Type | Description | Documentation |
-|---------|------|------|
-| 🤖 OpenAI GPTs | gpt-4-gizmo-* series | - |
-| 🎨 Midjourney-Proxy | [Midjourney-Proxy(Plus)](https://github.com/novicezk/midjourney-proxy) | [Documentation](https://docs.nexustok.ai/en/api/midjourney-proxy-image) |
-| 🎵 Suno-API | [Suno API](https://github.com/Suno-API/Suno-API) | [Documentation](https://docs.nexustok.ai/en/api/suno-music) |
-| 🔄 Rerank | Cohere, Jina | [Documentation](https://docs.nexustok.ai/en/docs/api/ai-model/rerank/create-rerank) |
-| 💬 Claude | Messages format | [Documentation](https://docs.nexustok.ai/en/docs/api/ai-model/chat/create-message) |
-| 🌐 Gemini | Google Gemini format | [Documentation](https://docs.nexustok.ai/en/api/google-gemini-chat) |
-| 🔧 Dify | ChatFlow mode | - |
-| 🎯 Custom upstream | Supports configuring legally authorized upstream endpoints | - |
-
-### 📡 Supported Interfaces
-
-<details>
-<summary>View complete interface list</summary>
-
-- [Chat Interface (Chat Completions)](https://docs.nexustok.ai/en/docs/api/ai-model/chat/openai/create-chat-completion)
-- [Response Interface (Responses)](https://docs.nexustok.ai/en/docs/api/ai-model/chat/openai/create-response)
-- [Image Interface (Image)](https://docs.nexustok.ai/en/docs/api/ai-model/images/openai/v1-images-generations--post)
-- [Audio Interface (Audio)](https://docs.nexustok.ai/en/docs/api/ai-model/audio/openai/create-transcription)
-- [Video Interface (Video)](https://docs.nexustok.ai/en/docs/api/ai-model/videos/sora/createvideo)
-- [Embedding Interface (Embeddings)](https://docs.nexustok.ai/en/docs/api/ai-model/embeddings/create-embedding)
-- [Rerank Interface (Rerank)](https://docs.nexustok.ai/en/docs/api/ai-model/rerank/create-rerank)
-- [Realtime Conversation (Realtime)](https://docs.nexustok.ai/en/docs/api/ai-model/realtime/create-realtime-session)
-- [Claude Chat](https://docs.nexustok.ai/en/docs/api/ai-model/chat/create-message)
-- [Google Gemini Chat](https://docs.nexustok.ai/en/api/google-gemini-chat)
-
-</details>
-
----
-
 ## 🚢 Deployment
 
 > [!TIP]
 > **Latest Docker image:** `c1cadabob/nexustok:latest`
+>
+> **v0.2.3 image:** `c1cadabob/nexustok:v0.2.3`
 
 ### 📋 Deployment Requirements
 
 | Component | Requirement |
 |------|------|
-| **Local database** | SQLite (Docker must mount `/data` directory)|
-| **Remote database** | MySQL ≥ 5.7.8 or PostgreSQL ≥ 9.6 |
+| **Production database** | PostgreSQL 15 (the application also supports PostgreSQL ≥ 9.6) |
+| **Production cache** | Redis 7 on the internal Compose network |
+| **Compatible databases** | MySQL ≥ 5.7.8 and SQLite |
 | **Container engine** | Docker / Docker Compose |
 | **System architecture** | 64-bit only (amd64 / arm64); 32-bit systems are not supported |
+
+> Compose is the recommended production entry point. The single-container command is only
+> a SQLite/no-Redis compatibility mode. PostgreSQL and Redis are not created automatically,
+> and an existing SQLite file is never migrated to PostgreSQL automatically.
 
 ### ⚙️ Environment Variable Configuration
 
@@ -342,81 +222,111 @@ docker run --name NexusTok -d --restart always \
 
 </details>
 
-### 🔧 Deployment Methods
+### 🖥️ Single-machine deployment (PostgreSQL + Redis)
 
-<details>
-<summary><strong>Method 1: Docker Compose (Recommended)</strong></summary>
+Prepare a 64-bit Linux host with Docker Engine, Docker Compose v2, Git and `curl`. Open only
+port `3030` in the firewall, or only `80/443` when an HTTPS reverse proxy is the public entry
+point. PostgreSQL `5432` and Redis `6379` stay on the internal Compose network and must not be
+exposed publicly.
 
 ```bash
-# Clone the project
 git clone https://github.com/c1cadaBob/NexusTok.git
 cd NexusTok
-
-# Edit configuration
-nano docker-compose.yml
-
-# Start service
-docker-compose up -d
+bash scripts/deploy.sh
 ```
 
-</details>
+On the first run the script creates a `.env` with mode `0600` and random
+`POSTGRES_PASSWORD` and `REDIS_PASSWORD` values. Existing passwords are preserved. The script
+validates `docker compose config`, pulls the image, starts PostgreSQL, Redis and NexusTok, and
+waits for all three health checks.
 
-<details>
-<summary><strong>Method 2: Docker Commands</strong></summary>
-
-**Using SQLite:**
 ```bash
-docker run --name NexusTok -d --restart always \
-  -p 3000:3000 \
-  -e TZ=Asia/Shanghai \
-  -v ./data:/data \
-  c1cadabob/nexustok:latest
+docker compose ps
+curl http://127.0.0.1:3030/api/status
+curl http://127.0.0.1:3030/api/setup
 ```
 
-**Using MySQL:**
+After the status endpoint succeeds, open `http://server-address:3030`, complete the setup wizard
+and create the administrator account. A reverse proxy must support SSE, WebSocket, long-lived
+connections and the `X-Forwarded-*` headers. With HTTPS, set `SESSION_COOKIE_SECURE=true` and
+set `SESSION_COOKIE_TRUSTED_URL` to the exact HTTPS Origin. Set `TRUSTED_PROXIES` only to the
+trusted proxy IP/CIDR ranges.
+
+The standalone command below is compatibility mode only:
+
 ```bash
-docker run --name NexusTok -d --restart always \
-  -p 3000:3000 \
-  -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
+mkdir -p /opt/nexustok/data /opt/nexustok/logs
+docker run --name nexustok -d --restart always \
+  -p 3030:3030 \
   -e TZ=Asia/Shanghai \
-  -v ./data:/data \
-  c1cadabob/nexustok:latest
+  -e PORT=3030 \
+  -e SESSION_SECRET_FILE=/data/session_secret \
+  -v /opt/nexustok/data:/data \
+  -v /opt/nexustok/logs:/app/logs \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  c1cadabob/nexustok:v0.2.3
 ```
 
-> **💡 Path explanation:** 
-> - `./data:/data` - Relative path, data saved in the data folder of the current directory
-> - You can also use absolute path, e.g.: `/your/custom/path:/data`
+It does not start PostgreSQL or Redis. Before an upgrade, back up `.env`,
+`/opt/nexustok/data`, `/opt/nexustok/logs` and the PostgreSQL named volume. Prefer a consistent
+database dump:
 
-</details>
+```bash
+docker compose exec -T postgres pg_dump -U root nexustok > nexustok-$(date +%F).sql
+cp .env /secure-backup/nexustok.env
+docker compose pull
+docker compose up -d
+```
 
-<details>
-<summary><strong>Method 3: BaoTa Panel</strong></summary>
+For rollback, pin the NexusTok service to the previously verified release image, run
+`docker compose up -d`, and keep the database backup. Do not
+delete the PostgreSQL named volume. Existing SQLite data requires a separate, verified migration
+before switching to PostgreSQL.
 
-1. Install BaoTa Panel (≥ 9.2.0 version)
-2. Search for **NexusTok** in the application store
-3. One-click installation
+Common problems include port `3030` conflicts, unhealthy PostgreSQL/Redis containers
+(`docker compose logs postgres redis`), changed or empty `.env` passwords, filesystem
+permissions or SELinux/AppArmor denials, amd64/arm64 image mismatches, and reverse-proxy
+timeouts or missing Upgrade headers for SSE/WebSocket. The Docker socket grants host-level Docker
+management and should only be mounted on a trusted administrator-controlled server.
 
-📖 [Tutorial with images](./docs/BT.md)
+Troubleshooting reference: [FAQ](https://docs.nexustok.ai/en/docs/support/faq).
 
-</details>
+### 🌐 Multi-machine deployment
 
-### ⚠️ Multi-machine Deployment Considerations
+Do not start the bundled PostgreSQL and Redis on every application node. Prepare one shared
+PostgreSQL service and one shared Redis service behind private-network access controls and TLS.
+Every application node must use the same `SQL_DSN`, `REDIS_CONN_STRING`, `SESSION_SECRET` and
+`CRYPTO_SECRET`, while `NODE_NAME` must be unique.
 
-> [!WARNING]
-> - All nodes must use the same primary database and the same `SESSION_SECRET`; otherwise Access Tokens, refresh sessions, and temporary authentication flows cannot be verified consistently.
-> - Nodes connected to the same Redis must also use the same `CRYPTO_SECRET`, or their cache-key digests will differ and shared entries cannot be reused consistently.
+The primary node leaves `NODE_TYPE` unset and performs database migrations and system tasks.
+Follower nodes set `NODE_TYPE=slave` and serve requests only. Synchronize clocks on every node.
+Route traffic through a load balancer or reverse proxy and use `/api/status` as the health check;
+remove an unhealthy node before maintenance.
 
-The database is authoritative for login Sessions and for the per-user active/issuance limits. Redis Session entries are short-lived caches whose TTL follows `SYNC_FREQUENCY` (60 seconds by default) and never exceeds the Session's remaining lifetime.
+Each node can run the application against the external services with an environment file:
 
-| Redis topology | Session propagation | Rate limiting |
-| --- | --- | --- |
-| Shared Redis | Revocations and version publications normally propagate immediately | Redis limits are shared across nodes |
-| Independent Redis per node | Nodes converge from the database within the effective `SYNC_FREQUENCY`; a newly rotated token may receive a temporary 401 on a node with stale cache | Each node has its own allowance, so aggregate capacity can reach roughly the configured limit multiplied by the node count |
-| No Redis | Every Session validation reads the database | In-memory limits are independent per node |
+```bash
+docker run --name nexustok-node-1 -d --restart always \
+  -p 3030:3030 \
+  --env-file /etc/nexustok/node.env \
+  -e NODE_NAME=node-1 \
+  -v /opt/nexustok/data:/data \
+  -v /opt/nexustok/logs:/app/logs \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  c1cadabob/nexustok:v0.2.3
+```
 
-A shorter `SYNC_FREQUENCY` reduces the independent-Redis staleness window but causes one additional primary-key Session lookup per active SID, per node, per TTL. These guarantees make Session authentication bounded-stale across the supported topologies; rate limits and other Redis-backed control-plane caches remain topology-dependent.
+`node.env` must contain at least `SQL_DSN`, `REDIS_CONN_STRING`, `SESSION_SECRET` and
+`CRYPTO_SECRET`; add `NODE_TYPE=slave` on followers. After the primary has completed migrations
+and passed its health check, upgrade followers one at a time, verify them, re-add them to the
+load balancer, and handle the primary in the maintenance window. Confirm database compatibility
+before rollback and keep a tested PostgreSQL restore.
 
-See [User authentication and login sessions](./docs/authentication.md) for the token, Origin-check and PAT contracts.
+Shared Redis provides shared Session, rate-limit and cache control-plane state. Independent Redis
+instances create propagation delays and node-local limits. Without Redis, Sessions fall back to
+the database and rate limits are process-local, so cluster-wide limits are not consistent. Docker
+socket access, node-local logs and `/data` are not shared storage; centralized logs and shared
+files require a separate design.
 
 ### 🔄 Channel Retry and Cache
 
@@ -426,65 +336,13 @@ See [User authentication and login sessions](./docs/authentication.md) for the t
 - `REDIS_CONN_STRING`: Redis cache (recommended)
 - `MEMORY_CACHE_ENABLED`: Memory cache
 
----
-
-## 🔗 Related Projects
-
-### Upstream Projects
-
-| Project | Description |
-|------|------|
-| [One API](https://github.com/songquanpeng/one-api) | Original project base |
-| [Midjourney-Proxy](https://github.com/novicezk/midjourney-proxy) | Midjourney interface support |
-
-### Supporting Tools
-
-| Project | Description |
-|------|------|
-| [NexusTok-key-tool](https://github.com/c1cadabob/nexustok-key-tool) | Key quota query tool |
-| [NexusTok-horizon](https://github.com/c1cadabob/nexustok-horizon) | NexusTok high-performance optimized version |
-
----
-
-## 💬 Help Support
-
-### 📖 Documentation Resources
-
-| Resource | Link |
-|------|------|
-| 📘 FAQ | [FAQ](https://docs.nexustok.ai/en/docs/support/faq) |
-| 💬 Community Interaction | [Communication Channels](https://docs.nexustok.ai/en/docs/support/community-interaction) |
-| 🐛 Issue Feedback | [Issue Feedback](https://docs.nexustok.ai/en/docs/support/feedback-issues) |
-| 📚 Complete Documentation | [Official Documentation](https://docs.nexustok.ai/en/docs) |
-
-### 🤝 Contribution Guide
-
-Welcome all forms of contribution!
-
-- 🐛 Report Bugs
-- 💡 Propose New Features
-- 📝 Improve Documentation
-- 🔧 Submit Code
-
----
-
-## 🌟 Star History
-
-<div align="center">
-
-[![Star History Chart](https://api.star-history.com/svg?repos=c1cadabob/nexustok&type=Date)](https://star-history.com/#c1cadabob/nexustok&Date)
-
-</div>
-
----
-
 <div align="center">
 
 ### 💖 Thank you for using NexusTok
 
 If this project is helpful to you, welcome to give us a ⭐️ Star！
 
-**[Official Documentation](https://docs.nexustok.ai/en/docs)** • **[Issue Feedback](https://github.com/c1cadabob/nexustok/issues)** • **[Latest Release](https://github.com/c1cadabob/nexustok/releases)**
+**[Issue Feedback](https://github.com/c1cadabob/nexustok/issues)** • **[Latest Release](https://github.com/c1cadabob/nexustok/releases)**
 
 <sub>Built with ❤️ by c1cadaBob</sub>
 
