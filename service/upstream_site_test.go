@@ -2445,6 +2445,161 @@ func TestSub2APIAuthFlowTwoFAUsesBrowserHeaders(t *testing.T) {
 	assert.Equal(t, model.UpstreamAuthAccessToken, verified.AuthType)
 }
 
+func TestSub2APIAuthFlowResolutionNormalizesManagementBaseURL(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		if request.Method == http.MethodPost && request.URL.Path == "/api/v1/auth/login" {
+			_, _ = writer.Write([]byte(
+				`{"code":0,"data":{"access_token":"sub2-access"}}`,
+			))
+			return
+		}
+		http.NotFound(writer, request)
+	}))
+	defer server.Close()
+
+	started, err := StartPlatformSiteAuthFlow(context.Background(), 43, PlatformSiteAuthFlowStartRequest{
+		Platform: model.PlatformSub2API,
+		BaseURL:  server.URL + "/v1",
+		AuthType: model.UpstreamAuthPassword,
+		Username: "operator",
+		Password: "synthetic-password",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, server.URL, started.BaseURL)
+
+	resolution, err := ResolvePlatformSiteAuthFlow(
+		43,
+		started.FlowID,
+		0,
+		model.PlatformSub2API,
+		server.URL+"/v1",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "sub2-access", resolution.Credential.AccessToken)
+}
+
+func TestSub2APIAuthFlowTwoFAUsesLatestLoginAgreementRevision(t *testing.T) {
+	settingsRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v1/settings/public":
+			settingsRequests++
+			revision := "terms-rev-initial"
+			if settingsRequests > 1 {
+				revision = "terms-rev-latest"
+			}
+			_, _ = fmt.Fprintf(
+				writer,
+				`{"code":0,"data":{"login_agreement_enabled":true,"login_agreement_revision":"%s"}}`,
+				revision,
+			)
+		case "/api/v1/auth/login":
+			body, readErr := io.ReadAll(request.Body)
+			require.NoError(t, readErr)
+			var loginPayload map[string]any
+			require.NoError(t, common.Unmarshal(body, &loginPayload))
+			assert.Equal(t, "terms-rev-initial", loginPayload["agreed_revision"])
+			_, _ = writer.Write([]byte(
+				`{"code":0,"data":{"requires_2fa":true,"temp_token":"sub2-temp"}}`,
+			))
+		case "/api/v1/auth/login/2fa":
+			body, readErr := io.ReadAll(request.Body)
+			require.NoError(t, readErr)
+			var verifyPayload map[string]any
+			require.NoError(t, common.Unmarshal(body, &verifyPayload))
+			assert.Equal(t, "terms-rev-latest", verifyPayload["agreed_revision"])
+			assert.Equal(t, "sub2-temp", verifyPayload["temp_token"])
+			assert.Equal(t, "654321", verifyPayload["totp_code"])
+			_, _ = writer.Write([]byte(
+				`{"code":0,"data":{"access_token":"sub2-access","refresh_token":"sub2-refresh","expires_in":3600,"user":{"id":23}}}`,
+			))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	started, err := StartPlatformSiteAuthFlow(context.Background(), 41, PlatformSiteAuthFlowStartRequest{
+		Platform: model.PlatformSub2API,
+		BaseURL:  server.URL,
+		AuthType: model.UpstreamAuthPassword,
+		Username: "operator@example.com",
+		Password: "synthetic-password",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, PlatformSiteAuthFlowStatusTwoFactorRequired, started.Status)
+	t.Cleanup(func() {
+		_ = DeletePlatformSiteAuthFlow(41, started.FlowID)
+	})
+
+	verified, err := VerifyPlatformSiteAuthFlow(
+		context.Background(),
+		41,
+		started.FlowID,
+		PlatformSiteAuthFlowVerifyRequest{Code: "654321"},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, PlatformSiteAuthFlowStatusAuthenticated, verified.Status)
+	assert.Equal(t, 2, settingsRequests)
+}
+
+func TestSub2APIAuthFlowTwoFAAgreementRejectionPersistsDedicatedStatus(t *testing.T) {
+	settingsRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v1/settings/public":
+			settingsRequests++
+			_, _ = writer.Write([]byte(
+				`{"code":0,"data":{"login_agreement_enabled":true,"login_agreement_revision":"terms-rev"}}`,
+			))
+		case "/api/v1/auth/login":
+			_, _ = writer.Write([]byte(
+				`{"code":0,"data":{"requires_2fa":true,"temp_token":"sub2-temp"}}`,
+			))
+		case "/api/v1/auth/login/2fa":
+			writer.WriteHeader(http.StatusBadRequest)
+			_, _ = writer.Write([]byte(
+				`{"code":400,"message":"agreement required","detail":"upstream-secret-response"}`,
+			))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	started, err := StartPlatformSiteAuthFlow(context.Background(), 42, PlatformSiteAuthFlowStartRequest{
+		Platform: model.PlatformSub2API,
+		BaseURL:  server.URL,
+		AuthType: model.UpstreamAuthPassword,
+		Username: "operator@example.com",
+		Password: "synthetic-password",
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = DeletePlatformSiteAuthFlow(42, started.FlowID)
+	})
+
+	_, err = VerifyPlatformSiteAuthFlow(
+		context.Background(),
+		42,
+		started.FlowID,
+		PlatformSiteAuthFlowVerifyRequest{Code: "654321"},
+	)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrSub2APILoginAgreement)
+	assert.NotContains(t, err.Error(), "upstream-secret-response")
+	assert.NotContains(t, err.Error(), "synthetic-password")
+	assert.Equal(t, 2, settingsRequests)
+
+	record, err := getPlatformSiteAuthFlowRecord(started.FlowID)
+	require.NoError(t, err)
+	assert.Equal(t, PlatformSiteAuthFlowStatusLoginAgreementRequired, record.Status)
+	assert.Zero(t, record.CodeAttempts)
+}
+
 func TestNewAPIAdminSnapshotMergesAccountAndChannelModelsAndCapabilities(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
@@ -3014,6 +3169,10 @@ func TestSub2APILoginTriesEmailThenUsernameBody(t *testing.T) {
 func TestSub2APILoginStopsOnSecurityVerification(t *testing.T) {
 	loginRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodGet && request.URL.Path == "/api/v1/settings/public" {
+			http.NotFound(writer, request)
+			return
+		}
 		if request.Method == http.MethodPost && request.URL.Path == "/api/v1/auth/login" {
 			loginRequests++
 			writer.Header().Set("Content-Type", "application/json")
@@ -3591,6 +3750,302 @@ func TestSub2APILoginUsesUsernameBody(t *testing.T) {
 	assert.Equal(t, 1, loginRequests)
 	require.NotNil(t, session)
 	assert.Equal(t, "Bearer username-session", session.Headers.Get("Authorization"))
+}
+
+func TestSub2APILoginAgreementRevisionIsSentForAllCredentialBodies(t *testing.T) {
+	loginBodies := make([]map[string]any, 0, 3)
+	settingsRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v1/settings/public":
+			settingsRequests++
+			_, _ = writer.Write([]byte(
+				`{"code":0,"data":{"login_agreement_enabled":true,"login_agreement_revision":"terms-rev-2026-10-01"}}`,
+			))
+		case "/api/v1/auth/login":
+			body, readErr := io.ReadAll(request.Body)
+			require.NoError(t, readErr)
+			var loginPayload map[string]any
+			require.NoError(t, common.Unmarshal(body, &loginPayload))
+			loginBodies = append(loginBodies, loginPayload)
+			if len(loginBodies) < 3 {
+				writer.WriteHeader(http.StatusUnauthorized)
+				_, _ = writer.Write([]byte(`{"code":401,"message":"invalid credentials"}`))
+				return
+			}
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"access_token":"sub2api-session"}}`))
+		case "/api/v1/auth/me":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"balance":1}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	session, err := NewSub2APIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType: model.UpstreamAuthPassword,
+			Username: "operator@example.com",
+			Password: "synthetic-password",
+		},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, session)
+	require.Len(t, loginBodies, 3)
+	assert.Equal(t, 1, settingsRequests)
+	for _, body := range loginBodies {
+		assert.Equal(t, "terms-rev-2026-10-01", body["agreed_revision"])
+		assert.Equal(t, "synthetic-password", body["password"])
+		_, hasNotInCNConfirmed := body["not_in_cn_confirmed"]
+		assert.False(t, hasNotInCNConfirmed)
+	}
+	assert.Equal(t, "operator@example.com", loginBodies[0]["email"])
+	_, firstHasUsername := loginBodies[0]["username"]
+	assert.False(t, firstHasUsername)
+	assert.Equal(t, "operator@example.com", loginBodies[1]["username"])
+	_, secondHasEmail := loginBodies[1]["email"]
+	assert.False(t, secondHasEmail)
+	assert.Equal(t, "operator@example.com", loginBodies[2]["username"])
+	assert.Equal(t, "operator@example.com", loginBodies[2]["email"])
+}
+
+func TestSub2APILoginAgreementRevisionFailureFallsBackToLegacyLogin(t *testing.T) {
+	testCases := []struct {
+		name           string
+		settingsStatus int
+		settingsBody   string
+		networkError   bool
+	}{
+		{
+			name:           "disabled",
+			settingsStatus: http.StatusOK,
+			settingsBody:   `{"code":0,"data":{"login_agreement_enabled":false,"login_agreement_revision":"terms-rev"}}`,
+		},
+		{
+			name:           "revision missing",
+			settingsStatus: http.StatusOK,
+			settingsBody:   `{"code":0,"data":{"login_agreement_enabled":true}}`,
+		},
+		{
+			name:           "revision empty",
+			settingsStatus: http.StatusOK,
+			settingsBody:   `{"code":0,"data":{"login_agreement_enabled":true,"login_agreement_revision":"  "}}`,
+		},
+		{
+			name:           "not found",
+			settingsStatus: http.StatusNotFound,
+			settingsBody:   `{"code":404,"message":"route not found"}`,
+		},
+		{
+			name:           "invalid response",
+			settingsStatus: http.StatusOK,
+			settingsBody:   `not-json`,
+		},
+		{
+			name:         "network error",
+			networkError: true,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			loginRequests := 0
+			handleRequest := func(request *http.Request) (*http.Response, error) {
+				switch request.URL.Path {
+				case "/":
+					return platformSiteJSONResponse(http.StatusNotFound, `{"code":404}`), nil
+				case "/api/v1/settings/public":
+					if testCase.networkError {
+						return nil, errors.New("settings network unavailable")
+					}
+					return platformSiteJSONResponse(
+						testCase.settingsStatus,
+						testCase.settingsBody,
+					), nil
+				case "/api/v1/auth/login":
+					loginRequests++
+					body, readErr := io.ReadAll(request.Body)
+					require.NoError(t, readErr)
+					var loginPayload map[string]any
+					require.NoError(t, common.Unmarshal(body, &loginPayload))
+					_, hasAgreedRevision := loginPayload["agreed_revision"]
+					assert.False(t, hasAgreedRevision)
+					return platformSiteJSONResponse(
+						http.StatusOK,
+						`{"code":0,"data":{"access_token":"legacy-session"}}`,
+					), nil
+				case "/api/v1/auth/me":
+					return platformSiteJSONResponse(
+						http.StatusOK,
+						`{"code":0,"data":{"balance":1}}`,
+					), nil
+				default:
+					return platformSiteJSONResponse(http.StatusNotFound, `{"code":404}`), nil
+				}
+			}
+
+			var (
+				client  *http.Client
+				baseURL string
+				server  *httptest.Server
+			)
+			if testCase.networkError {
+				client = &http.Client{Transport: platformSiteRoundTripFunc(handleRequest)}
+				baseURL = "https://example.com"
+			} else {
+				server = httptest.NewServer(http.HandlerFunc(func(
+					writer http.ResponseWriter,
+					request *http.Request,
+				) {
+					response, responseErr := handleRequest(request)
+					require.NoError(t, responseErr)
+					writer.Header().Set("Content-Type", "application/json")
+					writer.WriteHeader(response.StatusCode)
+					data, readErr := io.ReadAll(response.Body)
+					require.NoError(t, readErr)
+					_, _ = writer.Write(data)
+					_ = response.Body.Close()
+				}))
+				t.Cleanup(server.Close)
+				client = server.Client()
+				baseURL = server.URL
+			}
+
+			_, err := NewSub2APIAdapter(client).Authenticate(
+				context.Background(),
+				baseURL,
+				model.PlatformSiteCredential{
+					AuthType: model.UpstreamAuthPassword,
+					Username: "operator@example.com",
+					Password: "synthetic-password",
+				},
+			)
+			require.NoError(t, err)
+			assert.Equal(t, 1, loginRequests)
+		})
+	}
+}
+
+func TestSub2APILoginAgreementStopsCredentialFallbackAndIsNotCredentialError(t *testing.T) {
+	loginRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v1/settings/public":
+			_, _ = writer.Write([]byte(
+				`{"code":0,"data":{"login_agreement_enabled":true,"login_agreement_revision":"terms-rev"}}`,
+			))
+		case "/api/v1/auth/login":
+			loginRequests++
+			writer.WriteHeader(http.StatusBadRequest)
+			_, _ = writer.Write([]byte(
+				`{"code":400,"message":"agreement required","detail":"upstream-secret-response"}`,
+			))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	_, err := NewSub2APIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType: model.UpstreamAuthPassword,
+			Username: "operator@example.com",
+			Password: "synthetic-password",
+		},
+	)
+	require.Error(t, err)
+	assert.Equal(t, 1, loginRequests)
+	assert.ErrorIs(t, err, ErrSub2APILoginAgreement)
+	assert.NotErrorIs(t, err, ErrPlatformSiteCredentials)
+	assert.NotErrorIs(t, err, ErrPlatformSiteSecurity)
+	message := SafePlatformSiteError(err)
+	assert.Contains(t, message, "已尝试提交当前服务条款版本")
+	assert.NotContains(t, message, "synthetic-password")
+	assert.NotContains(t, message, "upstream-secret-response")
+	assert.NotContains(t, message, "Cookie")
+	assert.NotContains(t, message, "Access Token")
+	assert.NotContains(t, message, "Refresh Token")
+}
+
+func TestSub2APILoginAgreementMarkerPrecedesSecurityVerification(t *testing.T) {
+	loginRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/v1/settings/public":
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(
+				`{"code":0,"data":{"login_agreement_enabled":true,"login_agreement_revision":"terms-rev"}}`,
+			))
+		case "/api/v1/auth/login":
+			loginRequests++
+			writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = writer.Write([]byte(
+				`<html><body>service terms agreement required</body></html>`,
+			))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	_, err := NewSub2APIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType: model.UpstreamAuthPassword,
+			Username: "operator@example.com",
+			Password: "synthetic-password",
+		},
+	)
+	require.Error(t, err)
+	assert.Equal(t, 1, loginRequests)
+	assert.ErrorIs(t, err, ErrSub2APILoginAgreement)
+	assert.NotErrorIs(t, err, ErrPlatformSiteSecurity)
+}
+
+func TestNewAPILoginDoesNotReadSub2APIPublicSettingsOrSendAgreementRevision(t *testing.T) {
+	settingsRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v1/settings/public":
+			settingsRequests++
+			t.Fatalf("New API 登录不应请求 Sub2API 公开设置")
+		case "/api/user/login":
+			body, readErr := io.ReadAll(request.Body)
+			require.NoError(t, readErr)
+			var loginPayload map[string]any
+			require.NoError(t, common.Unmarshal(body, &loginPayload))
+			_, hasAgreedRevision := loginPayload["agreed_revision"]
+			assert.False(t, hasAgreedRevision)
+			_, _ = writer.Write([]byte(
+				`{"success":true,"data":{"token":"new-api-session"}}`,
+			))
+		case "/api/user/self":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"quota":1}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	_, err := NewNewAPIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType: model.UpstreamAuthPassword,
+			Username: "operator@example.com",
+			Password: "synthetic-password",
+		},
+	)
+	require.NoError(t, err)
+	assert.Zero(t, settingsRequests)
 }
 
 func TestNewAPILoginDistinguishesHTTP200InteractiveAndCredentialFailures(t *testing.T) {
@@ -4477,6 +4932,319 @@ func TestSyncPlatformSiteFailurePreservesLastSuccessfulSnapshot(t *testing.T) {
 	var preservedAbility model.UpstreamKeyAbility
 	require.NoError(t, db.Where("upstream_key_id = ?", failedKey.ID).First(&preservedAbility).Error)
 	assert.Equal(t, savedAbility.Model, preservedAbility.Model)
+}
+
+func TestSyncPlatformSiteLoginAgreementFailurePreservesLastSuccessfulSnapshot(t *testing.T) {
+	previousDB := model.DB
+	previousSecret := common.CryptoSecret
+	previousMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.CryptoSecret = "upstream-site-login-agreement-test-secret"
+	common.MemoryCacheEnabled = false
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&model.Channel{},
+		&model.Ability{},
+		&model.PlatformSiteAccount{},
+		&model.PlatformSiteIdentity{},
+		&model.PlatformSiteGroup{},
+		&model.PlatformSiteEndpoint{},
+		&model.PlatformSiteEndpointCapability{},
+		&model.PlatformSiteResourceSync{},
+		&model.UpstreamKey{},
+		&model.UpstreamKeyAbility{},
+	))
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = previousDB
+		common.CryptoSecret = previousSecret
+		common.MemoryCacheEnabled = previousMemoryCacheEnabled
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	loginRequests := 0
+	settingsRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v1/settings/public":
+			settingsRequests++
+			if loginRequests == 0 {
+				_, _ = writer.Write([]byte(
+					`{"code":0,"data":{"login_agreement_enabled":false,"login_agreement_revision":""}}`,
+				))
+				return
+			}
+			_, _ = writer.Write([]byte(
+				`{"code":0,"data":{"login_agreement_enabled":true,"login_agreement_revision":"terms-rev"}}`,
+			))
+		case "/api/v1/auth/login":
+			loginRequests++
+			if loginRequests > 1 {
+				writer.WriteHeader(http.StatusBadRequest)
+				_, _ = writer.Write([]byte(
+					`{"code":400,"message":"agreement required","detail":"upstream-secret-response"}`,
+				))
+				return
+			}
+			_, _ = writer.Write([]byte(
+				`{"code":0,"data":{"access_token":"session-token"}}`,
+			))
+		case "/api/v1/auth/me":
+			_, _ = writer.Write([]byte(
+				`{"code":0,"data":{"id":7,"balance":2,"used_quota":3}}`,
+			))
+		case "/api/v1/user/profile":
+			http.NotFound(writer, request)
+		case "/api/v1/groups/available":
+			_, _ = writer.Write([]byte(`{"code":0,"data":[]}`))
+		case "/api/v1/groups/rates":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{}}`))
+		case "/api/v1/usage/dashboard/stats", "/api/v1/usage/stats":
+			http.NotFound(writer, request)
+		case "/api/v1/keys":
+			_, _ = writer.Write([]byte(
+				`{"code":0,"data":{"items":[{"id":"key-1","name":"primary","key":"sk-stable","models":["gpt-4o"],"quota_used":4}],"total":1,"page_size":100}}`,
+			))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	channel := &model.Channel{
+		Name:         "sub2api-login-agreement",
+		Status:       common.ChannelStatusEnabled,
+		UpstreamKind: model.UpstreamKindPlatformSite,
+		Group:        "default",
+	}
+	require.NoError(t, db.Create(channel).Error)
+	credentialCiphertext, err := model.EncryptPlatformSiteCredential(model.PlatformSiteCredential{
+		AuthType: model.UpstreamAuthPassword,
+		Username: "operator@example.com",
+		Password: "synthetic-password",
+	})
+	require.NoError(t, err)
+	account := &model.PlatformSiteAccount{
+		ChannelID:            channel.Id,
+		Platform:             model.PlatformSub2API,
+		BaseURL:              server.URL,
+		AuthType:             model.UpstreamAuthPassword,
+		CredentialCiphertext: credentialCiphertext,
+		CredentialKeyVersion: "v1",
+		ConversionRatio:      0.1,
+		SyncStatus:           model.UpstreamSiteSyncIdle,
+	}
+	require.NoError(t, db.Create(account).Error)
+
+	require.NoError(t, SyncUpstreamSite(context.Background(), channel.Id))
+	var savedAccount model.PlatformSiteAccount
+	require.NoError(t, db.First(&savedAccount, account.ID).Error)
+	assert.Equal(t, model.UpstreamSiteSyncSuccess, savedAccount.SyncStatus)
+	assert.Equal(t, model.PlatformSiteAuthStatusAuthenticated, savedAccount.AuthStatus)
+	assert.NotZero(t, savedAccount.LastSyncAt)
+	successfulSyncAt := savedAccount.LastSyncAt
+	successfulBalance := savedAccount.Balance
+	successfulUsedQuota := savedAccount.UsedQuota
+
+	var savedKey model.UpstreamKey
+	require.NoError(t, db.Where(
+		"channel_id = ? AND external_id = ?",
+		channel.Id,
+		"key-1",
+	).First(&savedKey).Error)
+	oldKeyCiphertext := savedKey.SecretCiphertext
+	oldKeyModels := savedKey.Models
+
+	err = SyncUpstreamSite(context.Background(), channel.Id)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrSub2APILoginAgreement)
+	assert.Equal(t, 2, loginRequests)
+	assert.Equal(t, 2, settingsRequests)
+
+	require.NoError(t, db.First(&savedAccount, account.ID).Error)
+	assert.Equal(t, model.UpstreamSiteSyncFailed, savedAccount.SyncStatus)
+	assert.Equal(t, model.PlatformSiteAuthStatusLoginAgreementRequired, savedAccount.AuthStatus)
+	assert.Equal(t, successfulSyncAt, savedAccount.LastSyncAt)
+	assert.Equal(t, successfulBalance, savedAccount.Balance)
+	assert.Equal(t, successfulUsedQuota, savedAccount.UsedQuota)
+	assert.Equal(t, 1, savedAccount.ConsecutiveFailures)
+	assert.Contains(t, savedAccount.AuthStatusReason, "已尝试提交当前服务条款版本")
+	assert.NotContains(t, savedAccount.AuthStatusReason, "synthetic-password")
+	assert.NotContains(t, savedAccount.AuthStatusReason, "upstream-secret-response")
+
+	require.NoError(t, db.First(&savedKey, savedKey.ID).Error)
+	assert.Equal(t, oldKeyCiphertext, savedKey.SecretCiphertext)
+	assert.Equal(t, oldKeyModels, savedKey.Models)
+}
+
+func TestSyncPlatformSiteLoginAgreementStatusDatabaseMatrix(t *testing.T) {
+	tests := []struct {
+		name      string
+		env       string
+		dbType    common.DatabaseType
+		dialector func(string) gorm.Dialector
+		dsn       func(*testing.T) string
+	}{
+		{
+			name:   "sqlite",
+			dbType: common.DatabaseTypeSQLite,
+			dialector: func(dsn string) gorm.Dialector {
+				return sqlite.Open(dsn)
+			},
+			dsn: func(t *testing.T) string {
+				t.Helper()
+				return fmt.Sprintf(
+					"file:%s?mode=memory&cache=shared",
+					strings.ReplaceAll(t.Name(), "/", "_"),
+				)
+			},
+		},
+		{
+			name:      "mysql",
+			env:       "TEST_UPSTREAM_SITE_MYSQL_DSN",
+			dbType:    common.DatabaseTypeMySQL,
+			dialector: func(dsn string) gorm.Dialector { return mysql.Open(dsn) },
+		},
+		{
+			name:   "postgres",
+			env:    "TEST_UPSTREAM_SITE_POSTGRES_DSN",
+			dbType: common.DatabaseTypePostgreSQL,
+			dialector: func(dsn string) gorm.Dialector {
+				return postgres.New(postgres.Config{
+					DSN:                  dsn,
+					PreferSimpleProtocol: true,
+				})
+			},
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			dsn := ""
+			if testCase.dsn != nil {
+				dsn = testCase.dsn(t)
+			} else {
+				dsn = strings.TrimSpace(os.Getenv(testCase.env))
+				if dsn == "" {
+					t.Skip(testCase.env + " 未配置")
+				}
+				assertScratchDatabaseDSN(t, dsn)
+			}
+
+			prefix := fmt.Sprintf("la_%d_", time.Now().UnixNano())
+			db, err := gorm.Open(testCase.dialector(dsn), &gorm.Config{
+				NamingStrategy: schema.NamingStrategy{TablePrefix: prefix},
+			})
+			require.NoError(t, err)
+			sqlDB, err := db.DB()
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+			t.Cleanup(func() {
+				_ = db.Migrator().DropTable(&model.PlatformSiteAccount{}, &model.Channel{})
+			})
+			require.NoError(t, db.AutoMigrate(
+				&model.Channel{},
+				&model.PlatformSiteAccount{},
+			))
+
+			versionQuery := "select version()"
+			if testCase.name == "sqlite" {
+				versionQuery = "select sqlite_version()"
+			}
+			var version string
+			require.NoError(t, db.Raw(versionQuery).Scan(&version).Error)
+			t.Logf("database: %s", version)
+
+			previousDB := model.DB
+			previousMainType := common.MainDatabaseType()
+			previousLogType := common.LogDatabaseType()
+			previousSecret := common.CryptoSecret
+			model.DB = db
+			common.SetDatabaseTypes(testCase.dbType, testCase.dbType)
+			common.CryptoSecret = "upstream-site-login-agreement-matrix-secret"
+			t.Cleanup(func() {
+				model.DB = previousDB
+				common.SetDatabaseTypes(previousMainType, previousLogType)
+				common.CryptoSecret = previousSecret
+			})
+
+			server := httptest.NewServer(http.HandlerFunc(func(
+				writer http.ResponseWriter,
+				request *http.Request,
+			) {
+				writer.Header().Set("Content-Type", "application/json")
+				if request.Method == http.MethodGet &&
+					request.URL.Path == "/api/v1/settings/public" {
+					_, _ = writer.Write([]byte(
+						`{"code":0,"data":{"login_agreement_enabled":true,"login_agreement_revision":"terms-rev"}}`,
+					))
+					return
+				}
+				if request.Method == http.MethodPost &&
+					request.URL.Path == "/api/v1/auth/login" {
+					writer.WriteHeader(http.StatusBadRequest)
+					_, _ = writer.Write([]byte(
+						`{"code":400,"message":"agreement required"}`,
+					))
+					return
+				}
+				http.NotFound(writer, request)
+			}))
+			t.Cleanup(server.Close)
+
+			priority := int64(1)
+			channel := &model.Channel{
+				Name:         "login-agreement-matrix",
+				Status:       common.ChannelStatusEnabled,
+				UpstreamKind: model.UpstreamKindPlatformSite,
+				Group:        "default",
+				Priority:     &priority,
+			}
+			require.NoError(t, db.Create(channel).Error)
+			credentialCiphertext, err := model.EncryptPlatformSiteCredential(
+				model.PlatformSiteCredential{
+					AuthType: model.UpstreamAuthPassword,
+					Username: "operator@example.com",
+					Password: "synthetic-password",
+				},
+			)
+			require.NoError(t, err)
+			account := &model.PlatformSiteAccount{
+				ChannelID:            channel.Id,
+				Platform:             model.PlatformSub2API,
+				BaseURL:              server.URL,
+				AuthType:             model.UpstreamAuthPassword,
+				CredentialCiphertext: credentialCiphertext,
+				CredentialKeyVersion: "v1",
+				Balance:              8.5,
+				UsedQuota:            21,
+				LastSyncAt:           1_700_000_000,
+				SyncStatus:           model.UpstreamSiteSyncSuccess,
+				ConsecutiveFailures:  3,
+			}
+			require.NoError(t, db.Create(account).Error)
+
+			err = SyncUpstreamSite(context.Background(), channel.Id)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrSub2APILoginAgreement)
+
+			var saved model.PlatformSiteAccount
+			require.NoError(t, db.First(&saved, account.ID).Error)
+			assert.Equal(t, model.UpstreamSiteSyncFailed, saved.SyncStatus)
+			assert.Equal(t, model.PlatformSiteAuthStatusLoginAgreementRequired, saved.AuthStatus)
+			assert.Contains(t, saved.AuthStatusReason, "已尝试提交当前服务条款版本")
+			assert.NotContains(t, saved.AuthStatusReason, "synthetic-password")
+			assert.Equal(t, 4, saved.ConsecutiveFailures)
+			assert.Equal(t, int64(1_700_000_000), saved.LastSyncAt)
+			assert.Equal(t, 8.5, saved.Balance)
+			assert.Equal(t, int64(21), saved.UsedQuota)
+		})
+	}
 }
 
 func TestPersistPlatformSiteSnapshotRebuildsAbilitiesAndAutoDisablesUnavailableKeys(t *testing.T) {

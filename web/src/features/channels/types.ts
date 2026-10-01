@@ -489,6 +489,7 @@ export type PlatformSiteAuthStatus =
   | 'two_factor_required'
   | 'secure_verification_required'
   | 'credentials_invalid'
+  | 'login_agreement_required'
   | 'expired'
   | 'reauth_required'
   | 'session_limit'

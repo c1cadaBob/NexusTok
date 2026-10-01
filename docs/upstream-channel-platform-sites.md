@@ -1,7 +1,7 @@
 # 上游渠道与平台站点设计
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-30
+> 事实基线日期：2026-10-01
 > 主要代码来源：`model/upstream_channel.go`、`model/routing_key.go`、`service/upstream_site.go`、`controller/upstream_channel.go`、`controller/channel-test.go`
 > 关联架构文档：[`docs/architecture/relay-routing-and-conversion.md`](architecture/relay-routing-and-conversion.md)、[`docs/architecture/provider-capability-matrix.md`](architecture/provider-capability-matrix.md)、[`docs/architecture/data-cache-and-background-jobs.md`](architecture/data-cache-and-background-jobs.md)、[`平台站点资源获取比较`](platform-site-resource-acquisition-comparison.md)
 
@@ -356,6 +356,43 @@ Sub2API 普通用户接口如果只能返回掩码密钥，不会伪造真实密
 密钥时不再请求详情；只有密钥缺失或掩码时才读取 `/api/v1/keys/{id}`。无法取得真实
 密钥的新记录会自动禁用；已有密钥保留旧密文并继续按同步状态过滤。
 
+### 4.1 2026-10-01 Sub2API 登录服务条款兼容
+
+**变更前**
+
+- Sub2API 账号密码登录没有读取公开服务条款设置，遇到启用登录条款的部署时只能按旧
+  协议提交主体和密码；
+- 二次验证阶段不会重新读取条款版本，登录前后条款版本变化或条款检查延迟到
+  `/api/v1/auth/login/2fa` 的部署无法兼容；
+- 条款拒绝可能被归入普通凭据错误或安全验证错误，后台同步状态无法区分条款要求，
+  也没有单独说明快照保留边界。
+
+**变更后**
+
+- 仅 Sub2API 的账号密码登录在已规范化且已通过 SSRF、重定向和渠道代理校验的管理地址
+  上，复用当前平台 Session 的 HTTP Client、CookieJar、超时和重定向策略读取
+  `GET /api/v1/settings/public`；
+- 只有响应中的 `login_agreement_enabled` 严格为 `true`，且
+  `login_agreement_revision` 是非空字符串时，才向每个邮箱、用户名和混合主体候选的
+  `POST /api/v1/auth/login` 增加 `agreed_revision`。设置接口失败、404、网络错误、响应
+  格式异常、条款关闭或 revision 缺失均回退旧登录请求，主体顺序和仅在明确凭据错误或
+  HTTP 401 时重试的规则不变；
+- 如果初次登录返回 2FA challenge，验证前重新读取公开设置，并把当时最新的
+  `agreed_revision` 发送到 `POST /api/v1/auth/login/2fa`。不在 NexusTok 本地持久化
+  “已同意”记录，不接受客户端传入的条款版本，不发送未由参考源确认的
+  `not_in_cn_confirmed`；
+- Sub2API 条款 marker（包括 `login_agreement`、`agreed_revision`、`terms of service`、
+  `service terms`、`agreement required`、`accept terms`、`agree to terms` 和
+  `policy acceptance`）优先归类为 `login_agreement_required`，不触发邮箱、用户名或
+  混合主体回退，也不归类为账号密码错误或安全验证错误。New API 不读取该公开设置接口、
+  不发送 `agreed_revision`，也不推断或发送同名字段；
+- 条款拒绝通过 `ErrSub2APILoginAgreement` 和脱敏中文提示返回，提示已尝试提交当前
+  条款版本但上游仍拒绝，并引导检查上游条款配置或使用浏览器采集登录态；
+- 后台同步遇到条款拒绝时写入 `sync_status=failed`、
+  `auth_status=login_agreement_required`、脱敏 `auth_status_reason`，递增连续失败
+  次数；不清理现有密钥、模型能力、余额或最近成功快照。本次不新增数据库表、字段或
+  迁移，前端复用资源面板现有危险状态样式。
+
 ## 5. 同步任务
 
 - 保存平台站点后排队一次初始同步。
@@ -367,6 +404,9 @@ Sub2API 普通用户接口如果只能返回掩码密钥，不会伪造真实密
 - 同步开始只切换为 `running`，失败时只记录 `failed`、脱敏错误和连续失败次数；
   不删除旧密钥、不清理旧模型能力、不标记旧密钥 `missing`、不覆盖旧余额，
   并继续复用最近一次成功快照。
+- 账号密码同步被 Sub2API 服务条款拒绝时，额外写入
+  `auth_status=login_agreement_required`；该状态与 `credentials_invalid`、
+  `secure_verification_required`、权限不足和资源失败分开处理，且不能触发主体回退。
 - 单个子密钥的模型能力获取失败时保留最近一次模型快照，但设置
   `models_synced=false` 并自动禁用该子密钥；新密钥没有真实能力时只创建为
   不可路由记录。
@@ -451,6 +491,9 @@ POST  /api/channel/:id/upstream-resources/sync
 
 失败时返回脱敏错误，保留最近一次成功余额、模型和密钥快照，不把上游响应正文
 或凭据内容传递给前端。
+
+平台站点认证失败提示会区分 Sub2API 服务条款要求；条款拒绝只说明 NexusTok 已尝试
+提交公开设置提供的当前 revision，不代表 NexusTok 代替用户完成或记录法律同意。
 
 `routable_key_count` 只统计父渠道启用、平台快照可用、子密钥状态可路由、
 模型能力已确认且实际密钥能够解密的子密钥。无法解密的历史密钥、缺少模型能力
@@ -582,7 +625,9 @@ bun run build
 
 认证流程测试必须覆盖 2FA challenge、错误次数、过期、重放、管理员/Origin/平台
 绑定、New API 两种刷新形态、现代 Bundle 不完整拒绝降级、Sub2API 轮换不确定结果、
-敏感字段脱敏和安全验证拒绝读取密钥时的旧快照保留。数据库模型变更必须实际验证
+Sub2API 条款版本读取失败回退、初次登录和 2FA 的最新 revision、条款错误不触发主体
+回退、`login_agreement_required` 状态和敏感字段脱敏，以及安全验证拒绝读取密钥时的
+旧快照保留。数据库模型变更必须实际验证
 SQLite、MySQL 和 PostgreSQL 的新建、升级、幂等迁移、索引约束、删除清理与事务回滚；
 未完成矩阵时不得声明数据库兼容已完成。
 
@@ -595,6 +640,7 @@ New API Passkey/WebAuthn 和上游安全证明的自动完成能力。
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-26 | 认证与资源同步基线 | 账号密码遇到 2FA 时只返回普通认证错误；快照主要覆盖余额、模型和密钥 | 增加短期认证流程、两类会话刷新契约、资源级失败/快照保留、管理/Relay 地址分离和新增资源接口设计基线 | NewAPI/Sub2API 认证、同步、管理端和测试 | 参考源路由核对；`service/upstream_site*.go`、`controller/upstream_channel.go`、参考项目认证实现 |
+| 2026-10-01 | Sub2API 登录服务条款兼容 | Sub2API 账号密码登录未读取公开条款设置，2FA 不携带最新版本，条款拒绝与凭据/安全验证状态边界不清 | 仅 Sub2API 密码登录按 `GET /api/v1/settings/public` 的启用标记和非空 revision 可选发送 `agreed_revision`；设置失败回退旧协议，2FA 重新读取，条款拒绝独立分类并保留最近成功快照；New API 不读取或发送该字段，不发送 `not_in_cn_confirmed`，不新增数据库结构 | Sub2API 认证、2FA、后台同步状态、快照和资源面板 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go`；Sub2API 参考源公开 DTO；SQLite 3.50.4、MySQL 8.2.0、PostgreSQL 15.19 矩阵 |
 
 ### 10.1 2026-09-26 实现校准
 

@@ -21,6 +21,7 @@ import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import { handleServerError } from '@/lib/handle-server-error'
 import { requireServerSuccess } from '@/lib/server-error-message'
+import { cn } from '@/lib/utils'
 
 import { getPlatformSiteResources, syncPlatformSiteResources } from '../api'
 import type {
@@ -50,6 +51,7 @@ function statusVariant(
   if (status === 'partial' || status === 'stale') return 'warning'
   if (
     status === 'secure_verification_required' ||
+    status === 'login_agreement_required' ||
     status === 'reauth_required' ||
     status === 'rate_limited'
   ) {
@@ -427,13 +429,28 @@ export function PlatformSiteResourcesPanel(
       </div>
 
       {resources.auth_status && resources.auth_status !== 'authenticated' && (
-        <div className='border-warning/40 bg-warning/10 flex gap-2 rounded-md border p-3 text-sm'>
+        <div
+          className={cn(
+            'flex gap-2 rounded-md border p-3 text-sm',
+            resources.auth_status === 'login_agreement_required'
+              ? 'border-destructive/40 bg-destructive/10'
+              : 'border-warning/40 bg-warning/10'
+          )}
+        >
           <ShieldAlert
-            className='text-warning size-4 shrink-0'
+            className={
+              resources.auth_status === 'login_agreement_required'
+                ? 'text-destructive size-4 shrink-0'
+                : 'text-warning size-4 shrink-0'
+            }
             aria-hidden='true'
           />
           <div>
-            <p className='font-medium'>{resources.auth_status}</p>
+            <StatusBadge
+              label={resources.auth_status}
+              variant={statusVariant(resources.auth_status)}
+              copyable={false}
+            />
             <p className='text-muted-foreground text-xs'>
               {resources.auth_status_reason ||
                 t('Reauthentication is required.')}

@@ -278,6 +278,29 @@ test('安全验证状态显示管理员提示且同步按钮在 pending 时禁�
   await waitFor(() => expect(syncButton).not.toBeDisabled())
 })
 
+test('服务条款状态复用危险状态徽章样式', async () => {
+  vi.mocked(channelsApi.getPlatformSiteResources).mockResolvedValue(
+    response(
+      resources({
+        auth_status: 'login_agreement_required',
+        auth_status_reason: '上游仍要求同意服务条款',
+      })
+    )
+  )
+
+  renderPanel()
+
+  const status = await screen.findByText('login_agreement_required')
+  expect(status.closest('[data-slot="status-badge"]')).toHaveClass(
+    'text-destructive'
+  )
+  expect(status.closest('div.border')).toHaveClass(
+    'border-destructive/40',
+    'bg-destructive/10'
+  )
+  expect(screen.getByText('上游仍要求同意服务条款')).toBeInTheDocument()
+})
+
 test('资源为空列表时仍保留表格可访问表头和空内容', async () => {
   const baseResources = resources()
   if (!baseResources.endpoint) {

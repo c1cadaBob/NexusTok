@@ -1,7 +1,7 @@
 # 渠道能力矩阵
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-30
+> 事实基线日期：2026-10-01
 > 主要代码来源：`constant/channel.go`、`constant/api_type.go`、`common/api_type.go`、`relay/relay_adaptor.go`、`relay/common/relay_info.go`、`relay/channel/*/adaptor.go`、`router/relay-router.go`、`router/task-plugin-protocol-router.go`
 > 关联详细文档：[`README.md`](./README.md)、[`relay-routing-and-conversion.md`](./relay-routing-and-conversion.md)、[`implementation-deviations.md`](./implementation-deviations.md)、[`../key-routing-strategy.md`](../key-routing-strategy.md)
 
@@ -87,6 +87,32 @@ Admin channel 模型用于诊断和展示，不能替代单 Key 能力；Sub2API
 或 `/models` 探测。参考平台的 Sub2API `/api/v1/user/platform-quotas` 目前不在
 NexusTok 适配器请求清单中，因此平台窗口额度仍属于未完整覆盖能力。
 
+### 2.2 2026-10-01 Sub2API 登录服务条款能力
+
+**变更前**
+
+- Sub2API 账号密码能力只登记 `/api/v1/auth/login` 和 `/api/v1/auth/login/2fa`，
+  没有公开条款设置读取、revision 可选字段和专用失败状态；
+- 条款拒绝可能沿凭据错误或安全验证路径处理，主体候选回退和最近成功快照边界不够明确；
+- New API 与 Sub2API 的条款字段隔离没有在能力矩阵中记录。
+
+**变更后**
+
+- Sub2API 密码登录会在规范化管理 Session 上读取 `GET /api/v1/settings/public`。仅当
+  `login_agreement_enabled` 为 `true` 且 `login_agreement_revision` 为非空字符串时，
+  `/api/v1/auth/login` 的邮箱、用户名和混合主体候选才携带 `agreed_revision`；
+- 公开设置失败、404、网络错误、响应格式异常、条款未启用或 revision 缺失时回退旧登录
+  请求，不改变现有主体顺序，也不改变仅在明确凭据错误或 HTTP 401 后重试的边界；
+- 2FA 阶段重新读取公开设置，并将当时最新 revision 发送到
+  `/api/v1/auth/login/2fa`。条款 marker 独立归类为 `login_agreement_required`，
+  优先于凭据错误和安全验证错误，不触发主体回退；
+- 后台同步写入 `sync_status=failed`、`auth_status=login_agreement_required`、
+  脱敏原因和递增失败次数，保留最近成功余额、模型、密钥和能力快照。前端状态复用
+  资源面板危险状态样式；
+- 本能力只属于 Sub2API。New API 不读取 `/api/v1/settings/public`，不发送
+  `agreed_revision` 或 `not_in_cn_confirmed`；NexusTok 不接受客户端条款版本、不持久化
+  “已同意”记录，也不会猜测参考源未确认的额外字段。
+
 ## 3. 维护解释
 
 - “流式选项”只对应 `streamSupportedChannels`，不表示所有流式 Endpoint 或所有上游事件都可用。
@@ -104,6 +130,7 @@ NexusTok 适配器请求清单中，因此平台窗口额度仍属于未完整�
 | 2026-09-27 | 平台站点渠道代理接入 | 管理面请求、密码登录和 2FA 未使用渠道代理，客户端合并可能改变会话安全策略 | 按渠道配置复用代理 Transport，保留 CookieJar、超时和重定向策略，并在矩阵中区分代理配置错误、认证错误、网络错误、安全验证和资源权限失败 | NewAPI/Sub2API 管理面、渠道同步和 Auth Flow | `service/upstream_site.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go` |
 | 2026-09-29 | 校准平台站点管理面、Relay 面和模型边界 | 矩阵只按渠道类型描述平台能力，Sub2API 平台窗口额度、账号级模型和单 Key 模型来源边界不够明确 | 明确管理接口与 Relay 接口分层；Sub2API `/api/v1/user/platform-quotas` 为参考平台存在但当前未调用；New API 账号级模型不得复制给所有 Key；当前主要以单 Key Relay 模型探测作为路由能力依据；权限/分页失败保留快照 | New API/Sub2API 资源同步、模型能力、Admin 资源和失败回退 | `service/upstream_site_adapters.go`、`controller/upstream_channel.go`、`model/platform_site_resources.go`、本机参考源和[`平台站点资源获取比较`](../platform-site-resource-acquisition-comparison.md) |
 | 2026-09-30 | 旧版资源同步迁移与脱敏 fixture 验收 | Key 资源分页、登录主体兼容、Sub2API 资源顺序和完整 Key 读取优先级与旧版不完全一致；脱敏路由和地址验收未集中记录 | New API Token、Sub2API 普通 Key/Admin Key 分页恢复独立 1000 页；主体兼容、列表完整 Key 优先、详情补齐、单 Key 模型探测、RoutingKey 关系修复、模型映射和 Relay 地址规范化与旧版对齐 | 平台站点管理面、路由前置资源、Key 能力、请求地址和容量验证 | `service/upstream_site_adapters.go`、`service/upstream_site_test.go`、`model/upstream_channel_test.go`、脱敏 HTTP fixture 和 SQLite；未使用真实账号或站点 |
+| 2026-10-01 | Sub2API 登录服务条款兼容能力 | 矩阵只登记 Sub2API 的一般密码/2FA 入口，未记录公开条款设置、可选 revision、错误分类和 New API 隔离 | 增加 `GET /api/v1/settings/public` 的条件读取、`agreed_revision` 发送和 2FA 最新 revision；设置故障回退旧协议，条款拒绝独立分类并保留快照；不发送 `not_in_cn_confirmed`，New API 不读取或发送同名字段 | Sub2API 认证、Auth Flow、同步状态、资源面板和平台能力边界 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go`；Sub2API 参考源 DTO/路由；SQLite 3.50.4、MySQL 8.2.0、PostgreSQL 15.19 矩阵 |
 
 ### 3.2 2026-09-26 实现校准
 

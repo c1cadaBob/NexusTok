@@ -24,6 +24,7 @@ const (
 	PlatformSiteAuthFlowStatusTwoFactorRequired          = model.PlatformSiteAuthStatusTwoFactorRequired
 	PlatformSiteAuthFlowStatusSecureVerificationRequired = model.PlatformSiteAuthStatusSecureVerificationRequired
 	PlatformSiteAuthFlowStatusCredentialsInvalid         = model.PlatformSiteAuthStatusCredentialsInvalid
+	PlatformSiteAuthFlowStatusLoginAgreementRequired     = model.PlatformSiteAuthStatusLoginAgreementRequired
 	PlatformSiteAuthFlowStatusExpired                    = model.PlatformSiteAuthStatusExpired
 	PlatformSiteAuthFlowStatusReauthRequired             = model.PlatformSiteAuthStatusReauthRequired
 	PlatformSiteAuthFlowStatusSessionLimit               = model.PlatformSiteAuthStatusSessionLimit
@@ -134,6 +135,9 @@ func StartPlatformSiteAuthFlow(ctx context.Context, userID int, request Platform
 	if err != nil {
 		return nil, err
 	}
+	if platform == model.PlatformSub2API {
+		baseURL = normalizeSub2APIBaseURL(baseURL)
+	}
 	if err := validatePlatformSiteURL(baseURL); err != nil {
 		return nil, err
 	}
@@ -221,6 +225,7 @@ func VerifyPlatformSiteAuthFlow(ctx context.Context, userID int, flowID string, 
 	if err != nil {
 		return nil, err
 	}
+	session.Platform = record.Platform
 	siteClient, err := platformSiteHTTPClientForChannel(record.ChannelID)
 	if err != nil {
 		return nil, err
@@ -232,7 +237,7 @@ func VerifyPlatformSiteAuthFlow(ctx context.Context, userID int, flowID string, 
 	}
 	var payload any
 	if record.Platform == model.PlatformSub2API {
-		setSub2APIBrowserHeaders(session)
+		prepareSub2APIManagementSession(ctx, session)
 		payload, err = verifySub2APILogin2FA(ctx, session, secret.TempToken, code)
 	} else {
 		setNewAPIBrowserHeaders(session)
@@ -241,6 +246,13 @@ func VerifyPlatformSiteAuthFlow(ctx context.Context, userID int, flowID string, 
 	if err != nil {
 		if persistErr := persistPlatformSiteAuthFlowCredential(&record, &secret, session); persistErr != nil {
 			return nil, persistErr
+		}
+		if errors.Is(err, ErrSub2APILoginAgreement) {
+			record.Status = classifyAuthStatus(err)
+			if saveErr := savePlatformSiteAuthFlowRecord(record); saveErr != nil {
+				return nil, saveErr
+			}
+			return nil, err
 		}
 		record.Attempts++
 		record.CodeAttempts++
@@ -296,6 +308,9 @@ func ResolvePlatformSiteAuthFlow(userID int, flowID string, channelID int, platf
 		return PlatformSiteAuthFlowResolution{}, ErrPlatformSiteAuthFlowInvalid
 	}
 	normalizedBaseURL, err := normalizePlatformSiteURL(baseURL)
+	if err == nil && record.Platform == model.PlatformSub2API {
+		normalizedBaseURL = normalizeSub2APIBaseURL(normalizedBaseURL)
+	}
 	if err != nil || normalizedBaseURL != record.BaseURL {
 		record.Attempts++
 		_ = savePlatformSiteAuthFlowRecord(record)
@@ -365,9 +380,10 @@ func authenticatePlatformSitePassword(
 	if err != nil {
 		return nil, nil, err
 	}
+	session.Platform = platform
 	attachPlatformSiteHTTPClient(session, client)
 	if platform == model.PlatformSub2API {
-		setSub2APIBrowserHeaders(session)
+		prepareSub2APIManagementSession(ctx, session)
 		payload, err := loginSub2APIWithPassword(ctx, session, credential)
 		return session, payload, err
 	}
@@ -496,15 +512,33 @@ func verifySub2APILogin2FA(ctx context.Context, session *PlatformSiteSession, te
 	if strings.TrimSpace(tempToken) == "" {
 		return nil, ErrPlatformSiteAuthFlowInvalid
 	}
-	return platformSiteRequest(ctx, session, http.MethodPost, "/api/v1/auth/login/2fa", nil, map[string]string{
+	body := map[string]string{
 		"temp_token": tempToken,
 		"totp_code":  code,
-	})
+	}
+	if agreedRevision := sub2APILoginAgreementRevision(ctx, session); agreedRevision != "" {
+		body["agreed_revision"] = agreedRevision
+	}
+	payload, err := platformSiteRequest(
+		ctx,
+		session,
+		http.MethodPost,
+		"/api/v1/auth/login/2fa",
+		nil,
+		body,
+	)
+	if err != nil && platformSiteLoginAgreementRequired(err) {
+		return nil, classifySub2APILoginError(err)
+	}
+	return payload, err
 }
 
 func classifyPlatformSiteAuthFlowError(err error) error {
 	if err == nil {
 		return nil
+	}
+	if errors.Is(err, ErrSub2APILoginAgreement) {
+		return err
 	}
 	if errors.Is(err, ErrPlatformSiteHTTPStatus) || errors.Is(err, ErrPlatformSiteAuth) {
 		return fmt.Errorf("%w: %w", ErrPlatformSiteAuth, err)
@@ -516,6 +550,8 @@ func classifyAuthStatus(err error) string {
 	switch {
 	case errors.Is(err, ErrPlatformSiteAuthFlowExpired):
 		return PlatformSiteAuthFlowStatusExpired
+	case errors.Is(err, ErrSub2APILoginAgreement):
+		return PlatformSiteAuthFlowStatusLoginAgreementRequired
 	case errors.Is(err, ErrPlatformSiteAuth):
 		return PlatformSiteAuthFlowStatusCredentialsInvalid
 	default:

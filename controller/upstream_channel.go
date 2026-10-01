@@ -588,6 +588,8 @@ func platformSiteAuthFlowErrorMessage(err error) string {
 		return "认证流程尝试次数过多，请重新登录"
 	case errors.Is(err, service.ErrPlatformSiteAuthFlowCodeInvalid):
 		return "二次验证码错误"
+	case errors.Is(err, service.ErrSub2APILoginAgreement):
+		return "Sub2API 登录已尝试提交当前服务条款版本，但上游仍要求同意服务条款，请检查上游条款配置，或使用浏览器采集登录态"
 	case errors.Is(err, service.ErrPlatformSiteAuth):
 		return "上游平台认证失败"
 	case errors.Is(err, service.ErrPlatformSiteProxy):

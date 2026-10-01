@@ -1,7 +1,7 @@
 # 鉴权、会话与授权原理
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-30
+> 事实基线日期：2026-10-01
 > 主要代码来源：`middleware/auth.go`、`middleware/token_auth.go`、`service/auth_session.go`、`model/user_session.go`、`service/authz/`、`controller/`、`oauth/`
 > 关联详细文档：[`../authentication.md`](../authentication.md)、[`../rate-limiting.md`](../rate-limiting.md)、[`system-overview.md`](./system-overview.md)
 
@@ -112,6 +112,37 @@ Cookie、Token、Refresh Token 和 Session ID 不写入日志、审计字段、U
 密码、Cookie、Access Token、Refresh Token、Admin Key 和完整 Key 仍不写入审计、日志、
 普通响应或文档。
 
+### 8.2 2026-10-01 Sub2API 登录服务条款边界
+
+**变更前**
+
+- Sub2API 账号密码登录没有读取公开服务条款设置，条款启用时只能提交旧版登录请求；
+- 2FA 验证阶段不重新读取条款 revision，条款检查延迟或版本更新时无法携带当前版本；
+- 条款拒绝无法与凭据错误、安全验证、权限不足区分，后台同步也无法给出专用状态。
+
+**变更后**
+
+- 仅 Sub2API 密码认证在 `prepareSub2APIManagementSession` 完成管理地址规范化、渠道
+  Transport 注入、CookieJar、30 秒超时和重定向校验后，使用同一个 `PlatformSiteSession`
+  请求 `GET /api/v1/settings/public`；
+- 同时满足 `login_agreement_enabled=true` 和非空字符串
+  `login_agreement_revision` 才向每个 `/api/v1/auth/login` 候选请求增加
+  `agreed_revision`。公开设置接口 404、网络失败、响应格式不符合预期、条款关闭或
+  revision 缺失时保持旧登录协议，并不改变邮箱、用户名、混合主体顺序和仅在明确凭据
+  错误或 HTTP 401 后重试的边界；
+- 初次登录返回 2FA challenge 时，`/api/v1/auth/login/2fa` 前重新读取公开设置并发送
+  最新 revision。revision 只在当前认证请求生命周期内使用，不接受客户端提供的条款
+  版本，不写入本地“已同意”记录，不发送未经参考源确认的 `not_in_cn_confirmed`；
+- 条款 marker 优先归类为独立的 `login_agreement_required`，通过
+  `ErrSub2APILoginAgreement` 返回，不触发主体回退，也不归类为
+  `ErrPlatformSiteCredentials` 或 `ErrPlatformSiteSecurity`。同步失败写入
+  `sync_status=failed`、`auth_status=login_agreement_required`、脱敏原因并递增失败次数；
+  初次登录或 2FA 条款失败均不得清理最近成功密钥、模型能力、余额或其它资源快照；
+- `PlatformSiteSession.Platform` 将该 marker 分类限制在 Sub2API，New API 不请求
+  `/api/v1/settings/public`、不携带 `agreed_revision`，不推断同名字段。Controller 和
+  `SafePlatformSiteError` 仅返回脱敏中文提示，说明已尝试提交当前条款版本但上游仍拒绝，
+  并建议检查上游配置或使用浏览器采集登录态。
+
 ## 9. 维护时需要同步的关联模块
 
 修改登录、刷新、退出、Session、用户状态、鉴权版本、授权策略、Token 模型、OAuth/OIDC、Passkey、TOTP 或安全证明时，必须同步本文档、[`authentication.md`](../authentication.md)、必要时的[`rate-limiting.md`](../rate-limiting.md)和偏差登记。修改 Redis 键、TTL、缓存回退或多节点传播时同步[`data-cache-and-background-jobs.md`](./data-cache-and-background-jobs.md)。
@@ -127,6 +158,7 @@ Cookie、Token、Refresh Token 和 Session ID 不写入日志、审计字段、U
 | 2026-09-27 | 平台站点渠道代理认证 | 平台站点密码登录、2FA 和资源请求没有读取渠道代理，客户端合并可能覆盖平台 CookieJar、超时或重定向校验 | 所有后台同步和 Auth Flow 按 `channel_id` 复用渠道 Transport；只替换底层 Transport，保留 CookieJar、30 秒超时、管理站点重定向校验和 Cookie 轮换；代理配置、网络、凭据、安全验证和资源失败分层 | NewAPI/Sub2API 平台站点认证、Refresh、资源同步和敏感凭据保护 | `service/upstream_site.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go`、OWASP 认证/会话与 SSRF 指引 |
 | 2026-09-30 | 旧版平台登录主体与脱敏 fixture 验收 | 上游登录主体兼容顺序与旧版不一致，脱敏资源和认证失败边界未在鉴权架构记录 | 恢复受限主体兼容；使用脱敏 fixture 验证登录 envelope、资源权限失败和快照边界；保留 Refresh 轮换、Bundle 完整性和安全验证分类 | NewAPI/Sub2API 上游认证、资源读取和安全审计 | `service/upstream_site_adapters.go`、`service/upstream_site_test.go`、脱敏 HTTP fixture；未使用真实账号或站点 |
 | 2026-09-30 | 系统维护 Root 敏感操作 | 维护页只有浏览器侧 GitHub 读取，更新、回滚和重启没有 Root/审计/脱敏边界 | 后端经 `RootAuth()` 检查 Release 并创建系统任务，更新、回滚、重启沿用管理审计；管理响应、任务、日志和 helper 边界不输出敏感环境或认证值 | 系统维护接口、Root 权限、管理审计、任务响应和 Docker helper | `router/api-router.go`、`middleware/audit.go`、`controller/system_update.go`、`model/system_task.go`、OWASP ASVS 5.0.0 与认证/会话/日志 Cheat Sheet |
+| 2026-10-01 | Sub2API 登录服务条款兼容 | Sub2API 密码认证没有读取公开条款 revision，2FA 和后台同步无法区分条款拒绝与凭据/安全验证错误 | 仅 Sub2API 密码登录按公开设置可选发送 `agreed_revision`，2FA 重新读取最新 revision；条款错误独立分类、停止主体回退、写入 `login_agreement_required` 并保留成功快照；New API 不读取或发送条款字段 | Sub2API 上游认证、Auth Flow、后台同步、资源状态和脱敏提示 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go`；Sub2API 参考源；OWASP ASVS 5.0.0、Authentication/Session Management/Logging/SSRF Cheat Sheet |
 
 ### 9.1 2026-09-26 实现校准
 

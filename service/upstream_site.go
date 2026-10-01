@@ -54,6 +54,7 @@ var (
 	ErrSub2APILoginToken            = errors.New("sub2api login token missing")
 	ErrSub2APILoginInteractive      = errors.New("sub2api login requires interactive verification")
 	ErrSub2APILoginEmail            = errors.New("sub2api login requires a valid email")
+	ErrSub2APILoginAgreement        = errors.New("sub2api login requires login agreement")
 	ErrSub2APICurrentUser           = errors.New("sub2api current user request failed")
 )
 
@@ -67,12 +68,14 @@ const (
 	platformSiteErrorCategoryWAF            = "waf_blocked"
 	platformSiteErrorCategoryPermission     = "permission_denied"
 	platformSiteErrorCategorySessionLimit   = "session_limit"
+	platformSiteErrorCategoryLoginAgreement = "login_agreement_required"
 )
 
 type PlatformSiteSession struct {
 	BaseURL           string
 	ModelBaseURL      string
 	ManagementBaseURL string
+	Platform          string
 	LastRequestURL    string
 	Client            *http.Client
 	Headers           http.Header
@@ -214,6 +217,8 @@ func (err *platformSiteHTTPStatusError) Unwrap() error {
 		errs = append(errs, ErrPlatformSitePermission)
 	case platformSiteErrorCategorySessionLimit:
 		errs = append(errs, ErrPlatformSiteSessionLimit)
+	case platformSiteErrorCategoryLoginAgreement:
+		errs = append(errs, ErrSub2APILoginAgreement)
 	}
 	return errors.Join(errs...)
 }
@@ -230,8 +235,13 @@ func (err *platformSiteResponseError) Error() string {
 }
 
 func (err *platformSiteResponseError) Unwrap() error {
-	if err != nil && err.diagnostics.errorCategory == platformSiteErrorCategoryWAF {
-		return errors.Join(ErrPlatformSiteResponse, ErrPlatformSiteSecurity)
+	if err != nil {
+		switch err.diagnostics.errorCategory {
+		case platformSiteErrorCategoryWAF:
+			return errors.Join(ErrPlatformSiteResponse, ErrPlatformSiteSecurity)
+		case platformSiteErrorCategoryLoginAgreement:
+			return errors.Join(ErrPlatformSiteResponse, ErrSub2APILoginAgreement)
+		}
 	}
 	return ErrPlatformSiteResponse
 }
@@ -269,6 +279,8 @@ func (err *platformSiteBusinessError) Unwrap() error {
 		return errors.Join(ErrPlatformSiteAuth, ErrPlatformSitePermission)
 	case platformSiteErrorCategorySessionLimit:
 		return errors.Join(ErrPlatformSiteAuth, ErrPlatformSiteSessionLimit)
+	case platformSiteErrorCategoryLoginAgreement:
+		return errors.Join(ErrPlatformSiteAuth, ErrSub2APILoginAgreement)
 	default:
 		return ErrPlatformSiteAuth
 	}
@@ -546,14 +558,20 @@ func platformSiteRequest(
 	}
 	diagnostics := platformSiteResponseDiagnosticsFor(target, response)
 	diagnostics.responseType = platformSiteResponseType(response.Header.Get("Content-Type"), data)
+	loginAgreementResponse := session.Platform == model.PlatformSub2API &&
+		containsPlatformSiteLoginAgreementMarker(string(data))
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		var payload any
 		if parsed, unmarshalErr := unmarshalPlatformSiteJSON(data); unmarshalErr == nil {
 			payload = parsed
 			diagnostics.errorCode, diagnostics.errorReason, diagnostics.errorCategory =
-				platformSiteErrorMetadata(payload)
+				platformSiteErrorMetadata(payload, session.Platform == model.PlatformSub2API)
 		}
-		if code := platformSiteSecurityCode(payload, string(data)); code != "" {
+		if loginAgreementResponse {
+			diagnostics.errorCategory = platformSiteErrorCategoryLoginAgreement
+		}
+		if code := platformSiteSecurityCode(payload, string(data)); code != "" &&
+			diagnostics.errorCategory != platformSiteErrorCategoryLoginAgreement {
 			diagnostics.errorCode = sanitizePlatformSiteDiagnosticToken(code)
 			diagnostics.errorCategory = platformSiteErrorCategoryInteractive
 			return nil, &platformSiteSecurityError{
@@ -567,6 +585,7 @@ func platformSiteRequest(
 				response.StatusCode,
 				diagnostics.responseType,
 				data,
+				session.Platform == model.PlatformSub2API,
 			)
 		}
 		return nil, &platformSiteHTTPStatusError{
@@ -575,7 +594,11 @@ func platformSiteRequest(
 		}
 	}
 	if diagnostics.responseType == "html" {
-		diagnostics.errorCategory = platformSiteErrorCategoryWAF
+		if loginAgreementResponse {
+			diagnostics.errorCategory = platformSiteErrorCategoryLoginAgreement
+		} else {
+			diagnostics.errorCategory = platformSiteErrorCategoryWAF
+		}
 		return nil, &platformSiteResponseError{diagnostics: diagnostics}
 	}
 	if len(bytes.TrimSpace(data)) == 0 {
@@ -583,9 +606,13 @@ func platformSiteRequest(
 	}
 	var payload any
 	if err := common.Unmarshal(data, &payload); err != nil {
+		if loginAgreementResponse {
+			diagnostics.errorCategory = platformSiteErrorCategoryLoginAgreement
+		}
 		return nil, &platformSiteResponseError{diagnostics: diagnostics}
 	}
-	if code := platformSiteSecurityCode(payload, string(data)); code != "" {
+	if code := platformSiteSecurityCode(payload, string(data)); code != "" &&
+		!loginAgreementResponse {
 		diagnostics.errorCode = sanitizePlatformSiteDiagnosticToken(code)
 		diagnostics.errorCategory = platformSiteErrorCategoryInteractive
 		return nil, &platformSiteSecurityError{
@@ -596,7 +623,13 @@ func platformSiteRequest(
 	}
 	if object, ok := payload.(map[string]any); ok {
 		if success, exists := object["success"].(bool); exists && !success {
-			code, reason, category := platformSiteErrorMetadata(object)
+			code, reason, category := platformSiteErrorMetadata(
+				object,
+				session.Platform == model.PlatformSub2API,
+			)
+			if category == "" && loginAgreementResponse {
+				category = platformSiteErrorCategoryLoginAgreement
+			}
 			diagnostics.errorCode = code
 			diagnostics.errorReason = reason
 			diagnostics.errorCategory = category
@@ -608,7 +641,13 @@ func platformSiteRequest(
 			}
 		}
 		if code := firstFloat(object, "code"); code != 0 && code != 200 {
-			errorCode, reason, category := platformSiteErrorMetadata(object)
+			errorCode, reason, category := platformSiteErrorMetadata(
+				object,
+				session.Platform == model.PlatformSub2API,
+			)
+			if category == "" && loginAgreementResponse {
+				category = platformSiteErrorCategoryLoginAgreement
+			}
 			diagnostics.errorCode = errorCode
 			diagnostics.errorReason = reason
 			diagnostics.errorCategory = category
@@ -621,7 +660,13 @@ func platformSiteRequest(
 		}
 		if code := firstString(object, "code"); code != "" &&
 			code != "0" && code != "200" && !strings.EqualFold(code, "success") {
-			errorCode, reason, category := platformSiteErrorMetadata(object)
+			errorCode, reason, category := platformSiteErrorMetadata(
+				object,
+				session.Platform == model.PlatformSub2API,
+			)
+			if category == "" && loginAgreementResponse {
+				category = platformSiteErrorCategoryLoginAgreement
+			}
 			diagnostics.errorCode = errorCode
 			diagnostics.errorReason = reason
 			diagnostics.errorCategory = category
@@ -744,7 +789,7 @@ func unmarshalPlatformSiteJSON(data []byte) (any, error) {
 	return payload, nil
 }
 
-func platformSiteErrorMetadata(payload any) (code, reason, category string) {
+func platformSiteErrorMetadata(payload any, allowLoginAgreement bool) (code, reason, category string) {
 	record, ok := payload.(map[string]any)
 	if !ok {
 		return "", "", ""
@@ -756,12 +801,13 @@ func platformSiteErrorMetadata(payload any) (code, reason, category string) {
 		"errorCode",
 		"status",
 	))
-	reason = sanitizePlatformSiteDiagnosticToken(firstString(
+	rawReason := firstString(
 		record,
 		"reason",
 		"error_reason",
 		"errorReason",
-	))
+	)
+	reason = sanitizePlatformSiteDiagnosticToken(rawReason)
 	if code == "" {
 		if numericCode, ok := firstOptionalFloat(record, "code", "status"); ok {
 			code = sanitizePlatformSiteDiagnosticToken(
@@ -770,13 +816,20 @@ func platformSiteErrorMetadata(payload any) (code, reason, category string) {
 		}
 	}
 	message := firstString(record, "message", "error", "detail")
-	category = classifyPlatformSiteErrorCategory(code, reason, message)
+	category = classifyPlatformSiteErrorCategory(code, rawReason, message, allowLoginAgreement)
 	return code, reason, category
 }
 
-func classifyPlatformSiteErrorCategory(code, reason, message string) string {
+func classifyPlatformSiteErrorCategory(
+	code,
+	reason,
+	message string,
+	allowLoginAgreement bool,
+) string {
 	combined := strings.ToLower(strings.Join([]string{code, reason, message}, " "))
 	switch {
+	case allowLoginAgreement && containsPlatformSiteLoginAgreementMarker(combined):
+		return platformSiteErrorCategoryLoginAgreement
 	case strings.Contains(combined, "turnstile"),
 		strings.Contains(combined, "captcha"),
 		strings.Contains(combined, "challenge"),
@@ -832,13 +885,20 @@ func classifyPlatformSiteErrorCategory(code, reason, message string) string {
 	}
 }
 
-func classifyPlatformSiteResponseCategory(statusCode int, responseType string, data []byte) string {
+func classifyPlatformSiteResponseCategory(
+	statusCode int,
+	responseType string,
+	data []byte,
+	allowLoginAgreement bool,
+) string {
 	sample := bytes.TrimSpace(data)
 	if len(sample) > 4096 {
 		sample = sample[:4096]
 	}
 	combined := strings.ToLower(string(sample))
 	switch {
+	case allowLoginAgreement && containsPlatformSiteLoginAgreementMarker(combined):
+		return platformSiteErrorCategoryLoginAgreement
 	case strings.Contains(combined, "turnstile"),
 		strings.Contains(combined, "captcha"),
 		strings.Contains(combined, "challenge"),
@@ -873,6 +933,33 @@ func classifyPlatformSiteResponseCategory(statusCode int, responseType string, d
 	default:
 		return ""
 	}
+}
+
+func containsPlatformSiteLoginAgreementMarker(value string) bool {
+	value = strings.ToLower(value)
+	for _, marker := range []string{
+		"login_agreement",
+		"login agreement",
+		"agreed_revision",
+		"agreed revision",
+		"terms_of_service",
+		"terms of service",
+		"service_terms",
+		"service terms",
+		"agreement_required",
+		"agreement required",
+		"accept_terms",
+		"accept terms",
+		"agree_to_terms",
+		"agree to terms",
+		"policy_acceptance",
+		"policy acceptance",
+	} {
+		if strings.Contains(value, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func sanitizePlatformSiteDiagnosticToken(value string) string {
@@ -913,6 +1000,11 @@ func platformSiteErrorCategoryOf(err error) string {
 		return securityErr.diagnostics.errorCategory
 	}
 	return ""
+}
+
+func platformSiteLoginAgreementRequired(err error) bool {
+	return errors.Is(err, ErrSub2APILoginAgreement) ||
+		platformSiteErrorCategoryOf(err) == platformSiteErrorCategoryLoginAgreement
 }
 
 func platformSiteRouteMissing(err error) bool {
@@ -1392,7 +1484,10 @@ func syncPlatformSite(ctx context.Context, channelID int) error {
 			"consecutive_failures": account.ConsecutiveFailures + 1,
 			"auth_status_reason":   account.LastSyncError,
 		}
-		if platformSiteSessionLimit(err) {
+		if platformSiteLoginAgreementRequired(err) {
+			account.AuthStatus = model.PlatformSiteAuthStatusLoginAgreementRequired
+			failureUpdates["auth_status"] = account.AuthStatus
+		} else if platformSiteSessionLimit(err) {
 			account.AuthStatus = model.PlatformSiteAuthStatusSessionLimit
 			failureUpdates["auth_status"] = account.AuthStatus
 		} else if errors.Is(err, ErrPlatformSiteSecurity) ||
@@ -1578,6 +1673,11 @@ func SafePlatformSiteError(err error) string {
 	switch {
 	case errors.Is(err, ErrPlatformSiteCredential):
 		return "平台凭据无法解密，请重新保存平台凭据"
+	case platformSiteLoginAgreementRequired(err):
+		return "Sub2API 登录已尝试提交当前服务条款版本，但上游仍要求同意服务条款" +
+			platformSiteResponseDiagnosticSuffix(err) +
+			platformSiteStageDiagnosticSuffix(err) +
+			"，请检查上游条款配置，或使用现有浏览器采集登录态"
 	case errors.Is(err, ErrPlatformSiteSessionLimit):
 		return "上游平台会话数量或签发次数已达上限" +
 			platformSiteResponseDiagnosticSuffix(err) +

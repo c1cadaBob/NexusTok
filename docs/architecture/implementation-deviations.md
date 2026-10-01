@@ -1,7 +1,7 @@
 # 实现偏差登记
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-30
+> 事实基线日期：2026-10-01
 > 主要代码来源：`router/relay-router.go`、`common/api_type.go`、`relay/relay_adaptor.go`、`relay/channel/*/adaptor.go`、`router/task-plugin-protocol-router.go`、`docs/architecture/*.md`
 > 关联详细文档：[`README.md`](./README.md)、[`relay-routing-and-conversion.md`](./relay-routing-and-conversion.md)、[`provider-capability-matrix.md`](./provider-capability-matrix.md)、[`../plugin-api/README.md`](../plugin-api/README.md)
 
@@ -55,6 +55,7 @@
 | DEV-020 | Sub2API 平台窗口额度 | 参考平台提供 `/api/v1/user/platform-quotas`，可返回时间窗口、上限、已用和剩余额度 | 旧版和当前适配器均未完整调用该接口；当前只读取账号/Key 余额与用量，5 小时、日、周、月等窗口额度未进入资源快照 | 已确认偏差 | Sub2API `router/`、`controller/`、`service/` 中 platform-quotas 路由；旧版/当前 `service/upstream_site_adapters.go` | 2026-09-29 |
 | DEV-021 | Sub2API 账号级模型 | 平台可能提供账号级模型目录，名称上容易被当作所有 Key 的能力 | 当前 `fetchSub2APIModels` 直接返回 `nil`，没有独立账号级模型能力；主要通过每条完整 Key 请求 Relay `/v1/models` 或 `/models` 探测，不能把账号级目录复制给子 Key | 已确认偏差 | `service/upstream_site_adapters.go:2571`、`model/upstream_channel.go`、`service/upstream_site.go` | 2026-09-29 |
 | DEV-022 | 平台 Key 分页上限 | 旧版 New API/Sub2API Key 分页最多尝试 1000 页，每页 100 条 | New API Token、Sub2API 普通 Key 和 Sub2API Admin Key 各自最多尝试 1000 页、每页 100 条；分页中途失败时保留最近成功快照且不执行缺失判定。New API Admin channel 等非本次迁移的管理资源继续使用原独立分页限制 | 已实现/待持续容量验证 | 旧版 `service/upstreamaccount/`、`service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go` | 2026-09-30 |
+| DEV-023 | Sub2API 登录服务条款 | 开启登录条款的站点要求账号密码登录或 2FA 提交当前公开 revision；未确认的额外字段不得由客户端猜测或代填 | 仅 Sub2API 密码登录读取 `GET /api/v1/settings/public`，在启用且 revision 非空时发送 `agreed_revision`；设置失败回退旧协议，2FA 重新读取；条款拒绝独立归类为 `login_agreement_required`，不触发主体回退，后台保留最近成功快照；不发送 `not_in_cn_confirmed`，New API 不读取或发送同名字段 | 已实现/待真实站点持续核验 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_auth_flow.go`、`model/upstream_channel.go`、`controller/upstream_channel.go`、`web/src/features/channels/types.ts`；Sub2API 参考源 `setting_handler.go`、`auth_handler.go` | 2026-10-01 |
 
 ### 3.2 2026-09-26 实现核对结果
 
@@ -161,6 +162,26 @@ Docker 更新和回滚通过 Docker Engine socket 及独立 `system-update-helpe
 Admin Key 或完整上游 Key。尚未执行真实生产 Docker 容器切换，source/development build
 也不承诺从维护页面自动替换。
 
+### 3.8 2026-10-01 Sub2API 登录服务条款兼容
+
+**变更前**：Sub2API 账号密码登录没有读取公开条款设置，2FA 不重新读取条款版本；
+条款拒绝可能被当作凭据错误或安全验证错误，且后台同步没有专用认证状态。New API
+是否发送同名字段也没有在偏差记录中明确。
+
+**变更后**：NexusTok 只对 Sub2API 密码登录使用当前已校验的管理地址、渠道代理、
+CookieJar、超时和重定向策略读取 `GET /api/v1/settings/public`。只有
+`login_agreement_enabled=true` 且 `login_agreement_revision` 非空时，才向每个登录
+候选请求增加 `agreed_revision`；接口不可用或格式不符合预期时回退旧协议。2FA 前重新
+读取最新 revision。条款 marker 优先归类为 `login_agreement_required`，不触发主体
+回退，不归类为 `credentials_invalid` 或 `secure_verification_required`。同步失败写入
+`sync_status=failed`、`auth_status=login_agreement_required`、脱敏原因和连续失败次数，
+并保留最近成功快照。
+
+本次不发送 `not_in_cn_confirmed`，不接受客户端条款版本，不在 NexusTok 持久化“已同意”
+记录；New API 不读取 `/api/v1/settings/public`，不发送 `agreed_revision` 或
+`not_in_cn_confirmed`。如果上游仍需要参考源未确认的其它字段，系统保持明确的条款错误，
+提示检查上游配置或使用浏览器采集登录态。本次不新增数据库表、字段或迁移。
+
 ## 4. 维护规则
 
 新发现偏差必须先确认“预期来源”与“代码实际行为”都能引用，再新增编号。代码修复时在同一功能提交中：
@@ -182,3 +203,4 @@ Admin Key 或完整上游 Key。尚未执行真实生产 Docker 容器切换，s
 | 2026-09-29 | 旧版与当前平台站点资源差异登记 | 偏差表已有认证、刷新、代理和失败回退记录，但没有单独登记数据模型、父渠道额度写入、Sub2API 平台窗口额度、账号级模型和分页上限差异 | 新增 DEV-018 至 DEV-022，明确当前实现与旧版/参考平台的事实差异；已修复的旧版协议偏差继续保持“已实现/待真实站点持续核验”，不把静态核对写成真实站点验证 | 平台站点资源模型、额度、Key 生命周期、模型能力和缺失判定 | `docs/platform-site-resource-acquisition-comparison.md`、`service/upstream_site.go`、`service/upstream_site_adapters.go`、`model/upstream_channel.go`、本机参考源静态核对 |
 | 2026-09-30 | 旧版资源同步迁移与真实站点黑盒验收 | New API/Sub2API 三类 Key 资源仍受 100 页上限影响，偏差表未记录迁移后的容量边界和真实站点只读结果 | 三类 Key 资源独立恢复最多 1000 页；补充 New API 11 条 Key/32 个聚合模型、Sub2API 10 条 Key/18 个聚合模型的脱敏验收结果，并明确部分 `/v1/models` 的 HTTP 403 只进入安全验证、partial 或 stale 快照状态 | 平台站点分页、完整 Key 读取、模型能力、资源快照和安全交付 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`、隔离浏览器 DevTools MCP；未调用计费接口 |
 | 2026-09-30 | 系统维护更新与可重复回滚 | 维护页直连 GitHub，只能查看 Release；没有 Root 后端更新、回滚、重启任务，旧版回滚会消耗唯一 `.backup` | 增加 RootAuth 后端版本检查、SystemTask 更新、回滚、重启、GitHub 缓存与 checksum 校验；裸机和 Docker 均使用稳定备份交换并支持重复回滚；失败时恢复原状态并记录脱敏终态 | 维护页面、Root 管理、系统任务、裸机文件、Docker helper、管理审计和错误日志 | `controller/system_update.go`、`service/system_update.go`、`service/system_update_docker.go`、`model/system_task.go`、前端维护测试；SQLite、MySQL 8.2.0、PostgreSQL 15.19 系统任务兼容性用例通过；未单独验证最低版本和真实生产 Docker 切换 |
+| 2026-10-01 | Sub2API 登录服务条款兼容 | 条款设置、revision、2FA 延迟检查、条款专用状态和 New API 字段隔离未在偏差表中记录 | 增加可选 `agreed_revision`、设置接口故障旧协议回退、2FA 最新 revision、独立条款错误分类、`login_agreement_required` 状态和最近成功快照保留；不发送 `not_in_cn_confirmed`，不新增数据库结构 | Sub2API 密码认证、Auth Flow、后台同步、前端资源状态和安全诊断 | `service/upstream_site*.go`、`service/platform_site_auth_flow.go`、`model/upstream_channel.go`、`controller/upstream_channel.go`、前端类型/面板、脱敏回归测试；OWASP ASVS 5.0.0 与 Authentication/Session Management/Logging/SSRF Cheat Sheet |

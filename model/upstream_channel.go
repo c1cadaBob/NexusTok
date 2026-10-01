@@ -33,6 +33,7 @@ const (
 	PlatformSiteAuthStatusReauthRequired             = "reauth_required"
 	PlatformSiteAuthStatusSessionLimit               = "session_limit"
 	PlatformSiteAuthStatusRateLimited                = "rate_limited"
+	PlatformSiteAuthStatusLoginAgreementRequired     = "login_agreement_required"
 
 	UpstreamSiteSyncIdle    = "idle"
 	UpstreamSiteSyncRunning = "running"

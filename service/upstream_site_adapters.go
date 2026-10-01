@@ -143,6 +143,7 @@ func (adapter *NewAPIAdapter) Authenticate(ctx context.Context, baseURL string, 
 	if err != nil {
 		return nil, err
 	}
+	session.Platform = model.PlatformNewAPI
 	if adapter.client != nil {
 		attachPlatformSiteHTTPClient(session, adapter.client)
 	}
@@ -826,24 +827,11 @@ func (adapter *Sub2APIAdapter) Authenticate(ctx context.Context, baseURL string,
 	if err != nil {
 		return nil, err
 	}
+	session.Platform = model.PlatformSub2API
 	if adapter.client != nil {
 		attachPlatformSiteHTTPClient(session, adapter.client)
 	}
-	setSub2APIBrowserHeaders(session)
-	if modelBaseURL, ok := discoverSub2APIModelBaseURL(ctx, session); ok {
-		session.ModelBaseURL = modelBaseURL
-	}
-	if managementBaseURL, modelBaseURL, ok := discoverSub2APIManagementBaseURL(
-		ctx,
-		session,
-	); ok {
-		session.BaseURL = managementBaseURL
-		session.ManagementBaseURL = managementBaseURL
-		setSub2APIBrowserHeaders(session)
-		session.ModelBaseURL = modelBaseURL
-	} else {
-		session.ManagementBaseURL = session.BaseURL
-	}
+	prepareSub2APIManagementSession(ctx, session)
 	switch platformSiteCredentialAuthType(credential) {
 	case model.UpstreamAuthPassword:
 		payload, requestErr := loginSub2APIWithPassword(ctx, session, credential)
@@ -901,6 +889,29 @@ func (adapter *Sub2APIAdapter) Authenticate(ctx context.Context, baseURL string,
 		}
 	}
 	return session, nil
+}
+
+func prepareSub2APIManagementSession(ctx context.Context, session *PlatformSiteSession) {
+	if session == nil {
+		return
+	}
+	session.Platform = model.PlatformSub2API
+	session.BaseURL = normalizeSub2APIBaseURL(session.BaseURL)
+	setSub2APIBrowserHeaders(session)
+	if modelBaseURL, ok := discoverSub2APIModelBaseURL(ctx, session); ok {
+		session.ModelBaseURL = modelBaseURL
+	}
+	if managementBaseURL, modelBaseURL, ok := discoverSub2APIManagementBaseURL(
+		ctx,
+		session,
+	); ok {
+		session.BaseURL = managementBaseURL
+		session.ManagementBaseURL = managementBaseURL
+		setSub2APIBrowserHeaders(session)
+		session.ModelBaseURL = modelBaseURL
+	} else {
+		session.ManagementBaseURL = session.BaseURL
+	}
 }
 
 func platformSiteCredentialAuthType(credential model.PlatformSiteCredential) string {
@@ -1278,6 +1289,7 @@ func loginSub2APIWithPassword(ctx context.Context, session *PlatformSiteSession,
 		return nil, fmt.Errorf("%w: 缺少账号密码", ErrPlatformSiteAuth)
 	}
 
+	agreedRevision := sub2APILoginAgreementRevision(ctx, session)
 	email := ""
 	if strings.Contains(identity, "@") {
 		email = identity
@@ -1305,6 +1317,9 @@ func loginSub2APIWithPassword(ctx context.Context, session *PlatformSiteSession,
 	}
 	var lastErr error
 	for _, body := range bodies {
+		if agreedRevision != "" {
+			body["agreed_revision"] = agreedRevision
+		}
 		payload, requestErr := platformSiteRequest(
 			ctx,
 			session,
@@ -1327,8 +1342,36 @@ func loginSub2APIWithPassword(ctx context.Context, session *PlatformSiteSession,
 	return nil, lastErr
 }
 
+func sub2APILoginAgreementRevision(ctx context.Context, session *PlatformSiteSession) string {
+	if session == nil || session.Platform != model.PlatformSub2API {
+		return ""
+	}
+	payload, err := platformSiteRequest(
+		ctx,
+		session,
+		http.MethodGet,
+		"/api/v1/settings/public",
+		nil,
+		nil,
+	)
+	if err != nil {
+		return ""
+	}
+	record := firstRecord(payload)
+	enabled, ok := record["login_agreement_enabled"].(bool)
+	if !ok || !enabled {
+		return ""
+	}
+	revision, ok := record["login_agreement_revision"].(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(revision)
+}
+
 func platformSiteLoginCredentialRetryAllowed(err error) bool {
 	if err == nil ||
+		platformSiteLoginAgreementRequired(err) ||
 		!errors.Is(err, ErrPlatformSiteCredentials) ||
 		errors.Is(err, ErrPlatformSiteSecurity) ||
 		errors.Is(err, ErrPlatformSitePermission) ||
@@ -1345,6 +1388,13 @@ func platformSiteLoginCredentialRetryAllowed(err error) bool {
 func classifySub2APILoginError(err error) error {
 	if err == nil {
 		return nil
+	}
+	if platformSiteLoginAgreementRequired(err) {
+		return errors.Join(
+			ErrSub2APILoginAgreement,
+			ErrSub2APILoginHTTPStatus,
+			err,
+		)
 	}
 	if platformSiteInteractiveVerificationRequired(err) {
 		return errors.Join(
