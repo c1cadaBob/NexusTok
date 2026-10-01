@@ -134,8 +134,18 @@ Redis 兼容模式。SQLite 文件不会自动迁移到 PostgreSQL；已有生�
 `DOCKER_USERNAME`/`DOCKER_PASSWORD`。
 
 本版本只修改 web/Electron 依赖、发布工作流和文档，没有修改数据库代码、GORM、数据库
-驱动、Schema、迁移、路由、DTO 或 API 契约；因此不新增数据库兼容性结论。远端
-Dependabot、Docker 多架构发布和真实生产切换仍以认证 API 与 GitHub Actions 结果为准。
+驱动、Schema、迁移、路由、DTO 或 API 契约；因此不新增数据库兼容性结论。截至
+2026-10-01，GitHub 远端安全页面已显示 Dependabot #107 完成处理且没有开放警报。
+Docker 多架构发布和真实生产切换仍以 GitHub Actions 结果和实际部署验证为准。
+
+### v0.2.3 发布收尾（2026-10-01）
+
+**变更前**：仓库中保留一次性 Dependabot 处理与标签创建工作流，文档仍记录 #107
+开放、v0.2.3 标签和发布镜像尚未验证。
+
+**变更后**：删除一次性工作流；根据 GitHub 远端安全页面确认 #107 已完成处理且没有
+开放警报。正式发布通过 `v0.2.3` 标签触发 Docker 多架构、GitHub Release 和 Electron
+工作流，发布后继续核验镜像 manifest、Cosign、Release 产物和独立端口运行状态。
 
 ### Master/Slave
 
