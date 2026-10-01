@@ -85,7 +85,7 @@ beforeEach(() => {
         data: {
           success: true,
           data: {
-            scope: config?.params?.scope,
+            scope: (config?.params as { scope?: string } | undefined)?.scope,
             methods: [{ method: 'password', available: true }],
             oauth_providers: [],
             password_encryption_enabled: false,
