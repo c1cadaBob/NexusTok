@@ -93,7 +93,8 @@ Capability URL 不是上游 URL。读取时 Host 仍要加载任务、用户和�
 - 历史任务平台映射和新 Task Plugin 路径并存，不能根据某一个平台 key 推断所有任务操作都支持。
 - 系统维护自动更新只支持具备可验证 Release/checksum 的裸机发布构建或挂载 Docker socket
   的容器；source/development build、Windows 正在运行的二进制和无 socket 容器只提供
-  手动提示。真实生产 Docker 切换尚未执行。
+  手动提示。Docker 容器更新在 bridge/Compose 网络下先用不发布宿主端口的 preflight
+  容器探活，再停旧并启动正式容器；`host` 和 `container:<id>` 网络走停旧后探活的降级路径。
 
 ## 9. 维护时需要同步的关联模块
 
@@ -105,3 +106,4 @@ Capability URL 不是上游 URL。读取时 Host 仍要加载任务、用户和�
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 建立任务生命周期、插件边界、协议、轮询、Generation Pinning 和 Artifact 说明 | `pkg/jsplugin/`、`plugins/tasks/`、`service/task_polling.go`、`router/`、`model/task*` | 插件 API 详细文档、任务路由和轮询代码静态核对 |
 | 2026-09-30 | 系统维护任务链路 | 维护页面只能读取 Release 说明，系统任务文档没有更新、回滚、helper 和可重复回滚语义 | 增加 Root 维护任务类型、ActiveKey 互斥、任务进度/终态、Docker helper 租约接管；裸机和 Docker 回滚均交换当前版本与稳定备份而不消耗备份 | `service/system_task.go`、`service/system_update.go`、`service/system_update_docker.go`、`model/system_task.go`、维护页 | `service/system_update_test.go`、`model/system_task_test.go`；未执行真实生产 Docker 切换 |
+| 2026-10-02 | Docker 更新任务端口预检 | 更新任务在旧容器仍绑定宿主端口时启动同端口 staging 容器，可能因端口占用失败 | 增加无端口 preflight 探活和正式容器停旧后启动流程；失败时恢复旧容器并保留稳定 backup | `service/system_update_docker.go`、系统更新任务状态和失败终态 | `go test ./service -run 'Docker(Update\|Updated\|Readiness\|Helper\|Pull\|Staging)' -count=1` |

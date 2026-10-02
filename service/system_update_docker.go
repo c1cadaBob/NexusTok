@@ -180,6 +180,13 @@ type dockerHelperOptions struct {
 	BackupName         string
 }
 
+type dockerCreateRequestMode int
+
+const (
+	dockerCreateRequestModeFinal dockerCreateRequestMode = iota
+	dockerCreateRequestModePreflight
+)
+
 func systemUpdateDockerSocketPath() string {
 	return strings.TrimSpace(common.GetEnvOrDefaultString("SYSTEM_UPDATE_DOCKER_SOCK", systemUpdateDockerSockDefault))
 }
@@ -609,6 +616,10 @@ func dockerBackupContainerName(name string) string {
 
 func dockerFailedContainerName(name string) string {
 	return cleanDockerContainerName(name) + ".failed-" + dockerUniqueSuffix()
+}
+
+func dockerPreflightContainerName(name string) string {
+	return cleanDockerContainerName(name) + ".preflight-" + dockerUniqueSuffix()
 }
 
 func dockerStagingContainerName(name string) string {
@@ -1213,6 +1224,49 @@ type dockerContainerReadiness struct {
 }
 
 func (s *SystemUpdateService) recreateDockerContainer(ctx context.Context, client *dockerEngineClient, current *dockerInspectContainer, containerName string, backupName string, targetImage string) (string, dockerContainerReadiness, error) {
+	var preflightReadiness dockerContainerReadiness
+	if dockerCanRunParallelPreflight(current) {
+		preflightRequest := dockerCreateRequestFromInspectForMode(current, targetImage, dockerCreateRequestModePreflight)
+		preflightName := dockerPreflightContainerName(containerName)
+		preflightID, err := client.createContainer(ctx, preflightName, preflightRequest)
+		if err != nil {
+			return "", dockerContainerReadiness{}, fmt.Errorf("create preflight updated container failed: %w", err)
+		}
+		if strings.TrimSpace(preflightID) == "" {
+			return "", dockerContainerReadiness{}, errors.New("create preflight updated container returned an empty container ID")
+		}
+		cleanupPreflight := func(cleanupCtx context.Context) error {
+			if err := client.removeContainer(cleanupCtx, preflightID, true); err != nil && !isDockerNotFoundError(err) {
+				return err
+			}
+			return nil
+		}
+		if err := client.startContainer(ctx, preflightID); err != nil {
+			recoveryCtx, cancel := systemUpdateDockerRecoveryContext()
+			cleanupErr := cleanupPreflight(recoveryCtx)
+			cancel()
+			startErr := dockerUpdatedContainerStartError("start preflight updated container failed", err)
+			if cleanupErr != nil {
+				return "", dockerContainerReadiness{}, fmt.Errorf("%w; remove failed preflight container failed: %s", startErr, cleanupErr)
+			}
+			return "", dockerContainerReadiness{}, startErr
+		}
+		readiness, err := waitDockerContainerReady(ctx, client, preflightID, 30*time.Second)
+		if err != nil {
+			recoveryCtx, cancel := systemUpdateDockerRecoveryContext()
+			cleanupErr := cleanupPreflight(recoveryCtx)
+			cancel()
+			if cleanupErr != nil {
+				return "", dockerContainerReadiness{}, fmt.Errorf("%w; remove failed preflight container failed: %s", err, cleanupErr)
+			}
+			return "", dockerContainerReadiness{}, err
+		}
+		if err := cleanupPreflight(ctx); err != nil {
+			return "", dockerContainerReadiness{}, fmt.Errorf("remove preflight updated container failed: %w", err)
+		}
+		preflightReadiness = readiness
+	}
+
 	createRequest := dockerCreateRequestFromInspect(current, targetImage)
 	stagingName := dockerStagingContainerName(containerName)
 	failedName := dockerFailedContainerName(containerName)
@@ -1229,18 +1283,6 @@ func (s *SystemUpdateService) recreateDockerContainer(ctx context.Context, clien
 		recoveryCtx, cancel := systemUpdateDockerRecoveryContext()
 		defer cancel()
 		_ = client.removeContainer(recoveryCtx, stagingID, true)
-	}
-
-	// 先启动候选容器并完成探活。此阶段不触碰当前容器或稳定回滚槽位，
-	// 候选失败时线上容器可以继续提供服务。
-	if err := client.startContainer(ctx, stagingID); err != nil {
-		cleanupStaging()
-		return "", dockerContainerReadiness{}, fmt.Errorf("start updated container failed: %w", err)
-	}
-	readiness, err := waitDockerContainerReady(ctx, client, stagingID, 30*time.Second)
-	if err != nil {
-		cleanupStaging()
-		return "", dockerContainerReadiness{}, err
 	}
 
 	currentStopped := false
@@ -1307,6 +1349,17 @@ func (s *SystemUpdateService) recreateDockerContainer(ctx context.Context, clien
 	}
 	stagingActive = true
 
+	if err := client.startContainer(ctx, stagingID); err != nil {
+		return "", dockerContainerReadiness{}, restore(dockerUpdatedContainerStartError("start updated container failed", err))
+	}
+	readiness, err := waitDockerContainerReady(ctx, client, stagingID, 30*time.Second)
+	if err != nil {
+		if preflightReadiness.Status != "" {
+			err = fmt.Errorf("updated container passed preflight with health status %q but failed after replacing the current container: %w", preflightReadiness.Status, err)
+		}
+		return "", dockerContainerReadiness{}, restore(err)
+	}
+
 	_, backupErr := client.inspectContainer(ctx, backupName)
 	hasStableBackup := backupErr == nil
 	if backupErr != nil && !isDockerNotFoundError(backupErr) {
@@ -1343,14 +1396,25 @@ func restartDockerContainerAfterUpdateFailure(ctx context.Context, client *docke
 }
 
 func dockerCreateRequestFromInspect(current *dockerInspectContainer, targetImage string) dockerCreateContainerRequest {
+	return dockerCreateRequestFromInspectForMode(current, targetImage, dockerCreateRequestModeFinal)
+}
+
+func dockerCreateRequestFromInspectForMode(current *dockerInspectContainer, targetImage string, mode dockerCreateRequestMode) dockerCreateContainerRequest {
 	labels := map[string]string{}
 	for key, value := range current.Config.Labels {
+		if mode == dockerCreateRequestModePreflight && strings.HasPrefix(key, "com.docker.compose.") {
+			continue
+		}
 		labels[key] = value
 	}
 	labels["dev.c1cada.nexustok.updated_by"] = "system_update"
 	labels["dev.c1cada.nexustok.updated_at"] = fmt.Sprintf("%d", common.GetTimestamp())
 	hostConfig := current.HostConfig
 	hostConfig.Binds = dockerRuntimeBinds(current)
+	if mode == dockerCreateRequestModePreflight {
+		hostConfig.PortBindings = nil
+		hostConfig.RestartPolicy = dockerRestartPolicy{Name: "no"}
+	}
 	return dockerCreateContainerRequest{
 		User:         current.Config.User,
 		Env:          append([]string(nil), current.Config.Env...),
@@ -1363,9 +1427,17 @@ func dockerCreateRequestFromInspect(current *dockerInspectContainer, targetImage
 		ExposedPorts: current.Config.ExposedPorts,
 		HostConfig:   hostConfig,
 		NetworkingConfig: dockerCreateNetworkingConfig{
-			EndpointsConfig: dockerEndpointConfigForCreate(current),
+			EndpointsConfig: dockerEndpointConfigForCreate(current, mode != dockerCreateRequestModePreflight),
 		},
 	}
+}
+
+func dockerCanRunParallelPreflight(current *dockerInspectContainer) bool {
+	if current == nil {
+		return false
+	}
+	networkMode := strings.TrimSpace(strings.ToLower(current.HostConfig.NetworkMode))
+	return networkMode != "host" && !strings.HasPrefix(networkMode, "container:")
 }
 
 func dockerRuntimeBinds(current *dockerInspectContainer) []string {
@@ -1400,7 +1472,7 @@ func dockerRuntimeBinds(current *dockerInspectContainer) []string {
 	return binds
 }
 
-func dockerEndpointConfigForCreate(current *dockerInspectContainer) map[string]dockerEndpointSettings {
+func dockerEndpointConfigForCreate(current *dockerInspectContainer, includeAliases bool) map[string]dockerEndpointSettings {
 	if current == nil || len(current.NetworkSettings.Networks) == 0 {
 		return nil
 	}
@@ -1412,13 +1484,33 @@ func dockerEndpointConfigForCreate(current *dockerInspectContainer) map[string]d
 	result := map[string]dockerEndpointSettings{}
 	for _, name := range names {
 		endpoint := current.NetworkSettings.Networks[name]
-		if len(endpoint.Aliases) > 0 {
+		if includeAliases && len(endpoint.Aliases) > 0 {
 			result[name] = dockerEndpointSettings{Aliases: append([]string(nil), endpoint.Aliases...)}
 		} else {
 			result[name] = dockerEndpointSettings{}
 		}
 	}
 	return result
+}
+
+func dockerUpdatedContainerStartError(prefix string, err error) error {
+	if isDockerPortAllocatedError(err) {
+		return fmt.Errorf(
+			"%s: Docker host port is already allocated. NexusTok uses a portless preflight container before switching the published service; check whether another host process or container is using the published port. NexusTok attempted to keep or restore the previous container. Last error: %s",
+			prefix,
+			maskSystemUpdateSensitiveInfo(err.Error()),
+		)
+	}
+	return fmt.Errorf("%s: %s", prefix, maskSystemUpdateSensitiveInfo(err.Error()))
+}
+
+func isDockerPortAllocatedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "port is already allocated") ||
+		(strings.Contains(text, "bind for") && strings.Contains(text, "failed"))
 }
 
 func waitDockerContainerReady(ctx context.Context, client *dockerEngineClient, containerID string, timeout time.Duration) (dockerContainerReadiness, error) {

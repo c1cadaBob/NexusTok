@@ -159,8 +159,9 @@ Docker 更新和回滚通过 Docker Engine socket 及独立 `system-update-helpe
 本次不新增数据库字段或迁移；更新、回滚共用 `system_binary_update` ActiveKey，RootAuth、
 管理审计、确认对话框和服务端校验仍然有效。管理响应、任务错误、日志、helper 参数和
 手动 Docker 命令不得包含 `SESSION_SECRET`、数据库 DSN、Redis 连接串、Cookie、Token、
-Admin Key 或完整上游 Key。尚未执行真实生产 Docker 容器切换，source/development build
-也不承诺从维护页面自动替换。
+Admin Key 或完整上游 Key。2026-09-30 尚未执行真实生产 Docker 容器切换；2026-10-02
+已通过手动 Compose 完成生产切换，应用内 Docker 自更新端口预检边界见 3.9。
+source/development build 也不承诺从维护页面自动替换。
 
 ### 3.8 2026-10-01 Sub2API 登录服务条款兼容
 
@@ -181,6 +182,19 @@ CookieJar、超时和重定向策略读取 `GET /api/v1/settings/public`。只�
 记录；New API 不读取 `/api/v1/settings/public`，不发送 `agreed_revision` 或
 `not_in_cn_confirmed`。如果上游仍需要参考源未确认的其它字段，系统保持明确的条款错误，
 提示检查上游配置或使用浏览器采集登录态。本次不新增数据库表、字段或迁移。
+
+### 3.9 2026-10-02 Docker 自动更新端口占用修复
+
+**变更前**：Docker 自更新流程把当前容器的 `PortBindings` 原样复制到 staging 容器，并在
+旧容器仍运行时直接启动 staging。Compose 默认部署的旧容器已经发布宿主 `3030`，因此新
+staging 在 Docker 网络编程阶段可能返回 `port is already allocated`，应用内更新无法完成。
+
+**变更后**：bridge/Compose 网络先创建不发布宿主端口、移除 Compose 服务标签和网络别名的
+preflight 容器完成探活，通过后删除 preflight，再创建保留原始端口、网络别名、重启策略和
+Compose 标签的正式容器。正式容器只在旧容器停止并改名后启动；启动或探活失败会移除候选、
+恢复并重启旧容器，稳定 backup 不被覆盖。`host` 和 `container:<id>` 网络无法安全并行
+preflight，按停旧后启动正式容器的降级路径执行。错误文本继续脱敏，不写入数据库 DSN、
+Redis 密码、Cookie、Token、API Key 或完整环境变量值。本次不新增数据库表、字段或迁移。
 
 ## 4. 维护规则
 
@@ -204,3 +218,4 @@ CookieJar、超时和重定向策略读取 `GET /api/v1/settings/public`。只�
 | 2026-09-30 | 旧版资源同步迁移与真实站点黑盒验收 | New API/Sub2API 三类 Key 资源仍受 100 页上限影响，偏差表未记录迁移后的容量边界和真实站点只读结果 | 三类 Key 资源独立恢复最多 1000 页；补充 New API 11 条 Key/32 个聚合模型、Sub2API 10 条 Key/18 个聚合模型的脱敏验收结果，并明确部分 `/v1/models` 的 HTTP 403 只进入安全验证、partial 或 stale 快照状态 | 平台站点分页、完整 Key 读取、模型能力、资源快照和安全交付 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`、隔离浏览器 DevTools MCP；未调用计费接口 |
 | 2026-09-30 | 系统维护更新与可重复回滚 | 维护页直连 GitHub，只能查看 Release；没有 Root 后端更新、回滚、重启任务，旧版回滚会消耗唯一 `.backup` | 增加 RootAuth 后端版本检查、SystemTask 更新、回滚、重启、GitHub 缓存与 checksum 校验；裸机和 Docker 均使用稳定备份交换并支持重复回滚；失败时恢复原状态并记录脱敏终态 | 维护页面、Root 管理、系统任务、裸机文件、Docker helper、管理审计和错误日志 | `controller/system_update.go`、`service/system_update.go`、`service/system_update_docker.go`、`model/system_task.go`、前端维护测试；SQLite、MySQL 8.2.0、PostgreSQL 15.19 系统任务兼容性用例通过；未单独验证最低版本和真实生产 Docker 切换 |
 | 2026-10-01 | Sub2API 登录服务条款兼容 | 条款设置、revision、2FA 延迟检查、条款专用状态和 New API 字段隔离未在偏差表中记录 | 增加可选 `agreed_revision`、设置接口故障旧协议回退、2FA 最新 revision、独立条款错误分类、`login_agreement_required` 状态和最近成功快照保留；不发送 `not_in_cn_confirmed`，不新增数据库结构 | Sub2API 密码认证、Auth Flow、后台同步、前端资源状态和安全诊断 | `service/upstream_site*.go`、`service/platform_site_auth_flow.go`、`model/upstream_channel.go`、`controller/upstream_channel.go`、前端类型/面板、脱敏回归测试；OWASP ASVS 5.0.0 与 Authentication/Session Management/Logging/SSRF Cheat Sheet |
+| 2026-10-02 | Docker 自动更新端口占用修复 | staging 容器带原始宿主端口并在旧容器运行时启动，Compose 默认 `3030` 端口会冲突 | bridge/Compose 网络先无端口 preflight 探活，再停旧启动保留原端口的正式容器；失败恢复旧容器并保留 backup，`host`/`container:<id>` 网络受控降级 | Docker 自动更新、系统任务失败终态和维护页错误展示 | `service/system_update_docker.go`、`service/system_update_test.go`；定向 Docker 更新测试通过，不新增数据库迁移 |

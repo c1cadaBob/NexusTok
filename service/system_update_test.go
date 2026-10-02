@@ -808,30 +808,42 @@ func (f dockerTestRoundTripper) RoundTrip(request *http.Request) (*http.Response
 type fakeDockerEngine struct {
 	mu sync.Mutex
 
-	containers      map[string]*dockerInspectContainer
-	nextID          int
-	pullStatuses    []int
-	pullCalls       int
-	healthByImage   map[string]string
-	failRenameTo    map[string]int
-	failStartFor    map[string]int
-	failStartImage  map[string]int
-	failStartAll    int
-	startStateError string
-	failStopFor     map[string]int
-	failCreate      int
-	events          []string
+	containers           map[string]*dockerInspectContainer
+	nextID               int
+	pullStatuses         []int
+	pullCalls            int
+	healthByImage        map[string]string
+	healthByNameImage    map[string]string
+	failRenameTo         map[string]int
+	failStartFor         map[string]int
+	failStartImage       map[string]int
+	failStartName        map[string]int
+	failStartAll         int
+	startStateError      string
+	failStopFor          map[string]int
+	failCreate           int
+	enforcePortConflicts bool
+	createRequests       []dockerCreateRecord
+	startedNames         []string
+	events               []string
+}
+
+type dockerCreateRecord struct {
+	Name    string
+	Request dockerCreateContainerRequest
 }
 
 func newFakeDockerEngine() *fakeDockerEngine {
 	return &fakeDockerEngine{
-		containers:     map[string]*dockerInspectContainer{},
-		healthByImage:  map[string]string{},
-		failRenameTo:   map[string]int{},
-		failStartFor:   map[string]int{},
-		failStartImage: map[string]int{},
-		failStopFor:    map[string]int{},
-		events:         []string{},
+		containers:        map[string]*dockerInspectContainer{},
+		healthByImage:     map[string]string{},
+		healthByNameImage: map[string]string{},
+		failRenameTo:      map[string]int{},
+		failStartFor:      map[string]int{},
+		failStartImage:    map[string]int{},
+		failStartName:     map[string]int{},
+		failStopFor:       map[string]int{},
+		events:            []string{},
 	}
 }
 
@@ -884,6 +896,54 @@ func (f *fakeDockerEngine) hasContainerNamePrefix(prefix string) bool {
 		}
 	}
 	return false
+}
+
+func (f *fakeDockerEngine) runningPortConflict(candidate *dockerInspectContainer) (string, bool) {
+	if candidate == nil {
+		return "", false
+	}
+	candidatePorts := dockerTestPublishedPorts(candidate.HostConfig.PortBindings)
+	if len(candidatePorts) == 0 {
+		return "", false
+	}
+	seen := map[string]struct{}{}
+	for _, container := range f.containers {
+		if container == nil || container.ID == candidate.ID || !container.State.Running {
+			continue
+		}
+		if _, exists := seen[container.ID]; exists {
+			continue
+		}
+		seen[container.ID] = struct{}{}
+		runningPorts := dockerTestPublishedPorts(container.HostConfig.PortBindings)
+		for port := range candidatePorts {
+			if _, exists := runningPorts[port]; exists {
+				return port, true
+			}
+		}
+	}
+	return "", false
+}
+
+func dockerTestPublishedPorts(bindings map[string][]dockerPortBinding) map[string]struct{} {
+	ports := map[string]struct{}{}
+	for _, portBindings := range bindings {
+		for _, binding := range portBindings {
+			hostPort := strings.TrimSpace(binding.HostPort)
+			if hostPort == "" {
+				continue
+			}
+			hostIP := strings.TrimSpace(binding.HostIP)
+			if hostIP == "" {
+				hostIP = "0.0.0.0"
+			}
+			ports[hostIP+":"+hostPort] = struct{}{}
+			if hostIP == "0.0.0.0" {
+				ports[hostPort] = struct{}{}
+			}
+		}
+	}
+	return ports
 }
 
 func (f *fakeDockerEngine) client(t *testing.T) (*dockerEngineClient, func()) {
@@ -970,21 +1030,37 @@ func (f *fakeDockerEngine) handle(writer http.ResponseWriter, request *http.Requ
 			http.Error(writer, "start failed", http.StatusInternalServerError)
 			return
 		}
+		containerName := cleanDockerContainerName(container.Name)
+		if f.failStartName[containerName] > 0 {
+			f.failStartName[containerName]--
+			http.Error(writer, "start failed", http.StatusInternalServerError)
+			return
+		}
 		if f.failStartImage[container.Config.Image] > 0 {
 			f.failStartImage[container.Config.Image]--
 			http.Error(writer, "start failed", http.StatusInternalServerError)
 			return
 		}
+		if f.enforcePortConflicts {
+			if hostPort, ok := f.runningPortConflict(container); ok {
+				http.Error(writer, "failed to set up container networking: driver failed programming external connectivity on endpoint test: Bind for 0.0.0.0:"+hostPort+" failed: port is already allocated", http.StatusInternalServerError)
+				return
+			}
+		}
 		container.State.Running = true
 		container.State.Status = "running"
 		container.State.Error = f.startStateError
 		if container.Config.Healthcheck != nil {
-			healthStatus := f.healthByImage[container.Config.Image]
+			healthStatus := f.healthByNameImage[containerName+"\x00"+container.Config.Image]
+			if healthStatus == "" {
+				healthStatus = f.healthByImage[container.Config.Image]
+			}
 			if healthStatus == "" {
 				healthStatus = "healthy"
 			}
 			container.State.Health = &dockerContainerHealth{Status: healthStatus}
 		}
+		f.startedNames = append(f.startedNames, containerName)
 		f.events = append(f.events, "start:"+container.Config.Image)
 		writer.WriteHeader(http.StatusNoContent)
 	case request.Method == http.MethodPost && len(parts) == 2 && parts[1] == "stop":
@@ -1056,22 +1132,28 @@ func (f *fakeDockerEngine) handleCreate(writer http.ResponseWriter, request *htt
 		http.Error(writer, "decode failed", http.StatusBadRequest)
 		return
 	}
+	name := cleanDockerContainerName(request.URL.Query().Get("name"))
+	f.createRequests = append(f.createRequests, dockerCreateRecord{Name: name, Request: payload})
 	f.nextID++
 	container := &dockerInspectContainer{
 		ID:    fmt.Sprintf("container-%d", f.nextID),
-		Name:  "/" + cleanDockerContainerName(request.URL.Query().Get("name")),
+		Name:  "/" + name,
 		Image: payload.Image,
 		Config: dockerContainerConfig{
-			Image:       payload.Image,
-			Env:         payload.Env,
-			Cmd:         payload.Cmd,
-			Entrypoint:  payload.Entrypoint,
-			WorkingDir:  payload.WorkingDir,
-			User:        payload.User,
-			Labels:      payload.Labels,
-			Healthcheck: payload.Healthcheck,
+			Image:        payload.Image,
+			Env:          payload.Env,
+			Cmd:          payload.Cmd,
+			Entrypoint:   payload.Entrypoint,
+			WorkingDir:   payload.WorkingDir,
+			User:         payload.User,
+			Labels:       payload.Labels,
+			ExposedPorts: payload.ExposedPorts,
+			Healthcheck:  payload.Healthcheck,
 		},
 		HostConfig: payload.HostConfig,
+		NetworkSettings: dockerContainerNetworkSettings{
+			Networks: payload.NetworkingConfig.EndpointsConfig,
+		},
 		State: dockerContainerState{
 			Status: "created",
 		},
@@ -1200,6 +1282,22 @@ func TestDockerReadinessClassifiesHealthcheckStatesAndNoHealthcheck(t *testing.T
 	assert.NotContains(t, err.Error(), "hidden-value")
 }
 
+func TestDockerUpdatedContainerStartErrorExplainsPortConflictAndMasksSecrets(t *testing.T) {
+	err := dockerUpdatedContainerStartError(
+		"start updated container failed",
+		errors.New(`Docker Engine returned 500: {"message":"Bind for 0.0.0.0:3030 failed: port is already allocated","SESSION_SECRET":"hidden","SQL_DSN":"postgres://root:secret@example/nexustok","Authorization":"Bearer token-secret"}`),
+	)
+
+	require.Error(t, err)
+	text := err.Error()
+	assert.Contains(t, text, "Docker host port is already allocated")
+	assert.Contains(t, text, "portless preflight")
+	assert.Contains(t, text, "SESSION_SECRET")
+	assert.NotContains(t, text, "hidden")
+	assert.NotContains(t, text, "secret@example")
+	assert.NotContains(t, text, "token-secret")
+}
+
 func TestDockerUpdateKeepsStableBackupAndCleansFailedStagingContainer(t *testing.T) {
 	fake := newFakeDockerEngine()
 	current := &dockerInspectContainer{
@@ -1262,6 +1360,90 @@ func TestDockerUpdateKeepsStableBackupAndCleansFailedStagingContainer(t *testing
 	}
 	assert.GreaterOrEqual(t, startIndex, 0)
 	assert.Greater(t, stopIndex, startIndex)
+	assert.False(t, fake.hasContainerNamePrefix("nexustok.staging-"))
+	assert.False(t, fake.hasContainerNamePrefix("nexustok.failed-"))
+}
+
+func TestDockerUpdateUsesPortlessPreflightBeforeReplacingPortBoundContainer(t *testing.T) {
+	fake := newFakeDockerEngine()
+	fake.enforcePortConflicts = true
+	current := &dockerInspectContainer{
+		ID:   "current-id",
+		Name: "/nexustok",
+		Config: dockerContainerConfig{
+			Image: "c1cadabob/nexustok:old",
+			Env:   []string{"PORT=3030", "SESSION_SECRET=not-for-output"},
+			Labels: map[string]string{
+				"com.docker.compose.project":     "nexustok",
+				"com.docker.compose.service":     "nexustok",
+				"dev.c1cada.nexustok.keep-label": "true",
+			},
+			ExposedPorts: map[string]any{"3030/tcp": struct{}{}},
+			Healthcheck:  &dockerHealthcheck{Test: []string{"CMD-SHELL", "true"}},
+		},
+		HostConfig: dockerHostConfig{
+			PortBindings: map[string][]dockerPortBinding{
+				"3030/tcp": {{HostIP: "0.0.0.0", HostPort: "3030"}},
+			},
+			RestartPolicy: dockerRestartPolicy{Name: "always"},
+			NetworkMode:   "nexustok-network",
+			Binds:         []string{"/opt/nexustok/data:/data"},
+		},
+		NetworkSettings: dockerContainerNetworkSettings{
+			Networks: map[string]dockerEndpointSettings{
+				"nexustok-network": {Aliases: []string{"nexustok", "nexustok-1"}},
+			},
+		},
+		State: dockerContainerState{
+			Running: true,
+			Status:  "running",
+			Health:  &dockerContainerHealth{Status: "healthy"},
+		},
+	}
+	backup := &dockerInspectContainer{
+		ID:     "backup-id",
+		Name:   "/nexustok.backup",
+		Config: dockerContainerConfig{Image: "c1cadabob/nexustok:previous"},
+		State:  dockerContainerState{Status: "exited"},
+	}
+	fake.addContainer(current)
+	fake.addContainer(backup)
+	currentID := current.ID
+	service := dockerTestService(fake, &currentID)
+	originalFactory := systemUpdateDockerClientFactory
+	t.Cleanup(func() { systemUpdateDockerClientFactory = originalFactory })
+	client, closeServer := fake.client(t)
+	t.Cleanup(closeServer)
+	systemUpdateDockerClientFactory = func(string) *dockerEngineClient { return client }
+
+	result, err := service.performDockerUpdateInProcess(
+		context.Background(),
+		nil,
+		"runner",
+		dockerHelperOptions{TargetImage: "c1cadabob/nexustok:new"},
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, fake.createRequests, 2)
+	preflight := fake.createRequests[0]
+	final := fake.createRequests[1]
+	assert.Contains(t, preflight.Name, "nexustok.preflight-")
+	assert.Contains(t, final.Name, "nexustok.staging-")
+	assert.Empty(t, preflight.Request.HostConfig.PortBindings)
+	assert.Equal(t, "no", preflight.Request.HostConfig.RestartPolicy.Name)
+	assert.NotContains(t, preflight.Request.Labels, "com.docker.compose.project")
+	assert.NotContains(t, preflight.Request.Labels, "com.docker.compose.service")
+	assert.Equal(t, dockerEndpointSettings{}, preflight.Request.NetworkingConfig.EndpointsConfig["nexustok-network"])
+	assert.Equal(t, current.HostConfig.PortBindings, final.Request.HostConfig.PortBindings)
+	assert.Equal(t, "always", final.Request.HostConfig.RestartPolicy.Name)
+	assert.Equal(t, "nexustok", final.Request.Labels["com.docker.compose.project"])
+	assert.Equal(t, "nexustok", final.Request.Labels["com.docker.compose.service"])
+	assert.Equal(t, []string{"nexustok", "nexustok-1"}, final.Request.NetworkingConfig.EndpointsConfig["nexustok-network"].Aliases)
+	assert.Equal(t, "c1cadabob/nexustok:new", fake.findContainer("nexustok").Config.Image)
+	assert.Equal(t, "c1cadabob/nexustok:old", fake.findContainer("nexustok.backup").Config.Image)
+	assert.Equal(t, []string{preflight.Name, "nexustok"}, fake.startedNames)
+	assert.False(t, fake.hasContainerNamePrefix("nexustok.preflight-"))
 	assert.False(t, fake.hasContainerNamePrefix("nexustok.staging-"))
 	assert.False(t, fake.hasContainerNamePrefix("nexustok.failed-"))
 }
@@ -1386,6 +1568,122 @@ func TestDockerUpdateFailureBeforeReplacementKeepsCurrentAndBackup(t *testing.T)
 			assert.Equal(t, "c1cadabob/nexustok:previous", fake.findContainer("nexustok.backup").Config.Image)
 			assert.False(t, fake.hasContainerNamePrefix("nexustok.staging-"))
 			assert.False(t, fake.hasContainerNamePrefix("nexustok.failed-"))
+		})
+	}
+}
+
+func TestDockerUpdateFailureAfterFinalStartRestoresCurrentAndBackup(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(fake *fakeDockerEngine)
+	}{
+		{
+			name: "final start failure",
+			setup: func(fake *fakeDockerEngine) {
+				fake.failStartName["nexustok"] = 1
+			},
+		},
+		{
+			name: "final health failure",
+			setup: func(fake *fakeDockerEngine) {
+				fake.healthByNameImage["nexustok\x00c1cadabob/nexustok:new"] = "unhealthy"
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := newFakeDockerEngine()
+			current := &dockerInspectContainer{
+				ID:   "current-id",
+				Name: "/nexustok",
+				Config: dockerContainerConfig{
+					Image:       "c1cadabob/nexustok:old",
+					Healthcheck: &dockerHealthcheck{Test: []string{"CMD-SHELL", "true"}},
+				},
+				HostConfig: dockerHostConfig{
+					PortBindings: map[string][]dockerPortBinding{
+						"3030/tcp": {{HostPort: "3030"}},
+					},
+					RestartPolicy: dockerRestartPolicy{Name: "always"},
+				},
+				State: dockerContainerState{Running: true, Status: "running"},
+			}
+			backup := &dockerInspectContainer{
+				ID:     "backup-id",
+				Name:   "/nexustok.backup",
+				Config: dockerContainerConfig{Image: "c1cadabob/nexustok:previous"},
+				State:  dockerContainerState{Status: "exited"},
+			}
+			fake.addContainer(current)
+			fake.addContainer(backup)
+			tt.setup(fake)
+
+			currentID := current.ID
+			service := dockerTestService(fake, &currentID)
+			originalFactory := systemUpdateDockerClientFactory
+			t.Cleanup(func() { systemUpdateDockerClientFactory = originalFactory })
+			client, closeServer := fake.client(t)
+			t.Cleanup(closeServer)
+			systemUpdateDockerClientFactory = func(string) *dockerEngineClient { return client }
+
+			_, err := service.performDockerUpdateInProcess(
+				context.Background(),
+				nil,
+				"runner",
+				dockerHelperOptions{TargetImage: "c1cadabob/nexustok:new"},
+			)
+
+			require.Error(t, err)
+			assert.Equal(t, "c1cadabob/nexustok:old", fake.findContainer("nexustok").Config.Image)
+			assert.True(t, fake.findContainer("nexustok").State.Running)
+			assert.Equal(t, "c1cadabob/nexustok:previous", fake.findContainer("nexustok.backup").Config.Image)
+			assert.False(t, fake.hasContainerNamePrefix("nexustok.preflight-"))
+			assert.False(t, fake.hasContainerNamePrefix("nexustok.staging-"))
+			assert.False(t, fake.hasContainerNamePrefix("nexustok.failed-"))
+		})
+	}
+}
+
+func TestDockerUpdateSkipsParallelPreflightForHostAndContainerNetworkModes(t *testing.T) {
+	for _, networkMode := range []string{"host", "container:shared-network"} {
+		t.Run(networkMode, func(t *testing.T) {
+			fake := newFakeDockerEngine()
+			current := &dockerInspectContainer{
+				ID:   "current-id",
+				Name: "/nexustok",
+				Config: dockerContainerConfig{
+					Image:       "c1cadabob/nexustok:old",
+					Healthcheck: &dockerHealthcheck{Test: []string{"CMD-SHELL", "true"}},
+				},
+				HostConfig: dockerHostConfig{
+					NetworkMode: networkMode,
+				},
+				State: dockerContainerState{Running: true, Status: "running"},
+			}
+			fake.addContainer(current)
+			currentID := current.ID
+			service := dockerTestService(fake, &currentID)
+			originalFactory := systemUpdateDockerClientFactory
+			t.Cleanup(func() { systemUpdateDockerClientFactory = originalFactory })
+			client, closeServer := fake.client(t)
+			t.Cleanup(closeServer)
+			systemUpdateDockerClientFactory = func(string) *dockerEngineClient { return client }
+
+			result, err := service.performDockerUpdateInProcess(
+				context.Background(),
+				nil,
+				"runner",
+				dockerHelperOptions{TargetImage: "c1cadabob/nexustok:new"},
+			)
+
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Len(t, fake.createRequests, 1)
+			assert.Contains(t, fake.createRequests[0].Name, "nexustok.staging-")
+			assert.Equal(t, networkMode, fake.createRequests[0].Request.HostConfig.NetworkMode)
+			assert.Equal(t, []string{"nexustok"}, fake.startedNames)
+			assert.Equal(t, "c1cadabob/nexustok:new", fake.findContainer("nexustok").Config.Image)
 		})
 	}
 }

@@ -219,11 +219,14 @@ Docker 多架构发布和真实生产切换仍以 GitHub Actions 结果和实际
 源码/开发构建和 Windows 正在运行的二进制不强行自动替换，页面返回手动更新提示。
 
 Docker 部署通过 Docker Engine socket 和独立 helper 重建候选容器，保存环境、挂载、
-端口、网络、重启策略、入口参数和 Compose 标签；候选容器必须通过 `healthy`，没有
-Healthcheck 时至少确认持续 `Running` 并标记降级。helper 在主容器停止前接管系统任务
-租约，启动失败时把租约转回原 runner。管理响应、任务错误、日志和手动命令不包含
-`SESSION_SECRET`、`SQL_DSN`、`REDIS_CONN_STRING`、Cookie、Token 或完整 Key。
-截至 2026-09-30 尚未进行真实生产 Docker 容器切换。
+端口、网络、重启策略、入口参数和 Compose 标签。2026-10-02 起，普通 bridge/Compose
+网络先创建不发布宿主端口、无 Compose 服务标签和网络别名的 preflight 容器完成健康
+检查；通过后删除 preflight，再创建保留原始端口和 Compose 元数据的正式 staging
+容器，停旧容器并改名后才启动正式容器，避免旧容器仍占用 `3030` 时触发 Docker
+`port is already allocated`。`host` 和 `container:<id>` 网络无法安全并行预检，按停旧后
+启动正式容器的降级路径执行。helper 在主容器停止前接管系统任务租约，启动失败时把租约
+转回原 runner。管理响应、任务错误、日志和手动命令不包含 `SESSION_SECRET`、`SQL_DSN`、
+`REDIS_CONN_STRING`、Cookie、Token 或完整 Key。
 
 ## 8. 维护时需要同步的关联模块
 
@@ -235,6 +238,7 @@ Healthcheck 时至少确认持续 `Running` 并标记降级。helper 在主容�
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 建立启动、分层、请求链路、部署边界和限制说明 | `main.go`、`router/`、`middleware/`、`model/`、`service/`、`relay/` | `main.go`、`model/main.go`、`router/` 静态核对 |
 | 2026-09-30 | 系统维护更新与回滚 | 前端直连 GitHub 且没有后端运维任务；旧版回滚会消耗唯一备份 | 增加 RootAuth 维护接口、SystemTask 进度、GitHub 缓存/checksum、裸机稳定备份交换、Docker helper/健康检查和重启探活 | `router/api-router.go`、`controller/system_update.go`、`service/system_update*.go`、`main.go`、维护页 | `go test ./service ./model ./controller ./router`、前端定向测试；未进行生产容器切换 |
+| 2026-10-02 | Docker 自动更新端口预检 | 更新流程在旧容器仍发布 `3030` 时直接启动同端口 staging 容器，Docker 会返回 `port is already allocated` | bridge/Compose 网络先用无宿主端口、无 Compose 标签/别名的 preflight 容器探活，再停旧并启动保留原端口的正式容器；`host`/`container:<id>` 网络走受控降级 | `service/system_update_docker.go`、系统任务 Docker helper、维护页错误展示 | `go test ./service -run 'Docker(Update\|Updated\|Readiness\|Helper\|Pull\|Staging)' -count=1` |
 | 2026-09-30 | v0.2.2 生产默认部署 | Compose 使用浮动依赖、明文默认密码和相对目录，服务依赖未按健康状态编排；单容器示例未明确不包含外部数据库/缓存 | Compose 固定 PostgreSQL 15 + Redis 7，密码由 `.env`/部署脚本生成，应用端口为 `3030`，数据/日志使用 `/opt/nexustok` 持久化目录，单容器仅保留 SQLite/无 Redis 兼容模式 | `docker-compose.yml`、`scripts/deploy.sh`、`Dockerfile`、`VERSION`、Docker 发布工作流和中文部署文档 | `docker compose config`、`bash -n scripts/deploy.sh`、隔离三服务栈和真实 SQLite 3.50.4/MySQL 8.2.0/PostgreSQL 15.19 矩阵已通过；生产 Dockerfile 完整构建因 `proxy.golang.org` 超时未完成，远端发布以标签工作流为准 |
 | 2026-10-01 | v0.2.3 安全依赖与部署发布 | README 多语言存在旧端口、旧镜像和宣传栏目；发布工作流 Secret 名称不匹配；部署文档未完整覆盖单机、多机、备份和故障边界 | 统一六种 README、宝塔文档和架构事实为 `3030`、Compose、PostgreSQL 15 + Redis 7；补充多机共享外部服务、主从职责、代理和回滚；工作流使用 `DOCKER_USERNAME`/`DOCKER_PASSWORD`；前端/Electron 依赖按本地审计结果最小升级，数据库代码和 Schema 未修改 | `README*.md`、`docs/installation/BT.md`、`.github/workflows/docker-*.yml`、web/Electron 依赖 | Bun/npm 审计、govulncheck、前端全量回归、Go vet/build/test、relaykit 构建、Compose 配置和隔离三服务健康检查已通过；推送反馈仍有 1 条中等级 Dependabot 警报，认证 API、v0.2.3 镜像、多架构 manifest、Cosign 和远端 Release 待验证 |
 | 2026-10-01 | v0.2.4 部署故障修复与发布准备 | PostgreSQL 历史唯一约束可能导致启动迁移以 `SQLSTATE 42704` 失败；部署脚本可能先启动应用再暴露 `.env` 密码不一致；全新部署清理边界未集中记录 | 已知历史唯一对象在 `AutoMigrate` 前转换为独立唯一索引；Compose 健康检查和部署脚本先执行真实 TCP 密码认证，失败时不启动应用；补充 named volume、Redis 临时状态、数据/日志路径、备份、精确清理和 Komari 保护边界；发布目标为 `v0.2.4` 与 `latest` | `model/subscription_pre_consume_migration.go`、`docker-compose.yml`、`scripts/deploy.sh`、部署文档和发布说明 | SQLite 定向迁移测试、Compose 配置和脚本语法待本次完成；真实 PostgreSQL/MySQL 矩阵、发布工作流和远端全量清理结果按最终报告记录，未完成前不宣称三数据库兼容验证完成 |

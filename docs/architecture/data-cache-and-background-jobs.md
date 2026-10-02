@@ -202,11 +202,15 @@ SHA256 后再进行事务式交换；`.backup` 保持为稳定回滚槽位，回
 `.backup`，成功后仍可继续回滚。
 
 Docker 模式使用 Engine socket 和独立 helper，不启动第二个 HTTP/Redis runner。候选容器
-使用唯一 staging/failed 名称，旧 backup 在候选容器通过健康检查前不覆盖；存在
-Healthcheck 时必须为 `healthy`，没有 Healthcheck 时只确认容器持续运行并标记降级。Docker
-更新和回滚失败会删除候选容器、恢复原容器并再次确认其运行状态。helper、runner 和任务
-终态都只保存脱敏错误，不保存敏感环境变量值。source/development build、Windows 正在
-运行的二进制和未挂载 Docker socket 的部署继续显示手动更新提示，真实生产容器切换尚未执行。
+使用唯一 preflight/staging/failed 名称，旧 backup 在候选容器通过健康检查前不覆盖。
+2026-10-02 起，bridge/Compose 网络先启动不发布宿主端口、无 Compose 服务标签和网络别名的
+preflight 容器；通过后删除 preflight，再在旧容器停止并改名后启动保留原端口和 Compose
+元数据的正式 staging 容器，避免自更新时与旧容器争用 `3030`。存在 Healthcheck 时必须为
+`healthy`，没有 Healthcheck 时只确认容器持续运行并标记降级；`host` 和 `container:<id>`
+网络无法安全并行预检，走停旧后启动正式容器的降级路径。Docker 更新和回滚失败会删除候选
+容器、恢复原容器并再次确认其运行状态。helper、runner 和任务终态都只保存脱敏错误，不保存
+敏感环境变量值。source/development build、Windows 正在运行的二进制和未挂载 Docker socket
+的部署继续显示手动更新提示。
 
 本次系统任务兼容性验证（2026-09-30）执行：
 `TEST_MYSQL_DSN='<临时测试 DSN>' TEST_POSTGRES_DSN='<临时测试 DSN>' go test ./model -run '^TestSystemTaskDatabaseCompatibility$' -count=1 -v`。
@@ -229,6 +233,7 @@ SQLite、MySQL 8.2.0 和 PostgreSQL 15.19 均通过 AutoMigrate 二次执行、A
 | 2026-09-29 | 补充旧版预览缓存与当前平台资源快照关系 | 文档只描述当前资源表和失败回退，未把旧版 `upstream-account-preview`、完整 Key 临时边界、加密存储、HMAC 指纹与后台同步方式放在同一条缓存链路中 | 明确旧版预览缓存 10 分钟 TTL 和一次性消费；当前凭据/完整 Key 加密保存并以指纹和外部 ID 匹配；手动、排队、后台同步共用站点锁；资源失败保留最近成功 Key、额度、过期时间、模型和能力快照 | 平台站点缓存、资源查询、路由候选和系统任务 | `service/upstream_site.go`、`model/upstream_channel.go`、`model/platform_site_resources.go`、旧版 `service/upstreamaccount/`、[`平台站点资源获取比较`](../platform-site-resource-acquisition-comparison.md) |
 | 2026-09-30 | 旧版资源分页与脱敏 fixture 验收边界 | New API/Sub2API Key 资源最多 100 页，完整 Key 详情和分页失败边界未完全记录；脱敏资源失败和地址边界未纳入缓存快照说明 | 三类 Key 资源恢复独立 1000 页上限；完整列表优先、缺失详情补齐、资源失败保留最近成功快照；使用脱敏 fixture 验证资源状态和路由边界；不写入凭据或临时捕获文件 | 平台资源缓存、后台同步、路由快照和安全交付 | `service/upstream_site_adapters.go`、`service/upstream_site_test.go`、脱敏 HTTP fixture 和 SQLite；无数据库结构变更 |
 | 2026-09-30 | 系统维护任务与缓存边界 | 维护页直连 GitHub，未有更新/回滚任务，旧版回滚会消耗 `.backup`；Docker helper 和租约接管未登记 | 后端缓存 Release 并经 Root 任务执行更新、回滚和重启；裸机稳定 `.backup` 可重复交换，Docker 使用 socket/helper、唯一候选容器和健康检查；不修改 SystemTask 表字段或新增迁移 | GitHub 缓存、SystemTask、任务租约、裸机文件交换、Docker 容器生命周期 | `service/system_update.go`、`service/system_update_docker.go`、`model/system_task.go`、`service/system_update_test.go`；未执行真实生产容器切换 |
+| 2026-10-02 | Docker 自动更新端口预检 | Docker 更新在旧容器仍占用宿主端口时直接启动同端口 staging 容器，可能在任务 55% 处失败并保持旧版本 | bridge/Compose 网络增加无宿主端口 preflight 探活，正式容器只在旧容器停止并改名后启动；端口冲突错误脱敏并提示检查其它宿主进程或容器 | Docker Engine helper、系统任务终态、维护页失败原因 | `go test ./service -run 'Docker(Update\|Updated\|Readiness\|Helper\|Pull\|Staging)' -count=1`；不新增数据库表、字段或迁移 |
 | 2026-09-30 | v0.2.2 生产数据库与缓存默认值 | Compose 使用浮动 Redis/PostgreSQL 标签、默认密码和未固定的应用数据路径；单容器与完整生产拓扑边界不清晰 | Compose 固定 PostgreSQL 15 + Redis 7，密码由 `.env`/部署脚本生成，服务健康后启动应用，端口为 `3030`，SQLite/无 Redis 回退和既有数据库兼容行为保持不变 | `docker-compose.yml`、`scripts/deploy.sh`、`model/main.go`、`common/redis.go`、中文部署文档 | `docker compose config`、脚本语法检查、隔离三服务栈和真实 SQLite 3.50.4/MySQL 8.2.0/PostgreSQL 15.19 矩阵已通过；生产 Dockerfile 完整构建因 `proxy.golang.org` 超时未完成，最低版本和独立日志库矩阵未覆盖 |
 | 2026-10-01 | v0.2.3 部署文档与依赖边界 | 文档没有完整记录单机/多机的共享服务、健康检查、备份和故障边界；Secret 名称与项目执行环境不一致 | 文档明确 Compose 生产默认、外部多机 DSN/Redis、主从任务职责、Redis 拓扑差异和数据迁移限制；Docker 工作流改用 `DOCKER_USERNAME`/`DOCKER_PASSWORD`；web/Electron 依赖最小安全升级不改变缓存、任务和数据库代码 | `README*.md`、`docs/installation/BT.md`、`.github/workflows/docker-*.yml`、web/Electron lockfile | Bun/npm 审计、govulncheck 和隔离 Compose 三服务健康检查已通过；未修改 GORM、数据库驱动、迁移或缓存代码；推送反馈仍有 1 条中等级 Dependabot 警报，认证 API、发布镜像和多架构 manifest 待验证 |
 | 2026-10-01 | v0.2.3 发布收尾 | 一次性 Dependabot 处理工作流仍在仓库，缓存与后台任务文档仍记录 #107 开放及正式发布待验证 | 删除一次性工作流；GitHub 远端安全页面确认 #107 已完成处理且没有开放警报；本次只保留发布后镜像、Release 和 Electron 工作流核验，不改变 Redis、Session、任务租约或数据库兼容行为 | `.github/release-notes/v0.2.3.md`、`.github/workflows/dependabot-v023-release.yml`、发布工作流 | 远端安全页面无开放 Dependabot 警报；正式标签推送后核验多架构 manifest、Cosign、Release 产物和镜像运行状态；未修改缓存代码、后台任务代码或数据库 Schema |
@@ -309,4 +314,17 @@ helper 和租约接管未登记。
 
 **变更后**：后端缓存 Release 并经 Root 任务执行更新、回滚和重启；裸机稳定 `.backup`
 可重复交换，Docker 使用 socket/helper、唯一候选容器和健康检查；不修改 SystemTask 表
-字段或新增迁移。真实生产 Docker 容器切换尚未执行。
+字段或新增迁移。
+
+### 9.6 2026-10-02 Docker 自动更新端口预检
+
+**变更前**：Docker 自更新在旧容器仍运行并发布宿主 `3030` 时，直接启动复用同一
+`PortBindings` 的 staging 容器；Docker 会在网络编程阶段返回 `port is already allocated`，
+任务停在重建容器阶段，旧容器虽然仍可运行但无法完成应用内更新。
+
+**变更后**：bridge/Compose 网络先用移除宿主端口、Compose 服务标签和网络别名的 preflight
+容器完成探活，通过后删除 preflight，再创建保留原始端口、网络别名、重启策略和 Compose
+标签的正式容器。正式容器只在旧容器停止并改名后启动；启动或探活失败会移除候选容器、
+恢复并重启旧容器，稳定 backup 不被覆盖。`host` 和 `container:<id>` 网络不执行并行
+preflight，走停旧后启动正式容器的降级路径。错误原因继续脱敏，不写入数据库 DSN、Redis
+密码、Cookie、Token、API Key 或完整环境变量值。
