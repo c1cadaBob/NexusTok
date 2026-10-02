@@ -115,7 +115,7 @@ HTTP
 Redis 兼容模式。SQLite 文件不会自动迁移到 PostgreSQL；已有生产数据切换前必须备份，
 并单独执行经过验证的数据迁移。
 
-本次发布镜像为 `c1cadabob/nexustok:v0.2.5` 和 `c1cadabob/nexustok:latest`，Dockerfile
+本次发布镜像为 `c1cadabob/nexustok:v0.2.6` 和 `c1cadabob/nexustok:latest`，Dockerfile
 通过当前 `web/` 的 Bun/Rsbuild `bun run build` 生成并嵌入新版前端，不新增路由、DTO、
 数据库模型或字段。
 
@@ -178,6 +178,18 @@ Docker 多架构发布和真实生产切换仍以 GitHub Actions 结果和实际
 回退，后台同步保留最近成功资源快照。New API 不读取该接口、不发送条款字段；本版本
 不发送 `not_in_cn_confirmed`，不新增数据库结构。发布镜像为
 `c1cadabob/nexustok:v0.2.5` 和 `c1cadabob/nexustok:latest`。
+
+### v0.2.6 Docker 自动更新端口预检（2026-10-02）
+
+**变更前**：`v0.2.5` 的应用内 Docker 自动更新会复制当前容器的宿主端口映射，并在旧容器
+仍运行时启动 staging 容器；Compose 默认部署中旧容器已经绑定 `3030`，因此 Docker 可能
+返回 `port is already allocated`，更新任务停在重建容器阶段。
+
+**变更后**：bridge/Compose 网络先使用不发布宿主端口、无 Compose 服务标签和网络别名的
+preflight 容器完成健康检查；通过后删除 preflight，再创建保留原端口、网络别名、重启策略
+和 Compose 标签的正式容器。正式容器只在旧容器停止并改名后启动，失败时恢复旧容器并保留
+稳定 backup。`host` 和 `container:<id>` 网络走停旧后启动正式容器的降级路径。发布镜像为
+`c1cadabob/nexustok:v0.2.6` 和 `c1cadabob/nexustok:latest`；本版本不新增数据库结构。
 
 ### Master/Slave
 
