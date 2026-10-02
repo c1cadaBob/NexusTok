@@ -680,6 +680,7 @@ export function ChannelsTable() {
             title: t('Group'),
             options: groupFilterOptions,
             singleSelect: true,
+            translateLabels: false,
           },
         ],
         preActions: (
