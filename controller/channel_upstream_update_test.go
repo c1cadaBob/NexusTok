@@ -663,8 +663,12 @@ func TestSavePlatformSiteAccountKeepsExistingCredentialForAutomaticEdit(t *testi
 	require.NoError(t, db.AutoMigrate(&model.PlatformSiteAccount{}))
 
 	encrypted, err := model.EncryptPlatformSiteCredential(model.PlatformSiteCredential{
-		AuthType: model.UpstreamAuthAdminKey,
-		AdminKey: "existing-admin-key",
+		AuthType:         model.UpstreamAuthAdminKey,
+		AdminKey:         "existing-admin-key",
+		LastAuthAt:       123,
+		RefreshStatus:    "uncertain_rotation",
+		ReauthRequired:   true,
+		RefreshUncertain: true,
 	})
 	require.NoError(t, err)
 
@@ -702,6 +706,141 @@ func TestSavePlatformSiteAccountKeepsExistingCredentialForAutomaticEdit(t *testi
 	require.NoError(t, err)
 	assert.Equal(t, model.UpstreamAuthAdminKey, credential.AuthType)
 	assert.Equal(t, "existing-admin-key", credential.AdminKey)
+	assert.Equal(t, int64(123), credential.LastAuthAt)
+	assert.Equal(t, "uncertain_rotation", credential.RefreshStatus)
+	assert.True(t, credential.ReauthRequired)
+	assert.True(t, credential.RefreshUncertain)
+}
+
+func TestSavePlatformSiteAccountRejectsPasswordToAutomaticEditWithoutCapture(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.PlatformSiteAccount{}))
+
+	encrypted, err := model.EncryptPlatformSiteCredential(model.PlatformSiteCredential{
+		AuthType: model.UpstreamAuthPassword,
+		Username: "existing-user",
+		Password: "existing-password",
+	})
+	require.NoError(t, err)
+
+	channel := &model.Channel{
+		Name:         "NewAPI password site",
+		Type:         constant.ChannelTypeNewAPI,
+		UpstreamKind: model.UpstreamKindPlatformSite,
+		Status:       common.ChannelStatusEnabled,
+	}
+	require.NoError(t, db.Create(channel).Error)
+	account := &model.PlatformSiteAccount{
+		ChannelID:            channel.Id,
+		Platform:             model.PlatformNewAPI,
+		BaseURL:              "http://127.0.0.1:8090",
+		AuthType:             model.UpstreamAuthPassword,
+		CredentialCiphertext: encrypted,
+		CredentialKeyVersion: "v1",
+		ConversionRatio:      1,
+	}
+	require.NoError(t, db.Create(account).Error)
+
+	err = savePlatformSiteAccount(channel.Id, &PlatformSiteInput{
+		Platform: model.PlatformNewAPI,
+		BaseURL:  account.BaseURL,
+		AuthType: service.PlatformSiteCaptureAuthAuto,
+	}, account)
+	require.ErrorContains(t, err, "必须完成上游登录态采集")
+}
+
+func TestPlatformSiteInputDerivesPlatformAndPreservesLegacyAutomaticCredentials(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.PlatformSiteAccount{}))
+
+	channel := &model.Channel{
+		Name:         "NewAPI automatic compatibility",
+		Type:         constant.ChannelTypeNewAPI,
+		UpstreamKind: model.UpstreamKindPlatformSite,
+		Status:       common.ChannelStatusEnabled,
+	}
+	require.NoError(t, db.Create(channel).Error)
+
+	input := &PlatformSiteInput{}
+	require.NoError(t, ensurePlatformSiteChannel(channel, input))
+	assert.Equal(t, model.PlatformNewAPI, input.Platform)
+
+	mismatch := &PlatformSiteInput{Platform: model.PlatformSub2API}
+	require.ErrorContains(t, ensurePlatformSiteChannel(channel, mismatch), "NewAPI")
+
+	err := savePlatformSiteAccount(channel.Id, &PlatformSiteInput{
+		BaseURL:  "https://newapi.example.com",
+		AuthType: service.PlatformSiteCaptureAuthAuto,
+	}, nil)
+	require.ErrorContains(t, err, "自动配置需要先完成上游登录态采集")
+
+	tests := []struct {
+		name       string
+		authType   string
+		credential model.PlatformSiteCredential
+		assert     func(*testing.T, model.PlatformSiteCredential)
+	}{
+		{
+			name:     "access token",
+			authType: model.UpstreamAuthAccessToken,
+			credential: model.PlatformSiteCredential{
+				AuthType:    model.UpstreamAuthAccessToken,
+				AccessToken: "legacy-access-token",
+			},
+			assert: func(t *testing.T, credential model.PlatformSiteCredential) {
+				assert.Equal(t, "legacy-access-token", credential.AccessToken)
+			},
+		},
+		{
+			name:     "cookie",
+			authType: model.UpstreamAuthCookie,
+			credential: model.PlatformSiteCredential{
+				AuthType: model.UpstreamAuthCookie,
+				Cookie:   "session=legacy-cookie",
+			},
+			assert: func(t *testing.T, credential model.PlatformSiteCredential) {
+				assert.Equal(t, "session=legacy-cookie", credential.Cookie)
+			},
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			legacyChannel := &model.Channel{
+				Name:         "Sub2API " + testCase.name,
+				Type:         constant.ChannelTypeSub2API,
+				UpstreamKind: model.UpstreamKindPlatformSite,
+				Status:       common.ChannelStatusEnabled,
+			}
+			require.NoError(t, db.Create(legacyChannel).Error)
+			ciphertext, encryptErr := model.EncryptPlatformSiteCredential(testCase.credential)
+			require.NoError(t, encryptErr)
+			account := &model.PlatformSiteAccount{
+				ChannelID:            legacyChannel.Id,
+				Platform:             model.PlatformSub2API,
+				BaseURL:              "http://127.0.0.1:8089",
+				AuthType:             testCase.authType,
+				CredentialCiphertext: ciphertext,
+				CredentialKeyVersion: "v1",
+				ConversionRatio:      1,
+			}
+			require.NoError(t, db.Create(account).Error)
+
+			require.NoError(t, savePlatformSiteAccount(legacyChannel.Id, &PlatformSiteInput{
+				BaseURL:  account.BaseURL,
+				AuthType: service.PlatformSiteCaptureAuthAuto,
+			}, account))
+
+			var saved model.PlatformSiteAccount
+			require.NoError(t, db.First(&saved, account.ID).Error)
+			assert.Equal(t, testCase.authType, saved.AuthType)
+			savedCredential, decryptErr := model.DecryptPlatformSiteCredential(
+				saved.CredentialCiphertext,
+			)
+			require.NoError(t, decryptErr)
+			testCase.assert(t, savedCredential)
+		})
+	}
 }
 
 func TestValidatePlatformSiteInputKeepsExplicitCookieWithAccessToken(t *testing.T) {

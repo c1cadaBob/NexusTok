@@ -1,7 +1,7 @@
 # 数据库、缓存与后台任务
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-01
+> 事实基线日期：2026-10-02
 > 主要代码来源：`model/main.go`、`common/database.go`、`common/redis.go`、`model/channel_cache.go`、`model/sync.go`、`service/system_task.go`、`service/task_polling.go`、`main.go`
 > 关联详细文档：[`system-overview.md`](./system-overview.md)、[`authentication-and-authorization.md`](./authentication-and-authorization.md)、[`tasks-and-plugins.md`](./tasks-and-plugins.md)、[`../rate-limiting.md`](../rate-limiting.md)
 
@@ -10,6 +10,25 @@
 NexusTok 将主业务数据库、日志数据库、Redis 和进程内缓存分开使用。数据库保存用户、渠道、Token、任务、插件、选项、订阅和日志等权威状态；缓存用于降低查询成本和提供限流/路由索引；后台任务负责周期性维护、同步和异步任务推进。
 
 缓存命中不能被视为数据库事实。文档中的“回退”表示代码存在回源路径，不表示所有节点都能自动获得相同的内存状态。
+
+### 7.5 2026-10-02 平台站点 Capture 会话与跨节点占用
+
+**变更前**：平台站点自动配置的短期凭据缓存只有记录级删除语义；同一
+`capture_id` 被两个并发渠道保存请求解析时，Redis 节点之间没有统一的占用者校验。
+
+**变更后**：
+
+- Capture 记录继续位于 `platform-site-capture` 命名空间，TTL 为 10 分钟，凭据使用现有
+  `PlatformSiteCredential` 加密结构保存，不新增数据库列或持久化 claim 字段。
+- `HybridCache` 增加 `TryClaim`、`ClaimMatches`、`ReleaseClaim` 和 `DeleteClaim`：
+  Redis 使用命名空间下的 `<capture_id>:claim`、`SET NX`、TTL 和比较删除；无 Redis
+  时由同一进程的互斥锁和过期时间提供互斥。过期记录清理会同时删除记录和 claim。
+- `ResolvePlatformSiteCapture` 解密并校验成功后才申请内部 claim token；只有持有该 token
+  的请求可以消费记录。新建或编辑渠道在后续校验、数据库保存和入队失败时释放 claim，
+  成功保存后删除记录并释放 claim。claim token 使用 `json:"-"`，不发送给浏览器。
+- 后台资源同步不依赖 Capture claim。它按渠道同步锁执行，密码会话清理失败只告警，
+  不覆盖已成功资源快照或将凭据改为失效；资源失败、部分分页失败仍按最近成功快照
+  回退规则处理。
 
 ## 2. 数据库选择和迁移
 

@@ -21,7 +21,7 @@ const (
 	platformSiteCaptureStatusPending  = "pending"
 	platformSiteCaptureStatusComplete = "completed"
 	platformSiteCaptureStatusFailed   = "failed"
-	platformSiteCaptureHelperVersion  = "1.2.0"
+	platformSiteCaptureHelperVersion  = "1.5.0"
 	platformSiteCaptureHandoffParam   = "nexustok_capture"
 
 	PlatformSiteCaptureAuthAuto = "auto"
@@ -32,78 +32,119 @@ type PlatformSiteCaptureStartRequest struct {
 	BaseURL   string `json:"base_url"`
 	AuthType  string `json:"auth_type"`
 	ChannelID int    `json:"channel_id,omitempty"`
+	ReturnURL string `json:"return_url,omitempty"`
 }
 
 type PlatformSiteCaptureStartResult struct {
-	CaptureID        string `json:"capture_id"`
-	ExpiresAt        int64  `json:"expires_at"`
-	Platform         string `json:"platform"`
-	BaseURL          string `json:"base_url"`
-	AuthType         string `json:"auth_type"`
-	Origin           string `json:"origin"`
-	UserscriptURL    string `json:"userscript_url"`
-	HelperInstallURL string `json:"helper_install_url"`
-	HandoffURL       string `json:"handoff_url"`
-	LoginURL         string `json:"login_url"`
+	CaptureID             string `json:"capture_id"`
+	ExpiresAt             int64  `json:"expires_at"`
+	Platform              string `json:"platform"`
+	BaseURL               string `json:"base_url"`
+	AuthType              string `json:"auth_type"`
+	Origin                string `json:"origin"`
+	UserscriptURL         string `json:"userscript_url"`
+	HelperInstallURL      string `json:"helper_install_url"`
+	HandoffURL            string `json:"handoff_url"`
+	LoginURL              string `json:"login_url"`
+	HelperVersion         string `json:"helper_version"`
+	HelperRequiredVersion string `json:"helper_required_version"`
+	HelperStatusMessage   string `json:"helper_status_message,omitempty"`
+	ReturnURL             string `json:"return_url,omitempty"`
 }
 
 type PlatformSiteCaptureCompleteRequest struct {
-	CaptureSecret     string         `json:"capture_secret"`
-	CaptureSource     string         `json:"capture_source,omitempty"`
-	HelperVersion     string         `json:"helper_version,omitempty"`
-	Platform          string         `json:"platform,omitempty"`
-	AuthType          string         `json:"auth_type,omitempty"`
-	BaseURL           string         `json:"base_url,omitempty"`
-	ManagementBaseURL string         `json:"management_base_url,omitempty"`
-	RelayBaseURL      string         `json:"relay_base_url,omitempty"`
-	APIBaseURL        string         `json:"api_base_url,omitempty"`
-	Origin            string         `json:"origin,omitempty"`
-	AccessToken       string         `json:"access_token,omitempty"`
-	RefreshToken      string         `json:"refresh_token,omitempty"`
-	AdminKey          string         `json:"admin_key,omitempty"`
-	Cookie            string         `json:"cookie,omitempty"`
-	UserID            string         `json:"user_id,omitempty"`
-	Username          string         `json:"username,omitempty"`
-	Email             string         `json:"email,omitempty"`
-	TokenExpiresAt    int64          `json:"token_expires_at,omitempty"`
-	ExpiresIn         int64          `json:"expires_in,omitempty"`
-	AuthUser          map[string]any `json:"auth_user,omitempty"`
-	Error             string         `json:"error,omitempty"`
+	CaptureSecret     string                          `json:"capture_secret"`
+	CaptureSource     string                          `json:"capture_source,omitempty"`
+	HelperVersion     string                          `json:"helper_version,omitempty"`
+	Platform          string                          `json:"platform,omitempty"`
+	AuthType          string                          `json:"auth_type,omitempty"`
+	BaseURL           string                          `json:"base_url,omitempty"`
+	ManagementBaseURL string                          `json:"management_base_url,omitempty"`
+	RelayBaseURL      string                          `json:"relay_base_url,omitempty"`
+	APIBaseURL        string                          `json:"api_base_url,omitempty"`
+	Origin            string                          `json:"origin,omitempty"`
+	AccessToken       string                          `json:"access_token,omitempty"`
+	RefreshToken      string                          `json:"refresh_token,omitempty"`
+	AdminKey          string                          `json:"admin_key,omitempty"`
+	Cookie            string                          `json:"cookie,omitempty"`
+	SessionID         string                          `json:"session_id,omitempty"`
+	UserID            string                          `json:"user_id,omitempty"`
+	Username          string                          `json:"username,omitempty"`
+	Email             string                          `json:"email,omitempty"`
+	TokenExpiresAt    int64                           `json:"token_expires_at,omitempty"`
+	ExpiresIn         int64                           `json:"expires_in,omitempty"`
+	AuthUser          map[string]any                  `json:"auth_user,omitempty"`
+	Diagnostics       *PlatformSiteCaptureDiagnostics `json:"diagnostics,omitempty"`
+	Error             string                          `json:"error,omitempty"`
 }
 
 type PlatformSiteCaptureSummary struct {
-	Platform            string `json:"platform"`
-	AuthType            string `json:"auth_type"`
-	BaseURL             string `json:"base_url"`
-	ManagementBaseURL   string `json:"management_base_url,omitempty"`
-	RelayBaseURL        string `json:"relay_base_url,omitempty"`
-	APIBaseURL          string `json:"api_base_url,omitempty"`
-	Origin              string `json:"origin"`
-	AccessTokenMasked   string `json:"access_token_masked,omitempty"`
-	RefreshTokenPresent bool   `json:"refresh_token_present,omitempty"`
-	AdminKeyPresent     bool   `json:"admin_key_present,omitempty"`
-	CookiePresent       bool   `json:"cookie_present,omitempty"`
-	UserID              string `json:"user_id,omitempty"`
-	Username            string `json:"username,omitempty"`
-	Email               string `json:"email,omitempty"`
-	TokenExpiresAt      int64  `json:"token_expires_at,omitempty"`
-	CapturedAt          int64  `json:"captured_at,omitempty"`
+	Platform            string                          `json:"platform"`
+	AuthType            string                          `json:"auth_type"`
+	BaseURL             string                          `json:"base_url"`
+	ManagementBaseURL   string                          `json:"management_base_url,omitempty"`
+	RelayBaseURL        string                          `json:"relay_base_url,omitempty"`
+	APIBaseURL          string                          `json:"api_base_url,omitempty"`
+	Origin              string                          `json:"origin"`
+	AccessTokenMasked   string                          `json:"access_token_masked,omitempty"`
+	RefreshTokenPresent bool                            `json:"refresh_token_present,omitempty"`
+	AdminKeyPresent     bool                            `json:"admin_key_present,omitempty"`
+	CookiePresent       bool                            `json:"cookie_present,omitempty"`
+	UserID              string                          `json:"user_id,omitempty"`
+	Username            string                          `json:"username,omitempty"`
+	Email               string                          `json:"email,omitempty"`
+	TokenExpiresAt      int64                           `json:"token_expires_at,omitempty"`
+	CapturedAt          int64                           `json:"captured_at,omitempty"`
+	CaptureSource       string                          `json:"capture_source,omitempty"`
+	Diagnostics         *PlatformSiteCaptureDiagnostics `json:"diagnostics,omitempty"`
+}
+
+type PlatformSiteCaptureDiagnostics struct {
+	Source                       string   `json:"source,omitempty"`
+	HelperVersion                string   `json:"helper_version,omitempty"`
+	HelperRequiredVersion        string   `json:"helper_required_version,omitempty"`
+	PageOrigin                   string   `json:"page_origin,omitempty"`
+	APIBaseURLSeen               string   `json:"api_base_url_seen,omitempty"`
+	LocalStorageKeys             []string `json:"local_storage_keys,omitempty"`
+	SessionStorageKeys           []string `json:"session_storage_keys,omitempty"`
+	AuthTokenPresent             bool     `json:"auth_token_present,omitempty"`
+	AccessTokenPresent           bool     `json:"access_token_present,omitempty"`
+	RefreshTokenPresent          bool     `json:"refresh_token_present,omitempty"`
+	AdminKeyPresent              bool     `json:"admin_key_present,omitempty"`
+	CookiePresent                bool     `json:"cookie_present,omitempty"`
+	OAuthHashTokenPresent        bool     `json:"oauth_hash_token_present,omitempty"`
+	AuthClientIDPresent          bool     `json:"auth_client_id_present,omitempty"`
+	AuthUserVerified             bool     `json:"auth_user_verified,omitempty"`
+	AdminKeyVerified             bool     `json:"admin_key_verified,omitempty"`
+	AuthMePath                   string   `json:"auth_me_path,omitempty"`
+	AdminVerificationPath        string   `json:"admin_verification_path,omitempty"`
+	BrowserSessionRestorePath    string   `json:"browser_session_restore_path,omitempty"`
+	BrowserSessionRestoreStatus  string   `json:"browser_session_restore_status,omitempty"`
+	BrowserSessionRestoreMessage string   `json:"browser_session_restore_message,omitempty"`
+	FailureStage                 string   `json:"failure_stage,omitempty"`
+	FailureReason                string   `json:"failure_reason,omitempty"`
+	VerificationEndpoints        []string `json:"verification_endpoints,omitempty"`
 }
 
 type PlatformSiteCaptureStatusResult struct {
-	CaptureID        string                      `json:"capture_id"`
-	Status           string                      `json:"status"`
-	Message          string                      `json:"message,omitempty"`
-	ExpiresAt        int64                       `json:"expires_at"`
-	Platform         string                      `json:"platform"`
-	BaseURL          string                      `json:"base_url"`
-	AuthType         string                      `json:"auth_type"`
-	Origin           string                      `json:"origin"`
-	UserscriptURL    string                      `json:"userscript_url,omitempty"`
-	HelperInstallURL string                      `json:"helper_install_url,omitempty"`
-	HandoffURL       string                      `json:"handoff_url,omitempty"`
-	LoginURL         string                      `json:"login_url,omitempty"`
-	Summary          *PlatformSiteCaptureSummary `json:"summary,omitempty"`
+	CaptureID             string                          `json:"capture_id"`
+	Status                string                          `json:"status"`
+	Message               string                          `json:"message,omitempty"`
+	ExpiresAt             int64                           `json:"expires_at"`
+	Platform              string                          `json:"platform"`
+	BaseURL               string                          `json:"base_url"`
+	AuthType              string                          `json:"auth_type"`
+	Origin                string                          `json:"origin"`
+	UserscriptURL         string                          `json:"userscript_url,omitempty"`
+	HelperInstallURL      string                          `json:"helper_install_url,omitempty"`
+	HandoffURL            string                          `json:"handoff_url,omitempty"`
+	LoginURL              string                          `json:"login_url,omitempty"`
+	HelperVersion         string                          `json:"helper_version,omitempty"`
+	HelperRequiredVersion string                          `json:"helper_required_version,omitempty"`
+	HelperStatusMessage   string                          `json:"helper_status_message,omitempty"`
+	ReturnURL             string                          `json:"return_url,omitempty"`
+	Summary               *PlatformSiteCaptureSummary     `json:"summary,omitempty"`
+	Diagnostics           *PlatformSiteCaptureDiagnostics `json:"diagnostics,omitempty"`
 }
 
 type PlatformSiteCaptureResolution struct {
@@ -112,27 +153,33 @@ type PlatformSiteCaptureResolution struct {
 	ManagementBaseURL string
 	RelayBaseURL      string
 	APIBaseURL        string
+	ClaimToken        string
 }
 
 type platformSiteCaptureRecord struct {
-	ID                string                       `json:"id"`
-	Secret            string                       `json:"secret"`
-	InstallToken      string                       `json:"install_token"`
-	UserID            int                          `json:"user_id"`
-	ChannelID         int                          `json:"channel_id,omitempty"`
-	Platform          string                       `json:"platform"`
-	AuthType          string                       `json:"auth_type"`
-	BaseURL           string                       `json:"base_url"`
-	Origin            string                       `json:"origin"`
-	ExpiresAt         int64                        `json:"expires_at"`
-	Status            string                       `json:"status"`
-	Error             string                       `json:"error,omitempty"`
-	UpdatedAt         int64                        `json:"updated_at"`
-	Credential        model.PlatformSiteCredential `json:"credential"`
-	ManagementBaseURL string                       `json:"management_base_url,omitempty"`
-	RelayBaseURL      string                       `json:"relay_base_url,omitempty"`
-	APIBaseURL        string                       `json:"api_base_url,omitempty"`
-	Summary           *PlatformSiteCaptureSummary  `json:"summary,omitempty"`
+	ID           string `json:"id"`
+	Secret       string `json:"secret"`
+	InstallToken string `json:"install_token"`
+	UserID       int    `json:"user_id"`
+	ChannelID    int    `json:"channel_id,omitempty"`
+	Platform     string `json:"platform"`
+	AuthType     string `json:"auth_type"`
+	BaseURL      string `json:"base_url"`
+	Origin       string `json:"origin"`
+	ReturnURL    string `json:"return_url,omitempty"`
+	ExpiresAt    int64  `json:"expires_at"`
+	Status       string `json:"status"`
+	Error        string `json:"error,omitempty"`
+	UpdatedAt    int64  `json:"updated_at"`
+	// Credential 仅用于读取升级前已经写入缓存的短期记录；新记录必须使用
+	// CredentialCiphertext，避免 Redis 或进程内缓存保存明文登录态。
+	Credential           model.PlatformSiteCredential    `json:"credential,omitempty"`
+	CredentialCiphertext string                          `json:"credential_ciphertext,omitempty"`
+	ManagementBaseURL    string                          `json:"management_base_url,omitempty"`
+	RelayBaseURL         string                          `json:"relay_base_url,omitempty"`
+	APIBaseURL           string                          `json:"api_base_url,omitempty"`
+	Summary              *PlatformSiteCaptureSummary     `json:"summary,omitempty"`
+	Diagnostics          *PlatformSiteCaptureDiagnostics `json:"diagnostics,omitempty"`
 }
 
 var (
@@ -186,6 +233,10 @@ func StartPlatformSiteCaptureSession(
 	if err != nil {
 		return nil, err
 	}
+	returnURL, err := normalizePlatformSiteCaptureReturnURL(request.ReturnURL, nexusBaseURL)
+	if err != nil {
+		return nil, err
+	}
 	secret, err := common.GenerateRandomCharsKey(64)
 	if err != nil {
 		return nil, fmt.Errorf("生成采集会话密钥失败")
@@ -204,6 +255,7 @@ func StartPlatformSiteCaptureSession(
 		AuthType:     authType,
 		BaseURL:      baseURL,
 		Origin:       origin,
+		ReturnURL:    returnURL,
 		ExpiresAt:    time.Now().Add(platformSiteCaptureTTL).Unix(),
 		Status:       platformSiteCaptureStatusPending,
 		UpdatedAt:    common.GetTimestamp(),
@@ -214,16 +266,20 @@ func StartPlatformSiteCaptureSession(
 	userscriptURL := captureUserscriptURL(nexusBaseURL, record.ID, record.InstallToken)
 	handoffURL := captureHandoffURL(record, nexusBaseURL)
 	return &PlatformSiteCaptureStartResult{
-		CaptureID:        record.ID,
-		ExpiresAt:        record.ExpiresAt,
-		Platform:         record.Platform,
-		BaseURL:          record.BaseURL,
-		AuthType:         record.AuthType,
-		Origin:           record.Origin,
-		UserscriptURL:    userscriptURL,
-		HelperInstallURL: strings.TrimRight(nexusBaseURL, "/") + "/api/channel/platform-site/capture-helper.user.js",
-		HandoffURL:       handoffURL,
-		LoginURL:         record.BaseURL,
+		CaptureID:             record.ID,
+		ExpiresAt:             record.ExpiresAt,
+		Platform:              record.Platform,
+		BaseURL:               record.BaseURL,
+		AuthType:              record.AuthType,
+		Origin:                record.Origin,
+		UserscriptURL:         userscriptURL,
+		HelperInstallURL:      strings.TrimRight(nexusBaseURL, "/") + "/api/channel/platform-site/capture-helper.user.js",
+		HandoffURL:            handoffURL,
+		LoginURL:              record.BaseURL,
+		HelperVersion:         platformSiteCaptureHelperVersion,
+		HelperRequiredVersion: platformSiteCaptureHelperVersion,
+		HelperStatusMessage:   "请安装或更新 NexusTok Capture Helper 后继续。",
+		ReturnURL:             record.ReturnURL,
 	}, nil
 }
 
@@ -263,10 +319,20 @@ func CompletePlatformSiteCaptureSession(
 	if captureSource != "" && captureSource != "capture_helper" {
 		return nil, errorsForCapture("采集来源不受支持")
 	}
-	if captureSource == "capture_helper" &&
+	if record.AuthType == PlatformSiteCaptureAuthAuto && captureSource != "capture_helper" {
+		return nil, errorsForCapture("自动配置必须通过 Capture Helper 完成采集")
+	}
+	if (record.AuthType == PlatformSiteCaptureAuthAuto || captureSource == "capture_helper") &&
 		strings.TrimSpace(request.HelperVersion) != platformSiteCaptureHelperVersion {
 		return nil, errorsForCapture("采集助手版本不匹配")
 	}
+	diagnostics := sanitizePlatformSiteCaptureDiagnostics(request.Diagnostics)
+	if diagnostics == nil {
+		diagnostics = &PlatformSiteCaptureDiagnostics{}
+	}
+	diagnostics.Source = captureSource
+	diagnostics.HelperVersion = strings.TrimSpace(request.HelperVersion)
+	diagnostics.HelperRequiredVersion = platformSiteCaptureHelperVersion
 	if platform := strings.ToLower(strings.TrimSpace(request.Platform)); platform != "" && platform != record.Platform {
 		return nil, errorsForCapture("采集平台与会话不匹配")
 	}
@@ -286,6 +352,12 @@ func CompletePlatformSiteCaptureSession(
 	if strings.TrimSpace(request.Error) != "" {
 		record.Status = platformSiteCaptureStatusFailed
 		record.Error = safePlatformSiteCaptureFailure(request.Error)
+		diagnostics.FailureStage = firstNonEmptyCaptureString(
+			diagnostics.FailureStage,
+			"capture_helper",
+		)
+		diagnostics.FailureReason = record.Error
+		record.Diagnostics = diagnostics
 		record.UpdatedAt = common.GetTimestamp()
 		if err := savePlatformSiteCaptureRecord(record); err != nil {
 			return nil, err
@@ -297,16 +369,38 @@ func CompletePlatformSiteCaptureSession(
 	if err != nil {
 		record.Status = platformSiteCaptureStatusFailed
 		record.Error = safePlatformSiteCaptureFailure(err.Error())
+		diagnostics.FailureStage = firstNonEmptyCaptureString(
+			diagnostics.FailureStage,
+			"server_validation",
+		)
+		diagnostics.FailureReason = record.Error
+		record.Diagnostics = diagnostics
 		record.UpdatedAt = common.GetTimestamp()
 		_ = savePlatformSiteCaptureRecord(record)
 		return sanitizePlatformSiteCaptureRecord(record, ""), err
 	}
 	record.Status = platformSiteCaptureStatusComplete
 	record.Error = ""
-	record.Credential = resolution.Credential
+	credentialCiphertext, err := model.EncryptPlatformSiteCredential(resolution.Credential)
+	if err != nil {
+		record.Status = platformSiteCaptureStatusFailed
+		record.Error = "采集结果保存失败"
+		diagnostics.FailureStage = "credential_encryption"
+		diagnostics.FailureReason = record.Error
+		record.Diagnostics = diagnostics
+		record.UpdatedAt = common.GetTimestamp()
+		_ = savePlatformSiteCaptureRecord(record)
+		return sanitizePlatformSiteCaptureRecord(record, ""), fmt.Errorf("保存采集凭据失败")
+	}
+	record.Credential = model.PlatformSiteCredential{}
+	record.CredentialCiphertext = credentialCiphertext
 	record.ManagementBaseURL = resolution.ManagementBaseURL
 	record.RelayBaseURL = resolution.RelayBaseURL
 	record.APIBaseURL = resolution.APIBaseURL
+	record.Diagnostics = diagnostics
+	if summary != nil {
+		summary.Diagnostics = diagnostics
+	}
 	record.Summary = summary
 	record.UpdatedAt = common.GetTimestamp()
 	if err := savePlatformSiteCaptureRecord(record); err != nil {
@@ -341,22 +435,41 @@ func ResolvePlatformSiteCapture(
 	if normalized := strings.ToLower(strings.TrimSpace(platform)); normalized != "" && normalized != record.Platform {
 		return PlatformSiteCaptureResolution{}, errorsForCapture("采集平台与渠道不匹配")
 	}
-	if normalized := strings.ToLower(strings.TrimSpace(authType)); normalized != "" && normalized != record.AuthType {
-		if normalized != PlatformSiteCaptureAuthAuto &&
-			!(record.AuthType == PlatformSiteCaptureAuthAuto && normalized == record.Credential.AuthType) {
-			return PlatformSiteCaptureResolution{}, errorsForCapture("采集认证方式与渠道不匹配")
-		}
+	credential, err := decryptPlatformSiteCaptureCredential(record)
+	if err != nil {
+		return PlatformSiteCaptureResolution{}, errorsForCapture("采集凭据不可用，请重新采集")
+	}
+	if normalized := strings.ToLower(strings.TrimSpace(authType)); normalized != "" &&
+		normalized != record.AuthType &&
+		!(record.AuthType == PlatformSiteCaptureAuthAuto && normalized == credential.AuthType) {
+		return PlatformSiteCaptureResolution{}, errorsForCapture("采集认证方式与渠道不匹配")
+	}
+	claimToken, err := common.GenerateRandomCharsKey(48)
+	if err != nil {
+		return PlatformSiteCaptureResolution{}, errorsForCapture("生成采集会话占用凭据失败")
+	}
+	remaining := time.Until(time.Unix(record.ExpiresAt, 0))
+	if remaining <= 0 {
+		return PlatformSiteCaptureResolution{}, errorsForCapture("采集会话已过期")
+	}
+	claimed, err := platformSiteCaptureCache.TryClaim(record.ID, claimToken, remaining)
+	if err != nil {
+		return PlatformSiteCaptureResolution{}, errorsForCapture("采集会话暂时不可用")
+	}
+	if !claimed {
+		return PlatformSiteCaptureResolution{}, errorsForCapture("采集会话正在被其他请求使用")
 	}
 	return PlatformSiteCaptureResolution{
 		Platform:          record.Platform,
-		Credential:        record.Credential,
+		Credential:        credential,
 		ManagementBaseURL: record.ManagementBaseURL,
 		RelayBaseURL:      record.RelayBaseURL,
 		APIBaseURL:        record.APIBaseURL,
+		ClaimToken:        claimToken,
 	}, nil
 }
 
-func ConsumePlatformSiteCapture(userID int, captureID string, channelID int) error {
+func ConsumePlatformSiteCapture(userID int, captureID string, channelID int, claimTokens ...string) error {
 	platformSiteCaptureMu.Lock()
 	defer platformSiteCaptureMu.Unlock()
 
@@ -370,7 +483,30 @@ func ConsumePlatformSiteCapture(userID int, captureID string, channelID int) err
 	if record.ChannelID != 0 && channelID != 0 && record.ChannelID != channelID {
 		return errorsForCapture("采集会话未绑定当前渠道")
 	}
+	claimToken := ""
+	if len(claimTokens) > 0 {
+		claimToken = strings.TrimSpace(claimTokens[0])
+	}
+	if claimToken == "" {
+		return errorsForCapture("采集会话占用凭据无效")
+	}
+	claimed, err := platformSiteCaptureCache.ClaimMatches(captureID, claimToken)
+	if err != nil {
+		return err
+	}
+	if !claimed {
+		return errorsForCapture("采集会话占用凭据无效")
+	}
 	_, err = platformSiteCaptureCache.DeleteMany([]string{captureID})
+	if err != nil {
+		return err
+	}
+	_, err = platformSiteCaptureCache.ReleaseClaim(captureID, claimToken)
+	return err
+}
+
+func ReleasePlatformSiteCaptureClaim(captureID, claimToken string) error {
+	_, err := platformSiteCaptureCache.ReleaseClaim(captureID, claimToken)
 	return err
 }
 
@@ -411,6 +547,7 @@ func getPlatformSiteCaptureRecord(captureID string) (platformSiteCaptureRecord, 
 	}
 	if record.ExpiresAt <= time.Now().Unix() {
 		_, _ = platformSiteCaptureCache.DeleteMany([]string{captureID})
+		_ = platformSiteCaptureCache.DeleteClaim(captureID)
 		return platformSiteCaptureRecord{}, errorsForCapture("采集会话已过期")
 	}
 	return record, nil
@@ -424,20 +561,43 @@ func savePlatformSiteCaptureRecord(record platformSiteCaptureRecord) error {
 	return platformSiteCaptureCache.SetWithTTL(record.ID, record, remaining)
 }
 
+func decryptPlatformSiteCaptureCredential(
+	record platformSiteCaptureRecord,
+) (model.PlatformSiteCredential, error) {
+	if strings.TrimSpace(record.CredentialCiphertext) != "" {
+		return model.DecryptPlatformSiteCredential(record.CredentialCiphertext)
+	}
+	if record.Credential.AuthType != "" ||
+		record.Credential.Username != "" ||
+		record.Credential.Password != "" ||
+		record.Credential.AccessToken != "" ||
+		record.Credential.RefreshToken != "" ||
+		record.Credential.AdminKey != "" ||
+		record.Credential.Cookie != "" {
+		return record.Credential, nil
+	}
+	return model.PlatformSiteCredential{}, errorsForCapture("采集凭据不存在")
+}
+
 func sanitizePlatformSiteCaptureRecord(
 	record platformSiteCaptureRecord,
 	nexusBaseURL string,
 ) *PlatformSiteCaptureStatusResult {
 	result := &PlatformSiteCaptureStatusResult{
-		CaptureID: record.ID,
-		Status:    record.Status,
-		ExpiresAt: record.ExpiresAt,
-		Platform:  record.Platform,
-		BaseURL:   record.BaseURL,
-		AuthType:  record.AuthType,
-		Origin:    record.Origin,
-		Message:   record.Error,
-		Summary:   record.Summary,
+		CaptureID:             record.ID,
+		Status:                record.Status,
+		ExpiresAt:             record.ExpiresAt,
+		Platform:              record.Platform,
+		BaseURL:               record.BaseURL,
+		AuthType:              record.AuthType,
+		Origin:                record.Origin,
+		HelperVersion:         platformSiteCaptureHelperVersion,
+		HelperRequiredVersion: platformSiteCaptureHelperVersion,
+		HelperStatusMessage:   "请安装或更新 NexusTok Capture Helper 后继续。",
+		ReturnURL:             record.ReturnURL,
+		Message:               record.Error,
+		Summary:               record.Summary,
+		Diagnostics:           record.Diagnostics,
 	}
 	if strings.TrimSpace(nexusBaseURL) == "" {
 		return result
@@ -449,6 +609,109 @@ func sanitizePlatformSiteCaptureRecord(
 	}
 	result.LoginURL = record.BaseURL
 	return result
+}
+
+func sanitizePlatformSiteCaptureDiagnostics(
+	diagnostics *PlatformSiteCaptureDiagnostics,
+) *PlatformSiteCaptureDiagnostics {
+	if diagnostics == nil {
+		return nil
+	}
+	sanitized := &PlatformSiteCaptureDiagnostics{
+		Source:                       sanitizePlatformSiteDiagnosticToken(diagnostics.Source),
+		HelperVersion:                sanitizePlatformSiteDiagnosticToken(diagnostics.HelperVersion),
+		HelperRequiredVersion:        sanitizePlatformSiteDiagnosticToken(diagnostics.HelperRequiredVersion),
+		PageOrigin:                   sanitizePlatformSiteDiagnosticURL(diagnostics.PageOrigin),
+		APIBaseURLSeen:               sanitizePlatformSiteDiagnosticURL(diagnostics.APIBaseURLSeen),
+		AuthTokenPresent:             diagnostics.AuthTokenPresent,
+		AccessTokenPresent:           diagnostics.AccessTokenPresent,
+		RefreshTokenPresent:          diagnostics.RefreshTokenPresent,
+		AdminKeyPresent:              diagnostics.AdminKeyPresent,
+		CookiePresent:                diagnostics.CookiePresent,
+		OAuthHashTokenPresent:        diagnostics.OAuthHashTokenPresent,
+		AuthClientIDPresent:          diagnostics.AuthClientIDPresent,
+		AuthUserVerified:             diagnostics.AuthUserVerified,
+		AdminKeyVerified:             diagnostics.AdminKeyVerified,
+		AuthMePath:                   sanitizePlatformSiteDiagnosticPath(diagnostics.AuthMePath),
+		AdminVerificationPath:        sanitizePlatformSiteDiagnosticPath(diagnostics.AdminVerificationPath),
+		BrowserSessionRestorePath:    sanitizePlatformSiteDiagnosticPath(diagnostics.BrowserSessionRestorePath),
+		BrowserSessionRestoreStatus:  sanitizePlatformSiteDiagnosticToken(diagnostics.BrowserSessionRestoreStatus),
+		BrowserSessionRestoreMessage: sanitizePlatformSiteDiagnosticToken(diagnostics.BrowserSessionRestoreMessage),
+		FailureStage:                 sanitizePlatformSiteDiagnosticToken(diagnostics.FailureStage),
+		VerificationEndpoints:        sanitizePlatformSiteDiagnosticPaths(diagnostics.VerificationEndpoints),
+		LocalStorageKeys:             sanitizePlatformSiteDiagnosticKeys(diagnostics.LocalStorageKeys),
+		SessionStorageKeys:           sanitizePlatformSiteDiagnosticKeys(diagnostics.SessionStorageKeys),
+	}
+	if strings.TrimSpace(diagnostics.FailureReason) != "" {
+		sanitized.FailureReason = safePlatformSiteCaptureFailure(diagnostics.FailureReason)
+	}
+	if sanitized.HelperRequiredVersion == "" {
+		sanitized.HelperRequiredVersion = platformSiteCaptureHelperVersion
+	}
+	return sanitized
+}
+
+func sanitizePlatformSiteDiagnosticURL(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return strings.TrimRight(parsed.String(), "/")
+}
+
+func sanitizePlatformSiteDiagnosticPath(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if strings.ContainsAny(value, "\r\n") || len(value) > 512 {
+		return ""
+	}
+	return value
+}
+
+func sanitizePlatformSiteDiagnosticPaths(values []string) []string {
+	result := make([]string, 0, min(len(values), 16))
+	for _, value := range values {
+		if sanitized := sanitizePlatformSiteDiagnosticPath(value); sanitized != "" {
+			result = append(result, sanitized)
+		}
+		if len(result) >= 16 {
+			break
+		}
+	}
+	return uniqueStrings(result)
+}
+
+func sanitizePlatformSiteDiagnosticKeys(values []string) []string {
+	result := make([]string, 0, min(len(values), 64))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || len(value) > 128 || strings.ContainsAny(value, "\r\n") {
+			continue
+		}
+		result = append(result, value)
+		if len(result) >= 64 {
+			break
+		}
+	}
+	return uniqueStrings(result)
+}
+
+func firstNonEmptyCaptureString(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func buildPlatformSiteCaptureResolution(
@@ -492,6 +755,22 @@ func buildPlatformSiteCaptureResolution(
 	} else if !isPlatformSiteScriptAuthType(authType) {
 		return PlatformSiteCaptureResolution{}, nil, errorsForCapture("采集认证方式不受支持")
 	}
+	diagnostics := request.Diagnostics
+	if record.AuthType == PlatformSiteCaptureAuthAuto {
+		if diagnostics == nil {
+			return PlatformSiteCaptureResolution{}, nil, errorsForCapture("自动配置缺少认证验证诊断")
+		}
+		switch authType {
+		case model.UpstreamAuthAccessToken, model.UpstreamAuthCookie:
+			if diagnostics == nil || !diagnostics.AuthUserVerified {
+				return PlatformSiteCaptureResolution{}, nil, errorsForCapture("采集登录态未通过当前用户接口验证")
+			}
+		case model.UpstreamAuthAdminKey:
+			if diagnostics == nil || !diagnostics.AdminKeyVerified {
+				return PlatformSiteCaptureResolution{}, nil, errorsForCapture("采集 Admin Key 未通过管理权限验证")
+			}
+		}
+	}
 	credential := model.PlatformSiteCredential{AuthType: authType}
 	switch authType {
 	case model.UpstreamAuthAccessToken:
@@ -510,6 +789,9 @@ func buildPlatformSiteCaptureResolution(
 		credential.RefreshToken = strings.TrimSpace(request.RefreshToken)
 		credential.UserID = userID
 		credential.TokenExpiresAt = captureTokenExpiresAt(request)
+		credential.Username = strings.TrimSpace(request.Username)
+		credential.SessionID = strings.TrimSpace(request.SessionID)
+		credential.SessionCurrent = credential.SessionID != ""
 	case model.UpstreamAuthAdminKey:
 		adminKey := strings.TrimSpace(request.AdminKey)
 		if adminKey == "" {
@@ -521,6 +803,8 @@ func buildPlatformSiteCaptureResolution(
 			return PlatformSiteCaptureResolution{}, nil, errorsForCapture("采集结果不是 Admin Key")
 		}
 		credential.AdminKey = adminKey
+		credential.UserID = captureUserID(request)
+		credential.Username = strings.TrimSpace(request.Username)
 	case model.UpstreamAuthCookie:
 		cookie := strings.TrimSpace(request.Cookie)
 		if cookie == "" {
@@ -532,6 +816,8 @@ func buildPlatformSiteCaptureResolution(
 			return PlatformSiteCaptureResolution{}, nil, errorsForCapture("采集结果不是 Cookie")
 		}
 		credential.Cookie = cookie
+		credential.UserID = captureUserID(request)
+		credential.Username = strings.TrimSpace(request.Username)
 	default:
 		return PlatformSiteCaptureResolution{}, nil, errorsForCapture("采集认证方式不受支持")
 	}
@@ -552,6 +838,8 @@ func buildPlatformSiteCaptureResolution(
 		Email:               strings.TrimSpace(request.Email),
 		TokenExpiresAt:      credential.TokenExpiresAt,
 		CapturedAt:          common.GetTimestamp(),
+		CaptureSource:       strings.TrimSpace(request.CaptureSource),
+		Diagnostics:         sanitizePlatformSiteCaptureDiagnostics(request.Diagnostics),
 	}
 	return PlatformSiteCaptureResolution{
 		Platform:          record.Platform,
@@ -714,6 +1002,26 @@ func normalizeCaptureNexusBaseURL(raw string) (string, error) {
 	return strings.TrimRight(parsed.String(), "/"), nil
 }
 
+func normalizePlatformSiteCaptureReturnURL(raw, nexusBaseURL string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	target, err := url.Parse(raw)
+	if err != nil || target.Scheme == "" || target.Host == "" ||
+		(target.Scheme != "http" && target.Scheme != "https") {
+		return "", errorsForCapture("采集返回地址格式错误")
+	}
+	base, err := url.Parse(nexusBaseURL)
+	if err != nil || !strings.EqualFold(target.Scheme, base.Scheme) ||
+		!strings.EqualFold(target.Host, base.Host) {
+		return "", errorsForCapture("采集返回地址必须属于 NexusTok")
+	}
+	target.RawQuery = ""
+	target.Fragment = ""
+	return strings.TrimRight(target.String(), "/"), nil
+}
+
 func captureUserscriptURL(nexusBaseURL, captureID, installToken string) string {
 	return strings.TrimRight(nexusBaseURL, "/") +
 		"/api/channel/platform-site/capture-session/" +
@@ -729,6 +1037,8 @@ func captureHandoffURL(record platformSiteCaptureRecord, nexusBaseURL string) st
 		"auth_type":      record.AuthType,
 		"base_url":       record.BaseURL,
 		"origin":         record.Origin,
+		"return_url":     record.ReturnURL,
+		"helper_version": platformSiteCaptureHelperVersion,
 		"complete_url": strings.TrimRight(nexusBaseURL, "/") +
 			"/api/channel/platform-site/capture-session/" + url.PathEscape(record.ID) + "/complete",
 		"expires_at": record.ExpiresAt,
@@ -779,7 +1089,7 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
 // @name         NexusTok Platform Site Capture
 // @namespace    https://github.com/c1cadaBob/NexusTok
 // @version      __NEXUSTOK_HELPER_VERSION__
-// @description  Capture an explicitly selected NewAPI or Sub2API login state for NexusTok.
+// @description  Capture a verified NewAPI or Sub2API browser login state for NexusTok.
 // @match        __NEXUSTOK_MATCH__
 // @run-at       document-start
 // @grant        GM_xmlhttpRequest
@@ -792,11 +1102,105 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
   'use strict';
   const config = __NEXUSTOK_CONFIG__;
   const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-  const readyEvent = 'nexustok-platform-site-capture-ready';
+  const readyEvent = 'nexustok-upstream-capture-helper-ready';
+  const platformStrategies = {
+    newapi: {
+      candidates: ['dashboard_refresh', 'access_token', 'admin_key', 'cookie'],
+      mePaths: ['/api/user/self', '/api/user/me', '/api/user/profile', '/api/user/info'],
+    },
+    sub2api: {
+      candidates: ['auth_token', 'auth_user', 'refresh_token', 'browser_restore', 'access_token', 'admin_key', 'cookie'],
+      mePaths: ['/api/v1/auth/me', '/api/auth/me', '/auth/me'],
+    },
+  };
   const text = (value) => value == null ? '' : String(value).trim();
 
   function parseJSON(value) {
     try { return value ? JSON.parse(value) : null; } catch (_) { return null; }
+  }
+
+  function storageKeys(storage) {
+    const keys = [];
+    try {
+      for (let index = 0; index < storage.length && keys.length < 64; index += 1) {
+        const key = text(storage.key(index));
+        if (key && key.length <= 128) keys.push(key);
+      }
+    } catch (_) {}
+    return keys;
+  }
+
+  function diagnosticsBase(source) {
+    return {
+      source: text(source),
+      helper_version: config.version || '__NEXUSTOK_HELPER_VERSION__',
+      helper_required_version: '__NEXUSTOK_HELPER_VERSION__',
+      page_origin: text(pageWindow.location && pageWindow.location.origin),
+      api_base_url_seen: '',
+      local_storage_keys: storageKeys(pageWindow.localStorage),
+      session_storage_keys: storageKeys(pageWindow.sessionStorage),
+      auth_token_present: false,
+      access_token_present: false,
+      refresh_token_present: false,
+      admin_key_present: false,
+      cookie_present: false,
+      oauth_hash_token_present: false,
+      auth_client_id_present: false,
+      auth_user_verified: false,
+      admin_key_verified: false,
+      auth_me_path: '',
+      admin_verification_path: '',
+      browser_session_restore_path: '',
+      browser_session_restore_status: 'not_attempted',
+      browser_session_restore_message: '',
+      failure_stage: '',
+      failure_reason: '',
+      verification_endpoints: [],
+    };
+  }
+
+  function markAttempt(diagnostics, path) {
+    if (!diagnostics || !path) return;
+    diagnostics.verification_endpoints = Array.from(
+      new Set([...(diagnostics.verification_endpoints || []), text(path)])
+    ).slice(0, 16);
+  }
+
+  function mergeDiagnostics(target, source) {
+    if (!target || !source) return target;
+    for (const key of [
+      'auth_token_present',
+      'access_token_present',
+      'refresh_token_present',
+      'admin_key_present',
+      'cookie_present',
+      'oauth_hash_token_present',
+      'auth_client_id_present',
+      'auth_user_verified',
+      'admin_key_verified',
+    ]) {
+      target[key] = Boolean(target[key] || source[key]);
+    }
+    for (const key of [
+      'api_base_url_seen',
+      'auth_me_path',
+      'admin_verification_path',
+      'browser_session_restore_path',
+      'browser_session_restore_status',
+      'browser_session_restore_message',
+    ]) {
+      if (!text(target[key]) && text(source[key])) target[key] = text(source[key]);
+    }
+    for (const key of [
+      'local_storage_keys',
+      'session_storage_keys',
+      'verification_endpoints',
+    ]) {
+      target[key] = Array.from(
+        new Set([...(target[key] || []), ...(source[key] || [])])
+      ).slice(0, key === 'verification_endpoints' ? 16 : 64);
+    }
+    return target;
   }
 
   function nestedValue(value, names, depth) {
@@ -912,28 +1316,43 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
     return null;
   }
 
-  function readCookieHeader() {
+  function readCookieHeader(targetURL) {
+    let cookieURL = window.location.origin;
     try {
-      const visibleCookies = text(document.cookie);
-      if (visibleCookies) return Promise.resolve(visibleCookies);
+      const parsed = new URL(text(targetURL || ''), window.location.href);
+      if (
+        parsed.protocol === window.location.protocol &&
+        (parsed.host === window.location.host ||
+          parsed.host === 'api.' + window.location.host ||
+          window.location.host === 'api.' + parsed.host)
+      ) {
+        cookieURL = parsed.origin;
+      }
     } catch (_) {}
+    let visibleCookies = '';
+    try {
+      visibleCookies = text(document.cookie);
+    } catch (_) {}
+    if (cookieURL === window.location.origin && visibleCookies) {
+      return Promise.resolve(visibleCookies);
+    }
     if (typeof GM_cookie !== 'object' || typeof GM_cookie.list !== 'function') {
-      return Promise.resolve('');
+      return Promise.resolve(visibleCookies);
     }
     return new Promise((resolve) => {
       try {
-        GM_cookie.list({ url: window.location.origin }, (cookies, error) => {
+        GM_cookie.list({ url: cookieURL }, (cookies, error) => {
           if (error || !Array.isArray(cookies)) {
-            resolve('');
+            resolve(visibleCookies);
             return;
           }
           const values = cookies
             .filter((cookie) => cookie && text(cookie.name))
             .map((cookie) => text(cookie.name) + '=' + text(cookie.value));
-          resolve(values.join('; '));
+          resolve(values.join('; ') || visibleCookies);
         });
       } catch (_) {
-        resolve('');
+        resolve(visibleCookies);
       }
     });
   }
@@ -1045,23 +1464,112 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
     return window.location.origin;
   }
 
+  function isRelatedUpstreamURL(rawURL) {
+    try {
+      const page = new URL(window.location.href);
+      const target = new URL(text(rawURL), page.href);
+      if (target.protocol !== page.protocol || target.port !== page.port) return false;
+      if (target.hostname === page.hostname) return true;
+      return target.hostname === 'api.' + page.hostname ||
+        page.hostname === 'api.' + target.hostname;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function gmJSONRequest(url, options) {
+    return new Promise((resolve, reject) => {
+      const requestOptions = options || {};
+      const headers = {
+        Accept: 'application/json',
+        ...(requestOptions.headers || {}),
+      };
+      const cookie = text(requestOptions.cookie);
+      if (cookie) headers.Cookie = cookie;
+      const request = {
+        method: text(requestOptions.method) || 'GET',
+        url,
+        headers,
+        data: requestOptions.body,
+        withCredentials: false,
+        timeout: 15000,
+        onload: (response) => {
+          const parsed = parseJSON(response.responseText);
+          if (
+            response.status < 200 ||
+            response.status >= 300 ||
+            !responseSucceeded(parsed)
+          ) {
+            const error = new Error('upstream request failed');
+            error.requestCompleted = true;
+            error.status = response.status;
+            reject(error);
+            return;
+          }
+          resolve(parsed || {});
+        },
+        onerror: () => reject(new Error('upstream request unavailable')),
+        ontimeout: () => reject(new Error('upstream request timed out')),
+      };
+      try {
+        GM_xmlhttpRequest(request);
+      } catch (_) {
+        reject(new Error('upstream request unavailable'));
+      }
+    });
+  }
+
   async function jsonRequest(url, options) {
+    const requestOptions = options || {};
+    const cookie = text(requestOptions.cookie);
+    if (
+      cookie &&
+      typeof GM_xmlhttpRequest === 'function' &&
+      isRelatedUpstreamURL(url)
+    ) {
+      try {
+        return await gmJSONRequest(url, requestOptions);
+      } catch (error) {
+        if (error && error.requestCompleted) throw error;
+      }
+    }
+    const fetchOptions = { ...requestOptions };
+    delete fetchOptions.cookie;
+    delete fetchOptions.headers;
     const response = await fetch(url, {
+      ...fetchOptions,
       credentials: 'include',
-      headers: { Accept: 'application/json', ...(options && options.headers || {}) },
-      ...(options || {}),
+      headers: { Accept: 'application/json', ...(requestOptions.headers || {}) },
     });
     const body = await response.text();
     const parsed = parseJSON(body);
-    if (!response.ok) throw new Error('HTTP ' + response.status);
+    if (!response.ok || !responseSucceeded(parsed)) {
+      const error = new Error('upstream request failed');
+      error.status = response.status;
+      throw error;
+    }
     return parsed || {};
   }
 
+  function responseSucceeded(payload) {
+    if (!payload || typeof payload !== 'object') return true;
+    if (payload.success === false) return false;
+    const code = payload.code;
+    if (typeof code === 'number') return code === 0 || code === 200;
+    if (typeof code === 'string' && code.trim()) {
+      const normalized = code.trim().toLowerCase();
+      return normalized === '0' || normalized === '200' || normalized === 'success';
+    }
+    return true;
+  }
+
   async function restoreSub2APIBrowserSession(apiBase) {
+    const diagnostics = diagnosticsBase('browser_session_restore');
     let clientID = readNamed(
       ['sub2api_auth_client_id'],
       ['sub2api_auth_client_id']
     );
+    diagnostics.auth_client_id_present = Boolean(clientID);
     const paths = [
       '/api/v1/auth/session/restore',
       '/api/auth/session/restore',
@@ -1069,6 +1577,7 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
     ];
     for (const path of paths) {
       try {
+        markAttempt(diagnostics, path);
         const restored = await jsonRequest(new URL(path, apiBase).toString(), {
           method: 'POST',
           headers: {
@@ -1079,28 +1588,33 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
         });
         const accessToken = tokenFromResponse(restored);
         if (!accessToken) continue;
+        diagnostics.browser_session_restore_path = path;
+        diagnostics.browser_session_restore_status = 'authenticated';
         return {
           accessToken,
           refreshToken: refreshTokenFromResponse(restored),
           expiresAt: expiryFromResponse(restored),
           authUser: restored && (restored.data || restored.user || restored),
+          diagnostics,
         };
       } catch (_) {}
     }
-    return null;
+    diagnostics.browser_session_restore_status = 'failed';
+    diagnostics.browser_session_restore_message = '浏览器会话恢复接口未返回可用访问令牌';
+    return { diagnostics };
   }
 
   async function readNewAPIAuthBundle(apiBase) {
     try {
-      const response = await fetch(new URL('/api/user/auth/refresh', apiBase).toString(), {
-        method: 'POST',
-        credentials: 'include',
-        headers: { Accept: 'application/json' },
-      });
-      if (response.status === 404 || response.status === 405 || !response.ok) {
-        return null;
-      }
-      const payload = parseJSON(await response.text());
+      const cookie = await readCookieHeader(apiBase);
+      const payload = await jsonRequest(
+        new URL('/api/user/auth/refresh', apiBase).toString(),
+        {
+          method: 'POST',
+          headers: { Accept: 'application/json' },
+          cookie,
+        }
+      );
       const data = payload && payload.data;
       const session = data && data.session;
       if (
@@ -1123,6 +1637,8 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
         refreshToken: '',
         expiresAt,
         authUser: data.user || {},
+        sessionID: text(session.sid),
+        cookie,
       };
     } catch (_) {
       return null;
@@ -1156,136 +1672,203 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
     });
   }
 
-  async function fillCookieCredential(result) {
-    result.cookie = await readCookieHeader();
-    if (!result.cookie) throw new Error('cookie is not readable; HttpOnly cookie cannot be captured');
-  }
-
-  function fillAdminKeyCredential(result) {
-    result.admin_key = readNamed(
-      ['admin_key', 'adminKey', 'admin_token', 'adminToken', 'x-api-key'],
-      ['admin_key', 'adminkey', 'admin_token', 'admintoken', 'x-api-key']
-    );
-    if (!result.admin_key) throw new Error('admin key was not found in an explicitly named field');
-  }
-
-  async function fillAccessTokenCredential(result, platform) {
-    const apiBase = result.api_base_url;
-    let accessToken = readHashValue(
-      ['auth_token', 'access_token', 'token', 'jwt']
-    ) || readNamed(
-      ['auth_token', 'access_token', 'accessToken', 'token', 'jwt'],
-      ['auth_token', 'access_token', 'accesstoken', 'token', 'jwt']
-    ) || readDeepStorageValue(
-      ['access_token', 'auth_token', 'token', 'jwt']
-    );
-    let refreshToken = readHashValue(
-      ['refresh_token', 'refreshToken', 'rt']
-    ) || readNamed(
-      ['refresh_token', 'refreshToken'],
-      ['refresh_token', 'refreshtoken']
-    ) || readDeepStorageValue(
-      ['refresh_token', 'refreshtoken', 'rt']
-    );
-    let expiresAt = normalizeExpiresAt(readHashValue(
-      ['token_expires_at', 'tokenExpiresAt', 'expires_at', 'expiresAt']
-    ) || readNamed(
-      ['token_expires_at', 'tokenExpiresAt', 'expires_at', 'expiresAt'],
-      ['token_expires_at', 'tokenexpiresat', 'expires_at', 'expiresat']
-    ) || readDeepStorageValue(
-      ['token_expires_at', 'tokenexpiresat', 'expires_at', 'expiresat']
-    ));
-    const storedAuthUser = readStructured([
-      'auth_user',
-      'authUser',
-      'current_user',
-      'currentUser',
-      'user',
-    ]);
-    const storedUserID = nestedValue(
-      storedAuthUser,
-      ['id', 'user_id', 'userid', 'uid', 'sub'],
-      0
-    );
-    if (/^\d+$/.test(text(storedUserID))) {
-      result.user_id = text(storedUserID);
-    }
-    if (!accessToken && platform === 'newapi') {
-      const bundle = await readNewAPIAuthBundle(apiBase);
-      if (bundle) {
-        accessToken = bundle.accessToken;
-        refreshToken = bundle.refreshToken;
-        expiresAt = bundle.expiresAt;
-        result.auth_user = bundle.authUser;
-      }
-    }
-    if (!accessToken && platform === 'sub2api') {
-      const restored = await restoreSub2APIBrowserSession(apiBase);
-      if (restored) {
-        accessToken = restored.accessToken;
-        refreshToken = restored.refreshToken;
-        expiresAt = restored.expiresAt;
-        result.auth_user = restored.authUser;
-      }
-    }
-    if (platform === 'sub2api' && refreshToken && expiresAt > 0 && expiresAt < Math.floor(Date.now() / 1000) + 300) {
+  async function verifyCurrentUser(result, platform, accessToken, cookie, sessionID) {
+    const diagnostics = result.diagnostics || diagnosticsBase('verification');
+    const strategy = platformStrategies[platform] || platformStrategies.newapi;
+    const headers = {};
+    if (accessToken) headers.Authorization = 'Bearer ' + accessToken;
+    if (sessionID) headers['X-Auth-Session'] = sessionID;
+    let validatedUser = null;
+    for (const mePath of strategy.mePaths) {
       try {
+        markAttempt(diagnostics, mePath);
+        const me = await jsonRequest(
+          new URL(mePath, result.api_base_url).toString(),
+          { headers, cookie }
+        );
+        validatedUser = me && (me.data || me.user || me);
+        const userID = nestedValue(validatedUser, ['id', 'user_id', 'userid', 'uid', 'sub'], 0);
+        const username = nestedValue(
+          validatedUser,
+          ['username', 'user_name', 'login', 'email', 'mail'],
+          0
+        );
+        if (!userID && !username) {
+          validatedUser = null;
+          continue;
+        }
+        diagnostics.auth_me_path = mePath;
+        break;
+      } catch (_) {}
+    }
+    if (!validatedUser) throw new Error('current user validation failed');
+    diagnostics.auth_user_verified = true;
+    result.auth_user = validatedUser;
+    const id = nestedValue(validatedUser, ['id', 'user_id', 'userid', 'uid', 'sub'], 0);
+    if (/^\d+$/.test(text(id))) result.user_id = text(id);
+    if (!result.user_id && platform === 'newapi' && accessToken) {
+      result.user_id = userIDFromToken(accessToken);
+    }
+    result.username = text(
+      nestedValue(validatedUser, ['username', 'user_name', 'login'], 0)
+    ) || text(nestedValue(validatedUser, ['email', 'mail'], 0));
+    result.email = text(nestedValue(validatedUser, ['email', 'mail'], 0));
+    return validatedUser;
+  }
+
+  async function fillCookieCredential(result, platform) {
+    result.cookie = await readCookieHeader(result.api_base_url);
+    result.diagnostics.cookie_present = Boolean(result.cookie);
+    if (!result.cookie) throw new Error('cookie is not readable; HttpOnly cookie cannot be captured');
+    await verifyCurrentUser(result, platform, '', result.cookie, '');
+  }
+
+  async function fillAdminKeyCredential(result, platform) {
+    result.admin_key = readNamed(
+      ['admin_key', 'adminKey', 'admin_token', 'adminToken', 'x-api-key', 'New-Api-Key'],
+      ['admin_key', 'adminkey', 'admin_token', 'admintoken', 'x-api-key', 'new-api-key']
+    );
+    result.diagnostics.admin_key_present = Boolean(result.admin_key);
+    if (!result.admin_key) throw new Error('admin key was not found in an explicitly named field');
+    const headers = {
+      Authorization: 'Bearer ' + result.admin_key,
+      'x-api-key': result.admin_key,
+      'New-Api-Key': result.admin_key,
+    };
+    const paths = platform === 'newapi'
+      ? ['/api/channel/?p=1&page_size=1', '/api/channel/']
+      : ['/api/v1/admin/accounts', '/api/v1/admin/dashboard'];
+    for (const path of paths) {
+      try {
+        markAttempt(result.diagnostics, path);
+        await jsonRequest(new URL(path, result.api_base_url).toString(), { headers });
+        result.diagnostics.admin_key_verified = true;
+        result.diagnostics.admin_verification_path = path;
+        return;
+      } catch (_) {}
+    }
+    throw new Error('admin key validation failed');
+  }
+
+  async function readTokenCredential(result, platform, source) {
+    const apiBase = result.api_base_url;
+    let accessToken = '';
+    let refreshToken = '';
+    let expiresAt = 0;
+    let sessionID = '';
+    let cookie = '';
+    let storedAuthUser = null;
+    if (source === 'dashboard_refresh') {
+      const bundle = await readNewAPIAuthBundle(apiBase);
+      if (!bundle) throw new Error('NewAPI Dashboard refresh session is unavailable');
+      accessToken = bundle.accessToken;
+      refreshToken = bundle.refreshToken;
+      expiresAt = bundle.expiresAt;
+      sessionID = bundle.sessionID || '';
+      cookie = bundle.cookie || '';
+      storedAuthUser = bundle.authUser;
+      markAttempt(result.diagnostics, '/api/user/auth/refresh');
+    } else if (source === 'browser_restore') {
+      const restored = await restoreSub2APIBrowserSession(apiBase);
+      Object.assign(result.diagnostics, restored.diagnostics || {});
+      if (!restored.accessToken) throw new Error('Sub2API browser session restore did not return an access token');
+      accessToken = restored.accessToken;
+      refreshToken = restored.refreshToken || '';
+      expiresAt = restored.expiresAt || 0;
+      storedAuthUser = restored.authUser;
+    } else {
+      accessToken = readHashValue(
+        ['auth_token', 'access_token', 'token', 'jwt']
+      ) || readNamed(
+        ['auth_token', 'access_token', 'accessToken', 'token', 'jwt'],
+        ['auth_token', 'access_token', 'accesstoken', 'token', 'jwt']
+      ) || readDeepStorageValue(
+        ['access_token', 'auth_token', 'token', 'jwt']
+      );
+      refreshToken = readHashValue(
+        ['refresh_token', 'refreshToken', 'rt']
+      ) || readNamed(
+        ['refresh_token', 'refreshToken', 'sub2api_refresh_token'],
+        ['refresh_token', 'refreshtoken', 'rt']
+      ) || readDeepStorageValue(
+        ['refresh_token', 'refreshtoken', 'rt']
+      );
+      expiresAt = normalizeExpiresAt(readHashValue(
+        ['token_expires_at', 'tokenExpiresAt', 'expires_at', 'expiresAt']
+      ) || readNamed(
+        ['token_expires_at', 'tokenExpiresAt', 'expires_at', 'expiresAt'],
+        ['token_expires_at', 'tokenexpiresat', 'expires_at', 'expiresat']
+      ) || readDeepStorageValue(
+        ['token_expires_at', 'tokenexpiresat', 'expires_at', 'expiresat']
+      ));
+      storedAuthUser = readStructured([
+        'auth_user',
+        'authUser',
+        'current_user',
+        'currentUser',
+        'user',
+      ]);
+      if (source === 'auth_user' && !storedAuthUser) {
+        throw new Error('Sub2API auth_user login state was not found');
+      }
+      if (source === 'auth_user' && !accessToken) {
+        accessToken = tokenFromResponse(storedAuthUser);
+      }
+      if (!accessToken && platform === 'sub2api' && refreshToken) {
         const refreshed = await jsonRequest(new URL('/api/v1/auth/refresh', apiBase).toString(), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ refresh_token: refreshToken }),
         });
-        accessToken = tokenFromResponse(refreshed) || accessToken;
+        markAttempt(result.diagnostics, '/api/v1/auth/refresh');
+        accessToken = tokenFromResponse(refreshed);
         refreshToken = refreshTokenFromResponse(refreshed) || refreshToken;
         expiresAt = expiryFromResponse(refreshed) || expiresAt;
-      } catch (_) {}
+      }
     }
-    if (!accessToken) throw new Error('access token was not found in an explicitly named field');
-    const authHeaders = { Authorization: 'Bearer ' + accessToken };
-    let validatedUser = null;
-    const mePaths = platform === 'sub2api'
-      ? ['/api/v1/auth/me', '/api/auth/me']
-      : ['/api/user/self', '/api/user/me', '/api/user/profile', '/api/user/info'];
-    for (const mePath of mePaths) {
-      try {
-        const me = await jsonRequest(new URL(mePath, apiBase).toString(), { headers: authHeaders });
-        validatedUser = me && (me.data || me.user || me);
-        const id = nestedValue(validatedUser, ['id', 'user_id', 'userid', 'uid', 'sub'], 0);
-        if (/^\d+$/.test(text(id))) result.user_id = text(id);
-        break;
-      } catch (_) {}
+    result.diagnostics.auth_token_present = Boolean(
+      source === 'auth_token' && accessToken
+    );
+    result.diagnostics.access_token_present = Boolean(accessToken);
+    result.diagnostics.refresh_token_present = Boolean(refreshToken);
+    if (!accessToken) throw new Error('access token was not found in browser login state');
+    const storedUserID = nestedValue(
+      storedAuthUser,
+      ['id', 'user_id', 'userid', 'uid', 'sub'],
+      0
+    );
+    if (/^\d+$/.test(text(storedUserID))) result.user_id = text(storedUserID);
+    if (storedAuthUser && typeof storedAuthUser === 'object') {
+      result.auth_user = storedAuthUser;
     }
-    if (!validatedUser) throw new Error('access token validation failed');
-    result.auth_user = validatedUser;
-    if (!result.user_id && platform === 'newapi') {
-      result.user_id = userIDFromToken(accessToken);
-    }
+    result.diagnostics.cookie_present = Boolean(cookie);
+    await verifyCurrentUser(result, platform, accessToken, cookie, sessionID);
     result.access_token = accessToken;
     result.refresh_token = refreshToken;
     if (expiresAt > 0) result.token_expires_at = expiresAt;
-    result.username = text(nestedValue(
-      result.auth_user,
-      ['username', 'user_name', 'display_name', 'name'],
-      0
-    ));
-    result.email = text(nestedValue(result.auth_user, ['email', 'mail'], 0));
-    delete result.auth_user;
+    result.session_id = sessionID;
+    result.cookie = cookie;
   }
 
-  async function fillSelectedCredential(result, platform, authType) {
-    if (authType === 'access_token') {
-      await fillAccessTokenCredential(result, platform);
+  async function fillSelectedCredential(result, platform, candidate) {
+    if (candidate === 'dashboard_refresh' ||
+        candidate === 'auth_token' ||
+        candidate === 'auth_user' ||
+        candidate === 'refresh_token' ||
+        candidate === 'browser_restore' ||
+        candidate === 'access_token') {
+      await readTokenCredential(result, platform, candidate);
       return;
     }
-    if (authType === 'admin_key') {
-      fillAdminKeyCredential(result);
+    if (candidate === 'admin_key') {
+      await fillAdminKeyCredential(result, platform);
       return;
     }
-    if (authType === 'cookie') {
-      await fillCookieCredential(result);
+    if (candidate === 'cookie') {
+      await fillCookieCredential(result, platform);
       return;
     }
-    throw new Error('unsupported capture auth type');
+    throw new Error('unsupported capture candidate');
   }
 
   async function collect(payload) {
@@ -1298,24 +1881,46 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
       capture_secret: payload.capture_secret,
       complete_url: payload.complete_url,
       capture_source: 'capture_helper',
-      helper_version: config.version || '1.2.0',
+      helper_version: config.version || '__NEXUSTOK_HELPER_VERSION__',
       platform,
       auth_type: authType,
       base_url: window.location.origin,
       origin: window.location.origin,
       api_base_url: apiBaseURL(payload),
+      diagnostics: diagnosticsBase('capture_helper'),
     };
+    result.diagnostics.api_base_url_seen = result.api_base_url;
     if (authType === 'auto') {
       let selected = null;
-      for (const candidateType of ['access_token', 'admin_key', 'cookie']) {
-        const candidate = { ...result, auth_type: candidateType };
+      const strategy = platformStrategies[platform] || platformStrategies.newapi;
+      const aggregateDiagnostics = result.diagnostics;
+      for (const candidateType of strategy.candidates) {
+        const candidate = {
+          ...result,
+          auth_type: candidateType === 'admin_key' || candidateType === 'cookie'
+            ? candidateType
+            : 'access_token',
+          diagnostics: { ...result.diagnostics, verification_endpoints: [] },
+        };
         try {
           await fillSelectedCredential(candidate, platform, candidateType);
+          mergeDiagnostics(aggregateDiagnostics, candidate.diagnostics);
+          candidate.diagnostics = aggregateDiagnostics;
           selected = candidate;
           break;
-        } catch (_) {}
+        } catch (error) {
+          mergeDiagnostics(aggregateDiagnostics, candidate.diagnostics);
+          aggregateDiagnostics.failure_stage = candidateType;
+          aggregateDiagnostics.failure_reason = text(error && error.message);
+        }
       }
-      if (!selected) throw new Error('automatic capture failed');
+      if (!selected) {
+        aggregateDiagnostics.failure_stage = 'automatic_candidates_exhausted';
+        aggregateDiagnostics.failure_reason = 'automatic capture failed';
+        const failure = new Error('automatic capture failed');
+        failure.captureDiagnostics = aggregateDiagnostics;
+        throw failure;
+      }
       Object.assign(result, selected);
     } else if (authType === 'access_token' || authType === 'admin_key' || authType === 'cookie') {
       await fillSelectedCredential(result, platform, authType);
@@ -1328,20 +1933,45 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
     clearStoredHandoff();
     try {
       if (window.opener && !window.opener.closed) {
-        window.opener.postMessage({ type: 'nexustok-platform-site-capture-completed' }, '*');
+        window.opener.postMessage({
+          type: 'nexustok-upstream-capture-completed',
+          capture_id: payload.capture_id,
+          captureID: payload.capture_id,
+        }, '*');
+      }
+    } catch (_) {}
+    const returnURL = text(payload.return_url);
+    if (returnURL) {
+      try {
+        const returnTarget = new URL(returnURL, window.location.href);
+        returnTarget.searchParams.set('platform_site_capture_id', payload.capture_id);
+        window.setTimeout(() => window.location.replace(returnTarget.toString()), 700);
+      } catch (_) {}
+    }
+  }
+
+  function markReady() {
+    const readyPayload = {
+      type: 'nexustok-upstream-capture-helper-ready',
+      version: config.version || '__NEXUSTOK_HELPER_VERSION__',
+      helper_version: config.version || '__NEXUSTOK_HELPER_VERSION__',
+      capture_id: text(config.capture_id || ''),
+    };
+    try {
+        window.dispatchEvent(new CustomEvent(readyEvent, {
+          detail: readyPayload,
+        }));
+    } catch (_) {}
+    try {
+      if (window.opener && !window.opener.closed) {
+        window.opener.postMessage(readyPayload, '*');
       }
     } catch (_) {}
   }
 
-  function markReady() {
-    try {
-        window.dispatchEvent(new CustomEvent(readyEvent, { detail: { version: config.version || '1.2.0' } }));
-    } catch (_) {}
-  }
-
   const payload = handoff();
+  markReady();
   if (!payload) {
-    markReady();
     return;
   }
   collect(payload).catch((error) => {
@@ -1352,16 +1982,25 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
       : errorMessage.includes('cookie')
         ? 'cookie capture failed'
         : errorMessage.includes('admin')
-          ? 'admin key capture failed'
-          : 'access token capture failed';
+        ? 'admin key capture failed'
+        : 'access token capture failed';
+    const diagnostics = error && error.captureDiagnostics
+      ? error.captureDiagnostics
+      : Object.assign(
+          diagnosticsBase('capture_helper'),
+          { failure_stage: 'capture', failure_reason: safeMessage }
+        );
+    diagnostics.failure_stage = diagnostics.failure_stage || 'capture';
+    diagnostics.failure_reason = diagnostics.failure_reason || safeMessage;
     send({
       capture_secret: payload.capture_secret,
       complete_url: payload.complete_url,
       capture_source: 'capture_helper',
-      helper_version: config.version || '1.2.0',
+      helper_version: config.version || '__NEXUSTOK_HELPER_VERSION__',
       platform: payload.platform,
       auth_type: payload.auth_type,
       origin: window.location.origin,
+      diagnostics,
       error: safeMessage,
     }).catch(() => {});
   });
@@ -1380,10 +2019,43 @@ func renderPlatformSiteCaptureScript(
 			match = parsed.Scheme + "://" + parsed.Host + "/*"
 		}
 	}
-	connectHost := "*"
-	if parsed, err := url.Parse(nexusBaseURL); err == nil && parsed.Hostname() != "" {
-		connectHost = parsed.Hostname()
+	connectHosts := make([]string, 0, 4)
+	addConnectHost := func(raw string) {
+		parsed, err := url.Parse(raw)
+		if err != nil || parsed.Hostname() == "" {
+			return
+		}
+		host := strings.ToLower(parsed.Hostname())
+		for _, existing := range connectHosts {
+			if existing == host {
+				return
+			}
+		}
+		connectHosts = append(connectHosts, host)
+		if strings.HasPrefix(host, "api.") {
+			rootHost := strings.TrimPrefix(host, "api.")
+			for _, existing := range connectHosts {
+				if existing == rootHost {
+					return
+				}
+			}
+			connectHosts = append(connectHosts, rootHost)
+			return
+		}
+		apiHost := "api." + host
+		for _, existing := range connectHosts {
+			if existing == apiHost {
+				return
+			}
+		}
+		connectHosts = append(connectHosts, apiHost)
 	}
+	addConnectHost(nexusBaseURL)
+	addConnectHost(targetBaseURL)
+	if len(connectHosts) == 0 {
+		connectHosts = append(connectHosts, "localhost")
+	}
+	connectHost := strings.Join(connectHosts, "\n// @connect      ")
 	config, _ := common.Marshal(map[string]any{
 		"version":    platformSiteCaptureHelperVersion,
 		"nexus_base": nexusBaseURL,

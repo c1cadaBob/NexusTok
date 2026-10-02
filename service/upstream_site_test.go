@@ -165,7 +165,7 @@ func TestPlatformSiteChannelProxyPreservesCookieJarAndSessionPolicy(t *testing.T
 	require.NoError(t, err)
 	_, err = platformSiteRequest(context.Background(), session, http.MethodGet, "/second", nil, nil)
 	require.NoError(t, err)
-	assert.Equal(t, 2, proxyRequests)
+	assert.GreaterOrEqual(t, proxyRequests, 2)
 }
 
 func TestSyncPlatformSiteUsesChannelProxyAndClassifiesNewAPICredentials(t *testing.T) {
@@ -284,7 +284,7 @@ func TestPlatformSiteAuthFlowUsesChannelProxyForLoginAndTwoFA(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, PlatformSiteAuthFlowStatusAuthenticated, verified.Status)
 	assert.Equal(t, "17", verified.UserID)
-	assert.Equal(t, 2, proxyRequests)
+	assert.GreaterOrEqual(t, proxyRequests, 2)
 }
 
 func TestPlatformSiteCaptureSessionBindsUserAndConsumesAfterSave(t *testing.T) {
@@ -335,7 +335,7 @@ func TestPlatformSiteCaptureSessionBindsUserAndConsumesAfterSave(t *testing.T) {
 	require.Equal(t, "sub2-access-token", resolved.Credential.AccessToken)
 	require.Equal(t, "sub2-refresh-token", resolved.Credential.RefreshToken)
 
-	require.NoError(t, ConsumePlatformSiteCapture(7, start.CaptureID, 0))
+	require.NoError(t, ConsumePlatformSiteCapture(7, start.CaptureID, 0, resolved.ClaimToken))
 	_, err = ResolvePlatformSiteCapture(
 		7,
 		start.CaptureID,
@@ -344,6 +344,35 @@ func TestPlatformSiteCaptureSessionBindsUserAndConsumesAfterSave(t *testing.T) {
 		model.UpstreamAuthAccessToken,
 	)
 	require.Error(t, err)
+}
+
+func TestPlatformSiteCaptureScriptUsesTargetScopedConnectAndCookieVerification(t *testing.T) {
+	start, err := StartPlatformSiteCaptureSession(8, PlatformSiteCaptureStartRequest{
+		Platform: model.PlatformNewAPI,
+		BaseURL:  "http://127.0.0.1:8080",
+		AuthType: PlatformSiteCaptureAuthAuto,
+	}, "https://nexus.example.com")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = platformSiteCaptureCache.DeleteMany([]string{start.CaptureID})
+	})
+
+	record, found, err := platformSiteCaptureCache.Get(start.CaptureID)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	script, err := RenderPlatformSiteCaptureUserscript(
+		start.CaptureID,
+		record.InstallToken,
+		"https://nexus.example.com",
+	)
+	require.NoError(t, err)
+	assert.Contains(t, script, "// @connect      nexus.example.com")
+	assert.Contains(t, script, "// @connect      127.0.0.1")
+	assert.Contains(t, script, "// @connect      api.127.0.0.1")
+	assert.Contains(t, script, "headers.Cookie = cookie")
+	assert.Contains(t, script, "{ headers, cookie }")
+	assert.NotContains(t, script, "// @connect      *")
 }
 
 func TestPlatformSiteCaptureSessionAutoSelectsCredentialPriority(t *testing.T) {
@@ -403,6 +432,15 @@ func TestPlatformSiteCaptureSessionAutoSelectsCredentialPriority(t *testing.T) {
 			request.Platform = model.PlatformNewAPI
 			request.AuthType = PlatformSiteCaptureAuthAuto
 			request.Origin = record.Origin
+			request.CaptureSource = "capture_helper"
+			request.HelperVersion = platformSiteCaptureHelperVersion
+			request.Diagnostics = &PlatformSiteCaptureDiagnostics{}
+			switch testCase.wantAuth {
+			case model.UpstreamAuthAdminKey:
+				request.Diagnostics.AdminKeyVerified = true
+			default:
+				request.Diagnostics.AuthUserVerified = true
+			}
 			status, err := CompletePlatformSiteCaptureSession(start.CaptureID, request)
 			require.NoError(t, err)
 			require.NotNil(t, status.Summary)
@@ -421,6 +459,17 @@ func TestPlatformSiteCaptureSessionAutoSelectsCredentialPriority(t *testing.T) {
 			assert.Equal(t, testCase.wantAccess, resolved.Credential.AccessToken)
 			assert.Equal(t, testCase.wantAdmin, resolved.Credential.AdminKey)
 			assert.Equal(t, testCase.wantCookie, resolved.Credential.Cookie)
+			require.NoError(t, ReleasePlatformSiteCaptureClaim(start.CaptureID, resolved.ClaimToken))
+			resolved, err = ResolvePlatformSiteCapture(
+				17,
+				start.CaptureID,
+				0,
+				model.PlatformNewAPI,
+				testCase.wantAuth,
+			)
+			require.NoError(t, err)
+			assert.Equal(t, testCase.wantAuth, resolved.Credential.AuthType)
+			require.NoError(t, ReleasePlatformSiteCaptureClaim(start.CaptureID, resolved.ClaimToken))
 		})
 	}
 }
@@ -441,6 +490,9 @@ func TestPlatformSiteCaptureSessionAutoFailsWithoutReadableCredential(t *testing
 		Platform:      model.PlatformNewAPI,
 		AuthType:      PlatformSiteCaptureAuthAuto,
 		Origin:        record.Origin,
+		CaptureSource: "capture_helper",
+		HelperVersion: platformSiteCaptureHelperVersion,
+		Diagnostics:   &PlatformSiteCaptureDiagnostics{},
 	})
 	require.Error(t, err)
 
@@ -448,6 +500,41 @@ func TestPlatformSiteCaptureSessionAutoFailsWithoutReadableCredential(t *testing
 	require.NoError(t, err)
 	assert.Equal(t, platformSiteCaptureStatusFailed, status.Status)
 	assert.Equal(t, "自动配置未采集到可用登录态", status.Message)
+}
+
+func TestPlatformSiteCaptureAutoRequiresVerifiedHelperSubmission(t *testing.T) {
+	start, err := StartPlatformSiteCaptureSession(19, PlatformSiteCaptureStartRequest{
+		Platform: model.PlatformNewAPI,
+		BaseURL:  "http://127.0.0.1:8183",
+		AuthType: PlatformSiteCaptureAuthAuto,
+	}, "http://127.0.0.1:3003")
+	require.NoError(t, err)
+	record, found, err := platformSiteCaptureCache.Get(start.CaptureID)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	_, err = CompletePlatformSiteCaptureSession(start.CaptureID, PlatformSiteCaptureCompleteRequest{
+		CaptureSecret: record.Secret,
+		Platform:      model.PlatformNewAPI,
+		AuthType:      PlatformSiteCaptureAuthAuto,
+		Origin:        record.Origin,
+		AccessToken:   "access-token",
+	})
+	require.ErrorContains(t, err, "Capture Helper")
+
+	_, err = CompletePlatformSiteCaptureSession(start.CaptureID, PlatformSiteCaptureCompleteRequest{
+		CaptureSecret: record.Secret,
+		Platform:      model.PlatformNewAPI,
+		AuthType:      PlatformSiteCaptureAuthAuto,
+		Origin:        record.Origin,
+		CaptureSource: "capture_helper",
+		HelperVersion: platformSiteCaptureHelperVersion,
+		AccessToken:   "access-token",
+		Diagnostics: &PlatformSiteCaptureDiagnostics{
+			AuthUserVerified: true,
+		},
+	})
+	require.NoError(t, err)
 }
 
 func TestPlatformSiteCaptureSessionRejectsAuthTypeDowngradeAndCrossUserAccess(t *testing.T) {
@@ -492,6 +579,7 @@ func TestPlatformSiteCaptureSessionRejectsAuthTypeDowngradeAndCrossUserAccess(t 
 	)
 	require.NoError(t, err)
 	require.Equal(t, "admin-key", resolved.Credential.AdminKey)
+	require.NoError(t, ReleasePlatformSiteCaptureClaim(start.CaptureID, resolved.ClaimToken))
 
 	_, err = CompletePlatformSiteCaptureSession(start.CaptureID, PlatformSiteCaptureCompleteRequest{
 		CaptureSecret: record.Secret,
@@ -685,6 +773,8 @@ func TestPlatformSiteCaptureUserscriptsReadExplicitBrowserFieldsOnly(t *testing.
 	require.Contains(t, script, "api_base_url")
 	require.Contains(t, script, "readStructured")
 	require.Contains(t, script, "userIDFromToken")
+	require.Contains(t, script, "GM_cookie.list({ url: cookieURL")
+	require.Contains(t, script, "credentials: 'include'")
 	require.NotContains(t, script, record.Secret)
 
 	helper, err := RenderPlatformSiteCaptureHelper("https://nexus.example.com")
@@ -1024,18 +1114,23 @@ func TestNewAPIAdapterLoadsAPIyiSelectableGroupsAfterMissingDefaultRoutes(t *tes
 	assert.Equal(t, 0.5, groups[0].Ratio)
 }
 
-func TestNewAPIAdapterPasswordReusesPersistedUnexpiredSession(t *testing.T) {
+func TestNewAPIAdapterPasswordDoesNotReusePersistedSession(t *testing.T) {
 	loginRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
 		case "/api/user/login":
 			loginRequests++
-			t.Fatalf("未过期的已保存会话不应再次提交密码登录")
+			assert.Empty(t, request.Header.Get("Authorization"))
+			assert.NotContains(t, request.Header.Get("Cookie"), "saved-refresh")
+			assert.NotEqual(t, "saved-session", request.Header.Get("X-Auth-Session"))
+			_, _ = writer.Write([]byte(
+				`{"success":true,"data":{"token":"login-access","user":{"id":17}}}`,
+			))
 		case "/api/user/self":
-			assert.Equal(t, "Bearer saved-access", request.Header.Get("Authorization"))
-			assert.Equal(t, "new_api_refresh=saved-refresh", request.Header.Get("Cookie"))
-			assert.Equal(t, "saved-session", request.Header.Get("X-Auth-Session"))
+			assert.Equal(t, "Bearer login-access", request.Header.Get("Authorization"))
+			assert.NotContains(t, request.Header.Get("Cookie"), "saved-refresh")
+			assert.NotEqual(t, "saved-session", request.Header.Get("X-Auth-Session"))
 			_, _ = writer.Write([]byte(`{"success":true,"data":{"id":17,"quota":1}}`))
 		default:
 			http.NotFound(writer, request)
@@ -1060,11 +1155,15 @@ func TestNewAPIAdapterPasswordReusesPersistedUnexpiredSession(t *testing.T) {
 		},
 	)
 	require.NoError(t, err)
-	assert.Equal(t, 0, loginRequests)
+	assert.Equal(t, 1, loginRequests)
 	require.NotNil(t, session.CredentialUpdate)
 	assert.Equal(t, "17", session.CredentialUpdate.UserID)
-	assert.Equal(t, "saved-access", session.CredentialUpdate.AccessToken)
-	assert.Equal(t, "new_api_refresh=saved-refresh", session.CredentialUpdate.Cookie)
+	assert.Equal(t, "operator", session.CredentialUpdate.Username)
+	assert.Equal(t, "synthetic-password", session.CredentialUpdate.Password)
+	assert.Empty(t, session.CredentialUpdate.AccessToken)
+	assert.Empty(t, session.CredentialUpdate.RefreshToken)
+	assert.Empty(t, session.CredentialUpdate.SessionID)
+	assert.Empty(t, session.CredentialUpdate.Cookie)
 }
 
 func TestNewAPIAdapterAccessTokenUsesUnexpiredDashboardSessionWithoutRefresh(t *testing.T) {
@@ -1136,35 +1235,28 @@ func TestNewAPIAdapterAccessTokenPersistsResponseCookie(t *testing.T) {
 	assert.Contains(t, session.CredentialUpdate.Cookie, "new_api_refresh=captured-refresh")
 }
 
-func TestNewAPIAdapterPasswordRefreshesModernBundleAndPreservesPasswordFallback(t *testing.T) {
+func TestNewAPIAdapterPasswordAlwaysLogsInWithPassword(t *testing.T) {
 	refreshRequests := 0
 	loginRequests := 0
-	selfRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
-		case "/api/user/self":
-			selfRequests++
-			if selfRequests == 1 {
-				assert.Empty(t, request.Header.Get("Authorization"))
-				writer.WriteHeader(http.StatusUnauthorized)
-				_, _ = writer.Write([]byte(`{"success":false,"code":401}`))
-				return
-			}
-			assert.Equal(t, "Bearer refreshed-access", request.Header.Get("Authorization"))
-			assert.Equal(t, "new_api_refresh=rotated-refresh", request.Header.Get("Cookie"))
-			assert.Equal(t, "rotated-session", request.Header.Get("X-Auth-Session"))
-			_, _ = writer.Write([]byte(`{"success":true,"data":{"id":17,"quota":1}}`))
 		case "/api/user/auth/refresh":
 			refreshRequests++
-			assert.Equal(t, "old-session", request.Header.Get("X-Auth-Session"))
-			assert.Equal(t, "new_api_refresh=old-refresh", request.Header.Get("Cookie"))
-			assert.Equal(t, "Bearer expired-access", request.Header.Get("Authorization"))
-			http.SetCookie(writer, &http.Cookie{Name: "new_api_refresh", Value: "rotated-refresh", Path: "/api/user/auth"})
-			_, _ = writer.Write([]byte(fmt.Sprintf(`{"success":true,"data":{"access_token":"refreshed-access","token_type":"Bearer","access_expires_at":%d,"session":{"sid":"rotated-session","current":true},"user":{"id":17}}}`, common.GetTimestamp()+3600)))
+			t.Fatalf("密码认证不应调用 Dashboard Refresh")
 		case "/api/user/login":
 			loginRequests++
-			t.Fatalf("刷新成功后不应再次提交密码登录")
+			assert.Empty(t, request.Header.Get("Authorization"))
+			assert.NotContains(t, request.Header.Get("Cookie"), "old-refresh")
+			assert.NotEqual(t, "old-session", request.Header.Get("X-Auth-Session"))
+			_, _ = writer.Write([]byte(
+				`{"success":true,"data":{"token":"login-access","user":{"id":17}}}`,
+			))
+		case "/api/user/self":
+			assert.Equal(t, "Bearer login-access", request.Header.Get("Authorization"))
+			assert.NotContains(t, request.Header.Get("Cookie"), "old-refresh")
+			assert.NotEqual(t, "old-session", request.Header.Get("X-Auth-Session"))
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"id":17,"quota":1}}`))
 		default:
 			http.NotFound(writer, request)
 		}
@@ -1186,16 +1278,16 @@ func TestNewAPIAdapterPasswordRefreshesModernBundleAndPreservesPasswordFallback(
 	session, err := NewNewAPIAdapter(server.Client()).Authenticate(context.Background(), server.URL, credential)
 	require.NoError(t, err)
 	require.NotNil(t, session.CredentialUpdate)
-	assert.Equal(t, 1, refreshRequests)
-	assert.Equal(t, 0, loginRequests)
+	assert.Equal(t, 0, refreshRequests)
+	assert.Equal(t, 1, loginRequests)
 	assert.Equal(t, model.UpstreamAuthPassword, session.CredentialUpdate.AuthType)
 	assert.Equal(t, "operator", session.CredentialUpdate.Username)
 	assert.Equal(t, "synthetic-password", session.CredentialUpdate.Password)
-	assert.Equal(t, "refreshed-access", session.CredentialUpdate.AccessToken)
-	assert.Equal(t, "rotated-session", session.CredentialUpdate.SessionID)
 	assert.Equal(t, "17", session.CredentialUpdate.UserID)
-	assert.Contains(t, session.CredentialUpdate.Cookie, "new_api_refresh=rotated-refresh")
-	assert.Greater(t, session.CredentialUpdate.TokenExpiresAt, common.GetTimestamp())
+	assert.Empty(t, session.CredentialUpdate.AccessToken)
+	assert.Empty(t, session.CredentialUpdate.RefreshToken)
+	assert.Empty(t, session.CredentialUpdate.SessionID)
+	assert.Empty(t, session.CredentialUpdate.Cookie)
 }
 
 func TestNewAPIRefreshCookieMergesJarAndExplicitHeaderWithoutDuplicates(t *testing.T) {
@@ -1264,29 +1356,24 @@ func TestPlatformSiteRequestCarriesSetCookieAcrossRedirects(t *testing.T) {
 	assert.Contains(t, platformSiteJarCookieHeader(session), "redirect-session=captured")
 }
 
-func TestNewAPIAdapterPasswordRefreshUnauthorizedFallsBackOnce(t *testing.T) {
+func TestNewAPIAdapterPasswordDoesNotRefreshBeforeLogin(t *testing.T) {
 	refreshRequests := 0
 	loginRequests := 0
-	selfRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
-		case "/api/user/self":
-			selfRequests++
-			if selfRequests == 1 {
-				writer.WriteHeader(http.StatusUnauthorized)
-				_, _ = writer.Write([]byte(`{"success":false,"code":401}`))
-				return
-			}
-			assert.Equal(t, "Bearer login-access", request.Header.Get("Authorization"))
-			_, _ = writer.Write([]byte(`{"success":true,"data":{"id":17,"quota":1}}`))
 		case "/api/user/auth/refresh":
 			refreshRequests++
-			writer.WriteHeader(http.StatusUnauthorized)
-			_, _ = writer.Write([]byte(`{"success":false,"code":401,"message":"expired"}`))
+			t.Fatalf("密码认证不应请求历史 Refresh")
 		case "/api/user/login":
 			loginRequests++
+			assert.Empty(t, request.Header.Get("Authorization"))
+			assert.NotContains(t, request.Header.Get("Cookie"), "old-refresh")
+			assert.NotEqual(t, "old-session", request.Header.Get("X-Auth-Session"))
 			_, _ = writer.Write([]byte(`{"success":true,"data":{"token":"login-access","user":{"id":17}}}`))
+		case "/api/user/self":
+			assert.Equal(t, "Bearer login-access", request.Header.Get("Authorization"))
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"id":17,"quota":1}}`))
 		default:
 			http.NotFound(writer, request)
 		}
@@ -1303,117 +1390,385 @@ func TestNewAPIAdapterPasswordRefreshUnauthorizedFallsBackOnce(t *testing.T) {
 		Cookie:         "new_api_refresh=old-refresh",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, 1, refreshRequests)
+	assert.Equal(t, 0, refreshRequests)
 	assert.Equal(t, 1, loginRequests)
 	require.NotNil(t, session.CredentialUpdate)
 	assert.Equal(t, model.UpstreamAuthPassword, session.CredentialUpdate.AuthType)
-	assert.Equal(t, "login-access", session.CredentialUpdate.AccessToken)
+	assert.Empty(t, session.CredentialUpdate.AccessToken)
+	assert.Empty(t, session.CredentialUpdate.RefreshToken)
+	assert.Empty(t, session.CredentialUpdate.SessionID)
+	assert.Empty(t, session.CredentialUpdate.Cookie)
 }
 
-func TestNewAPIAdapterDoesNotRetryPasswordOnUncertainRefresh(t *testing.T) {
+func TestNewAPIAdapterPasswordLoginIgnoresHistoricalRefreshMaterial(t *testing.T) {
+	refreshRequests := 0
+	loginRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/user/auth/refresh":
+			refreshRequests++
+			t.Fatalf("密码认证不应请求历史 Refresh")
+		case "/api/user/login":
+			loginRequests++
+			assert.Empty(t, request.Header.Get("Authorization"))
+			assert.Empty(t, request.Header.Get("X-Auth-Session"))
+			assert.NotContains(t, request.Header.Get("Cookie"), "old-refresh")
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"token":"login-access","user":{"id":17}}}`))
+		case "/api/user/self":
+			assert.Equal(t, "Bearer login-access", request.Header.Get("Authorization"))
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"id":17}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	session, err := NewNewAPIAdapter(server.Client()).Authenticate(context.Background(), server.URL, model.PlatformSiteCredential{
+		AuthType:       model.UpstreamAuthPassword,
+		Username:       "operator",
+		Password:       "synthetic-password",
+		AccessToken:    "expired-access",
+		TokenExpiresAt: common.GetTimestamp() - 1,
+		RefreshToken:   "old-refresh-token",
+		SessionID:      "old-session",
+		AdminKey:       "old-admin-key",
+		Cookie:         "new_api_refresh=old-refresh",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 0, refreshRequests)
+	assert.Equal(t, 1, loginRequests)
+	require.NotNil(t, session.CredentialUpdate)
+	assert.Empty(t, session.CredentialUpdate.AccessToken)
+	assert.Empty(t, session.CredentialUpdate.RefreshToken)
+	assert.Empty(t, session.CredentialUpdate.SessionID)
+	assert.Empty(t, session.CredentialUpdate.Cookie)
+	assert.Empty(t, session.CredentialUpdate.AdminKey)
+}
+
+func TestTemporaryPasswordSessionMaterialsRequireActualMaterial(t *testing.T) {
+	session, err := newPlatformSiteSession("http://127.0.0.1", nil)
+	require.NoError(t, err)
+
+	setTemporaryPasswordSessionMaterials(session, model.PlatformSiteCredential{})
+	assert.False(t, session.PasswordSession)
+	assert.Empty(t, session.TemporaryToken)
+	assert.Empty(t, session.TemporaryRefresh)
+	assert.Empty(t, session.TemporarySession)
+	assert.Empty(t, session.TemporaryCookie)
+
+	setTemporaryPasswordSessionMaterials(session, model.PlatformSiteCredential{
+		AccessToken: "temporary-access",
+	})
+	assert.True(t, session.PasswordSession)
+	assert.Equal(t, "temporary-access", session.TemporaryToken)
+
+	clearPlatformSitePasswordSession(session)
+	assert.False(t, session.PasswordSession)
+	assert.Empty(t, session.TemporaryToken)
+}
+
+func TestPlatformSiteAuthFlowCleansCookieAfterPasswordLoginFailure(t *testing.T) {
+	logoutRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/user/login":
+			http.SetCookie(writer, &http.Cookie{
+				Name:  "new_api_refresh",
+				Value: "failed-login-refresh",
+				Path:  "/",
+			})
+			writer.WriteHeader(http.StatusUnauthorized)
+			_, _ = writer.Write([]byte(
+				`{"success":false,"message":"Username or password error"}`,
+			))
+		case "/api/user/auth/logout":
+			logoutRequests++
+			assert.Equal(t, "new_api_refresh=failed-login-refresh", request.Header.Get("Cookie"))
+			_, _ = writer.Write([]byte(`{"success":true}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	_, err := StartPlatformSiteAuthFlow(context.Background(), 9901, PlatformSiteAuthFlowStartRequest{
+		Platform: model.PlatformNewAPI,
+		BaseURL:  server.URL,
+		AuthType: model.UpstreamAuthPassword,
+		Username: "operator",
+		Password: "synthetic-password",
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPlatformSiteCredentials)
+	assert.Equal(t, 1, logoutRequests)
+}
+
+func TestNewAPIAdapterCleanupLogsOutAndDeletesExactSession(t *testing.T) {
+	logoutRequests := 0
+	deleteRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/user/login":
+			http.SetCookie(writer, &http.Cookie{
+				Name:  "new_api_refresh",
+				Value: "temporary-refresh",
+				Path:  "/",
+			})
+			_, _ = writer.Write([]byte(
+				`{"success":true,"data":{"token":"temporary-access","session_id":"sid-123","user":{"id":7}}}`,
+			))
+		case "/api/user/self":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"id":7,"username":"operator"}}`))
+		case "/api/user/auth/logout":
+			logoutRequests++
+			assert.Equal(t, http.MethodPost, request.Method)
+			assert.Equal(t, "http://"+request.Host, request.Header.Get("Origin"))
+			assert.Equal(t, "Bearer temporary-access", request.Header.Get("Authorization"))
+			assert.Equal(t, "sid-123", request.Header.Get("X-Auth-Session"))
+			assert.Contains(t, request.Header.Get("Cookie"), "new_api_refresh=temporary-refresh")
+			_, _ = writer.Write([]byte(`{"success":true}`))
+		case "/api/user/sessions/sid-123":
+			deleteRequests++
+			assert.Equal(t, http.MethodDelete, request.Method)
+			assert.Equal(t, "Bearer temporary-access", request.Header.Get("Authorization"))
+			assert.Equal(t, "sid-123", request.Header.Get("X-Auth-Session"))
+			_, _ = writer.Write([]byte(`{"success":true}`))
+		case "/api/user/sessions/revoke-others":
+			t.Fatalf("密码同步不得撤销其他设备会话")
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	session, err := NewNewAPIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType: model.UpstreamAuthPassword,
+			Username: "operator",
+			Password: "synthetic-password",
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, session.PasswordSession)
+	require.Equal(t, "temporary-access", session.TemporaryToken)
+	require.Equal(t, "sid-123", session.TemporarySession)
+
+	require.NoError(t, NewNewAPIAdapter(server.Client()).Cleanup(context.Background(), session))
+	assert.Equal(t, 1, logoutRequests)
+	assert.Equal(t, 1, deleteRequests)
+	assert.Empty(t, session.TemporaryToken)
+	assert.Empty(t, session.TemporaryRefresh)
+	assert.Empty(t, session.TemporarySession)
+	assert.Empty(t, session.TemporaryCookie)
+	assert.Empty(t, session.Headers.Get("Authorization"))
+	assert.Empty(t, session.Headers.Get("Cookie"))
+	assert.Empty(t, session.Headers.Get("X-Auth-Session"))
+}
+
+func TestNewAPIAdapterCleanupTreatsLogoutAndSessionDeleteAsIdempotent(t *testing.T) {
 	tests := []struct {
-		name           string
-		status         int
-		body           string
-		contentType    string
-		wantLimit      bool
-		wantPermission bool
+		name         string
+		logoutStatus int
+		logoutBody   string
+		deleteStatus int
 	}{
 		{
-			name:        "waf",
-			status:      http.StatusForbidden,
-			body:        "<html>Cloudflare challenge</html>",
-			contentType: "text/html",
+			name:         "session mismatch",
+			logoutStatus: http.StatusConflict,
+			logoutBody:   `{"success":false,"code":"AUTH_SESSION_MISMATCH"}`,
+			deleteStatus: http.StatusOK,
 		},
 		{
-			name:           "permission denied",
-			status:         http.StatusForbidden,
-			body:           `{"success":false,"code":403,"message":"permission denied"}`,
-			contentType:    "application/json",
-			wantPermission: true,
+			name:         "logout unauthorized",
+			logoutStatus: http.StatusUnauthorized,
+			deleteStatus: http.StatusOK,
 		},
 		{
-			name:        "two factor",
-			status:      http.StatusOK,
-			body:        `{"success":false,"message":"turnstile verification required"}`,
-			contentType: "application/json",
+			name:         "logout forbidden",
+			logoutStatus: http.StatusForbidden,
+			deleteStatus: http.StatusOK,
 		},
 		{
-			name:        "session limit",
-			status:      http.StatusConflict,
-			body:        `{"success":false,"code":"AUTH_SESSION_LIMIT","message":"too many active sessions"}`,
-			contentType: "application/json",
-			wantLimit:   true,
+			name:         "logout not found",
+			logoutStatus: http.StatusNotFound,
+			deleteStatus: http.StatusOK,
 		},
 		{
-			name:        "incomplete modern bundle",
-			status:      http.StatusOK,
-			body:        `{"success":true,"data":{"access_token":"partial","token_type":"Bearer"}}`,
-			contentType: "application/json",
+			name:         "logout method missing",
+			logoutStatus: http.StatusMethodNotAllowed,
+			deleteStatus: http.StatusOK,
+		},
+		{
+			name:         "session delete unauthorized",
+			logoutStatus: http.StatusOK,
+			deleteStatus: http.StatusUnauthorized,
+		},
+		{
+			name:         "session delete forbidden",
+			logoutStatus: http.StatusOK,
+			deleteStatus: http.StatusForbidden,
+		},
+		{
+			name:         "session delete not found",
+			logoutStatus: http.StatusOK,
+			deleteStatus: http.StatusNotFound,
+		},
+		{
+			name:         "session delete method missing",
+			logoutStatus: http.StatusOK,
+			deleteStatus: http.StatusMethodNotAllowed,
 		},
 	}
 
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			loginRequests := 0
+			deleteRequests := 0
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 				switch request.URL.Path {
-				case "/api/user/self":
-					writer.WriteHeader(http.StatusUnauthorized)
-					_, _ = writer.Write([]byte(`{"success":false,"code":401}`))
-				case "/api/user/auth/refresh":
-					writer.Header().Set("Content-Type", testCase.contentType)
-					writer.WriteHeader(testCase.status)
-					_, _ = writer.Write([]byte(testCase.body))
-				case "/api/user/login":
-					loginRequests++
-					t.Fatalf("刷新结果不确定时不应重复密码登录")
+				case "/api/user/auth/logout":
+					writer.WriteHeader(testCase.logoutStatus)
+					if testCase.logoutBody != "" {
+						_, _ = writer.Write([]byte(testCase.logoutBody))
+					}
+				case "/api/user/sessions/sid-123":
+					deleteRequests++
+					writer.WriteHeader(testCase.deleteStatus)
+					if testCase.deleteStatus == http.StatusOK {
+						_, _ = writer.Write([]byte(`{"success":true}`))
+					}
+				case "/api/user/sessions/revoke-others":
+					t.Fatalf("不得调用 revoke-others")
 				default:
 					http.NotFound(writer, request)
 				}
 			}))
 			defer server.Close()
 
-			_, err := NewNewAPIAdapter(server.Client()).Authenticate(context.Background(), server.URL, model.PlatformSiteCredential{
-				AuthType:       model.UpstreamAuthPassword,
-				Username:       "operator",
-				Password:       "synthetic-password",
-				AccessToken:    "expired-access",
-				TokenExpiresAt: common.GetTimestamp() - 1,
-				SessionID:      "old-session",
-				Cookie:         "new_api_refresh=old-refresh",
-			})
-			require.Error(t, err)
-			assert.Equal(t, 0, loginRequests)
-			assert.Equal(t, testCase.wantLimit, platformSiteSessionLimit(err))
-			assert.Equal(t, testCase.wantPermission, errors.Is(err, ErrPlatformSitePermission))
-			assert.NotContains(t, err.Error(), "synthetic-password")
+			session, err := newPlatformSiteSession(server.URL, nil)
+			require.NoError(t, err)
+			session.Platform = model.PlatformNewAPI
+			session.PasswordSession = true
+			session.TemporaryToken = "temporary-access"
+			session.TemporarySession = "sid-123"
+			session.TemporaryCookie = "new_api_refresh=temporary-refresh"
+
+			require.NoError(t, NewNewAPIAdapter(server.Client()).Cleanup(context.Background(), session))
+			assert.Equal(t, 1, deleteRequests)
+			assert.Empty(t, session.TemporaryToken)
+			assert.Empty(t, session.TemporarySession)
 		})
 	}
+}
 
-	transport := platformSiteRoundTripFunc(func(request *http.Request) (*http.Response, error) {
-		if request.URL.Path == "/api/user/self" {
-			return platformSiteJSONResponse(http.StatusUnauthorized, `{"success":false,"code":401}`), nil
+func TestSub2APIAdapterCleanupUsesOnlyRefreshToken(t *testing.T) {
+	logoutRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v1/settings/public":
+			http.NotFound(writer, request)
+		case "/api/v1/auth/login":
+			_, _ = writer.Write([]byte(
+				`{"code":0,"data":{"access_token":"temporary-access","refresh_token":"temporary-refresh","expires_in":3600,"user":{"id":9}}}`,
+			))
+		case "/api/v1/auth/me":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"id":9,"username":"operator"}}`))
+		case "/api/v1/auth/logout":
+			logoutRequests++
+			assert.Equal(t, http.MethodPost, request.Method)
+			assert.Empty(t, request.Header.Get("Authorization"))
+			assert.Empty(t, request.Header.Get("Cookie"))
+			body, err := io.ReadAll(request.Body)
+			require.NoError(t, err)
+			var payload map[string]string
+			require.NoError(t, common.Unmarshal(body, &payload))
+			assert.Equal(t, map[string]string{"refresh_token": "temporary-refresh"}, payload)
+			_, _ = writer.Write([]byte(`{"code":0}`))
+		case "/api/v1/auth/revoke-all-sessions":
+			t.Fatalf("密码同步不得撤销全部会话")
+		default:
+			http.NotFound(writer, request)
 		}
-		if request.URL.Path == "/api/user/auth/refresh" {
-			return nil, errors.New("synthetic network failure")
-		}
-		if request.URL.Path == "/api/user/login" {
-			t.Fatalf("网络错误时不应重复密码登录")
-		}
-		return platformSiteJSONResponse(http.StatusNotFound, `{"success":false}`), nil
-	})
-	_, err := NewNewAPIAdapter(&http.Client{Transport: transport}).Authenticate(context.Background(), "https://example.com", model.PlatformSiteCredential{
-		AuthType:       model.UpstreamAuthPassword,
-		Username:       "operator",
-		Password:       "synthetic-password",
-		AccessToken:    "expired-access",
-		TokenExpiresAt: common.GetTimestamp() - 1,
-		SessionID:      "old-session",
-		Cookie:         "new_api_refresh=old-refresh",
-	})
+	}))
+	defer server.Close()
+
+	session, err := NewSub2APIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType: model.UpstreamAuthPassword,
+			Username: "operator",
+			Password: "synthetic-password",
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, session.PasswordSession)
+	require.Equal(t, "temporary-refresh", session.TemporaryRefresh)
+
+	require.NoError(t, NewSub2APIAdapter(server.Client()).Cleanup(context.Background(), session))
+	assert.Equal(t, 1, logoutRequests)
+	assert.Empty(t, session.TemporaryToken)
+	assert.Empty(t, session.TemporaryRefresh)
+	assert.Empty(t, session.TemporarySession)
+	assert.Empty(t, session.TemporaryCookie)
+}
+
+func TestSub2APIAdapterCleanupWithoutRefreshTokenClearsTemporaryMaterials(t *testing.T) {
+	logoutRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		logoutRequests++
+		t.Fatalf("缺少 Refresh Token 时不应请求注销接口")
+	}))
+	defer server.Close()
+
+	session, err := newPlatformSiteSession(server.URL, nil)
+	require.NoError(t, err)
+	session.Platform = model.PlatformSub2API
+	session.PasswordSession = true
+	session.TemporaryToken = "temporary-access"
+	session.TemporarySession = "sid-123"
+	session.TemporaryCookie = "session=temporary"
+
+	err = NewSub2APIAdapter(server.Client()).Cleanup(context.Background(), session)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrPlatformSiteRefreshUncertain)
+	assert.ErrorIs(t, err, ErrPlatformSiteSessionCleanup)
+	assert.Equal(t, 0, logoutRequests)
+	assert.Empty(t, session.TemporaryToken)
+	assert.Empty(t, session.TemporaryRefresh)
+	assert.Empty(t, session.TemporarySession)
+	assert.Empty(t, session.TemporaryCookie)
+}
+
+func TestPlatformSiteCleanupDoesNotRequestWithoutTemporarySession(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(
+		writer http.ResponseWriter,
+		request *http.Request,
+	) {
+		requests++
+		t.Fatalf("未建立临时会话时不应发送注销请求")
+	}))
+	t.Cleanup(server.Close)
+
+	session, err := newPlatformSiteSession(server.URL, nil)
+	require.NoError(t, err)
+	session.Platform = model.PlatformNewAPI
+	session.PasswordSession = true
+
+	err = NewNewAPIAdapter(server.Client()).Cleanup(context.Background(), session)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPlatformSiteSessionCleanup)
+	assert.Zero(t, requests)
+	assert.False(t, session.PasswordSession)
+	assert.Empty(t, session.TemporaryToken)
+	assert.Empty(t, session.TemporaryRefresh)
+	assert.Empty(t, session.TemporarySession)
+	assert.Empty(t, session.TemporaryCookie)
 }
 
 func TestSyncPlatformSiteMapsSessionLimitWithoutPasswordRetry(t *testing.T) {
@@ -1441,15 +1796,13 @@ func TestSyncPlatformSiteMapsSessionLimitWithoutPasswordRetry(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
-		case "/api/user/self":
-			writer.WriteHeader(http.StatusUnauthorized)
-			_, _ = writer.Write([]byte(`{"success":false,"code":401}`))
 		case "/api/user/auth/refresh":
-			writer.WriteHeader(http.StatusConflict)
-			_, _ = writer.Write([]byte(`{"success":false,"code":"AUTH_SESSION_LIMIT","message":"too many active sessions"}`))
+			t.Fatalf("账号密码同步不应请求历史 Refresh")
 		case "/api/user/login":
 			loginRequests++
-			t.Fatalf("会话上限时不应再次提交密码登录")
+			_, _ = writer.Write([]byte(`{"success":false,"code":"AUTH_SESSION_LIMIT","message":"too many active sessions"}`))
+		case "/api/user/self":
+			t.Fatalf("登录被会话上限拒绝时不应读取当前用户")
 		default:
 			http.NotFound(writer, request)
 		}
@@ -1487,7 +1840,7 @@ func TestSyncPlatformSiteMapsSessionLimitWithoutPasswordRetry(t *testing.T) {
 
 	err = SyncUpstreamSite(context.Background(), channel.Id)
 	require.Error(t, err)
-	assert.Equal(t, 0, loginRequests)
+	assert.Equal(t, 1, loginRequests)
 
 	var saved model.PlatformSiteAccount
 	require.NoError(t, db.First(&saved, account.ID).Error)
@@ -1782,26 +2135,24 @@ func TestNewAPIAdapterAdminKeySkipsPasswordLogin(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestPlatformSitePasswordAuthenticationKeepsPasswordFallbackAndPersistsNewAPIState(t *testing.T) {
+func TestPlatformSitePasswordAuthenticationPersistsOnlyPasswordState(t *testing.T) {
 	tests := []struct {
-		name          string
-		newAdapter    func(*http.Client) PlatformSiteAdapter
-		loginPath     string
-		refreshPath   string
-		selfPath      string
-		loginBody     string
-		selfBody      string
-		expectPersist bool
+		name        string
+		newAdapter  func(*http.Client) PlatformSiteAdapter
+		loginPath   string
+		refreshPath string
+		selfPath    string
+		loginBody   string
+		selfBody    string
 	}{
 		{
-			name:          "NewAPI",
-			newAdapter:    func(client *http.Client) PlatformSiteAdapter { return NewNewAPIAdapter(client) },
-			loginPath:     "/api/user/login",
-			refreshPath:   "/api/user/auth/refresh",
-			selfPath:      "/api/user/self",
-			loginBody:     `{"success":true,"data":{"token":"session","refresh_token":"rotated"}}`,
-			selfBody:      `{"success":true,"data":{"quota":1}}`,
-			expectPersist: true,
+			name:        "NewAPI",
+			newAdapter:  func(client *http.Client) PlatformSiteAdapter { return NewNewAPIAdapter(client) },
+			loginPath:   "/api/user/login",
+			refreshPath: "/api/user/auth/refresh",
+			selfPath:    "/api/user/self",
+			loginBody:   `{"success":true,"data":{"token":"session","refresh_token":"rotated"}}`,
+			selfBody:    `{"success":true,"data":{"quota":1}}`,
 		},
 		{
 			name:        "Sub2API",
@@ -1822,6 +2173,9 @@ func TestPlatformSitePasswordAuthenticationKeepsPasswordFallbackAndPersistsNewAP
 				case testCase.refreshPath:
 					t.Fatalf("密码认证不应尝试刷新令牌")
 				case testCase.loginPath:
+					assert.Empty(t, request.Header.Get("Authorization"))
+					assert.Empty(t, request.Header.Get("Cookie"))
+					assert.Empty(t, request.Header.Get("X-Auth-Session"))
 					_, _ = writer.Write([]byte(testCase.loginBody))
 				case testCase.selfPath:
 					assert.Equal(t, "Bearer session", request.Header.Get("Authorization"))
@@ -1833,21 +2187,106 @@ func TestPlatformSitePasswordAuthenticationKeepsPasswordFallbackAndPersistsNewAP
 			defer server.Close()
 
 			credential := model.PlatformSiteCredential{
-				AuthType: model.UpstreamAuthPassword,
-				Username: "operator@example.com",
-				Password: "synthetic-password",
+				AuthType:       model.UpstreamAuthPassword,
+				Username:       "operator@example.com",
+				Password:       "synthetic-password",
+				AccessToken:    "stale-access-token",
+				RefreshToken:   "stale-refresh-token",
+				TokenExpiresAt: common.GetTimestamp() + 3600,
+				SessionID:      "stale-session",
+				Cookie:         "new_api_refresh=stale-refresh",
 			}
 			session, err := testCase.newAdapter(server.Client()).Authenticate(context.Background(), server.URL, credential)
 			require.NoError(t, err)
-			if testCase.expectPersist {
-				require.NotNil(t, session.CredentialUpdate)
-				assert.Equal(t, model.UpstreamAuthPassword, session.CredentialUpdate.AuthType)
-				assert.Equal(t, "operator@example.com", session.CredentialUpdate.Username)
-				assert.Equal(t, "synthetic-password", session.CredentialUpdate.Password)
-				assert.Equal(t, "session", session.CredentialUpdate.AccessToken)
-			} else {
-				assert.Nil(t, session.CredentialUpdate)
-			}
+			require.NotNil(t, session.CredentialUpdate)
+			assert.Equal(t, model.UpstreamAuthPassword, session.CredentialUpdate.AuthType)
+			assert.Equal(t, "operator@example.com", session.CredentialUpdate.Username)
+			assert.Equal(t, "synthetic-password", session.CredentialUpdate.Password)
+			assert.Empty(t, session.CredentialUpdate.AccessToken)
+			assert.Empty(t, session.CredentialUpdate.RefreshToken)
+			assert.Empty(t, session.CredentialUpdate.TokenExpiresAt)
+			assert.Empty(t, session.CredentialUpdate.SessionID)
+			assert.Empty(t, session.CredentialUpdate.Cookie)
+		})
+	}
+}
+
+func TestPlatformSitePasswordAuthenticationPersistsCurrentUsername(t *testing.T) {
+	tests := []struct {
+		name      string
+		adapter   func(*http.Client) PlatformSiteAdapter
+		loginPath string
+		selfPath  string
+		selfBody  string
+		wantID    string
+		wantName  string
+	}{
+		{
+			name:      "NewAPI username",
+			adapter:   func(client *http.Client) PlatformSiteAdapter { return NewNewAPIAdapter(client) },
+			loginPath: "/api/user/login",
+			selfPath:  "/api/user/self",
+			selfBody:  `{"success":true,"data":{"id":17,"username":"newapi-user","email":"newapi@example.com"}}`,
+			wantID:    "17",
+			wantName:  "newapi-user",
+		},
+		{
+			name:      "Sub2API user_name",
+			adapter:   func(client *http.Client) PlatformSiteAdapter { return NewSub2APIAdapter(client) },
+			loginPath: "/api/v1/auth/login",
+			selfPath:  "/api/v1/auth/me",
+			selfBody:  `{"code":0,"data":{"id":23,"user_name":"sub2-user","email":"sub2@example.com"}}`,
+			wantID:    "23",
+			wantName:  "sub2-user",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(
+				writer http.ResponseWriter,
+				request *http.Request,
+			) {
+				writer.Header().Set("Content-Type", "application/json")
+				switch request.URL.Path {
+				case "/api/v1/settings/public":
+					http.NotFound(writer, request)
+				case testCase.loginPath:
+					if testCase.loginPath == "/api/user/login" {
+						_, _ = writer.Write([]byte(
+							`{"success":true,"data":{"token":"temporary-access"}}`,
+						))
+					} else {
+						_, _ = writer.Write([]byte(
+							`{"code":0,"data":{"access_token":"temporary-access","refresh_token":"temporary-refresh"}}`,
+						))
+					}
+				case testCase.selfPath:
+					_, _ = writer.Write([]byte(testCase.selfBody))
+				default:
+					http.NotFound(writer, request)
+				}
+			}))
+			t.Cleanup(server.Close)
+
+			session, err := testCase.adapter(server.Client()).Authenticate(
+				context.Background(),
+				server.URL,
+				model.PlatformSiteCredential{
+					AuthType: model.UpstreamAuthPassword,
+					Username: "operator",
+					Password: "synthetic-password",
+				},
+			)
+			require.NoError(t, err)
+			require.NotNil(t, session.CredentialUpdate)
+			assert.Equal(t, testCase.wantID, session.CredentialUpdate.UserID)
+			assert.Equal(t, testCase.wantName, session.CredentialUpdate.Username)
+			assert.NotZero(t, session.CredentialUpdate.LastAuthAt)
+			assert.Empty(t, session.CredentialUpdate.AccessToken)
+			assert.Empty(t, session.CredentialUpdate.RefreshToken)
+			assert.Empty(t, session.CredentialUpdate.SessionID)
+			assert.Empty(t, session.CredentialUpdate.Cookie)
 		})
 	}
 }
@@ -1899,7 +2338,14 @@ func TestSub2APIAdapterParsesRealLoginEnvelopeWithoutCredentialDrift(t *testing.
 	)
 	require.NoError(t, err)
 	assert.Equal(t, 1, loginRequests)
-	assert.Nil(t, session.CredentialUpdate)
+	require.NotNil(t, session.CredentialUpdate)
+	assert.Equal(t, model.UpstreamAuthPassword, session.CredentialUpdate.AuthType)
+	assert.Equal(t, "operator@example.com", session.CredentialUpdate.Username)
+	assert.Equal(t, "synthetic-password", session.CredentialUpdate.Password)
+	assert.Empty(t, session.CredentialUpdate.AccessToken)
+	assert.Empty(t, session.CredentialUpdate.RefreshToken)
+	assert.Empty(t, session.CredentialUpdate.SessionID)
+	assert.Empty(t, session.CredentialUpdate.Cookie)
 }
 
 func TestPlatformSiteAccessTokenAuthenticationDoesNotFallbackToPassword(t *testing.T) {
@@ -2226,7 +2672,10 @@ func TestPlatformSiteAuthFlowBindsIdentityAndConsumesAfterNewAPITwoFA(t *testing
 		server.URL,
 	)
 	require.NoError(t, err)
-	assert.Equal(t, "newapi-access", resolution.Credential.AccessToken)
+	assert.Empty(t, resolution.Credential.AccessToken)
+	assert.Empty(t, resolution.Credential.RefreshToken)
+	assert.Empty(t, resolution.Credential.SessionID)
+	assert.Empty(t, resolution.Credential.Cookie)
 	assert.Equal(t, "17", resolution.Credential.UserID)
 	assert.Equal(t, model.UpstreamAuthPassword, resolution.Credential.AuthType)
 
@@ -2328,7 +2777,10 @@ func TestPlatformSiteAuthFlowPersistsRotatedCookieAfterNewAPI2FAError(t *testing
 		server.URL,
 	)
 	require.NoError(t, err)
-	assert.Equal(t, "final-refresh", newAPIRefreshCookieValue(resolution.Credential.Cookie))
+	assert.Empty(t, resolution.Credential.AccessToken)
+	assert.Empty(t, resolution.Credential.RefreshToken)
+	assert.Empty(t, resolution.Credential.SessionID)
+	assert.Empty(t, resolution.Credential.Cookie)
 	assert.Equal(t, model.UpstreamAuthPassword, resolution.Credential.AuthType)
 	assert.Equal(t, "synthetic-password", resolution.Credential.Password)
 }
@@ -2399,7 +2851,42 @@ func TestNewAPIAuthFlowLegacyLoginPreservesPasswordCredential(t *testing.T) {
 	assert.Equal(t, model.UpstreamAuthPassword, resolution.Credential.AuthType)
 	assert.Equal(t, "operator", resolution.Credential.Username)
 	assert.Equal(t, "synthetic-password", resolution.Credential.Password)
-	assert.Equal(t, "legacy-access", resolution.Credential.AccessToken)
+	assert.Empty(t, resolution.Credential.AccessToken)
+	assert.Empty(t, resolution.Credential.RefreshToken)
+	assert.Empty(t, resolution.Credential.SessionID)
+	assert.Empty(t, resolution.Credential.Cookie)
+}
+
+func TestPlatformSiteAuthFlowRejectsEmptyCurrentUserResponse(t *testing.T) {
+	logoutRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/user/login":
+			_, _ = writer.Write([]byte(
+				`{"success":true,"data":{"token":"temporary-access","user":{"id":17}}}`,
+			))
+		case "/api/user/self":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{}}`))
+		case "/api/user/auth/logout":
+			logoutRequests++
+			_, _ = writer.Write([]byte(`{"success":true}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	_, err := StartPlatformSiteAuthFlow(context.Background(), 9902, PlatformSiteAuthFlowStartRequest{
+		Platform: model.PlatformNewAPI,
+		BaseURL:  server.URL,
+		AuthType: model.UpstreamAuthPassword,
+		Username: "operator",
+		Password: "synthetic-password",
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPlatformSiteAuth)
+	assert.Equal(t, 1, logoutRequests)
 }
 
 func TestSub2APIAuthFlowTwoFAUsesBrowserHeaders(t *testing.T) {
@@ -2418,6 +2905,10 @@ func TestSub2APIAuthFlowTwoFAUsesBrowserHeaders(t *testing.T) {
 			assert.Contains(t, string(body), `"temp_token":"sub2-temp"`)
 			assert.Contains(t, string(body), `"totp_code":"654321"`)
 			_, _ = writer.Write([]byte(`{"code":0,"data":{"access_token":"sub2-access","refresh_token":"sub2-refresh","expires_in":3600,"user":{"id":23}}}`))
+		case "/api/v1/auth/me":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"id":23,"user_name":"sub-operator"}}`))
+		case "/api/v1/auth/logout":
+			_, _ = writer.Write([]byte(`{"code":0}`))
 		default:
 			http.NotFound(writer, request)
 		}
@@ -2442,7 +2933,21 @@ func TestSub2APIAuthFlowTwoFAUsesBrowserHeaders(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.Equal(t, "23", verified.UserID)
-	assert.Equal(t, model.UpstreamAuthAccessToken, verified.AuthType)
+	assert.Equal(t, "sub-operator", verified.Username)
+	assert.Equal(t, model.UpstreamAuthPassword, verified.AuthType)
+	resolution, err := ResolvePlatformSiteAuthFlow(
+		41,
+		started.FlowID,
+		0,
+		model.PlatformSub2API,
+		server.URL,
+	)
+	require.NoError(t, err)
+	assert.Empty(t, resolution.Credential.AccessToken)
+	assert.Empty(t, resolution.Credential.RefreshToken)
+	assert.Empty(t, resolution.Credential.SessionID)
+	assert.Empty(t, resolution.Credential.Cookie)
+	assert.Equal(t, "sub-operator", resolution.Credential.Username)
 }
 
 func TestSub2APIAuthFlowResolutionNormalizesManagementBaseURL(t *testing.T) {
@@ -2450,7 +2955,7 @@ func TestSub2APIAuthFlowResolutionNormalizesManagementBaseURL(t *testing.T) {
 		writer.Header().Set("Content-Type", "application/json")
 		if request.Method == http.MethodPost && request.URL.Path == "/api/v1/auth/login" {
 			_, _ = writer.Write([]byte(
-				`{"code":0,"data":{"access_token":"sub2-access"}}`,
+				`{"code":0,"data":{"access_token":"sub2-access","user":{"id":43}}}`,
 			))
 			return
 		}
@@ -2476,7 +2981,10 @@ func TestSub2APIAuthFlowResolutionNormalizesManagementBaseURL(t *testing.T) {
 		server.URL+"/v1",
 	)
 	require.NoError(t, err)
-	assert.Equal(t, "sub2-access", resolution.Credential.AccessToken)
+	assert.Empty(t, resolution.Credential.AccessToken)
+	assert.Empty(t, resolution.Credential.RefreshToken)
+	assert.Empty(t, resolution.Credential.SessionID)
+	assert.Empty(t, resolution.Credential.Cookie)
 }
 
 func TestSub2APIAuthFlowTwoFAUsesLatestLoginAgreementRevision(t *testing.T) {
@@ -4589,6 +5097,8 @@ func TestSyncPlatformSitePersistsPasswordSessionBeforeResourceFailure(t *testing
 	})
 
 	loginRequests := 0
+	logoutRequests := 0
+	deleteSessionRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
@@ -4604,6 +5114,21 @@ func TestSyncPlatformSitePersistsPasswordSessionBeforeResourceFailure(t *testing
 		case "/api/token/":
 			writer.WriteHeader(http.StatusForbidden)
 			_, _ = writer.Write([]byte(`{"success":false,"code":403,"message":"permission denied"}`))
+		case "/api/user/auth/logout":
+			logoutRequests++
+			assert.Equal(t, http.MethodPost, request.Method)
+			assert.Equal(t, "Bearer login-access", request.Header.Get("Authorization"))
+			assert.Equal(t, "login-session", request.Header.Get("X-Auth-Session"))
+			writer.WriteHeader(http.StatusInternalServerError)
+			_, _ = writer.Write([]byte(`{"success":false,"message":"logout failed"}`))
+		case "/api/user/sessions/login-session":
+			deleteSessionRequests++
+			assert.Equal(t, http.MethodDelete, request.Method)
+			assert.Equal(t, "Bearer login-access", request.Header.Get("Authorization"))
+			assert.Equal(t, "login-session", request.Header.Get("X-Auth-Session"))
+			_, _ = writer.Write([]byte(`{"success":true}`))
+		case "/api/user/sessions/revoke-others":
+			t.Fatalf("密码同步不得撤销其他设备会话")
 		default:
 			http.NotFound(writer, request)
 		}
@@ -4662,11 +5187,17 @@ func TestSyncPlatformSitePersistsPasswordSessionBeforeResourceFailure(t *testing
 	assert.Equal(t, model.UpstreamAuthPassword, savedCredential.AuthType)
 	assert.Equal(t, "operator", savedCredential.Username)
 	assert.Equal(t, "synthetic-password", savedCredential.Password)
-	assert.Equal(t, "login-access", savedCredential.AccessToken)
+	assert.Empty(t, savedCredential.AccessToken)
+	assert.Empty(t, savedCredential.RefreshToken)
+	assert.Empty(t, savedCredential.RefreshStatus)
+	assert.False(t, savedCredential.ReauthRequired)
+	assert.False(t, savedCredential.RefreshUncertain)
 	assert.Equal(t, "17", savedCredential.UserID)
-	assert.Equal(t, "login-session", savedCredential.SessionID)
-	assert.Contains(t, savedCredential.Cookie, "new_api_refresh=refresh-1")
+	assert.Empty(t, savedCredential.SessionID)
+	assert.Empty(t, savedCredential.Cookie)
 	assert.Equal(t, model.UpstreamSiteSyncFailed, saved.SyncStatus)
+	assert.Equal(t, 1, logoutRequests)
+	assert.Equal(t, 1, deleteSessionRequests)
 	assert.Zero(t, saved.LastSyncAt)
 	assert.Equal(t, model.PlatformSiteAuthStatusAuthenticated, saved.AuthStatus)
 	assert.Equal(t, 10.0, saved.Balance)
@@ -4698,6 +5229,138 @@ func TestSyncPlatformSitePersistsPasswordSessionBeforeResourceFailure(t *testing
 	require.NoError(t, err)
 	assert.Equal(t, "sk-old", oldCredential.AccessToken)
 	assert.Equal(t, model.UpstreamKeyStatusEnabled, savedKey.Status)
+}
+
+func TestSyncPlatformSiteSub2APIPasswordResourceFailureCleansSession(t *testing.T) {
+	previousDB := model.DB
+	previousSecret := common.CryptoSecret
+	previousMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.CryptoSecret = "upstream-site-sub2-password-cleanup-test-secret"
+	common.MemoryCacheEnabled = false
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&model.Channel{},
+		&model.Ability{},
+		&model.PlatformSiteAccount{},
+		&model.PlatformSiteIdentity{},
+		&model.PlatformSiteGroup{},
+		&model.PlatformSiteEndpoint{},
+		&model.PlatformSiteEndpointCapability{},
+		&model.PlatformSiteResourceSync{},
+		&model.UpstreamKey{},
+		&model.UpstreamKeyAbility{},
+	))
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = previousDB
+		common.CryptoSecret = previousSecret
+		common.MemoryCacheEnabled = previousMemoryCacheEnabled
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	logoutRequests := 0
+	var logoutBody string
+	server := httptest.NewServer(http.HandlerFunc(func(
+		writer http.ResponseWriter,
+		request *http.Request,
+	) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/":
+			http.NotFound(writer, request)
+		case "/api/v1/settings/public":
+			http.NotFound(writer, request)
+		case "/api/v1/auth/login":
+			_, _ = writer.Write([]byte(
+				`{"code":0,"data":{"access_token":"sub2-temporary-access","refresh_token":"sub2-temporary-refresh","expires_in":3600,"user":{"id":29}}}`,
+			))
+		case "/api/v1/auth/me":
+			assert.Equal(t, "Bearer sub2-temporary-access", request.Header.Get("Authorization"))
+			_, _ = writer.Write([]byte(
+				`{"code":0,"data":{"id":29,"username":"sub2-user","balance":8}}`,
+			))
+		case "/api/v1/user/profile":
+			http.NotFound(writer, request)
+		case "/api/v1/groups/available":
+			_, _ = writer.Write([]byte(`{"code":0,"data":[]}`))
+		case "/api/v1/groups/rates":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{}}`))
+		case "/api/v1/usage/dashboard/stats", "/api/v1/usage/stats":
+			http.NotFound(writer, request)
+		case "/api/v1/keys":
+			writer.WriteHeader(http.StatusInternalServerError)
+			_, _ = writer.Write([]byte(`{"code":500,"message":"temporary key failure"}`))
+		case "/api/v1/auth/logout":
+			logoutRequests++
+			assert.Empty(t, request.Header.Get("Authorization"))
+			assert.Empty(t, request.Header.Get("Cookie"))
+			body, readErr := io.ReadAll(request.Body)
+			require.NoError(t, readErr)
+			logoutBody = string(body)
+			_, _ = writer.Write([]byte(`{"code":0}`))
+		case "/api/v1/auth/revoke-all-sessions":
+			t.Fatalf("密码同步不得撤销全部 Sub2API 会话")
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	channel := &model.Channel{
+		Id:           906,
+		Name:         "sub2-password-resource-failure",
+		Status:       common.ChannelStatusEnabled,
+		UpstreamKind: model.UpstreamKindPlatformSite,
+		Group:        "default",
+	}
+	require.NoError(t, db.Create(channel).Error)
+	credentialCiphertext, err := model.EncryptPlatformSiteCredential(
+		model.PlatformSiteCredential{
+			AuthType:     model.UpstreamAuthPassword,
+			Username:     "operator",
+			Password:     "synthetic-password",
+			AccessToken:  "stale-access-token",
+			RefreshToken: "stale-refresh-token",
+			SessionID:    "stale-session",
+			Cookie:       "session=stale",
+		},
+	)
+	require.NoError(t, err)
+	account := &model.PlatformSiteAccount{
+		ChannelID:            channel.Id,
+		Platform:             model.PlatformSub2API,
+		BaseURL:              server.URL,
+		AuthType:             model.UpstreamAuthPassword,
+		CredentialCiphertext: credentialCiphertext,
+		CredentialKeyVersion: "v1",
+		SyncStatus:           model.UpstreamSiteSyncIdle,
+	}
+	require.NoError(t, db.Create(account).Error)
+
+	err = SyncUpstreamSite(context.Background(), channel.Id)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPlatformSiteResource)
+	assert.Equal(t, 1, logoutRequests)
+	assert.JSONEq(t, `{"refresh_token":"sub2-temporary-refresh"}`, logoutBody)
+	assert.NotContains(t, SafePlatformSiteError(err), "撤销全部")
+
+	var saved model.PlatformSiteAccount
+	require.NoError(t, db.First(&saved, account.ID).Error)
+	savedCredential, decryptErr := model.DecryptPlatformSiteCredential(saved.CredentialCiphertext)
+	require.NoError(t, decryptErr)
+	assert.Equal(t, "sub2-user", savedCredential.Username)
+	assert.Equal(t, "29", savedCredential.UserID)
+	assert.Empty(t, savedCredential.AccessToken)
+	assert.Empty(t, savedCredential.RefreshToken)
+	assert.Empty(t, savedCredential.SessionID)
+	assert.Empty(t, savedCredential.Cookie)
+	assert.NotContains(t, saved.CredentialCiphertext, "sub2-temporary-access")
+	assert.NotContains(t, saved.CredentialCiphertext, "sub2-temporary-refresh")
 }
 
 func TestSyncPlatformSiteSucceedsWithUsableKeyAndPartialResourceFailure(t *testing.T) {

@@ -1,7 +1,7 @@
 # 实现偏差登记
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-01
+> 事实基线日期：2026-10-02
 > 主要代码来源：`router/relay-router.go`、`common/api_type.go`、`relay/relay_adaptor.go`、`relay/channel/*/adaptor.go`、`router/task-plugin-protocol-router.go`、`docs/architecture/*.md`
 > 关联详细文档：[`README.md`](./README.md)、[`relay-routing-and-conversion.md`](./relay-routing-and-conversion.md)、[`provider-capability-matrix.md`](./provider-capability-matrix.md)、[`../plugin-api/README.md`](../plugin-api/README.md)
 
@@ -56,6 +56,7 @@
 | DEV-021 | Sub2API 账号级模型 | 平台可能提供账号级模型目录，名称上容易被当作所有 Key 的能力 | 当前 `fetchSub2APIModels` 直接返回 `nil`，没有独立账号级模型能力；主要通过每条完整 Key 请求 Relay `/v1/models` 或 `/models` 探测，不能把账号级目录复制给子 Key | 已确认偏差 | `service/upstream_site_adapters.go:2571`、`model/upstream_channel.go`、`service/upstream_site.go` | 2026-09-29 |
 | DEV-022 | 平台 Key 分页上限 | 旧版 New API/Sub2API Key 分页最多尝试 1000 页，每页 100 条 | New API Token、Sub2API 普通 Key 和 Sub2API Admin Key 各自最多尝试 1000 页、每页 100 条；分页中途失败时保留最近成功快照且不执行缺失判定。New API Admin channel 等非本次迁移的管理资源继续使用原独立分页限制 | 已实现/待持续容量验证 | 旧版 `service/upstreamaccount/`、`service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go` | 2026-09-30 |
 | DEV-023 | Sub2API 登录服务条款 | 开启登录条款的站点要求账号密码登录或 2FA 提交当前公开 revision；未确认的额外字段不得由客户端猜测或代填 | 仅 Sub2API 密码登录读取 `GET /api/v1/settings/public`，在启用且 revision 非空时发送 `agreed_revision`；设置失败回退旧协议，2FA 重新读取；条款拒绝独立归类为 `login_agreement_required`，不触发主体回退，后台保留最近成功快照；不发送 `not_in_cn_confirmed`，New API 不读取或发送同名字段 | 已实现/待真实站点持续核验 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_auth_flow.go`、`model/upstream_channel.go`、`controller/upstream_channel.go`、`web/src/features/channels/types.ts`；Sub2API 参考源 `setting_handler.go`、`auth_handler.go` | 2026-10-01 |
+| DEV-024 | 平台站点密码会话与自动配置 | 密码同步可能复用旧 Access/Refresh Token、Cookie、Session ID 或 Dashboard Refresh；同步结束没有统一的本轮会话清理；自动配置与浏览器既有会话的所有权、表单隐藏旧凭据入口和并发消费边界不完整 | NewAPI/Sub2API 密码模式每次直接登录；NewAPI `POST /api/user/auth/logout` 后按 SID `DELETE /api/user/sessions/{sid}`，Sub2API 仅提交本轮 Refresh Token 到 `POST /api/v1/auth/logout`；禁止撤销其他会话，清理失败只告警并保留快照；Capture Helper 通过验证、脱敏诊断、现有加密凭据和 Redis/内存 claim 一次性消费，浏览器登录态不由后台注销 | 已实现/待真实站点持续核验 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_capture.go`、`pkg/cachex/hybrid_cache.go`、`controller/channel.go`、`controller/upstream_channel.go`；New API/Sub2API/all-api-hub 参考源 | 2026-10-02 |
 
 ### 3.2 2026-09-26 实现核对结果
 
@@ -196,6 +197,19 @@ Compose 标签的正式容器。正式容器只在旧容器停止并改名后启
 preflight，按停旧后启动正式容器的降级路径执行。错误文本继续脱敏，不写入数据库 DSN、
 Redis 密码、Cookie、Token、API Key 或完整环境变量值。本次不新增数据库表、字段或迁移。
 
+### 3.10 2026-10-02 平台站点认证与 Capture 会话边界
+
+**变更前**：后台同步和自动配置共用“已有登录态可继续使用”的宽泛描述，无法从文档
+直接判断密码同步是否会复用历史凭据，也无法判断资源失败时的会话清理、快照回退和
+浏览器会话所有权。
+
+**变更后**：代码事实已经区分三种边界：密码同步创建的临时会话由适配器 Cleanup
+尽力清理；Access Token、Admin Key、Cookie 和浏览器 Capture 登录态不由后台注销；
+资源、分页或快照写库失败不会因清理错误覆盖最近成功快照。Capture 记录在
+`ResolvePlatformSiteCapture` 后由 Redis/内存 claim 独占，保存成功后删除并释放，
+保存链路中途失败释放 claim。该记录仍不增加数据库字段；真实最低版本数据库和真实
+上游注销结果保持“待持续核验”，不能由本地单元测试推断完成。
+
 ## 4. 维护规则
 
 新发现偏差必须先确认“预期来源”与“代码实际行为”都能引用，再新增编号。代码修复时在同一功能提交中：
@@ -219,3 +233,4 @@ Redis 密码、Cookie、Token、API Key 或完整环境变量值。本次不新�
 | 2026-09-30 | 系统维护更新与可重复回滚 | 维护页直连 GitHub，只能查看 Release；没有 Root 后端更新、回滚、重启任务，旧版回滚会消耗唯一 `.backup` | 增加 RootAuth 后端版本检查、SystemTask 更新、回滚、重启、GitHub 缓存与 checksum 校验；裸机和 Docker 均使用稳定备份交换并支持重复回滚；失败时恢复原状态并记录脱敏终态 | 维护页面、Root 管理、系统任务、裸机文件、Docker helper、管理审计和错误日志 | `controller/system_update.go`、`service/system_update.go`、`service/system_update_docker.go`、`model/system_task.go`、前端维护测试；SQLite、MySQL 8.2.0、PostgreSQL 15.19 系统任务兼容性用例通过；未单独验证最低版本和真实生产 Docker 切换 |
 | 2026-10-01 | Sub2API 登录服务条款兼容 | 条款设置、revision、2FA 延迟检查、条款专用状态和 New API 字段隔离未在偏差表中记录 | 增加可选 `agreed_revision`、设置接口故障旧协议回退、2FA 最新 revision、独立条款错误分类、`login_agreement_required` 状态和最近成功快照保留；不发送 `not_in_cn_confirmed`，不新增数据库结构 | Sub2API 密码认证、Auth Flow、后台同步、前端资源状态和安全诊断 | `service/upstream_site*.go`、`service/platform_site_auth_flow.go`、`model/upstream_channel.go`、`controller/upstream_channel.go`、前端类型/面板、脱敏回归测试；OWASP ASVS 5.0.0 与 Authentication/Session Management/Logging/SSRF Cheat Sheet |
 | 2026-10-02 | Docker 自动更新端口占用修复 | staging 容器带原始宿主端口并在旧容器运行时启动，Compose 默认 `3030` 端口会冲突 | bridge/Compose 网络先无端口 preflight 探活，再停旧启动保留原端口的正式容器；失败恢复旧容器并保留 backup，`host`/`container:<id>` 网络受控降级 | Docker 自动更新、系统任务失败终态和维护页错误展示 | `service/system_update_docker.go`、`service/system_update_test.go`；定向 Docker 更新测试通过，不新增数据库迁移 |
+| 2026-10-02 | 平台站点密码会话与自动配置 | 密码同步历史登录态复用、精确注销、Capture 并发消费和浏览器会话所有权未集中记录 | 密码同步直接登录并清理本轮会话；NewAPI/Sup2API 仅执行各自精确注销；资源失败保留快照；自动配置完成验证、加密保存和一次性 claim 消费，旧手动凭据仍可读但不再有新版录入入口 | 平台站点认证、同步、Capture Helper、缓存和前端表单 | `service/upstream_site*.go`、`service/platform_site_capture.go`、`pkg/cachex/hybrid_cache.go`、`controller/channel.go`、前端平台站点组件、定向测试 |

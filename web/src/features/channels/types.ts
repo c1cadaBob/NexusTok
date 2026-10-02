@@ -434,7 +434,7 @@ export type PlatformSiteCaptureAuthType =
   | Exclude<UpstreamAuthType, 'password'>
 
 export interface PlatformSiteInput {
-  platform: 'newapi' | 'sub2api'
+  platform?: 'newapi' | 'sub2api'
   base_url: string
   relay_base_url?: string
   auth_type: UpstreamAuthType | 'auto'
@@ -462,6 +462,7 @@ export interface UpstreamSiteStatus {
   base_url: string
   relay_base_url?: string
   auth_type: UpstreamAuthType
+  username?: string
   auth_status?: PlatformSiteAuthStatus
   auth_status_reason?: string
   recharge_amount: number
@@ -672,6 +673,7 @@ export interface PlatformSiteCaptureStartRequest {
   base_url: string
   auth_type: PlatformSiteCaptureAuthType
   channel_id?: number
+  return_url?: string
 }
 
 export interface PlatformSiteCaptureSummary {
@@ -691,6 +693,35 @@ export interface PlatformSiteCaptureSummary {
   email?: string
   token_expires_at?: number
   captured_at?: number
+  capture_source?: string
+  diagnostics?: PlatformSiteCaptureDiagnostics
+}
+
+export interface PlatformSiteCaptureDiagnostics {
+  source?: string
+  helper_version?: string
+  helper_required_version?: string
+  page_origin?: string
+  api_base_url_seen?: string
+  local_storage_keys?: string[]
+  session_storage_keys?: string[]
+  auth_token_present?: boolean
+  access_token_present?: boolean
+  refresh_token_present?: boolean
+  admin_key_present?: boolean
+  cookie_present?: boolean
+  oauth_hash_token_present?: boolean
+  auth_client_id_present?: boolean
+  auth_user_verified?: boolean
+  admin_key_verified?: boolean
+  auth_me_path?: string
+  admin_verification_path?: string
+  browser_session_restore_path?: string
+  browser_session_restore_status?: string
+  browser_session_restore_message?: string
+  failure_stage?: string
+  failure_reason?: string
+  verification_endpoints?: string[]
 }
 
 export interface PlatformSiteCaptureStartResponse {
@@ -707,6 +738,10 @@ export interface PlatformSiteCaptureStartResponse {
     helper_install_url: string
     handoff_url: string
     login_url: string
+    helper_version?: string
+    helper_required_version?: string
+    helper_status_message?: string
+    return_url?: string
   }
 }
 
@@ -726,7 +761,12 @@ export interface PlatformSiteCaptureStatusResponse {
     helper_install_url?: string
     handoff_url?: string
     login_url?: string
+    helper_version?: string
+    helper_required_version?: string
+    helper_status_message?: string
+    return_url?: string
     summary?: PlatformSiteCaptureSummary
+    diagnostics?: PlatformSiteCaptureDiagnostics
   }
 }
 

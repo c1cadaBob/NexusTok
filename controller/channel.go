@@ -815,8 +815,27 @@ func AddChannel(c *gin.Context) {
 		return
 	}
 	var platformSiteCaptureID string
+	var platformSiteCaptureClaimToken string
+	platformSiteCaptureConsumed := false
+	defer func() {
+		if platformSiteCaptureID == "" || platformSiteCaptureConsumed {
+			return
+		}
+		if releaseErr := service.ReleasePlatformSiteCaptureClaim(
+			platformSiteCaptureID,
+			platformSiteCaptureClaimToken,
+		); releaseErr != nil {
+			common.SysError("平台站点采集会话占用释放失败: " + releaseErr.Error())
+		}
+	}()
 	var platformSiteAuthFlowID string
 	if addChannelRequest.PlatformSite != nil {
+		if strings.TrimSpace(addChannelRequest.PlatformSite.Platform) == "" &&
+			addChannelRequest.Channel != nil {
+			addChannelRequest.PlatformSite.Platform = platformSitePlatformForChannelType(
+				addChannelRequest.Channel.Type,
+			)
+		}
 		var authFlowErr error
 		platformSiteAuthFlowID, authFlowErr = applyPlatformSiteAuthFlow(
 			c.GetInt("id"),
@@ -837,6 +856,7 @@ func AddChannel(c *gin.Context) {
 			common.ApiError(c, captureErr)
 			return
 		}
+		platformSiteCaptureClaimToken = addChannelRequest.PlatformSite.CaptureClaimToken
 	}
 
 	if addChannelRequest.Channel != nil && addChannelRequest.Channel.UpstreamKind == "" {
@@ -984,8 +1004,15 @@ func AddChannel(c *gin.Context) {
 			return
 		}
 		if platformSiteCaptureID != "" {
-			if consumeErr := service.ConsumePlatformSiteCapture(c.GetInt("id"), platformSiteCaptureID, channel.Id); consumeErr != nil {
+			if consumeErr := service.ConsumePlatformSiteCapture(
+				c.GetInt("id"),
+				platformSiteCaptureID,
+				channel.Id,
+				platformSiteCaptureClaimToken,
+			); consumeErr != nil {
 				common.SysError("平台站点采集会话消费失败: " + consumeErr.Error())
+			} else {
+				platformSiteCaptureConsumed = true
 			}
 		}
 		if platformSiteAuthFlowID != "" {
@@ -1298,8 +1325,24 @@ func UpdateChannel(c *gin.Context) {
 		channel.Type = originChannel.Type
 	}
 	var platformSiteCaptureID string
+	var platformSiteCaptureClaimToken string
+	platformSiteCaptureConsumed := false
+	defer func() {
+		if platformSiteCaptureID == "" || platformSiteCaptureConsumed {
+			return
+		}
+		if releaseErr := service.ReleasePlatformSiteCaptureClaim(
+			platformSiteCaptureID,
+			platformSiteCaptureClaimToken,
+		); releaseErr != nil {
+			common.SysError("平台站点采集会话占用释放失败: " + releaseErr.Error())
+		}
+	}()
 	var platformSiteAuthFlowID string
 	if channel.PlatformSite != nil {
+		if strings.TrimSpace(channel.PlatformSite.Platform) == "" {
+			channel.PlatformSite.Platform = platformSitePlatformForChannelType(channel.Type)
+		}
 		var authFlowErr error
 		platformSiteAuthFlowID, authFlowErr = applyPlatformSiteAuthFlow(
 			c.GetInt("id"),
@@ -1320,6 +1363,7 @@ func UpdateChannel(c *gin.Context) {
 			common.ApiError(c, captureErr)
 			return
 		}
+		platformSiteCaptureClaimToken = channel.PlatformSite.CaptureClaimToken
 	}
 
 	if channel.Type == constant.ChannelTypeTaskPlugin &&
@@ -1523,8 +1567,15 @@ func UpdateChannel(c *gin.Context) {
 			return
 		}
 		if platformSiteCaptureID != "" {
-			if consumeErr := service.ConsumePlatformSiteCapture(c.GetInt("id"), platformSiteCaptureID, channel.Id); consumeErr != nil {
+			if consumeErr := service.ConsumePlatformSiteCapture(
+				c.GetInt("id"),
+				platformSiteCaptureID,
+				channel.Id,
+				platformSiteCaptureClaimToken,
+			); consumeErr != nil {
 				common.SysError("平台站点采集会话消费失败: " + consumeErr.Error())
+			} else {
+				platformSiteCaptureConsumed = true
 			}
 		}
 		if platformSiteAuthFlowID != "" {

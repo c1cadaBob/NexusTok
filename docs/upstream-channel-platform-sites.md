@@ -1,7 +1,7 @@
 # 上游渠道与平台站点设计
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-01
+> 事实基线日期：2026-10-02
 > 主要代码来源：`model/upstream_channel.go`、`model/routing_key.go`、`service/upstream_site.go`、`controller/upstream_channel.go`、`controller/channel-test.go`
 > 关联架构文档：[`docs/architecture/relay-routing-and-conversion.md`](architecture/relay-routing-and-conversion.md)、[`docs/architecture/provider-capability-matrix.md`](architecture/provider-capability-matrix.md)、[`docs/architecture/data-cache-and-background-jobs.md`](architecture/data-cache-and-background-jobs.md)、[`平台站点资源获取比较`](platform-site-resource-acquisition-comparison.md)
 
@@ -281,7 +281,9 @@ Sub2API 首期协议范围：
 - `/api/v1/admin/accounts/data`
 - `/v1/models`
 
-适配器不能绕过验证码、交互式二次验证或站点风控。密码登录无法完成时返回可识别的认证状态，管理员可以切换为 Cookie 或令牌认证。
+适配器不能绕过验证码、交互式二次验证或站点风控。密码登录无法完成时返回可识别的认证状态。
+后端仍兼容读取历史 Cookie 或令牌认证渠道，但新版渠道表单不再提供这些凭据的手动录入
+或替换入口。
 
 账号密码登录的交互式二次验证不再作为长期认证类型。服务端以一次性短期
 `auth_flow_id` 承载待验证状态，绑定管理员、平台、规范化 Origin、管理地址和可选
@@ -313,13 +315,13 @@ Origin、平台、认证类型和可选渠道，默认有效期 10 分钟，完�
 WAF、限流、权限拒绝、网络错误和其它非 401 结果都立即停止兼容登录。
 
 浏览器脚本只读取明确命名的 Access Token、Refresh Token、Admin Key、Cookie 和
-用户对象。Sub2API 的 `auth_token`/`refresh_token` 会在临近过期且存在刷新令牌时
-尝试刷新，并用 `/api/v1/auth/me` 或兼容接口确认登录态；NewAPI 会读取数字用户
-ID，用于需要兼容用户请求头的派生站点。Admin Key 或 HttpOnly Cookie 无法被脚本
-读取时直接跳过该候选；自动配置按 Access Token/Refresh Token、Admin Key、Cookie
-的顺序选择首个可用凭据。三者都不可用时失败，不手动补填、不把一种凭据冒充成
-另一种认证方式，也不保存混合认证结果。前端只提交 `capture_id`，不提交原始令牌、
-Cookie 或 Admin Key。
+用户对象。NewAPI 优先读取当前 Dashboard 登录态和明确的 Access Token，再尝试
+Admin Key、Cookie；Sub2API 优先读取 `auth_token`、`auth_user`、Refresh Token 和
+浏览器 Session Restore，再尝试其它可验证登录态。候选在提交前通过
+`/api/user/self`、`/api/v1/auth/me` 或 Admin 管理权限接口验证；Admin Key 或
+HttpOnly Cookie 无法被脚本读取时直接跳过。三者都不可用时失败，不手动补填、不把一种
+凭据冒充成另一种认证方式，也不保存混合认证结果。前端只提交 `capture_id`，不提交
+原始令牌、Cookie 或 Admin Key。
 
 Sub2API 管理地址和转发地址分离处理：账号、分组和密钥接口始终使用
 `base_url` 指向的管理站地址；页面配置中的 `api_base_url` 用于发现 OpenAI
@@ -584,9 +586,12 @@ ASVS 全部要求：
 - 复用现有 DataTable、Dialog、ConfirmDialog 和 CopyButton；
 - 所有文案通过 `useTranslation()` 和 `t(...)` 提供七语言翻译。
 
-认证方式分层展示：默认显示账号密码和自动配置，高级区域显示 Access Token、
-Admin Key 和 Cookie。账号密码及 TOTP 只存在表单内存；2FA 验证只提交到认证流程
-验证接口，成功后仅保存短期 `auth_flow_id`，刷新、关闭、取消、失败和保存完成后
+认证方式只显示账号密码和自动配置，平台站点由基本信息中的 NewAPI/Sub2API 渠道类型
+派生；凭证区域不再显示重复的平台选择、高级认证入口或 Access Token、Admin Key、
+Cookie 手动输入。认证方式和站点地址在宽屏使用约 `2fr 8fr` 栅格，窄屏纵向排列。
+账号密码编辑时从同步状态接口的安全 `username` 字段回填用户名，密码保持为空并由
+后端合并未修改的已保存密码。账号密码及 TOTP 只存在表单内存；2FA 验证只提交到
+认证流程接口，成功后仅保存短期 `auth_flow_id`，刷新、关闭、取消、失败和保存完成后
 清理密码、验证码和流程 ID，不写入 Local Storage、Session Storage、URL 或持久化
 Query Cache。资源面板展示管理/Relay 地址、平台身份、余额、已用额度、额度单位、
 当前分组及倍率、协议端点、密钥统计、最近成功同步时间、旧快照和资源级失败原因。
@@ -907,6 +912,40 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
   Access Token、Refresh Token、Admin Key、完整上游 Key、网络捕获或截图，未调用
   任何计费接口。
 
+### 9.7 2026-10-02 密码同步会话清理与自动配置边界
+
+**变更前**
+
+- NewAPI/Sub2API 后台密码同步可能依赖历史 Access Token、Refresh Token、Cookie、
+  Session ID 或 Dashboard Refresh，资源读取完成后也没有统一的临时会话注销契约；
+- 失败清理可能与资源同步结果耦合，存在把已取得的身份、额度或最近成功 Key 快照
+  覆盖为凭据失效的风险；
+- 自动配置文档把手动凭据入口、高级认证、平台选择和浏览器采集登录态混为一层，
+  Capture 记录没有跨节点的一次性占用说明。
+
+**变更后**
+
+- 密码认证在登录前清除内存中的历史 Authorization、Cookie、`X-Auth-Session`、
+  Access Token、Refresh Token、Session ID、过期信息和刷新状态，每次直接提交账号
+  密码。密码同步成功后只保存认证方式、真实用户名、密码、可选 User ID、最后认证
+  时间和正常状态；临时登录材料不会写回长期凭据。
+- NewAPI 资源读取完成后调用 `POST /api/user/auth/logout`，随后以本轮 SID 调用
+  `DELETE /api/user/sessions/{sid}` 精确清理；`AUTH_SESSION_MISMATCH`、401、403、
+  404、405 视为幂等完成，绝不调用 `/api/user/sessions/revoke-others`。请求携带本轮
+  Bearer、`X-Auth-Session`、Cookie 和正确 `Origin`。
+- Sub2API 资源读取完成后调用 `POST /api/v1/auth/logout`，请求体仅提交本轮
+  `refresh_token`，绝不调用 `/api/v1/auth/revoke-all-sessions`。缺少 Refresh Token、
+  网络错误或意外 5xx 只写脱敏告警，临时材料仍清除，不覆盖已经获得的快照或把账号
+  直接标记为凭据失效。
+- Cleanup 延迟路径覆盖认证失败、资源失败、部分分页失败和快照写库前后；浏览器
+  Capture 登录态属于用户已有会话，不执行后台注销。Capture Helper `1.5.0` 先做当前
+  用户或 Admin 权限验证，诊断只保存候选存在性、存储键、尝试接口、版本、失败阶段
+  和来源；结果通过现有加密凭据结构保存。
+- `ResolvePlatformSiteCapture` 成功后使用 Redis `SET NX` 或进程内 claim 独占记录，
+  后续渠道保存失败释放 claim，成功保存删除记录并释放 claim。claim token 不返回
+  前端；历史 Access Token、Admin Key、Cookie 渠道继续可读可同步，但新版界面不再
+  新增手动录入入口。
+
 ## 与架构文档的关系
 
 本文保留平台站点、账号同步、子密钥字段、倍率/权重公式、权限、SSRF 和测试验收等详细规则；架构文档描述平台站点如何进入渠道过滤、Routing Key 和 Relay 转发。新增平台类型或调整同步/路由语义时，必须同时更新本文、能力矩阵和偏差表。
@@ -920,3 +959,4 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
 | 2026-09-27 | 修复 NewAPI 类平台会话与资源同步 | Refresh Cookie、Session ID 和 Bearer Token 的真实 Dashboard 契约未在所有入口统一；Cookie 轮换、资源失败和管理/Relay 地址边界可能导致渠道 4、5 同步失败 | 统一 CookieJar/显式 Cookie 优先级和轮换持久化，严格区分现代 Bundle，按资源保存部分快照并限制 404/405 回退，诊断显示脱敏最终地址和资源状态 | NewAPI 及派生平台认证、刷新、身份/余额、密钥、模型、路由快照和管理员诊断 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go`、New API/Sub2API/all-api-hub 参考源 |
 | 2026-09-27 | 接入渠道代理与 NewAPI 错误分类 | 平台站点同步、密码登录和 2FA 没有读取渠道代理；通用客户端注入可能覆盖平台会话 CookieJar、超时和重定向策略；真实账号错误消息分类不完整 | 按渠道配置复用代理 Transport，保留平台会话策略和 Cookie 轮换；同步与 Auth Flow 统一使用代理；识别 `username or password`/封禁消息并保持认证、网络、安全验证和资源失败分层 | 渠道 4 代理同步、渠道 5 认证诊断、NewAPI/Sub2API 平台站点认证和资源请求 | `service/upstream_site.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go`；代理、CookieJar、Auth Flow 和同步回归 |
 | 2026-09-29 | 平台站点资源获取比较文档与管理端字段校准 | 专项文档将 `GET /api/channel/:id/upstream-keys` 描述为不返回额度、过期时间和最近使用时间，且没有链接旧版/参考源/当前实现的完整资源链路比较 | 明确该接口实际返回 `UsedQuota`、`RemainQuota`、`ExpiresAt`、`Models`、`ModelsSynced`、`Status`、可路由诊断和脱敏 `KeyPreview`；完整 Secret 仍不返回，并增加完整比较文档入口 | 平台站点资源查询、管理员诊断、额度和模型能力边界 | `controller/upstream_channel.go:75-104`、`controller/upstream_channel.go:667-710`、[`docs/platform-site-resource-acquisition-comparison.md`](platform-site-resource-acquisition-comparison.md) |
+| 2026-10-02 | 密码同步会话清理与自动配置边界 | 密码同步可能复用历史登录态；NewAPI/Sub2API 注销路径、资源失败快照保护、浏览器会话所有权和自动配置一次性消费边界未统一 | 每轮密码同步直接登录并清理本轮会话；NewAPI 登出后精确删除 SID，Sub2API 仅 Refresh Token 登出，禁止撤销其他会话；清理失败不覆盖快照；自动配置完成验证、脱敏诊断、现有加密保存和 Redis/内存 claim 一次性消费，表单仅保留账号密码/自动配置 | 平台站点认证、资源同步、Capture Helper、前端表单和缓存 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_capture.go`、`pkg/cachex/hybrid_cache.go`、`controller/channel.go`、前端平台站点组件、本机参考源和定向测试 |

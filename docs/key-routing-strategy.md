@@ -1,7 +1,7 @@
 # 密钥调度策略与日志可观测性
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-30
+> 事实基线日期：2026-10-02
 > 主要代码来源：`model/routing_key.go`、`model/upstream_routing.go`、`middleware/distributor.go`、`service/channel_select.go`、`controller/channel-test.go`、`model/channel_cache.go`
 > 关联架构文档：[`docs/architecture/relay-routing-and-conversion.md`](architecture/relay-routing-and-conversion.md)、[`docs/architecture/provider-capability-matrix.md`](architecture/provider-capability-matrix.md)、[`docs/architecture/implementation-deviations.md`](architecture/implementation-deviations.md)、[`平台站点资源获取比较`](platform-site-resource-acquisition-comparison.md)
 
@@ -574,3 +574,29 @@ Relay 地址和渠道请求根地址没有统一校验，模型别名判断可�
   只在服务端临时内存中解密使用；
 - 本次回归只使用脱敏 `httptest`、SQLite 和本地源码静态核对，未使用真实平台账号、
   密码、Cookie、Token、网络捕获或截图，也未执行真实上游计费请求。
+
+### 14.7 2026-10-02 平台站点密码同步与路由快照边界
+
+**变更前**：平台站点路由文档只说明凭据刷新和资源失败快照，没有明确账号密码同步
+是否复用历史 Token、Cookie、Session ID，也没有记录清理失败对候选密钥和管理员可见
+状态的影响。
+
+**变更后**：
+
+- 密码模式后台同步每轮直接用账号密码登录，不发送已保存的 Access Token、Refresh
+  Token、Cookie 或 Session ID。NewAPI 资源读取后先调用
+  `POST /api/user/auth/logout`，再按本轮 SID 调用 `DELETE /api/user/sessions/{sid}`；
+  Sub2API 只向 `POST /api/v1/auth/logout` 提交本轮 Refresh Token。两者均不撤销其他
+  设备会话，认证方式为 Access Token、Admin Key、Cookie 或浏览器 Capture 时不执行
+  后台注销。
+- Cleanup 的网络错误、意外 5xx、缺少 Sub2API Refresh Token 或幂等状态只形成脱敏
+  告警；不会删除已有 `RoutingKey`、`UpstreamKeyAbility`、模型、额度、倍率或权重，
+  也不会把账号直接改成 `credentials_invalid`。资源、分页和快照写库失败仍按最近
+  成功快照过滤候选。
+- 密码认证成功后长期凭据只保留密码、真实用户名、可选 User ID、认证时间和正常
+  状态。用户名由 `username`、`user_name`、`login` 或邮箱字段抽取，并通过同步状态
+  接口回填编辑表单；管理员可见字段仍不包含 Token、Cookie 或完整 Key。
+- 自动配置产生的 Access Token、Admin Key、Cookie 或 Refresh Token 仍可进入现有加密
+  凭据结构并参与后续同步，但只从已验证的 `capture_id` 进入保存链路。Capture
+  解析后由 Redis/内存 claim 一次性占用，保存成功消费，校验或数据库失败释放，避免
+  同一完整凭据快照被并发创建多个渠道。

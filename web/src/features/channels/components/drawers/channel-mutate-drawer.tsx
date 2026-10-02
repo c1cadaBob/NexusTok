@@ -1290,18 +1290,17 @@ export function ChannelMutateDrawer({
       }
       const defaults = transformChannelToFormDefaults(channelData.data)
       const site = upstreamSiteData?.data
-      let platformSitePlatform: 'newapi' | 'sub2api' = 'newapi'
-      if (site?.platform === 'sub2api') {
-        platformSitePlatform = 'sub2api'
-      } else if (channelData.data.type === CHANNEL_TYPE_SUB2_API) {
-        platformSitePlatform = 'sub2api'
-      }
+      const platformSiteAuthType =
+        site?.auth_type === 'password' ? 'password' : 'auto'
       form.reset({
         ...defaults,
         base_url: site?.base_url ?? defaults.base_url,
-        platform_site_platform: platformSitePlatform,
-        platform_site_auth_type: site?.auth_type ?? 'password',
+        platform_site_auth_type: platformSiteAuthType,
         platform_site_auth_flow_id: '',
+        platform_site_capture_id: '',
+        platform_site_username:
+          platformSiteAuthType === 'password' ? site?.username ?? '' : '',
+        platform_site_password: '',
         platform_site_recharge_amount: site?.recharge_amount ?? 0,
         platform_site_credited_amount: site?.credited_amount ?? 0,
         platform_site_conversion_ratio: site?.conversion_ratio ?? 1,

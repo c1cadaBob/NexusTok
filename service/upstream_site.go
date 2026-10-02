@@ -47,6 +47,7 @@ var (
 	ErrPlatformSitePermission       = errors.New("platform site permission denied")
 	ErrPlatformSiteSessionLimit     = errors.New("platform site session limit reached")
 	ErrPlatformSiteRefreshUncertain = errors.New("platform site session refresh result uncertain")
+	ErrPlatformSiteSessionCleanup   = errors.New("platform site temporary session cleanup failed")
 	ErrPlatformSiteProxy            = errors.New("platform site proxy configuration invalid")
 	ErrSub2APILoginRequest          = errors.New("sub2api login request failed")
 	ErrSub2APILoginHTTPStatus       = errors.New("sub2api login http status failed")
@@ -80,12 +81,18 @@ type PlatformSiteSession struct {
 	Client            *http.Client
 	Headers           http.Header
 	CredentialUpdate  *model.PlatformSiteCredential
+	PasswordSession   bool
+	TemporaryToken    string
+	TemporaryRefresh  string
+	TemporarySession  string
+	TemporaryCookie   string
 }
 
 type PlatformSiteAdapter interface {
 	Platform() string
 	Authenticate(context.Context, string, model.PlatformSiteCredential) (*PlatformSiteSession, error)
 	FetchSnapshot(context.Context, *PlatformSiteSession) (PlatformSiteSnapshot, error)
+	Cleanup(context.Context, *PlatformSiteSession) error
 }
 
 type UpstreamKeySnapshot struct {
@@ -1433,8 +1440,29 @@ func syncPlatformSite(ctx context.Context, channelID int) error {
 				err = wrapPlatformSiteStage("适配器选择", err)
 			}
 			if err == nil {
+				var session *PlatformSiteSession
 				session, authenticateErr := adapter.Authenticate(ctx, account.BaseURL, credential)
 				err = authenticateErr
+				if session != nil {
+					defer func() {
+						cleanupCtx, cancel := context.WithTimeout(
+							context.Background(),
+							upstreamSiteRequestTimeout,
+						)
+						defer cancel()
+						if cleanupErr := adapter.Cleanup(cleanupCtx, session); cleanupErr != nil {
+							logger.LogWarn(
+								ctx,
+								fmt.Sprintf(
+									"platform site temporary session cleanup failed: channel_id=%d platform=%s error=%s",
+									channelID,
+									account.Platform,
+									SafePlatformSiteSessionCleanupError(cleanupErr),
+								),
+							)
+						}
+					}()
+				}
 				if err == nil {
 					if session.CredentialUpdate != nil {
 						err = persistPlatformSiteCredential(&account, *session.CredentialUpdate)
@@ -1651,6 +1679,12 @@ func persistPlatformSiteCredential(account *model.PlatformSiteAccount, credentia
 		return errors.New("平台站点不存在")
 	}
 	credential.AuthType = account.AuthType
+	if credential.AuthType == model.UpstreamAuthPassword {
+		clearPlatformSiteTemporaryCredential(&credential)
+		credential.RefreshStatus = ""
+		credential.ReauthRequired = false
+		credential.RefreshUncertain = false
+	}
 	ciphertext, err := model.EncryptPlatformSiteCredential(credential)
 	if err != nil {
 		return err
@@ -1758,6 +1792,27 @@ func SafePlatformSiteError(err error) string {
 	}
 }
 
+func SafePlatformSiteSessionCleanupError(err error) string {
+	if err == nil {
+		return ""
+	}
+	status, hasStatus := platformSiteHTTPStatusCode(err)
+	code := platformSiteErrorCodeOf(err)
+	if hasStatus && code != "" {
+		return fmt.Sprintf("HTTP %d，错误码：%s", status, code)
+	}
+	if hasStatus {
+		return fmt.Sprintf("HTTP %d", status)
+	}
+	if code != "" {
+		return "错误码：" + code
+	}
+	if errors.Is(err, ErrPlatformSiteSessionCleanup) {
+		return "上游临时会话清理未完成"
+	}
+	return "上游临时会话清理网络请求失败"
+}
+
 func platformSiteHTTPStatusCode(err error) (int, bool) {
 	var statusErr *platformSiteHTTPStatusError
 	if errors.As(err, &statusErr) && statusErr.statusCode > 0 {
@@ -1768,6 +1823,29 @@ func platformSiteHTTPStatusCode(err error) (int, bool) {
 		return businessErr.diagnostics.statusCode, true
 	}
 	return 0, false
+}
+
+func platformSiteErrorCodeOf(err error) string {
+	if err == nil {
+		return ""
+	}
+	var responseErr *platformSiteResponseError
+	if errors.As(err, &responseErr) {
+		return sanitizePlatformSiteDiagnosticToken(responseErr.diagnostics.errorCode)
+	}
+	var statusErr *platformSiteHTTPStatusError
+	if errors.As(err, &statusErr) {
+		return sanitizePlatformSiteDiagnosticToken(statusErr.diagnostics.errorCode)
+	}
+	var businessErr *platformSiteBusinessError
+	if errors.As(err, &businessErr) {
+		return sanitizePlatformSiteDiagnosticToken(businessErr.code)
+	}
+	var securityErr *platformSiteSecurityError
+	if errors.As(err, &securityErr) {
+		return sanitizePlatformSiteDiagnosticToken(securityErr.code)
+	}
+	return ""
 }
 
 func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteAccount, snapshot PlatformSiteSnapshot) error {

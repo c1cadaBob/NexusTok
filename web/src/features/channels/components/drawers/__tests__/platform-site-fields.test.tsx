@@ -375,42 +375,18 @@ test('提交时仅在手动覆盖后发送平台转换倍率', async () => {
   expect(payload.platform_site?.conversion_ratio).toBe(0.25)
 })
 
-test('高级访问令牌认证显示令牌输入框而不是脚本采集入口', () => {
-  render(<PlatformSiteForm authType='access_token' />)
+test('凭证区域仅显示账号密码和自动配置，不显示高级认证输入', () => {
+  render(<PlatformSiteForm />)
 
-  expect(
-    screen.queryByText('Browser login state capture')
-  ).not.toBeInTheDocument()
-  expect(screen.getByLabelText('Access token')).toBeInTheDocument()
-  expect(screen.getByLabelText('Dashboard Session ID')).toBeInTheDocument()
-  expect(screen.getByLabelText('Cookie')).toBeInTheDocument()
+  expect(screen.getByLabelText('Authentication method')).toBeInTheDocument()
+  expect(screen.getByLabelText('Site URL *')).toBeInTheDocument()
+  expect(screen.getByLabelText('Username')).toBeInTheDocument()
+  expect(screen.getByLabelText('Password')).toBeInTheDocument()
+  expect(screen.queryByLabelText('Access token')).not.toBeInTheDocument()
   expect(screen.queryByLabelText('Admin Key')).not.toBeInTheDocument()
-  expect(screen.queryByLabelText('Username')).not.toBeInTheDocument()
-})
-
-test('NewAPI访问令牌认证可提交Dashboard刷新Cookie和Session ID', async () => {
-  const user = userEvent.setup()
-  const onSubmit = vi.fn<(values: ChannelFormValues) => void>()
-  render(<PlatformSiteForm authType='access_token' onSubmit={onSubmit} />)
-
-  await user.type(screen.getByLabelText('Access token'), 'access-token')
-  await user.type(screen.getByLabelText('Dashboard Session ID'), 'session-id')
-  await user.type(
-    screen.getByLabelText('Cookie'),
-    'new_api_refresh=refresh-cookie'
-  )
-  await user.click(screen.getByRole('button', { name: 'Save' }))
-
-  await waitFor(() => {
-    expect(onSubmit).toHaveBeenCalledOnce()
-  })
-  const payload = transformFormDataToCreatePayload(onSubmit.mock.calls[0][0])
-  expect(payload.platform_site).toMatchObject({
-    auth_type: 'access_token',
-    access_token: 'access-token',
-    cookie: 'new_api_refresh=refresh-cookie',
-    session_id: 'session-id',
-  })
+  expect(screen.queryByLabelText('Cookie')).not.toBeInTheDocument()
+  expect(screen.queryByLabelText('Dashboard Session ID')).not.toBeInTheDocument()
+  expect(screen.queryByText('Advanced authentication')).not.toBeInTheDocument()
 })
 
 test('点击自动配置时同步预开窗口并仅提交自动认证方式', async () => {
@@ -436,6 +412,7 @@ test('点击自动配置时同步预开窗口并仅提交自动认证方式', as
     expect(channelsApi.startPlatformSiteCapture).toHaveBeenCalledWith(
       expect.objectContaining({
         auth_type: 'auto',
+        return_url: window.location.href,
       })
     )
   })
@@ -473,4 +450,38 @@ test('预开窗口被拦截时保留会话并提供手动打开按钮', async ()
     '_blank'
   )
   openSpy.mockRestore()
+})
+
+test('从 Capture Helper 回跳参数恢复采集会话并清理地址栏参数', async () => {
+  const originalURL = window.location.href
+  window.history.pushState(
+    {},
+    '',
+    `${originalURL.split('?')[0]}?platform_site_capture_id=returned-capture`
+  )
+  vi.mocked(channelsApi.getPlatformSiteCaptureStatus).mockResolvedValue({
+    success: true,
+    data: {
+      capture_id: 'returned-capture',
+      status: 'pending',
+      expires_at: Math.floor(Date.now() / 1000) + 600,
+      platform: 'newapi',
+      base_url: 'https://upstream.example',
+      auth_type: 'auto',
+      origin: 'https://upstream.example',
+    },
+  })
+
+  try {
+    render(<PlatformSiteForm authType='auto' />)
+
+    await waitFor(() => {
+      expect(channelsApi.getPlatformSiteCaptureStatus).toHaveBeenCalledWith(
+        'returned-capture'
+      )
+    })
+    expect(window.location.search).toBe('')
+  } finally {
+    window.history.replaceState({}, '', originalURL)
+  }
 })

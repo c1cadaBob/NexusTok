@@ -22,26 +22,31 @@ import (
 )
 
 type PlatformSiteInput struct {
-	Platform        string   `json:"platform"`
-	BaseURL         string   `json:"base_url"`
-	RelayBaseURL    string   `json:"relay_base_url,omitempty"`
-	AuthType        string   `json:"auth_type"`
-	AuthFlowID      string   `json:"auth_flow_id,omitempty"`
-	Username        string   `json:"username"`
-	Password        string   `json:"password"`
-	UserID          string   `json:"user_id,omitempty"`
-	AccessToken     string   `json:"access_token"`
-	RefreshToken    string   `json:"refresh_token,omitempty"`
-	TokenExpiresAt  int64    `json:"token_expires_at,omitempty"`
-	TokenType       string   `json:"token_type,omitempty"`
-	SessionID       string   `json:"session_id,omitempty"`
-	SessionCurrent  bool     `json:"session_current,omitempty"`
-	AdminKey        string   `json:"admin_key"`
-	Cookie          string   `json:"cookie"`
-	CaptureID       string   `json:"capture_id,omitempty"`
-	RechargeAmount  *float64 `json:"recharge_amount"`
-	CreditedAmount  *float64 `json:"credited_amount"`
-	ConversionRatio *float64 `json:"conversion_ratio"`
+	Platform          string   `json:"platform"`
+	BaseURL           string   `json:"base_url"`
+	RelayBaseURL      string   `json:"relay_base_url,omitempty"`
+	AuthType          string   `json:"auth_type"`
+	AuthFlowID        string   `json:"auth_flow_id,omitempty"`
+	Username          string   `json:"username"`
+	Password          string   `json:"password"`
+	UserID            string   `json:"user_id,omitempty"`
+	AccessToken       string   `json:"access_token"`
+	RefreshToken      string   `json:"refresh_token,omitempty"`
+	TokenExpiresAt    int64    `json:"token_expires_at,omitempty"`
+	TokenType         string   `json:"token_type,omitempty"`
+	SessionID         string   `json:"session_id,omitempty"`
+	SessionCurrent    bool     `json:"session_current,omitempty"`
+	AdminKey          string   `json:"admin_key"`
+	Cookie            string   `json:"cookie"`
+	CaptureID         string   `json:"capture_id,omitempty"`
+	CaptureClaimToken string   `json:"-"`
+	LastAuthAt        int64    `json:"-"`
+	RefreshStatus     string   `json:"-"`
+	ReauthRequired    bool     `json:"-"`
+	RefreshUncertain  bool     `json:"-"`
+	RechargeAmount    *float64 `json:"recharge_amount"`
+	CreditedAmount    *float64 `json:"credited_amount"`
+	ConversionRatio   *float64 `json:"conversion_ratio"`
 }
 
 type UpstreamSiteStatusResponse struct {
@@ -50,6 +55,7 @@ type UpstreamSiteStatusResponse struct {
 	BaseURL             string  `json:"base_url"`
 	RelayBaseURL        string  `json:"relay_base_url,omitempty"`
 	AuthType            string  `json:"auth_type"`
+	Username            string  `json:"username,omitempty"`
 	AuthStatus          string  `json:"auth_status,omitempty"`
 	AuthStatusReason    string  `json:"auth_status_reason,omitempty"`
 	RechargeAmount      float64 `json:"recharge_amount"`
@@ -243,18 +249,22 @@ func validatePlatformSiteInput(input *PlatformSiteInput, existing *model.Platfor
 		}
 	}
 	credential := model.PlatformSiteCredential{
-		AuthType:       input.AuthType,
-		Username:       strings.TrimSpace(input.Username),
-		Password:       input.Password,
-		UserID:         strings.TrimSpace(input.UserID),
-		AccessToken:    strings.TrimSpace(input.AccessToken),
-		RefreshToken:   strings.TrimSpace(input.RefreshToken),
-		TokenExpiresAt: input.TokenExpiresAt,
-		TokenType:      strings.TrimSpace(input.TokenType),
-		SessionID:      strings.TrimSpace(input.SessionID),
-		SessionCurrent: input.SessionCurrent,
-		AdminKey:       strings.TrimSpace(input.AdminKey),
-		Cookie:         strings.TrimSpace(input.Cookie),
+		AuthType:         input.AuthType,
+		Username:         strings.TrimSpace(input.Username),
+		Password:         input.Password,
+		UserID:           strings.TrimSpace(input.UserID),
+		AccessToken:      strings.TrimSpace(input.AccessToken),
+		RefreshToken:     strings.TrimSpace(input.RefreshToken),
+		TokenExpiresAt:   input.TokenExpiresAt,
+		TokenType:        strings.TrimSpace(input.TokenType),
+		SessionID:        strings.TrimSpace(input.SessionID),
+		SessionCurrent:   input.SessionCurrent,
+		LastAuthAt:       input.LastAuthAt,
+		RefreshStatus:    strings.TrimSpace(input.RefreshStatus),
+		ReauthRequired:   input.ReauthRequired,
+		RefreshUncertain: input.RefreshUncertain,
+		AdminKey:         strings.TrimSpace(input.AdminKey),
+		Cookie:           strings.TrimSpace(input.Cookie),
 	}
 	switch input.AuthType {
 	case model.UpstreamAuthPassword:
@@ -263,11 +273,13 @@ func validatePlatformSiteInput(input *PlatformSiteInput, existing *model.Platfor
 		}
 		credential.AccessToken = ""
 		credential.RefreshToken = ""
-		credential.UserID = ""
 		credential.TokenExpiresAt = 0
 		credential.TokenType = ""
 		credential.SessionID = ""
 		credential.SessionCurrent = false
+		credential.RefreshStatus = ""
+		credential.ReauthRequired = false
+		credential.RefreshUncertain = false
 		credential.AdminKey = ""
 		credential.Cookie = ""
 	case model.UpstreamAuthAccessToken:
@@ -337,6 +349,17 @@ func validatePlatformSiteInput(input *PlatformSiteInput, existing *model.Platfor
 }
 
 func savePlatformSiteAccount(channelID int, input *PlatformSiteInput, existing *model.PlatformSiteAccount) error {
+	preserveAutomaticCredentialMetadata := false
+	if input != nil && strings.TrimSpace(input.Platform) == "" {
+		if existing != nil && strings.TrimSpace(existing.Platform) != "" {
+			input.Platform = existing.Platform
+		} else {
+			var channel model.Channel
+			if err := model.DB.Select("type").First(&channel, "id = ?", channelID).Error; err == nil {
+				input.Platform = platformSitePlatformForChannelType(channel.Type)
+			}
+		}
+	}
 	if input != nil && existing != nil {
 		merged := *input
 		if strings.TrimSpace(merged.Platform) == "" {
@@ -353,7 +376,11 @@ func savePlatformSiteAccount(channelID int, input *PlatformSiteInput, existing *
 		}
 		if strings.EqualFold(strings.TrimSpace(merged.AuthType), service.PlatformSiteCaptureAuthAuto) &&
 			!hasCredentialInput(&merged) {
+			if strings.EqualFold(strings.TrimSpace(existing.AuthType), model.UpstreamAuthPassword) {
+				return errors.New("账号密码渠道切换为自动配置前必须完成上游登录态采集")
+			}
 			merged.AuthType = existing.AuthType
+			preserveAutomaticCredentialMetadata = true
 		}
 		if merged.RechargeAmount == nil {
 			merged.RechargeAmount = &existing.RechargeAmount
@@ -373,6 +400,19 @@ func savePlatformSiteAccount(channelID int, input *PlatformSiteInput, existing *
 					return errors.New("平台凭据无法解密，请重新保存平台凭据")
 				}
 			} else {
+				if preserveAutomaticCredentialMetadata {
+					merged.LastAuthAt = credential.LastAuthAt
+					merged.RefreshStatus = credential.RefreshStatus
+					merged.ReauthRequired = credential.ReauthRequired
+					merged.RefreshUncertain = credential.RefreshUncertain
+				}
+				if strings.EqualFold(
+					strings.TrimSpace(merged.AuthType),
+					model.UpstreamAuthPassword,
+				) &&
+					merged.LastAuthAt == 0 {
+					merged.LastAuthAt = credential.LastAuthAt
+				}
 				if strings.TrimSpace(merged.AuthType) == "" {
 					merged.AuthType = model.InferPlatformSiteAuthType(credential)
 				}
@@ -383,6 +423,9 @@ func savePlatformSiteAccount(channelID int, input *PlatformSiteInput, existing *
 					}
 					if merged.Password == "" {
 						merged.Password = credential.Password
+					}
+					if merged.UserID == "" {
+						merged.UserID = credential.UserID
 					}
 				case model.UpstreamAuthAccessToken:
 					if merged.AccessToken == "" {
@@ -523,6 +566,10 @@ func applyPlatformSiteCapture(userID, channelID int, input *PlatformSiteInput) (
 	input.Username = resolution.Credential.Username
 	input.Password = resolution.Credential.Password
 	input.UserID = resolution.Credential.UserID
+	input.LastAuthAt = resolution.Credential.LastAuthAt
+	input.RefreshStatus = resolution.Credential.RefreshStatus
+	input.ReauthRequired = resolution.Credential.ReauthRequired
+	input.RefreshUncertain = resolution.Credential.RefreshUncertain
 	input.AccessToken = resolution.Credential.AccessToken
 	input.RefreshToken = resolution.Credential.RefreshToken
 	input.TokenExpiresAt = resolution.Credential.TokenExpiresAt
@@ -531,6 +578,7 @@ func applyPlatformSiteCapture(userID, channelID int, input *PlatformSiteInput) (
 	input.SessionCurrent = resolution.Credential.SessionCurrent
 	input.AdminKey = resolution.Credential.AdminKey
 	input.Cookie = resolution.Credential.Cookie
+	input.CaptureClaimToken = resolution.ClaimToken
 	if resolution.ManagementBaseURL != "" {
 		input.BaseURL = resolution.ManagementBaseURL
 	}
@@ -612,6 +660,10 @@ func platformSiteStatus(account *model.PlatformSiteAccount) UpstreamSiteStatusRe
 	credentialAvailable := model.PlatformSiteCredentialAvailable(account)
 	snapshotUsable := model.PlatformSiteSnapshotUsable(account)
 	usingLastSnapshot := model.PlatformSiteUsingLastSnapshot(account)
+	username := ""
+	if credential, err := model.DecryptPlatformSiteCredential(account.CredentialCiphertext); err == nil {
+		username = strings.TrimSpace(credential.Username)
+	}
 	availabilityReason := model.UpstreamAvailabilityRoutable
 	switch {
 	case !credentialAvailable:
@@ -627,6 +679,7 @@ func platformSiteStatus(account *model.PlatformSiteAccount) UpstreamSiteStatusRe
 		BaseURL:             redactBaseURL(account.BaseURL),
 		RelayBaseURL:        redactBaseURL(account.RelayBaseURL),
 		AuthType:            account.AuthType,
+		Username:            username,
 		AuthStatus:          account.AuthStatus,
 		AuthStatusReason:    account.AuthStatusReason,
 		RechargeAmount:      account.RechargeAmount,
@@ -1292,6 +1345,11 @@ func ensurePlatformSiteChannel(channel *model.Channel, input *PlatformSiteInput)
 		return nil
 	}
 	platform := strings.ToLower(strings.TrimSpace(input.Platform))
+	expectedPlatform := platformSitePlatformForChannelType(channel.Type)
+	if platform == "" {
+		platform = expectedPlatform
+		input.Platform = platform
+	}
 	if platform == "" && channel.Id > 0 {
 		var account model.PlatformSiteAccount
 		if err := model.DB.Where("channel_id = ?", channel.Id).First(&account).Error; err != nil {
@@ -1310,6 +1368,17 @@ func ensurePlatformSiteChannel(channel *model.Channel, input *PlatformSiteInput)
 		}
 	}
 	return nil
+}
+
+func platformSitePlatformForChannelType(channelType int) string {
+	switch channelType {
+	case constant.ChannelTypeNewAPI:
+		return model.PlatformNewAPI
+	case constant.ChannelTypeSub2API:
+		return model.PlatformSub2API
+	default:
+		return ""
+	}
 }
 
 func StartPlatformSiteCapture(c *gin.Context) {

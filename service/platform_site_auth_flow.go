@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/c1cadaBob/NexusTok/common"
+	"github.com/c1cadaBob/NexusTok/logger"
 	"github.com/c1cadaBob/NexusTok/model"
 	"github.com/c1cadaBob/NexusTok/pkg/cachex"
 
@@ -155,6 +156,8 @@ func StartPlatformSiteAuthFlow(ctx context.Context, userID int, request Platform
 	}
 	session, payload, err := authenticatePlatformSitePassword(ctx, platform, baseURL, credential, siteClient)
 	if err != nil {
+		setPasswordSessionMaterialsFromPayload(session, payload)
+		cleanupPlatformSiteAuthFlowSession(ctx, platform, session)
 		return nil, classifyPlatformSiteAuthFlowError(err)
 	}
 	status := PlatformSiteAuthFlowStatusAuthenticated
@@ -179,9 +182,22 @@ func StartPlatformSiteAuthFlow(ctx context.Context, userID int, request Platform
 	capturePlatformSiteSessionCookie(session, &secret.Credential)
 	captureNewAPIRefreshCookie(session, &secret.Credential)
 	if status == PlatformSiteAuthFlowStatusAuthenticated {
+		markPlatformSiteAuthFlowSessionForCleanup(session, payload)
+		defer cleanupPlatformSiteAuthFlowSession(ctx, platform, session)
 		if err := applyPlatformSiteLoginPayload(session, platform, &credential, payload); err != nil {
 			return nil, classifyPlatformSiteAuthFlowError(err)
 		}
+		if err := finalizePlatformSitePasswordCredential(
+			ctx,
+			platform,
+			session,
+			&credential,
+			payload,
+		); err != nil {
+			clearPlatformSiteAuthFlowTemporaryCredential(session, &credential)
+			return nil, classifyPlatformSiteAuthFlowError(err)
+		}
+		clearPlatformSiteAuthFlowSecretTemporaryMaterials(&secret)
 		secret.Credential = credential
 	}
 	if status == PlatformSiteAuthFlowStatusTwoFactorRequired {
@@ -207,7 +223,10 @@ func VerifyPlatformSiteAuthFlow(ctx context.Context, userID int, flowID string, 
 		return nil, fmt.Errorf("%w: 当前流程无需二次验证", ErrPlatformSiteAuthFlowInvalid)
 	}
 	if record.CodeAttempts >= platformSiteAuthFlowMaxCodeAttempts {
+		cleanupPlatformSiteAuthFlowSecret(ctx, &record, &secret)
+		clearPlatformSiteAuthFlowSecretTemporaryMaterials(&secret)
 		record.Status = PlatformSiteAuthFlowStatusRateLimited
+		record.Secret, _ = encryptPlatformSiteAuthFlowSecret(secret)
 		_ = savePlatformSiteAuthFlowRecord(record)
 		return nil, ErrPlatformSiteAuthFlowRateLimited
 	}
@@ -215,10 +234,19 @@ func VerifyPlatformSiteAuthFlow(ctx context.Context, userID int, flowID string, 
 	if len(code) != 6 {
 		record.Attempts++
 		record.CodeAttempts++
-		if record.Attempts >= platformSiteAuthFlowMaxAttempts {
+		if record.CodeAttempts >= platformSiteAuthFlowMaxCodeAttempts ||
+			record.Attempts >= platformSiteAuthFlowMaxAttempts {
 			record.Status = PlatformSiteAuthFlowStatusRateLimited
 		}
+		if record.Status == PlatformSiteAuthFlowStatusRateLimited {
+			cleanupPlatformSiteAuthFlowSecret(ctx, &record, &secret)
+			clearPlatformSiteAuthFlowSecretTemporaryMaterials(&secret)
+		}
+		record.Secret, _ = encryptPlatformSiteAuthFlowSecret(secret)
 		_ = savePlatformSiteAuthFlowRecord(record)
+		if record.Status == PlatformSiteAuthFlowStatusRateLimited {
+			return nil, ErrPlatformSiteAuthFlowRateLimited
+		}
 		return nil, ErrPlatformSiteAuthFlowCodeInvalid
 	}
 	session, err := newPlatformSiteSession(record.BaseURL, nil)
@@ -234,6 +262,8 @@ func VerifyPlatformSiteAuthFlow(ctx context.Context, userID int, flowID string, 
 	if record.Platform == model.PlatformNewAPI {
 		session.CredentialUpdate = &secret.Credential
 		syncNewAPISessionHeaders(session, secret.Credential)
+	} else {
+		session.CredentialUpdate = &secret.Credential
 	}
 	var payload any
 	if record.Platform == model.PlatformSub2API {
@@ -254,26 +284,63 @@ func VerifyPlatformSiteAuthFlow(ctx context.Context, userID int, flowID string, 
 			}
 			return nil, err
 		}
+		if !platformSiteAuthFlowCodeRetryable(err) {
+			setTemporaryPasswordSessionMaterials(session, secret.Credential)
+			cleanupPlatformSiteAuthFlowSession(ctx, record.Platform, session)
+			clearPlatformSiteAuthFlowSecretTemporaryMaterials(&secret)
+			record.Status = classifyAuthStatus(err)
+			record.Secret, _ = encryptPlatformSiteAuthFlowSecret(secret)
+			_ = savePlatformSiteAuthFlowRecord(record)
+			return nil, classifyPlatformSiteAuthFlowError(err)
+		}
 		record.Attempts++
 		record.CodeAttempts++
 		if record.CodeAttempts >= platformSiteAuthFlowMaxCodeAttempts ||
 			record.Attempts >= platformSiteAuthFlowMaxAttempts {
 			record.Status = PlatformSiteAuthFlowStatusRateLimited
+			setTemporaryPasswordSessionMaterials(session, secret.Credential)
+			cleanupPlatformSiteAuthFlowSession(ctx, record.Platform, session)
+			clearPlatformSiteAuthFlowSecretTemporaryMaterials(&secret)
 		}
+		record.Secret, _ = encryptPlatformSiteAuthFlowSecret(secret)
 		_ = savePlatformSiteAuthFlowRecord(record)
+		if record.Status == PlatformSiteAuthFlowStatusRateLimited {
+			return nil, ErrPlatformSiteAuthFlowRateLimited
+		}
 		return nil, ErrPlatformSiteAuthFlowCodeInvalid
 	}
 	credential := secret.Credential
+	markPlatformSiteAuthFlowSessionForCleanup(session, payload)
+	defer cleanupPlatformSiteAuthFlowSession(ctx, record.Platform, session)
 	if err := applyPlatformSiteLoginPayload(session, record.Platform, &credential, payload); err != nil {
+		clearPlatformSiteAuthFlowTemporaryCredential(session, &credential)
 		secret.Credential = credential
 		if persistErr := persistPlatformSiteAuthFlowCredential(&record, &secret, session); persistErr != nil {
 			return nil, persistErr
 		}
 		record.Status = classifyAuthStatus(err)
+		clearPlatformSiteAuthFlowSecretTemporaryMaterials(&secret)
+		record.Secret, _ = encryptPlatformSiteAuthFlowSecret(secret)
 		_ = savePlatformSiteAuthFlowRecord(record)
 		return nil, err
 	}
+	if err := finalizePlatformSitePasswordCredential(
+		ctx,
+		record.Platform,
+		session,
+		&credential,
+		payload,
+	); err != nil {
+		clearPlatformSiteAuthFlowTemporaryCredential(session, &credential)
+		secret.Credential = credential
+		clearPlatformSiteAuthFlowSecretTemporaryMaterials(&secret)
+		record.Status = classifyAuthStatus(err)
+		record.Secret, _ = encryptPlatformSiteAuthFlowSecret(secret)
+		_ = savePlatformSiteAuthFlowRecord(record)
+		return nil, classifyPlatformSiteAuthFlowError(err)
+	}
 	secret.Credential = credential
+	clearPlatformSiteAuthFlowSecretTemporaryMaterials(&secret)
 	record.Status = PlatformSiteAuthFlowStatusAuthenticated
 	record.AuthType = model.InferPlatformSiteAuthType(credential)
 	record.Methods = nil
@@ -355,13 +422,12 @@ func ConsumePlatformSiteAuthFlow(userID int, flowID string, channelID int) error
 func DeletePlatformSiteAuthFlow(userID int, flowID string) error {
 	platformSiteAuthFlowMu.Lock()
 	defer platformSiteAuthFlowMu.Unlock()
-	record, err := getPlatformSiteAuthFlowRecord(flowID)
+	record, secret, err := getPlatformSiteAuthFlow(flowID, userID)
 	if err != nil {
 		return err
 	}
-	if record.UserID != userID {
-		return ErrPlatformSiteAuthFlowInvalid
-	}
+	cleanupPlatformSiteAuthFlowSecret(context.Background(), &record, &secret)
+	clearPlatformSiteAuthFlowSecretTemporaryMaterials(&secret)
 	_, err = platformSiteAuthFlowCache.DeleteMany([]string{flowID})
 	return err
 }
@@ -392,6 +458,193 @@ func authenticatePlatformSitePassword(
 	return session, payload, err
 }
 
+func markPlatformSiteAuthFlowSessionForCleanup(
+	session *PlatformSiteSession,
+	payload any,
+) {
+	if session == nil {
+		return
+	}
+	setPasswordSessionMaterialsFromPayload(session, payload)
+}
+
+func finalizePlatformSitePasswordCredential(
+	ctx context.Context,
+	platform string,
+	session *PlatformSiteSession,
+	credential *model.PlatformSiteCredential,
+	loginPayload any,
+) error {
+	if session == nil || credential == nil {
+		return ErrPlatformSiteAuthFlowInvalid
+	}
+	var currentUser any
+	var err error
+	switch platform {
+	case model.PlatformNewAPI:
+		currentUser, err = fetchNewAPICurrentUser(ctx, session)
+	case model.PlatformSub2API:
+		currentUser, err = fetchSub2APICurrentUser(ctx, session)
+	default:
+		return ErrUnsupportedPlatformSite
+	}
+	if err != nil {
+		if platformSiteRouteMissing(err) {
+			loginUserID := strings.TrimSpace(findUserID(loginPayload))
+			loginUsername := platformSiteUsernameFromRecord(
+				firstNestedRecord(loginPayload, "user", "account", "profile"),
+			)
+			if loginUserID == "" && loginUsername == "" {
+				return wrapPlatformSiteStage("平台站点当前用户", err)
+			}
+			if loginUserID != "" {
+				credential.UserID = loginUserID
+			}
+			if loginUsername != "" {
+				credential.Username = loginUsername
+			}
+			credential.AuthType = model.UpstreamAuthPassword
+			credential.LastAuthAt = common.GetTimestamp()
+			credential.RefreshStatus = "active"
+			credential.ReauthRequired = false
+			credential.RefreshUncertain = false
+			clearPlatformSiteTemporaryCredential(credential)
+			return nil
+		}
+		return wrapPlatformSiteStage("平台站点当前用户", err)
+	}
+	userID := strings.TrimSpace(findUserID(currentUser))
+	username := platformSiteUsernameFromRecord(
+		firstNestedRecord(currentUser, "user", "account", "profile"),
+	)
+	if userID == "" && username == "" {
+		return wrapPlatformSiteStage(
+			"平台站点当前用户",
+			fmt.Errorf("%w: 当前用户响应缺少身份信息", ErrPlatformSiteAuth),
+		)
+	}
+	if userID != "" {
+		credential.UserID = userID
+	}
+	if username != "" {
+		credential.Username = username
+	}
+	credential.AuthType = model.UpstreamAuthPassword
+	credential.LastAuthAt = common.GetTimestamp()
+	credential.RefreshStatus = "active"
+	credential.ReauthRequired = false
+	credential.RefreshUncertain = false
+	clearPlatformSiteTemporaryCredential(credential)
+	return nil
+}
+
+func clearPlatformSiteAuthFlowTemporaryCredential(
+	session *PlatformSiteSession,
+	credential *model.PlatformSiteCredential,
+) {
+	if credential != nil {
+		clearPlatformSiteTemporaryCredential(credential)
+	}
+	if session != nil && session.CredentialUpdate != nil {
+		clearPlatformSiteTemporaryCredential(session.CredentialUpdate)
+	}
+}
+
+func clearPlatformSiteAuthFlowSecretTemporaryMaterials(
+	secret *platformSiteAuthFlowSecret,
+) {
+	if secret == nil {
+		return
+	}
+	clearPlatformSiteTemporaryCredential(&secret.Credential)
+	secret.FlowToken = ""
+	secret.TempToken = ""
+}
+
+func cleanupPlatformSiteAuthFlowSession(
+	ctx context.Context,
+	platform string,
+	session *PlatformSiteSession,
+) {
+	if session == nil || !session.PasswordSession {
+		return
+	}
+	adapter, err := adapterForPlatform(platform, session.Client)
+	if err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf(
+			"platform site auth flow session cleanup adapter failed: platform=%s error=%s",
+			platform,
+			SafePlatformSiteSessionCleanupError(err),
+		))
+		return
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), upstreamSiteRequestTimeout)
+	defer cancel()
+	if err := adapter.Cleanup(cleanupCtx, session); err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf(
+			"platform site auth flow session cleanup failed: platform=%s error=%s",
+			platform,
+			SafePlatformSiteSessionCleanupError(err),
+		))
+	}
+}
+
+func cleanupPlatformSiteAuthFlowSecret(
+	ctx context.Context,
+	record *platformSiteAuthFlowRecord,
+	secret *platformSiteAuthFlowSecret,
+) {
+	if record == nil || secret == nil {
+		return
+	}
+	siteClient, err := platformSiteHTTPClientForChannel(record.ChannelID)
+	if err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf(
+			"platform site auth flow secret cleanup adapter failed: platform=%s error=%s",
+			record.Platform,
+			SafePlatformSiteSessionCleanupError(err),
+		))
+		return
+	}
+	session, err := newPlatformSiteSession(record.BaseURL, nil)
+	if err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf(
+			"platform site auth flow secret cleanup session failed: platform=%s error=%s",
+			record.Platform,
+			SafePlatformSiteSessionCleanupError(err),
+		))
+		return
+	}
+	session.Platform = record.Platform
+	attachPlatformSiteHTTPClient(session, siteClient)
+	session.CredentialUpdate = &secret.Credential
+	if record.Platform == model.PlatformNewAPI {
+		setNewAPIBrowserHeaders(session)
+		if token := strings.TrimSpace(secret.Credential.AccessToken); token != "" {
+			session.Headers.Set("Authorization", bearerToken(token))
+		}
+		syncNewAPISessionHeaders(session, secret.Credential)
+	} else {
+		setSub2APIBrowserHeaders(session)
+	}
+	setTemporaryPasswordSessionMaterials(session, secret.Credential)
+	cleanupPlatformSiteAuthFlowSession(ctx, record.Platform, session)
+}
+
+func platformSiteAuthFlowCodeRetryable(err error) bool {
+	if err == nil || errors.Is(err, ErrSub2APILoginAgreement) {
+		return false
+	}
+	lower := strings.ToLower(err.Error())
+	if strings.Contains(lower, "invalid verification code") ||
+		strings.Contains(lower, "invalid code") ||
+		strings.Contains(err.Error(), "验证码错误") {
+		return true
+	}
+	status, ok := platformSiteHTTPStatusCode(err)
+	return ok && (status == http.StatusBadRequest || status == http.StatusUnauthorized)
+}
+
 func applyPlatformSiteLoginPayload(session *PlatformSiteSession, platform string, credential *model.PlatformSiteCredential, payload any) error {
 	if session == nil || credential == nil {
 		return ErrPlatformSiteAuthFlowInvalid
@@ -406,6 +659,7 @@ func applyPlatformSiteLoginPayload(session *PlatformSiteSession, platform string
 			captureNewAPIRefreshCookie(session, credential)
 			syncNewAPISessionHeaders(session, *credential)
 			session.Headers.Set("Authorization", bearerToken(credential.AccessToken))
+			setTemporaryPasswordSessionMaterials(session, *credential)
 			setNewAPICompatUserHeaders(session.Headers, credential.UserID)
 			return nil
 		}
@@ -414,8 +668,7 @@ func applyPlatformSiteLoginPayload(session *PlatformSiteSession, platform string
 	if token == "" && platform != model.PlatformNewAPI {
 		return ErrSub2APILoginToken
 	}
-	preservePassword := platform == model.PlatformNewAPI &&
-		credential.AuthType == model.UpstreamAuthPassword
+	preservePassword := credential.AuthType == model.UpstreamAuthPassword
 	if token != "" {
 		if !preservePassword {
 			credential.AuthType = model.UpstreamAuthAccessToken
@@ -449,6 +702,7 @@ func applyPlatformSiteLoginPayload(session *PlatformSiteSession, platform string
 		credential.Username = ""
 		credential.Password = ""
 	}
+	setTemporaryPasswordSessionMaterials(session, *credential)
 	return nil
 }
 
@@ -623,6 +877,10 @@ func getPlatformSiteAuthFlowRecord(flowID string) (platformSiteAuthFlowRecord, e
 		return record, ErrPlatformSiteAuthFlowConsumed
 	}
 	if record.ExpiresAt <= time.Now().Unix() {
+		if secret, decryptErr := decryptPlatformSiteAuthFlowSecret(record.Secret); decryptErr == nil {
+			cleanupPlatformSiteAuthFlowSecret(context.Background(), &record, &secret)
+			clearPlatformSiteAuthFlowSecretTemporaryMaterials(&secret)
+		}
 		_, _ = platformSiteAuthFlowCache.DeleteMany([]string{flowID})
 		return record, ErrPlatformSiteAuthFlowExpired
 	}

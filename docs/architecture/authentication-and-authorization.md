@@ -1,7 +1,7 @@
 # 鉴权、会话与授权原理
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-01
+> 事实基线日期：2026-10-02
 > 主要代码来源：`middleware/auth.go`、`middleware/token_auth.go`、`service/auth_session.go`、`model/user_session.go`、`service/authz/`、`controller/`、`oauth/`
 > 关联详细文档：[`../authentication.md`](../authentication.md)、[`../rate-limiting.md`](../rate-limiting.md)、[`system-overview.md`](./system-overview.md)
 
@@ -166,11 +166,12 @@ Cookie、Token、Refresh Token 和 Session ID 不写入日志、审计字段、U
 会话刷新只需要关注访问令牌是否存在，资源管理接口也没有明确区分管理员资源拒绝与普通
 账号失效。
 
-**变更后**：默认管理端入口仍显示账号密码和自动配置，高级区域提供 Access Token、
-Admin Key 和 Cookie。账号密码登录通过服务端 opaque flow ID 承接 New API/Sub2API 的
-TOTP challenge，流程绑定管理员、平台、规范化 Base URL 和 Origin，TTL 为 5 分钟并限制
-验证码尝试次数；密码、验证码、Cookie、Token、Refresh Token 和 Session ID 不进入日志、
-审计字段、URL、普通响应或前端持久化存储。
+**变更后**：默认管理端入口只显示账号密码和自动配置；历史 Access Token、Admin Key
+和 Cookie 渠道仍可读取和同步，但新版表单不再提供这些登录态的手动录入入口。账号密码
+登录通过服务端 opaque flow ID 承接 New API/Sub2API 的 TOTP challenge，流程绑定管理员、
+平台、规范化 Base URL 和 Origin，TTL 为 5 分钟并限制验证码尝试次数；密码、验证码、
+Cookie、Token、Refresh Token 和 Session ID 不进入日志、审计字段、URL、普通响应或前端
+持久化存储。
 
 New API 的传统刷新和 Dashboard Auth Bundle 分开解析。Bundle 必须同时满足 `success`、
 `data.access_token`、`data.token_type`、未来的 `data.access_expires_at`、当前
@@ -257,3 +258,37 @@ Session Secret、数据库 DSN、Redis 连接串、Access/Refresh Token、Admin 
 不会把环境变量值放入手动命令或对外响应。安全核对依据为 OWASP ASVS 5.0.0、
 Authentication Cheat Sheet、Session Management Cheat Sheet 和 Logging Cheat Sheet；
 本次未改变 NexusTok 面板 Session、Refresh Token 或 CSRF 边界。
+
+### 9.6 2026-10-02 平台站点密码会话所有权与自动配置
+
+**变更前**：NewAPI 和 Sub2API 的平台站点后台同步可能沿用已保存的 Access Token、
+Refresh Token、Cookie 或 Session ID；资源读取完成后没有统一的“本轮登录会话”注销契约。
+渠道表单还把平台选择、高级认证和手动登录态输入混在凭证区域，自动采集完成后缺少
+统一的验证、诊断和一次性消费边界。
+
+**变更后**：
+
+- `PlatformSiteAdapter` 统一提供 `Cleanup(context.Context, *PlatformSiteSession) error`。
+  `password` 同步在任何上游资源请求前清除旧的 Authorization、Cookie、`X-Auth-Session`、
+  Access Token、Refresh Token、Session ID、Cookie 和刷新状态，然后直接调用密码登录；
+  `access_token`、`admin_key`、`cookie` 以及浏览器 Capture 登录态不执行后台注销。
+- NewAPI 同步完成资源读取后调用 `POST /api/user/auth/logout`，携带本轮 Bearer、
+  `X-Auth-Session`、Cookie 和基于管理地址计算的 `Origin`；有 SID 时继续调用
+  `DELETE /api/user/sessions/{sid}`。`AUTH_SESSION_MISMATCH`、401、403、404、405
+  按幂等完成处理，不调用 `/api/user/sessions/revoke-others`。
+- Sub2API 同步完成资源读取后调用 `POST /api/v1/auth/logout`，请求体只包含本轮
+  `refresh_token`，不调用 `/api/v1/auth/revoke-all-sessions`。没有 Refresh Token
+  或注销网络失败时只写脱敏告警并清除本地临时材料，不覆盖已获得的快照，也不把账号
+  标记为凭据失效。
+- 清理通过同步函数的延迟路径覆盖认证成功、认证失败、资源失败、部分分页失败以及
+  快照写库前后的返回路径。密码认证最终只持久化认证方式、真实用户名、密码、可选
+  User ID、最后认证时间和正常状态；临时 Token、Cookie、Session ID、Token 过期信息
+  和刷新状态不会写回长期凭据。当前用户用户名统一从 `username`、`user_name`、`login`
+  或邮箱字段提取，并通过同步状态接口安全回填编辑表单。
+- 自动配置只对外提交 `auth_type=auto` 和已完成的 `capture_id`。Capture Helper
+  版本为 `1.5.0`，候选登录态在提交前通过当前用户接口或 Admin 权限验证，诊断只保留
+  存在性、存储键、验证接口、版本和失败阶段。采集结果继续使用现有加密凭据结构；
+  浏览器会话属于用户既有登录态，不纳入后台密码会话清理。
+- Capture 会话被解析后由 Redis `SET NX` 或单进程内存 claim 原子占用，成功保存渠道
+  后一次性消费；后续校验、数据库保存或同步入队失败会释放 claim，claim token 不返回
+  给前端或普通 API 响应。

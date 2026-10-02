@@ -17,6 +17,11 @@ const (
 	defaultRedisDelTimeout  = 10 * time.Second
 )
 
+type cacheClaim struct {
+	token     string
+	expiresAt time.Time
+}
+
 type HybridCacheConfig[V any] struct {
 	Namespace Namespace
 
@@ -40,6 +45,9 @@ type HybridCache[V any] struct {
 	memOnce sync.Once
 	memInit func() *hot.HotCache[string, V]
 	mem     *hot.HotCache[string, V]
+
+	claimMu sync.Mutex
+	claims  map[string]cacheClaim
 }
 
 func NewHybridCache[V any](cfg HybridCacheConfig[V]) *HybridCache[V] {
@@ -126,6 +134,142 @@ func (c *HybridCache[V]) SetWithTTL(key string, v V, ttl time.Duration) error {
 
 	c.memCache().SetWithTTL(full, v, ttl)
 	return nil
+}
+
+// TryClaim 为一个调用方原子占用缓存键，直到 ttl 到期。
+// Redis 使用 SET NX，使不同应用节点共享同一占用状态。
+func (c *HybridCache[V]) TryClaim(key, token string, ttl time.Duration) (bool, error) {
+	full := c.claimFullKey(key)
+	token = strings.TrimSpace(token)
+	if full == "" || token == "" || ttl <= 0 {
+		return false, nil
+	}
+
+	if c.redisOn() {
+		ctx, cancel := context.WithTimeout(context.Background(), defaultRedisOpTimeout)
+		defer cancel()
+		return c.redis.SetNX(ctx, full, token, ttl).Result()
+	}
+
+	now := time.Now()
+	c.claimMu.Lock()
+	defer c.claimMu.Unlock()
+	if c.claims == nil {
+		c.claims = make(map[string]cacheClaim)
+	}
+	if existing, ok := c.claims[full]; ok {
+		if existing.expiresAt.After(now) {
+			return false, nil
+		}
+		delete(c.claims, full)
+	}
+	c.claims[full] = cacheClaim{
+		token:     token,
+		expiresAt: now.Add(ttl),
+	}
+	return true, nil
+}
+
+// ReleaseClaim 仅在 token 仍匹配占用者时释放占用。
+// Redis 使用 Lua 比较删除，保证校验和删除的原子性。
+func (c *HybridCache[V]) ReleaseClaim(key, token string) (bool, error) {
+	full := c.claimFullKey(key)
+	token = strings.TrimSpace(token)
+	if full == "" || token == "" {
+		return false, nil
+	}
+
+	if c.redisOn() {
+		ctx, cancel := context.WithTimeout(context.Background(), defaultRedisOpTimeout)
+		defer cancel()
+		result, err := c.redis.Eval(ctx, `
+			if redis.call("GET", KEYS[1]) == ARGV[1] then
+				return redis.call("DEL", KEYS[1])
+			end
+			return 0
+		`, []string{full}, token).Int()
+		if err != nil {
+			return false, err
+		}
+		return result > 0, nil
+	}
+
+	c.claimMu.Lock()
+	defer c.claimMu.Unlock()
+	claim, ok := c.claims[full]
+	if !ok {
+		return false, nil
+	}
+	if !claim.expiresAt.After(time.Now()) {
+		delete(c.claims, full)
+		return false, nil
+	}
+	if claim.token != token {
+		return false, nil
+	}
+	delete(c.claims, full)
+	return true, nil
+}
+
+// ClaimMatches 判断当前占用是否仍由指定 token 持有。
+func (c *HybridCache[V]) ClaimMatches(key, token string) (bool, error) {
+	full := c.claimFullKey(key)
+	token = strings.TrimSpace(token)
+	if full == "" || token == "" {
+		return false, nil
+	}
+
+	if c.redisOn() {
+		ctx, cancel := context.WithTimeout(context.Background(), defaultRedisOpTimeout)
+		defer cancel()
+		value, err := c.redis.Get(ctx, full).Result()
+		if errors.Is(err, redis.Nil) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		return value == token, nil
+	}
+
+	c.claimMu.Lock()
+	defer c.claimMu.Unlock()
+	claim, ok := c.claims[full]
+	if !ok {
+		return false, nil
+	}
+	if !claim.expiresAt.After(time.Now()) {
+		delete(c.claims, full)
+		return false, nil
+	}
+	return claim.token == token, nil
+}
+
+// DeleteClaim 不校验占用者直接删除占用，仅供已校验外层缓存记录的清理路径使用。
+func (c *HybridCache[V]) DeleteClaim(key string) error {
+	full := c.claimFullKey(key)
+	if full == "" {
+		return nil
+	}
+
+	if c.redisOn() {
+		ctx, cancel := context.WithTimeout(context.Background(), defaultRedisOpTimeout)
+		defer cancel()
+		return c.redis.Del(ctx, full).Err()
+	}
+
+	c.claimMu.Lock()
+	delete(c.claims, full)
+	c.claimMu.Unlock()
+	return nil
+}
+
+func (c *HybridCache[V]) claimFullKey(key string) string {
+	full := c.ns.FullKey(key)
+	if full == "" {
+		return ""
+	}
+	return full + ":claim"
 }
 
 // Keys returns keys with valid values. In Redis, it returns all matching keys.

@@ -1,7 +1,7 @@
 # 渠道能力矩阵
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-01
+> 事实基线日期：2026-10-02
 > 主要代码来源：`constant/channel.go`、`constant/api_type.go`、`common/api_type.go`、`relay/relay_adaptor.go`、`relay/common/relay_info.go`、`relay/channel/*/adaptor.go`、`router/relay-router.go`、`router/task-plugin-protocol-router.go`
 > 关联详细文档：[`README.md`](./README.md)、[`relay-routing-and-conversion.md`](./relay-routing-and-conversion.md)、[`implementation-deviations.md`](./implementation-deviations.md)、[`../key-routing-strategy.md`](../key-routing-strategy.md)
 
@@ -78,8 +78,8 @@
 
 | 平台 | 认证与刷新 | 资源来源 | 端点与模型能力 | 失败回退 |
 | --- | --- | --- | --- | --- |
-| New API 平台站点 | 账号密码、自动配置、Access Token、Admin Key、Cookie；支持 `/api/user/login/2fa`、`/api/user/login/verify`；传统刷新与 Dashboard Auth Bundle 均需按结构校验；邮箱输入仅在明确 401 凭据错误后兼容 email/混合主体 | 管理面读取 `/api/status`、当前用户、分组/倍率、价格、Token 分页和完整 Key；Token 资源最多 1000 页；Admin 资源按权限读取 | Relay `/v1/models` 按单个完整 Key 确认；`supported_endpoint`/pricing 只进入端点诊断，账号级模型不能复制给所有 Key | 2FA、安全验证、Bundle 不完整、Admin 资源拒绝、部分分页或单 Key 模型失败只影响对应资源状态，保留最近成功快照 |
-| Sub2API 平台站点 | 账号密码、自动配置、Access Token、Admin Key、Cookie；支持 `/api/v1/auth/login/2fa`；邮箱/用户名主体受限兼容；Refresh Token 必须完整轮换 | 管理面按 auth/me、Profile、Groups、Group Rates、Dashboard Usage、Usage Stats、Keys 读取；普通/Admin Key 资源均最多 1000 页；Admin Key 额外读取 accounts/data；参考平台还有 `/api/v1/user/platform-quotas`，当前适配器未调用 | Relay `/v1/models` 或兼容 `/models` 按单个完整 Key 确认；页面 `api_base_url` 分离管理和 Relay 地址；当前无独立账号级模型实现 | Refresh 轮换不确定、step-up、权限不足、WAF、分页失败或单 Key 模型失败不当作密钥不存在，保留最近成功快照 |
+| New API 平台站点 | 账号密码、自动配置；Access Token、Admin Key、Cookie 仅作为历史渠道兼容能力读取和同步，新版不提供手动录入；支持 `/api/user/login/2fa`、`/api/user/login/verify`；传统刷新与 Dashboard Auth Bundle 均需按结构校验；邮箱输入仅在明确 401 凭据错误后兼容 email/混合主体 | 管理面读取 `/api/status`、当前用户、分组/倍率、价格、Token 分页和完整 Key；Token 资源最多 1000 页；Admin 资源按权限读取 | Relay `/v1/models` 按单个完整 Key 确认；`supported_endpoint`/pricing 只进入端点诊断，账号级模型不能复制给所有 Key | 2FA、安全验证、Bundle 不完整、Admin 资源拒绝、部分分页或单 Key 模型失败只影响对应资源状态，保留最近成功快照 |
+| Sub2API 平台站点 | 账号密码、自动配置；Access Token、Admin Key、Cookie 仅作为历史渠道兼容能力读取和同步，新版不提供手动录入；支持 `/api/v1/auth/login/2fa`；邮箱/用户名主体受限兼容；Refresh Token 必须完整轮换 | 管理面按 auth/me、Profile、Groups、Group Rates、Dashboard Usage、Usage Stats、Keys 读取；普通/Admin Key 资源均最多 1000 页；Admin Key 额外读取 accounts/data；参考平台还有 `/api/v1/user/platform-quotas`，当前适配器未调用 | Relay `/v1/models` 或兼容 `/models` 按单个完整 Key 确认；页面 `api_base_url` 分离管理和 Relay 地址；当前无独立账号级模型实现 | Refresh 轮换不确定、step-up、权限不足、WAF、分页失败或单 Key 模型失败不当作密钥不存在，保留最近成功快照 |
 
 这里的“模型获取”列只描述当前实际进入路由的能力来源：New API 的账号模型、价格或
 Admin channel 模型用于诊断和展示，不能替代单 Key 能力；Sub2API 当前
@@ -131,6 +131,7 @@ NexusTok 适配器请求清单中，因此平台窗口额度仍属于未完整�
 | 2026-09-29 | 校准平台站点管理面、Relay 面和模型边界 | 矩阵只按渠道类型描述平台能力，Sub2API 平台窗口额度、账号级模型和单 Key 模型来源边界不够明确 | 明确管理接口与 Relay 接口分层；Sub2API `/api/v1/user/platform-quotas` 为参考平台存在但当前未调用；New API 账号级模型不得复制给所有 Key；当前主要以单 Key Relay 模型探测作为路由能力依据；权限/分页失败保留快照 | New API/Sub2API 资源同步、模型能力、Admin 资源和失败回退 | `service/upstream_site_adapters.go`、`controller/upstream_channel.go`、`model/platform_site_resources.go`、本机参考源和[`平台站点资源获取比较`](../platform-site-resource-acquisition-comparison.md) |
 | 2026-09-30 | 旧版资源同步迁移与脱敏 fixture 验收 | Key 资源分页、登录主体兼容、Sub2API 资源顺序和完整 Key 读取优先级与旧版不完全一致；脱敏路由和地址验收未集中记录 | New API Token、Sub2API 普通 Key/Admin Key 分页恢复独立 1000 页；主体兼容、列表完整 Key 优先、详情补齐、单 Key 模型探测、RoutingKey 关系修复、模型映射和 Relay 地址规范化与旧版对齐 | 平台站点管理面、路由前置资源、Key 能力、请求地址和容量验证 | `service/upstream_site_adapters.go`、`service/upstream_site_test.go`、`model/upstream_channel_test.go`、脱敏 HTTP fixture 和 SQLite；未使用真实账号或站点 |
 | 2026-10-01 | Sub2API 登录服务条款兼容能力 | 矩阵只登记 Sub2API 的一般密码/2FA 入口，未记录公开条款设置、可选 revision、错误分类和 New API 隔离 | 增加 `GET /api/v1/settings/public` 的条件读取、`agreed_revision` 发送和 2FA 最新 revision；设置故障回退旧协议，条款拒绝独立分类并保留快照；不发送 `not_in_cn_confirmed`，New API 不读取或发送同名字段 | Sub2API 认证、Auth Flow、同步状态、资源面板和平台能力边界 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go`；Sub2API 参考源 DTO/路由；SQLite 3.50.4、MySQL 8.2.0、PostgreSQL 15.19 矩阵 |
+| 2026-10-02 | 平台站点密码会话清理与自动配置能力 | 密码同步复用历史登录态的边界、NewAPI/Sub2API 精确注销路径、浏览器采集所有权和表单隐藏旧凭据入口未在矩阵中统一登记 | 密码同步每次重新登录；NewAPI 登出后精确删除 SID，Sub2API 仅 Refresh Token 登出；资源失败保留快照；自动配置完成验证后加密保存并一次性消费，平台从渠道类型派生 | 平台站点认证、资源同步、Capture Helper、渠道表单和跨节点缓存 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_capture.go`、`web/src/features/channels/components/drawers/platform-site-fields.tsx`、本机参考源和定向测试 |
 
 ### 3.2 2026-09-26 实现校准
 
@@ -217,3 +218,16 @@ CookieJar、显式 Cookie 合并、30 秒超时和允许内网管理地址的重
 - Dashboard Refresh 仍要求 `new_api_refresh`、`X-Auth-Session` 和旧 Bearer Token，
   渠道代理只从 `setting.proxy` 读取，管理 `BaseURL` 与 Relay 地址继续分离。当前
   前端资源模型不变。
+
+### 3.7 2026-10-02 平台站点密码会话与 Capture 所有权
+
+**变更前**：能力矩阵没有明确后台密码同步是否复用已保存 Token、Cookie、Refresh
+Token 和 Session ID，也没有记录资源读取之后的注销路径；自动配置和历史登录态的
+清理范围容易与用户浏览器会话混淆。
+
+**变更后**：密码模式每轮只使用账号密码，NewAPI 以 `POST /api/user/auth/logout`
+和精确 `DELETE /api/user/sessions/{sid}` 清理本轮会话，Sub2API 以只含本轮
+Refresh Token 的 `POST /api/v1/auth/logout` 清理；两者均不撤销其他设备会话。浏览器
+Capture 属于用户已有会话，不进入后台 Cleanup。自动配置候选在提交前验证当前用户或
+Admin 权限，诊断脱敏，Capture 记录用 Redis/内存 claim 防止并发重复消费；无数据库
+字段变更。

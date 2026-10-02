@@ -9,6 +9,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"regexp"
 	"slices"
@@ -149,7 +150,7 @@ func (adapter *NewAPIAdapter) Authenticate(ctx context.Context, baseURL string, 
 	}
 	setNewAPIBrowserHeaders(session)
 	switch platformSiteCredentialAuthType(credential) {
-	case model.UpstreamAuthPassword, model.UpstreamAuthAccessToken, model.UpstreamAuthCookie:
+	case model.UpstreamAuthAccessToken, model.UpstreamAuthCookie:
 		// 让登录、当前用户和刷新响应中的 Set-Cookie 都能回写到同一份凭据。
 		session.CredentialUpdate = &credential
 	}
@@ -232,11 +233,17 @@ func (adapter *NewAPIAdapter) Authenticate(ctx context.Context, baseURL string, 
 		if userID := strings.TrimSpace(findUserID(currentUser)); userID != "" {
 			credential.UserID = userID
 		}
+		if username := platformSiteUsernameFromRecord(firstNestedRecord(currentUser, "user", "account", "profile")); username != "" {
+			credential.Username = username
+		}
 		credential.LastAuthAt = common.GetTimestamp()
 		credential.RefreshStatus = "active"
 		credential.ReauthRequired = false
 		credential.RefreshUncertain = false
-		if session.CredentialUpdate != nil {
+		if credential.AuthType == model.UpstreamAuthPassword {
+			clearPlatformSiteTemporaryCredential(&credential)
+			setPlatformSiteCredentialUpdate(session, credential)
+		} else if session.CredentialUpdate != nil {
 			credential.Cookie = mergePlatformSiteCookieHeaders(
 				credential.Cookie,
 				session.CredentialUpdate.Cookie,
@@ -256,68 +263,21 @@ func authenticateNewAPIPasswordSession(
 		return nil, fmt.Errorf("%w: 凭据为空", ErrPlatformSiteAuth)
 	}
 	credential.AuthType = model.UpstreamAuthPassword
-	if credential.Cookie != "" {
-		session.Headers.Set("Cookie", credential.Cookie)
-	}
-	if credential.SessionID != "" {
-		session.Headers.Set("X-Auth-Session", credential.SessionID)
-	}
-	if credential.AccessToken != "" {
-		setNewAPICompatUserHeaders(session.Headers, credential.UserID)
-	}
-
-	hasReusableAccessToken := newAPIAccessTokenUsable(*credential)
-	hasCookieSession := strings.TrimSpace(credential.Cookie) != "" ||
-		strings.TrimSpace(credential.SessionID) != ""
-	if hasReusableAccessToken || hasCookieSession {
-		if !hasReusableAccessToken {
-			session.Headers.Del("Authorization")
-		} else {
-			session.Headers.Set("Authorization", bearerToken(credential.AccessToken))
-		}
-		currentUser, err := fetchNewAPICurrentUser(ctx, session)
-		if err == nil {
-			return currentUser, nil
-		}
-		if !newAPISessionInvalid(err) {
-			return nil, err
-		}
-	}
-
-	if credential.RefreshUncertain {
-		setPlatformSiteCredentialUpdate(session, *credential)
-		return nil, ErrPlatformSiteRefreshUncertain
-	}
-	if newAPIRefreshMaterial(*credential) {
-		if err := refreshPlatformSiteSession(
-			ctx,
-			session,
-			"/api/user/auth/refresh",
-			credential,
-		); err == nil {
-			currentUser, currentErr := fetchNewAPICurrentUser(ctx, session)
-			if currentErr == nil {
-				return currentUser, nil
-			}
-			markPlatformSiteRefreshFailure(credential, true)
-			setPlatformSiteCredentialUpdate(session, *credential)
-			return nil, errors.Join(ErrPlatformSiteRefreshUncertain, currentErr)
-		} else if !newAPIPasswordFallbackAllowed(err) {
-			return nil, err
-		} else {
-			resetNewAPISessionBeforePasswordLogin(session, credential)
-		}
-	}
-
 	resetNewAPISessionBeforePasswordLogin(session, credential)
+	credential.UserID = ""
 	payload, err := loginNewAPIWithPassword(ctx, session, *credential)
 	if err != nil {
+		setPasswordSessionMaterialsFromPayload(session, nil)
 		return nil, err
 	}
 	if loginRequiresInteractiveVerification(payload) {
+		setPasswordSessionMaterialsFromPayload(session, payload)
 		return nil, fmt.Errorf("%w: 需要完成上游二次验证", ErrPlatformSiteAuth)
 	}
 	if err := applyNewAPIPasswordLoginPayload(session, credential, payload); err != nil {
+		if !session.PasswordSession {
+			setPasswordSessionMaterialsFromPayload(session, payload)
+		}
 		return nil, err
 	}
 	return nil, nil
@@ -372,15 +332,14 @@ func resetNewAPISessionBeforePasswordLogin(
 	if session == nil || credential == nil {
 		return
 	}
-	session.Headers.Del("Authorization")
-	session.Headers.Del("Cookie")
-	session.Headers.Del("X-Auth-Session")
+	clearPlatformSitePasswordSession(session)
 	credential.AccessToken = ""
 	credential.RefreshToken = ""
 	credential.TokenExpiresAt = 0
 	credential.TokenType = ""
 	credential.SessionID = ""
 	credential.SessionCurrent = false
+	credential.AdminKey = ""
 	credential.Cookie = ""
 	credential.RefreshStatus = ""
 	credential.ReauthRequired = false
@@ -392,6 +351,14 @@ func applyNewAPIPasswordLoginPayload(
 	credential *model.PlatformSiteCredential,
 	payload any,
 ) error {
+	if session == nil || credential == nil {
+		return fmt.Errorf("%w: 登录会话不可用", ErrPlatformSiteAuth)
+	}
+	tempCredential := model.PlatformSiteCredential{
+		AuthType: model.UpstreamAuthPassword,
+		Username: credential.Username,
+		Password: credential.Password,
+	}
 	recognized, bundleErr := applyNewAPIDashboardAuthBundle(payload, credential, true)
 	if recognized {
 		if bundleErr != nil {
@@ -402,36 +369,35 @@ func applyNewAPIPasswordLoginPayload(
 		syncNewAPISessionHeaders(session, *credential)
 		session.Headers.Set("Authorization", bearerToken(credential.AccessToken))
 		setNewAPICompatUserHeaders(session.Headers, credential.UserID)
-		setPlatformSiteCredentialUpdate(session, *credential)
+		setTemporaryPasswordSessionMaterials(session, *credential)
+		clearPlatformSiteTemporaryCredential(credential)
 		return nil
 	}
 
 	token := findToken(payload)
 	if token != "" {
-		credential.AccessToken = token
-		credential.TokenType = firstNonEmptyString(findTokenType(payload), "Bearer")
+		tempCredential.AccessToken = token
+		tempCredential.TokenType = firstNonEmptyString(findTokenType(payload), "Bearer")
 		session.Headers.Set("Authorization", bearerToken(token))
 	}
 	if refreshToken := findRefreshToken(payload); refreshToken != "" {
-		credential.RefreshToken = refreshToken
+		tempCredential.RefreshToken = refreshToken
 	}
-	credential.TokenExpiresAt = findTokenExpiresAt(payload)
+	tempCredential.TokenExpiresAt = findTokenExpiresAt(payload)
 	if userID := findUserID(payload); userID != "" {
-		credential.UserID = userID
+		tempCredential.UserID = userID
 	}
 	if sessionID := findSessionID(payload); sessionID != "" {
-		credential.SessionID = sessionID
-		credential.SessionCurrent = true
+		tempCredential.SessionID = sessionID
+		tempCredential.SessionCurrent = true
 	}
-	credential.LastAuthAt = common.GetTimestamp()
-	credential.RefreshStatus = "active"
-	credential.ReauthRequired = false
-	credential.RefreshUncertain = false
-	capturePlatformSiteSessionCookie(session, credential)
-	captureNewAPIRefreshCookie(session, credential)
-	syncNewAPISessionHeaders(session, *credential)
-	setNewAPICompatUserHeaders(session.Headers, credential.UserID)
-	setPlatformSiteCredentialUpdate(session, *credential)
+	capturePlatformSiteSessionCookie(session, &tempCredential)
+	captureNewAPIRefreshCookie(session, &tempCredential)
+	syncNewAPISessionHeaders(session, tempCredential)
+	setNewAPICompatUserHeaders(session.Headers, tempCredential.UserID)
+	setTemporaryPasswordSessionMaterials(session, tempCredential)
+	credential.UserID = tempCredential.UserID
+	clearPlatformSiteTemporaryCredential(credential)
 	return nil
 }
 
@@ -831,20 +797,32 @@ func (adapter *Sub2APIAdapter) Authenticate(ctx context.Context, baseURL string,
 	if adapter.client != nil {
 		attachPlatformSiteHTTPClient(session, adapter.client)
 	}
+	if platformSiteCredentialAuthType(credential) == model.UpstreamAuthPassword {
+		resetSub2APISessionBeforePasswordLogin(session, &credential)
+	}
 	prepareSub2APIManagementSession(ctx, session)
 	switch platformSiteCredentialAuthType(credential) {
 	case model.UpstreamAuthPassword:
 		payload, requestErr := loginSub2APIWithPassword(ctx, session, credential)
 		if requestErr != nil {
-			return nil, wrapPlatformSiteStage("Sub2API 登录", requestErr)
+			setPasswordSessionMaterialsFromPayload(session, nil)
+			return session, wrapPlatformSiteStage("Sub2API 登录", requestErr)
 		}
 		if loginRequiresInteractiveVerification(payload) {
-			return nil, fmt.Errorf("%w: 需要完成上游二次验证", ErrPlatformSiteAuth)
+			setPasswordSessionMaterialsFromPayload(session, payload)
+			return session, fmt.Errorf("%w: 需要完成上游二次验证", ErrPlatformSiteAuth)
 		}
 		if token := findToken(payload); token != "" {
 			session.Headers.Set("Authorization", bearerToken(token))
 		} else {
-			return nil, wrapPlatformSiteStage("Sub2API 登录未返回访问令牌", ErrSub2APILoginToken)
+			setPasswordSessionMaterialsFromPayload(session, payload)
+			return session, wrapPlatformSiteStage("Sub2API 登录未返回访问令牌", ErrSub2APILoginToken)
+		}
+		if err := applySub2APIPasswordLoginPayload(session, &credential, payload); err != nil {
+			if !session.PasswordSession {
+				setPasswordSessionMaterialsFromPayload(session, payload)
+			}
+			return session, wrapPlatformSiteStage("Sub2API 登录响应", err)
 		}
 	case model.UpstreamAuthAccessToken:
 		if credential.Cookie != "" {
@@ -880,13 +858,27 @@ func (adapter *Sub2APIAdapter) Authenticate(ctx context.Context, baseURL string,
 	}
 	currentUser, err := fetchSub2APICurrentUser(ctx, session)
 	if err != nil {
-		return nil, wrapPlatformSiteStage("Sub2API 当前用户", err)
+		return session, wrapPlatformSiteStage("Sub2API 当前用户", err)
 	}
 	if expectedUserID := strings.TrimSpace(credential.UserID); expectedUserID != "" {
 		actualUserID := strings.TrimSpace(findUserID(currentUser))
 		if actualUserID != "" && actualUserID != expectedUserID {
-			return nil, wrapPlatformSiteStage("Sub2API 用户身份", ErrPlatformSiteIdentity)
+			return session, wrapPlatformSiteStage("Sub2API 用户身份", ErrPlatformSiteIdentity)
 		}
+	}
+	if userID := strings.TrimSpace(findUserID(currentUser)); userID != "" {
+		credential.UserID = userID
+	}
+	if username := platformSiteUsernameFromRecord(firstNestedRecord(currentUser, "user", "account", "profile")); username != "" {
+		credential.Username = username
+	}
+	credential.LastAuthAt = common.GetTimestamp()
+	credential.RefreshStatus = "active"
+	credential.ReauthRequired = false
+	credential.RefreshUncertain = false
+	if credential.AuthType == model.UpstreamAuthPassword {
+		clearPlatformSiteTemporaryCredential(&credential)
+		setPlatformSiteCredentialUpdate(session, credential)
 	}
 	return session, nil
 }
@@ -1228,6 +1220,203 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 		})
 	}
 	return snapshot, nil
+}
+
+func (adapter *NewAPIAdapter) Cleanup(ctx context.Context, session *PlatformSiteSession) error {
+	if session == nil || !session.PasswordSession {
+		return nil
+	}
+	credentialUpdate := session.CredentialUpdate
+	session.CredentialUpdate = nil
+	defer func() {
+		clearPlatformSitePasswordSession(session)
+		session.CredentialUpdate = credentialUpdate
+	}()
+
+	token := strings.TrimSpace(session.TemporaryToken)
+	sessionID := strings.TrimSpace(session.TemporarySession)
+	if token == "" && sessionID == "" && strings.TrimSpace(session.TemporaryCookie) == "" {
+		return fmt.Errorf("%w: NewAPI 本轮会话材料为空", ErrPlatformSiteSessionCleanup)
+	}
+
+	setNewAPIBrowserHeaders(session)
+	session.Headers.Del("Cookie")
+	session.Headers.Del("Authorization")
+	session.Headers.Del("X-Auth-Session")
+	if session.TemporaryCookie != "" {
+		session.Headers.Set("Cookie", session.TemporaryCookie)
+	}
+	if token != "" {
+		session.Headers.Set("Authorization", bearerToken(token))
+	}
+	if sessionID != "" {
+		session.Headers.Set("X-Auth-Session", sessionID)
+	}
+
+	logoutErr := error(nil)
+	_, logoutErr = platformSiteRequest(
+		ctx,
+		session,
+		http.MethodPost,
+		"/api/user/auth/logout",
+		nil,
+		nil,
+	)
+
+	shouldDeleteSID := sessionID != ""
+	if logoutErr != nil {
+		if !isIdempotentPlatformSiteCleanupError(logoutErr) {
+			// 5xx 和网络错误仍继续尝试精确 SID 删除，但保留脱敏错误供
+			// 同步层记录告警，不能影响已经读取的资源快照。
+			if !shouldDeleteSID {
+				return errors.Join(ErrPlatformSiteSessionCleanup, logoutErr)
+			}
+		}
+	}
+
+	if !shouldDeleteSID {
+		if logoutErr != nil && !isIdempotentPlatformSiteCleanupError(logoutErr) {
+			return errors.Join(ErrPlatformSiteSessionCleanup, logoutErr)
+		}
+		return nil
+	}
+
+	session.Headers.Del("Cookie")
+	if session.TemporaryCookie != "" {
+		session.Headers.Set("Cookie", session.TemporaryCookie)
+	}
+	if token != "" {
+		session.Headers.Set("Authorization", bearerToken(token))
+	} else {
+		session.Headers.Del("Authorization")
+	}
+	session.Headers.Set("X-Auth-Session", sessionID)
+	_, deleteErr := platformSiteRequest(
+		ctx,
+		session,
+		http.MethodDelete,
+		"/api/user/sessions/"+url.PathEscape(sessionID),
+		nil,
+		nil,
+	)
+	if deleteErr != nil {
+		if !isIdempotentPlatformSiteCleanupError(deleteErr) {
+			if logoutErr != nil {
+				return errors.Join(
+					ErrPlatformSiteSessionCleanup,
+					logoutErr,
+					deleteErr,
+				)
+			}
+			return errors.Join(ErrPlatformSiteSessionCleanup, deleteErr)
+		}
+	}
+	if logoutErr != nil && !isIdempotentPlatformSiteCleanupError(logoutErr) {
+		return errors.Join(ErrPlatformSiteSessionCleanup, logoutErr)
+	}
+	return nil
+}
+
+func isIdempotentPlatformSiteCleanupError(err error) bool {
+	if err == nil {
+		return true
+	}
+	if platformSiteErrorCodeOf(err) == "AUTH_SESSION_MISMATCH" {
+		return true
+	}
+	status, ok := platformSiteHTTPStatusCode(err)
+	return ok && slices.Contains([]int{
+		http.StatusUnauthorized,
+		http.StatusForbidden,
+		http.StatusNotFound,
+		http.StatusMethodNotAllowed,
+	}, status)
+}
+
+func (adapter *Sub2APIAdapter) Cleanup(ctx context.Context, session *PlatformSiteSession) error {
+	if session == nil || !session.PasswordSession {
+		return nil
+	}
+	credentialUpdate := session.CredentialUpdate
+	session.CredentialUpdate = nil
+	defer func() {
+		clearPlatformSitePasswordSession(session)
+		session.CredentialUpdate = credentialUpdate
+	}()
+
+	refreshToken := strings.TrimSpace(session.TemporaryRefresh)
+	if refreshToken == "" {
+		return fmt.Errorf(
+			"%w: Sub2API 登录响应未返回 Refresh Token",
+			ErrPlatformSiteSessionCleanup,
+		)
+	}
+
+	session.Headers.Del("Authorization")
+	session.Headers.Del("Cookie")
+	session.Headers.Del("X-Auth-Session")
+	setSub2APIBrowserHeaders(session)
+	_, err := platformSiteRequest(
+		ctx,
+		session,
+		http.MethodPost,
+		"/api/v1/auth/logout",
+		nil,
+		map[string]string{"refresh_token": refreshToken},
+	)
+	if err != nil {
+		return errors.Join(ErrPlatformSiteSessionCleanup, err)
+	}
+	return nil
+}
+
+func resetSub2APISessionBeforePasswordLogin(
+	session *PlatformSiteSession,
+	credential *model.PlatformSiteCredential,
+) {
+	if session == nil || credential == nil {
+		return
+	}
+	clearPlatformSitePasswordSession(session)
+	clearPlatformSiteTemporaryCredential(credential)
+	credential.AuthType = model.UpstreamAuthPassword
+	credential.RefreshStatus = ""
+	credential.ReauthRequired = false
+	credential.RefreshUncertain = false
+}
+
+func applySub2APIPasswordLoginPayload(
+	session *PlatformSiteSession,
+	credential *model.PlatformSiteCredential,
+	payload any,
+) error {
+	if session == nil || credential == nil {
+		return fmt.Errorf("%w: 登录会话不可用", ErrPlatformSiteAuth)
+	}
+	token := findToken(payload)
+	if token == "" {
+		return ErrSub2APILoginToken
+	}
+	tempCredential := model.PlatformSiteCredential{
+		AuthType:       model.UpstreamAuthPassword,
+		Username:       credential.Username,
+		Password:       credential.Password,
+		AccessToken:    token,
+		RefreshToken:   findRefreshToken(payload),
+		TokenType:      firstNonEmptyString(findTokenType(payload), "Bearer"),
+		TokenExpiresAt: findTokenExpiresAt(payload),
+		UserID:         findUserID(payload),
+	}
+	if sessionID := findSessionID(payload); sessionID != "" {
+		tempCredential.SessionID = sessionID
+		tempCredential.SessionCurrent = true
+	}
+	session.Headers.Set("Authorization", bearerToken(token))
+	capturePlatformSiteSessionCookie(session, &tempCredential)
+	setTemporaryPasswordSessionMaterials(session, tempCredential)
+	credential.UserID = tempCredential.UserID
+	clearPlatformSiteTemporaryCredential(credential)
+	return nil
 }
 
 func loginNewAPIWithPassword(ctx context.Context, session *PlatformSiteSession, credential model.PlatformSiteCredential) (any, error) {
@@ -1772,6 +1961,104 @@ func setPlatformSiteCredentialUpdate(session *PlatformSiteSession, credential mo
 	session.CredentialUpdate = &updatedCredential
 }
 
+func setTemporaryPasswordSessionMaterials(
+	session *PlatformSiteSession,
+	credential model.PlatformSiteCredential,
+) {
+	if session == nil {
+		return
+	}
+	session.TemporaryToken = strings.TrimSpace(credential.AccessToken)
+	session.TemporaryRefresh = strings.TrimSpace(credential.RefreshToken)
+	session.TemporarySession = strings.TrimSpace(credential.SessionID)
+	session.TemporaryCookie = mergePlatformSiteCookieHeaders(
+		credential.Cookie,
+		platformSiteJarCookieHeader(session),
+	)
+	session.PasswordSession = session.TemporaryToken != "" ||
+		session.TemporaryRefresh != "" ||
+		session.TemporarySession != "" ||
+		session.TemporaryCookie != ""
+}
+
+func setPasswordSessionMaterialsFromPayload(
+	session *PlatformSiteSession,
+	payload any,
+) {
+	if session == nil {
+		return
+	}
+	setTemporaryPasswordSessionMaterials(session, model.PlatformSiteCredential{
+		AccessToken:    findToken(payload),
+		RefreshToken:   findRefreshToken(payload),
+		TokenType:      firstNonEmptyString(findTokenType(payload), "Bearer"),
+		TokenExpiresAt: findTokenExpiresAt(payload),
+		SessionID:      findSessionID(payload),
+		Cookie:         platformSiteJarCookieHeader(session),
+	})
+}
+
+func clearPlatformSiteTemporaryCredential(credential *model.PlatformSiteCredential) {
+	if credential == nil {
+		return
+	}
+	credential.AccessToken = ""
+	credential.RefreshToken = ""
+	credential.TokenExpiresAt = 0
+	credential.TokenType = ""
+	credential.SessionID = ""
+	credential.SessionCurrent = false
+	credential.AdminKey = ""
+	credential.Cookie = ""
+}
+
+func clearPlatformSiteTemporarySession(session *PlatformSiteSession) {
+	if session == nil {
+		return
+	}
+	session.Headers.Del("Authorization")
+	session.Headers.Del("Cookie")
+	session.Headers.Del("X-Auth-Session")
+	clearNewAPICompatUserHeaders(session.Headers)
+	session.PasswordSession = false
+	session.TemporaryToken = ""
+	session.TemporaryRefresh = ""
+	session.TemporarySession = ""
+	session.TemporaryCookie = ""
+}
+
+func clearPlatformSitePasswordSession(session *PlatformSiteSession) {
+	if session == nil {
+		return
+	}
+	clearPlatformSiteTemporarySession(session)
+	if session.Client == nil {
+		return
+	}
+	jar, err := cookiejar.New(nil)
+	if err == nil {
+		session.Client.Jar = jar
+	}
+}
+
+func clearNewAPICompatUserHeaders(headers http.Header) {
+	if headers == nil {
+		return
+	}
+	for _, name := range []string{
+		"New-API-User",
+		"X-ModelFlare-User",
+		"Veloera-User",
+		"X-Api-User",
+		"voapi-user",
+		"User-id",
+		"Rix-Api-User",
+		"neo-api-user",
+	} {
+		headers.Del(name)
+	}
+}
+
 func capturePlatformSiteCredentialCookie(session *PlatformSiteSession, rawURL string) {
 	if session == nil || session.CredentialUpdate == nil {
 		return
@@ -2263,7 +2550,7 @@ func platformSiteIdentityFromRecord(
 ) *PlatformSiteIdentitySnapshot {
 	identity := &PlatformSiteIdentitySnapshot{
 		PlatformUserID: firstString(record, "id", "user_id", "userId", "uid"),
-		Username:       firstString(record, "username", "user_name", "login"),
+		Username:       platformSiteUsernameFromRecord(record),
 		Email:          firstString(record, "email", "mail"),
 		DisplayName:    firstString(record, "display_name", "displayName", "nickname", "name"),
 		Role:           firstString(record, "role", "role_name", "roleName"),
@@ -2277,6 +2564,16 @@ func platformSiteIdentityFromRecord(
 		SourceEndpoint:    sourceEndpoint,
 	}
 	return identity
+}
+
+func platformSiteUsernameFromRecord(record map[string]any) string {
+	if record == nil {
+		return ""
+	}
+	return firstNonEmptyString(
+		firstString(record, "username", "user_name", "login"),
+		firstString(record, "email", "mail"),
+	)
 }
 
 func platformSiteEndpointURL(baseURL, path string) string {

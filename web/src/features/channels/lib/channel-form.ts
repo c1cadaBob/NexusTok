@@ -49,15 +49,10 @@ const SUPPORTED_PROXY_PROTOCOLS = new Set([
   'socks5:',
   'socks5h:',
 ])
-const PLATFORM_SITE_TYPE_BY_PLATFORM = {
-  newapi: CHANNEL_TYPE_NEW_API,
-  sub2api: CHANNEL_TYPE_SUB2_API,
-} as const
-
-function platformSiteChannelType(
-  platform: keyof typeof PLATFORM_SITE_TYPE_BY_PLATFORM
-): number {
-  return PLATFORM_SITE_TYPE_BY_PLATFORM[platform]
+export function platformForChannelType(
+  channelType: number
+): 'newapi' | 'sub2api' {
+  return channelType === CHANNEL_TYPE_SUB2_API ? 'sub2api' : 'newapi'
 }
 
 function isOptionalProxyURL(value: string | undefined): boolean {
@@ -218,21 +213,11 @@ export const channelFormSchema = z
     key_priority: z.number().int().min(0).max(99).default(0),
     conversion_ratio: z.number().min(0).default(1),
     key_weight_override: z.number().int().min(0).max(2000).optional(),
-    platform_site_platform: z.enum(['newapi', 'sub2api']).default('newapi'),
-    platform_site_auth_type: z
-      .enum(['password', 'auto', 'access_token', 'admin_key', 'cookie'])
-      .default('password'),
+    platform_site_auth_type: z.enum(['password', 'auto']).default('password'),
     platform_site_auth_flow_id: z.string().optional(),
     platform_site_capture_id: z.string().optional(),
     platform_site_username: z.string().optional(),
     platform_site_password: z.string().optional(),
-    platform_site_access_token: z.string().optional(),
-    platform_site_token_expires_at: z.number().int().min(0).optional(),
-    platform_site_token_type: z.string().optional(),
-    platform_site_session_id: z.string().optional(),
-    platform_site_session_current: z.boolean().optional(),
-    platform_site_admin_key: z.string().optional(),
-    platform_site_cookie: z.string().optional(),
     platform_site_recharge_amount: z.number().min(0).default(0),
     platform_site_credited_amount: z.number().min(0).default(0),
     platform_site_conversion_ratio: z.number().min(0).default(1),
@@ -324,9 +309,6 @@ export const channelFormSchema = z
   .superRefine((data, ctx) => {
     if (data.upstream_kind === 'platform_site') {
       if (![CHANNEL_TYPE_NEW_API, CHANNEL_TYPE_SUB2_API].includes(data.type)) {
-        addRequiredIssue(ctx, 'type', '平台站点仅支持 NewAPI 或 Sub2API')
-      }
-      if (data.type !== platformSiteChannelType(data.platform_site_platform)) {
         addRequiredIssue(ctx, 'type', '平台站点仅支持 NewAPI 或 Sub2API')
       }
       if (!data.base_url?.trim()) {
@@ -477,19 +459,11 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   key_priority: 0,
   conversion_ratio: 1,
   key_weight_override: undefined,
-  platform_site_platform: 'newapi',
   platform_site_auth_type: 'password',
   platform_site_auth_flow_id: '',
   platform_site_capture_id: '',
   platform_site_username: '',
   platform_site_password: '',
-  platform_site_access_token: '',
-  platform_site_token_expires_at: undefined,
-  platform_site_token_type: '',
-  platform_site_session_id: '',
-  platform_site_session_current: false,
-  platform_site_admin_key: '',
-  platform_site_cookie: '',
   platform_site_recharge_amount: 0,
   platform_site_credited_amount: 0,
   platform_site_conversion_ratio: 1,
@@ -652,20 +626,11 @@ export function transformChannelToFormDefaults(
     key_priority: channel.key_priority ?? 0,
     conversion_ratio: channel.conversion_ratio ?? 1,
     key_weight_override: channel.key_weight_override ?? undefined,
-    platform_site_platform:
-      channel.type === CHANNEL_TYPE_SUB2_API ? 'sub2api' : 'newapi',
     platform_site_auth_type: 'password',
     platform_site_auth_flow_id: '',
     platform_site_capture_id: '',
     platform_site_username: '',
     platform_site_password: '',
-    platform_site_access_token: '',
-    platform_site_token_expires_at: undefined,
-    platform_site_token_type: '',
-    platform_site_session_id: '',
-    platform_site_session_current: false,
-    platform_site_admin_key: '',
-    platform_site_cookie: '',
     platform_site_recharge_amount: 0,
     platform_site_credited_amount: 0,
     platform_site_conversion_ratio: 1,
@@ -895,7 +860,7 @@ function buildPlatformSitePayload(
   formData: ChannelFormValues
 ): PlatformSiteInput {
   const payload: PlatformSiteInput = {
-    platform: formData.platform_site_platform,
+    platform: platformForChannelType(formData.type),
     base_url: normalizeBaseUrl(formData.base_url),
     auth_type: formData.platform_site_auth_type,
     auth_flow_id:
@@ -909,27 +874,13 @@ function buildPlatformSitePayload(
       : undefined,
   }
   if (formData.platform_site_auth_type === 'password') {
+    payload.username =
+      formData.platform_site_username?.trim() || undefined
+    payload.password = formData.platform_site_password || undefined
     return payload
   }
   if (formData.platform_site_auth_type === 'auto') {
     payload.capture_id = formData.platform_site_capture_id?.trim() || undefined
-  } else if (formData.platform_site_auth_type === 'access_token') {
-    payload.access_token =
-      formData.platform_site_access_token?.trim() || undefined
-    payload.cookie = formData.platform_site_cookie?.trim() || undefined
-    payload.session_id = formData.platform_site_session_id?.trim() || undefined
-    payload.token_type = formData.platform_site_token_type?.trim() || undefined
-    if (
-      typeof formData.platform_site_token_expires_at === 'number' &&
-      formData.platform_site_token_expires_at > 0
-    ) {
-      payload.token_expires_at = formData.platform_site_token_expires_at
-    }
-    payload.session_current = formData.platform_site_session_current === true
-  } else if (formData.platform_site_auth_type === 'admin_key') {
-    payload.admin_key = formData.platform_site_admin_key
-  } else if (formData.platform_site_auth_type === 'cookie') {
-    payload.cookie = formData.platform_site_cookie
   }
   return payload
 }
@@ -947,7 +898,7 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
   const mode = formData.multi_key_mode || 'single'
   const channelType =
     formData.upstream_kind === 'platform_site'
-      ? platformSiteChannelType(formData.platform_site_platform)
+      ? formData.type
       : formData.type
 
   const channel: Partial<Channel> = {
@@ -1014,7 +965,7 @@ export function transformFormDataToUpdatePayload(
 ): Partial<Channel> & { platform_site?: PlatformSiteInput } {
   const channelType =
     formData.upstream_kind === 'platform_site'
-      ? platformSiteChannelType(formData.platform_site_platform)
+      ? formData.type
       : formData.type
   const payload: Partial<Channel> & { platform_site?: PlatformSiteInput } = {
     id: channelId,

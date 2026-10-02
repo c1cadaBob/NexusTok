@@ -1,6 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import {
-  ChevronDown,
   ExternalLink,
   KeyRound,
   Loader2,
@@ -38,8 +37,7 @@ import {
   startPlatformSiteCapture,
   verifyPlatformSiteAuthFlow,
 } from '../../api'
-import { CHANNEL_TYPE_NEW_API, CHANNEL_TYPE_SUB2_API } from '../../constants'
-import type { ChannelFormValues } from '../../lib'
+import { platformForChannelType, type ChannelFormValues } from '../../lib'
 import type { UpstreamSiteStatus } from '../../types'
 
 type PlatformSiteFieldsProps = {
@@ -71,35 +69,10 @@ function openPlatformCaptureURL(
   try {
     const opened = window.open(targetURL, '_blank')
     if (!opened) return false
-    try {
-      opened.opener = null
-    } catch {
-      // 部分浏览器不允许修改 opener；打开结果仍然可用。
-    }
     opened.focus()
     return true
   } catch {
     return false
-  }
-}
-
-function formatPlatformAuthType(
-  value: string | undefined,
-  t: (key: string) => string
-): string {
-  switch (value) {
-    case 'password':
-      return t('Username and password')
-    case 'auto':
-      return t('Automatic configuration')
-    case 'access_token':
-      return t('Access token')
-    case 'admin_key':
-      return t('Admin Key')
-    case 'cookie':
-      return t('Cookie')
-    default:
-      return value || '-'
   }
 }
 
@@ -117,6 +90,15 @@ function normalizePlatformRatio(value: number): number {
   return Math.round(value * RATIO_INPUT_PRECISION) / RATIO_INPUT_PRECISION
 }
 
+function formatPlatformCaptureAuthType(
+  value: string | undefined,
+  t: (key: string) => string
+): string {
+  return value === 'password'
+    ? t('Username and password')
+    : t('Automatic configuration')
+}
+
 function formatPlatformRatioInput(value: number): string {
   return String(normalizePlatformRatio(normalizePlatformNumber(value, 1)))
 }
@@ -128,10 +110,7 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
     control: form.control,
     name: 'type',
   })
-  const platform = useWatch({
-    control: form.control,
-    name: 'platform_site_platform',
-  })
+  const platform = platformForChannelType(channelType ?? 0)
   const authType = useWatch({
     control: form.control,
     name: 'platform_site_auth_type',
@@ -185,16 +164,16 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
   const activeCaptureWindowRef = useRef<Window | null>(null)
   const [handoffURL, setHandoffURL] = useState('')
   const [showHandoffFallback, setShowHandoffFallback] = useState(false)
+  const [helperVersion, setHelperVersion] = useState('')
+  const [helperDetection, setHelperDetection] = useState<
+    'idle' | 'probing' | 'ready' | 'missing' | 'outdated'
+  >('idle')
   const [twoFactorCode, setTwoFactorCode] = useState('')
   const [authFlowStatus, setAuthFlowStatus] = useState<
     'two_factor_required' | 'authenticated' | undefined
   >()
-  const [advancedAuthOpen, setAdvancedAuthOpen] = useState(
-    authType === 'access_token' ||
-      authType === 'admin_key' ||
-      authType === 'cookie'
-  )
   const authFlowRef = useRef('')
+  const helperProbeTimerRef = useRef<number | null>(null)
 
   const captureStatusQuery = useQuery({
     queryKey: ['platform-site-capture-status', captureID],
@@ -208,19 +187,15 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
 
   const captureMutation = useMutation({
     mutationFn: () => {
-      if (
-        authType !== 'auto' &&
-        authType !== 'access_token' &&
-        authType !== 'admin_key' &&
-        authType !== 'cookie'
-      ) {
+      if (authType !== 'auto') {
         throw new Error(t('Select a script-based authentication method first.'))
       }
       return startPlatformSiteCapture({
         platform,
         base_url: baseURL || '',
-        auth_type: authType,
+        auth_type: 'auto',
         channel_id: props.channelId,
+        return_url: window.location.href,
       })
     },
     onSuccess: (response) => {
@@ -234,6 +209,14 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
       })
       completedCaptureRef.current = ''
       setHandoffURL(response.data.handoff_url)
+      setHelperVersion(response.data.helper_version || '')
+      setHelperDetection('probing')
+      if (helperProbeTimerRef.current) {
+        window.clearTimeout(helperProbeTimerRef.current)
+      }
+      helperProbeTimerRef.current = window.setTimeout(() => {
+        setHelperDetection('missing')
+      }, 4500)
       const targetWindow = pendingCaptureWindowRef.current
       pendingCaptureWindowRef.current = null
       const hasTargetWindow = Boolean(targetWindow && !targetWindow.closed)
@@ -295,7 +278,6 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
       setAuthFlowStatus(
         flow.status === 'two_factor_required' ? flow.status : 'authenticated'
       )
-      form.setValue('platform_site_username', '')
       form.setValue('platform_site_password', '')
       if (flow.status === 'two_factor_required') {
         setTwoFactorCode('')
@@ -347,13 +329,108 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
   const onCaptureCompleted = props.onCaptureCompleted
 
   useEffect(() => {
+    if (typeof window === 'undefined') return
+    const currentURL = new URL(window.location.href)
+    const returnedCaptureID = currentURL.searchParams
+      .get('platform_site_capture_id')
+      ?.trim()
+    if (!returnedCaptureID) return
+
+    if (captureID !== returnedCaptureID) {
+      form.setValue('platform_site_capture_id', returnedCaptureID, {
+        shouldDirty: true,
+        shouldValidate: true,
+      })
+      completedCaptureRef.current = ''
+    }
+    currentURL.searchParams.delete('platform_site_capture_id')
+    window.history.replaceState(
+      window.history.state,
+      document.title,
+      currentURL.toString()
+    )
+  }, [captureID, form])
+
+  useEffect(() => {
     if (!captureStatus || captureStatus.status !== 'completed') return
     if (completedCaptureRef.current === captureStatus.capture_id) return
     completedCaptureRef.current = captureStatus.capture_id
+    if (helperProbeTimerRef.current) {
+      window.clearTimeout(helperProbeTimerRef.current)
+      helperProbeTimerRef.current = null
+    }
+    setHelperDetection('ready')
+    setHelperVersion(
+      captureStatus.helper_version ||
+        captureStatus.diagnostics?.helper_version ||
+        ''
+    )
     setShowHandoffFallback(false)
     toast.success(t('Upstream login state captured'))
     onCaptureCompleted?.(captureStatus.capture_id)
   }, [captureStatus, onCaptureCompleted, t])
+
+  useEffect(() => {
+    const handleHelperMessage = (event: MessageEvent) => {
+      const data = event.data as
+        | {
+            type?: string
+            helper_version?: string
+            helperVersion?: string
+            capture_id?: string
+            captureID?: string
+          }
+        | undefined
+      if (
+        !data ||
+        data.type !== 'nexustok-upstream-capture-helper-ready'
+      ) {
+        return
+      }
+      const expectedCaptureID = captureID || ''
+      const messageCaptureID = String(
+        data.capture_id || data.captureID || ''
+      ).trim()
+      if (messageCaptureID && messageCaptureID !== expectedCaptureID) return
+      const expectedOrigin = captureStatus?.origin?.trim()
+      if (expectedOrigin && event.origin !== expectedOrigin) return
+      const expectedWindow = activeCaptureWindowRef.current
+      if (expectedWindow && event.source && event.source !== expectedWindow) return
+      const detectedVersion = String(
+        data.helper_version || data.helperVersion || ''
+      ).trim()
+      const requiredVersion = String(
+        captureStatus?.helper_required_version ||
+          captureStatus?.helper_version ||
+          helperVersion ||
+          ''
+      ).trim()
+      setHelperVersion(detectedVersion)
+      if (detectedVersion && requiredVersion && detectedVersion !== requiredVersion) {
+        setHelperDetection('outdated')
+        return
+      }
+      setHelperDetection('ready')
+      if (helperProbeTimerRef.current) {
+        window.clearTimeout(helperProbeTimerRef.current)
+        helperProbeTimerRef.current = null
+      }
+    }
+    window.addEventListener('message', handleHelperMessage)
+    return () => {
+      window.removeEventListener('message', handleHelperMessage)
+      if (helperProbeTimerRef.current) {
+        window.clearTimeout(helperProbeTimerRef.current)
+        helperProbeTimerRef.current = null
+      }
+    }
+  }, [
+    captureID,
+    captureStatus?.origin,
+    captureStatus?.helper_required_version,
+    captureStatus?.helper_version,
+    helperVersion,
+  ])
 
   function handleStartCapture() {
     if (
@@ -366,13 +443,6 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
     try {
       pendingCaptureWindowRef.current = window.open('about:blank', '_blank')
       activeCaptureWindowRef.current = pendingCaptureWindowRef.current
-      if (pendingCaptureWindowRef.current) {
-        try {
-          pendingCaptureWindowRef.current.opener = null
-        } catch {
-          // 部分浏览器不允许修改 opener；仍保留窗口引用用于后续导航。
-        }
-      }
     } catch {
       pendingCaptureWindowRef.current = null
       activeCaptureWindowRef.current = null
@@ -414,32 +484,6 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
   }, [conversionRatio, form, previewRatio, ratioIsOverridden])
 
   useEffect(() => {
-    if (channelType === CHANNEL_TYPE_NEW_API && platform !== 'newapi') {
-      form.setValue('platform_site_platform', 'newapi', {
-        shouldDirty: true,
-        shouldValidate: true,
-      })
-      return
-    }
-    if (channelType === CHANNEL_TYPE_SUB2_API && platform !== 'sub2api') {
-      form.setValue('platform_site_platform', 'sub2api', {
-        shouldDirty: true,
-        shouldValidate: true,
-      })
-    }
-  }, [channelType, form, platform])
-
-  useEffect(() => {
-    if (
-      authType === 'access_token' ||
-      authType === 'admin_key' ||
-      authType === 'cookie'
-    ) {
-      setAdvancedAuthOpen(true)
-    }
-  }, [authType])
-
-  useEffect(() => {
     authFlowRef.current = authFlowID || ''
   }, [authFlowID])
 
@@ -460,15 +504,7 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
     authFlowRef.current = ''
     setAuthFlowStatus(undefined)
     form.setValue('platform_site_auth_flow_id', '')
-    form.setValue('platform_site_username', '')
     form.setValue('platform_site_password', '')
-    form.setValue('platform_site_access_token', '')
-    form.setValue('platform_site_token_expires_at', undefined)
-    form.setValue('platform_site_token_type', '')
-    form.setValue('platform_site_session_id', '')
-    form.setValue('platform_site_session_current', false)
-    form.setValue('platform_site_admin_key', '')
-    form.setValue('platform_site_cookie', '')
     form.setValue('platform_site_capture_id', '')
     setTwoFactorCode('')
     setHandoffURL('')
@@ -500,31 +536,22 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
           )}
         </div>
       )}
-      <div className='grid gap-4 sm:grid-cols-2'>
+      <div className='grid gap-4 sm:grid-cols-[minmax(0,2fr)_minmax(0,8fr)]'>
         <FormField
           control={form.control}
-          name='platform_site_platform'
+          name='platform_site_auth_type'
           render={({ field }) => (
             <FormItem>
-              <FormLabel>{t('Platform site')}</FormLabel>
+              <FormLabel>{t('Authentication method')}</FormLabel>
               <Select
                 value={field.value}
                 onValueChange={(value) => {
                   field.onChange(value)
-                  form.setValue(
-                    'type',
-                    value === 'sub2api'
-                      ? CHANNEL_TYPE_SUB2_API
-                      : CHANNEL_TYPE_NEW_API,
-                    {
-                      shouldDirty: true,
-                      shouldValidate: true,
-                    }
-                  )
+                  clearAuthenticationFields()
                 }}
                 items={[
-                  { value: 'newapi', label: 'NewAPI' },
-                  { value: 'sub2api', label: 'Sub2API' },
+                  { value: 'password', label: t('Username and password') },
+                  { value: 'auto', label: t('Automatic configuration') },
                 ]}
               >
                 <FormControl>
@@ -533,8 +560,12 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
                   </SelectTrigger>
                 </FormControl>
                 <SelectContent>
-                  <SelectItem value='newapi'>NewAPI</SelectItem>
-                  <SelectItem value='sub2api'>Sub2API</SelectItem>
+                  <SelectItem value='password'>
+                    {t('Username and password')}
+                  </SelectItem>
+                  <SelectItem value='auto'>
+                    {t('Automatic configuration')}
+                  </SelectItem>
                 </SelectContent>
               </Select>
               <FormMessage />
@@ -544,91 +575,23 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
 
         <FormField
           control={form.control}
-          name='platform_site_auth_type'
+          name='base_url'
           render={({ field }) => (
-            <div className='space-y-2'>
-              <FormItem>
-                <FormLabel>{t('Authentication method')}</FormLabel>
-                <Select
-                  value={field.value}
-                  onValueChange={(value) => {
-                    field.onChange(value)
-                    clearAuthenticationFields()
-                  }}
-                  items={[
-                    { value: 'password', label: t('Username and password') },
-                    { value: 'auto', label: t('Automatic configuration') },
-                    { value: 'access_token', label: t('Access token') },
-                    { value: 'admin_key', label: t('Admin Key') },
-                    { value: 'cookie', label: t('Cookie') },
-                  ]}
-                >
-                  <FormControl>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                  </FormControl>
-                  <SelectContent>
-                    <SelectItem value='password'>
-                      {t('Username and password')}
-                    </SelectItem>
-                    <SelectItem value='auto'>
-                      {t('Automatic configuration')}
-                    </SelectItem>
-                    {advancedAuthOpen && (
-                      <>
-                        <SelectItem value='access_token'>
-                          {t('Access token')}
-                        </SelectItem>
-                        <SelectItem value='admin_key'>
-                          {t('Admin Key')}
-                        </SelectItem>
-                        <SelectItem value='cookie'>{t('Cookie')}</SelectItem>
-                      </>
-                    )}
-                  </SelectContent>
-                </Select>
-                <FormMessage />
-              </FormItem>
-              <Button
-                type='button'
-                variant='ghost'
-                size='sm'
-                className='h-auto px-0 text-xs'
-                onClick={() => setAdvancedAuthOpen((open) => !open)}
-                aria-expanded={advancedAuthOpen}
-              >
-                <ChevronDown
-                  className={`size-4 transition-transform ${
-                    advancedAuthOpen ? 'rotate-180' : ''
-                  }`}
-                  aria-hidden='true'
-                />
-                {t('Advanced authentication')}
-              </Button>
-            </div>
+            <FormItem>
+              <FormLabel>{t('Site URL *')}</FormLabel>
+              <FormControl>
+                <Input type='url' placeholder='https://example.com' {...field} />
+              </FormControl>
+              <FormDescription>
+                {t(
+                  'HTTP and HTTPS are supported, including private and local addresses.'
+                )}
+              </FormDescription>
+              <FormMessage />
+            </FormItem>
           )}
         />
       </div>
-
-      <FormField
-        control={form.control}
-        name='base_url'
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>{t('Site URL *')}</FormLabel>
-            <FormControl>
-              <Input type='url' placeholder='https://example.com' {...field} />
-            </FormControl>
-            <FormDescription>
-              {t(
-                'HTTP and HTTPS are supported, including private and local addresses.'
-              )}
-            </FormDescription>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
 
       {authType === 'password' && !authFlowID && (
         <div className='space-y-3'>
@@ -747,6 +710,32 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
               </span>
             )}
           </div>
+          {helperDetection !== 'idle' && (
+            <p
+              className={
+                helperDetection === 'missing' ||
+                helperDetection === 'outdated'
+                  ? 'text-destructive text-xs'
+                  : 'text-muted-foreground text-xs'
+              }
+              aria-live='polite'
+            >
+              {helperDetection === 'probing' &&
+                t('Detecting Capture Helper...')}
+              {helperDetection === 'ready' &&
+                t('Capture Helper is ready (version {{version}})', {
+                  version: helperVersion || 'unknown',
+                })}
+              {helperDetection === 'missing' &&
+                t(
+                  'Capture Helper was not detected. Install it and try again.'
+                )}
+              {helperDetection === 'outdated' &&
+                t(
+                  'Capture Helper is outdated. Update it before continuing.'
+                )}
+            </p>
+          )}
           <p className='text-muted-foreground text-xs'>
             {t(
               'Open the upstream site and let the Capture Helper choose the best available authentication method. Tokens, cookies, and Admin Keys are never entered here.'
@@ -789,7 +778,8 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
                 size='sm'
                 onClick={() =>
                   window.open(
-                    captureStatus.helper_install_url,
+                    captureStatus.userscript_url ||
+                      captureStatus.helper_install_url,
                     '_blank',
                     'noopener,noreferrer'
                   )
@@ -822,7 +812,10 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
             <div className='text-muted-foreground grid gap-1 text-xs'>
               <span>
                 {t('Authentication method')}:{' '}
-                {formatPlatformAuthType(captureStatus.summary.auth_type, t)}
+                {formatPlatformCaptureAuthType(
+                  captureStatus.summary.auth_type,
+                  t
+                )}
               </span>
               {captureStatus.summary.access_token_masked && (
                 <span>
@@ -850,94 +843,6 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
             </div>
           )}
         </div>
-      )}
-
-      {authType === 'access_token' && (
-        <div className='grid gap-4 sm:grid-cols-2'>
-          <FormField
-            control={form.control}
-            name='platform_site_access_token'
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>{t('Access token')}</FormLabel>
-                <FormControl>
-                  <Input type='password' autoComplete='off' {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-          {platform === 'newapi' && (
-            <FormField
-              control={form.control}
-              name='platform_site_session_id'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t('Dashboard Session ID')}</FormLabel>
-                  <FormControl>
-                    <Input type='password' autoComplete='off' {...field} />
-                  </FormControl>
-                  <FormDescription>
-                    {t('Used with the NewAPI Dashboard refresh endpoint.')}
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          )}
-          {platform === 'newapi' && (
-            <FormField
-              control={form.control}
-              name='platform_site_cookie'
-              render={({ field }) => (
-                <FormItem className='sm:col-span-2'>
-                  <FormLabel>{t('Cookie')}</FormLabel>
-                  <FormControl>
-                    <Input type='password' autoComplete='off' {...field} />
-                  </FormControl>
-                  <FormDescription>
-                    {t(
-                      'For NewAPI Dashboard refresh, include the new_api_refresh cookie.'
-                    )}
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          )}
-        </div>
-      )}
-
-      {authType === 'admin_key' && (
-        <FormField
-          control={form.control}
-          name='platform_site_admin_key'
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>{t('Admin Key')}</FormLabel>
-              <FormControl>
-                <Input type='password' autoComplete='off' {...field} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-      )}
-
-      {authType === 'cookie' && (
-        <FormField
-          control={form.control}
-          name='platform_site_cookie'
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>{t('Cookie')}</FormLabel>
-              <FormControl>
-                <Input type='password' autoComplete='off' {...field} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
       )}
 
       <div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-4'>

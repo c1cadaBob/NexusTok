@@ -1,7 +1,7 @@
 # NexusTok 功能原理与实现偏差文档
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-01
+> 事实基线日期：2026-10-02
 > 主要代码来源：`main.go`、`router/`、`middleware/`、`controller/`、`service/`、`model/`、`relay/`、`pkg/`、`constant/`
 > 关联详细文档：[`docs/authentication.md`](../authentication.md)、[`docs/rate-limiting.md`](../rate-limiting.md)、[`docs/key-routing-strategy.md`](../key-routing-strategy.md)、[`docs/upstream-channel-platform-sites.md`](../upstream-channel-platform-sites.md)、[`docs/plugin-api/`](../plugin-api/)
 
@@ -104,3 +104,4 @@
 | 2026-10-01 | v0.2.3 发布收尾 | v0.2.3 发布前仍保留一次性 Dependabot 处理工作流，架构记录还显示 #107 开放且标签、镜像和 Release 待验证 | 删除一次性处理工作流；根据 GitHub 远端安全页面确认 Dependabot #107 已完成处理且没有开放警报；保留 v0.2.3 正式标签工作流、Docker 多架构镜像、GitHub Release 和 Electron 产物的发布验证边界 | `.github/release-notes/v0.2.3.md`、`.github/workflows/dependabot-v023-release.yml`、Git 标签和发布工作流 | 远端安全页面显示无开放 Dependabot 警报；正式标签推送后继续核验 Docker amd64/arm64 manifest、Cosign、GitHub Release 和 Electron 工作流；本地 Dockerfile 完整构建仍受 `proxy.golang.org` 网络超时限制 |
 | 2026-10-01 | v0.2.4 部署故障修复与全新部署准备 | PostgreSQL 历史唯一约束可能使启动迁移删除不存在的约束并失败；部署脚本可能在真实网络认证前启动应用；全新清理容易误删其它 Docker 资源 | 已知历史对象在 `AutoMigrate` 前安全转换为独立唯一索引；Compose 健康检查和部署脚本先执行 TCP 密码认证，失败时不启动应用；文档明确备份、named volume、Redis 临时状态和精确 NexusTok 清理边界；目标发布镜像为 `c1cadabob/nexustok:v0.2.4` 与 `latest` | `model/subscription_pre_consume_migration.go`、`model/subscription_pre_consume_migration_test.go`、`docker-compose.yml`、`scripts/deploy.sh`、部署文档 | SQLite、PostgreSQL 15、MySQL 8.x 的实际命令和结果纳入发布报告；最低版本和远端清理在未执行前不作完成声明 |
 | 2026-10-02 | Docker 自动更新端口占用修复 | 应用内 Docker 更新在旧容器仍占用 `3030` 时直接启动同端口 staging 容器，可能失败于 `port is already allocated` | bridge/Compose 网络先启动无宿主端口、无 Compose 标签/别名的 preflight 容器探活，再停旧启动正式容器；失败恢复旧容器并保留 backup | Docker 自动更新、系统任务终态和维护页错误展示 | `service/system_update_docker.go`、`service/system_update_test.go`；定向 Docker 更新测试通过 |
+| 2026-10-02 | 平台站点密码会话清理与自动配置优化 | NewAPI/Sub2API 密码同步可能复用历史登录态；同步结束没有统一注销本轮会话；自动配置、平台字段和历史一次性凭据的边界不完整 | 密码同步每次重新登录并只清理本轮会话；NewAPI 先登出再按 SID 精确删除，Sub2API 仅用本轮 Refresh Token 登出，资源或快照失败仍保留最近成功快照；表单由渠道类型派生平台，仅保留账号密码/自动配置；自动配置使用现有加密凭据结构、验证诊断和一次性跨节点 claim | 平台站点认证、资源同步、Capture Helper、渠道表单、缓存和路由快照 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_capture.go`、`controller/upstream_channel.go`、本机 New API/Sub2API/all-api-hub 参考源、定向 Go/React 测试 |

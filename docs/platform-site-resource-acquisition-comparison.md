@@ -1,7 +1,7 @@
 # Sub2API 与 New API 平台站点资源获取链路分析及版本差异
 
 > 文档状态：源码事实分析
-> 分析日期：2026-09-30
+> 分析日期：2026-10-02
 > 适用范围：旧版备份、Sub2API/New API/all-api-hub 本机参考源、当前 NexusTok
 > 安全边界：本文只记录接口契约、字段语义、代码入口和失败处理，不记录任何真实密码、Cookie、Access Token、Refresh Token、Admin Key、测试账号、环境变量或完整密钥。
 
@@ -443,12 +443,18 @@ New API Handler 注释、兼容站点和真实注册路径也可能不同，核�
 3. 读取 `PlatformSiteAccount`，解密 `CredentialCiphertext`。
 4. 根据渠道 `setting.proxy`、HTTP 协议和连接分片创建平台站点 HTTP Client。
 5. 根据 `Platform` 选择 `NewAPIAdapter` 或 `Sub2APIAdapter`。
-6. 适配器认证，必要时刷新 Session、Cookie、Access Token 或 Refresh Token。
-7. 将轮换后的凭据放入 `session.CredentialUpdate`，成功或明确可保存时再加密回写。
+6. 适配器认证：`password` 每轮直接使用账号密码登录，不读取已保存的 Session、
+   Cookie、Access Token、Refresh Token 或 Dashboard Refresh；历史 `access_token`、
+   `admin_key`、`cookie` 和浏览器 Capture 凭据才按各自认证方式使用已有登录态。
+7. 将非密码认证的轮换凭据放入 `session.CredentialUpdate`；密码同步只把真实用户名、
+   密码、可选 User ID、认证时间和正常状态加密回写，不保存本轮临时 Token、Cookie、
+   Session ID 或过期信息。
 8. 调用 `FetchSnapshot`，得到身份、余额、账号用量、分组、端点、Key、Key 模型和资源状态。
 9. `persistPlatformSiteSnapshot` 开启事务，写入平台资源表、`UpstreamKey`、`UpstreamKeyAbility`、父渠道余额、父渠道用量和模型并集。
 10. 刷新渠道缓存、Routing Key 和路由模型索引。
 11. 失败时写入脱敏失败类别和资源级状态，但保留最近成功 Key、额度、模型、倍率、权重和能力。
+12. 资源快照读取、部分分页失败和快照写库结束后，密码会话由适配器 `Cleanup` 尽力
+    注销；Cleanup 失败只告警，不覆盖已获取快照或把账号标记为凭据失效。
 
 当前安全边界：
 
@@ -1007,3 +1013,39 @@ Sub2API 站点验收结果：
 | --- | --- | --- | --- | --- |
 | 2026-09-30 | 当前 New API Token、Sub2API 普通 Key 和 Admin Key 资源分页统一受 100 页上限影响；New API 登录和 Sub2API 登录主体兼容、完整 Key 补偿、资源顺序和模型来源边界与旧版不完全一致 | 迁移旧版已验证契约：三类资源分页独立恢复为最多 1000 页；New API 恢复 `username`、`email` 和混合主体的受限兼容、批量 Key 缺失补偿及单条 POST/GET 回退；Sub2API 恢复 email/username/混合主体、Profile/Groups/Usage/Keys 顺序、列表完整 Key 优先、详情补齐和单 Key Relay 模型探测；凭据加密、Refresh 轮换、安全验证分类和最近成功快照保持不变 | New API/Sub2API 认证、资源快照、Key 生命周期、模型能力和路由候选 | `service/upstream_site_adapters.go`、`service/upstream_site.go`、`service/upstream_site_test.go`；本机三套参考源；两个真实站点隔离会话黑盒验收 |
 | 2026-09-30 | 真实站点验收记录容易混入凭据或完整响应 | 只保留脱敏方法、路径、状态、资源数量和资源状态；New API 验收到 11 条 Key/32 个聚合模型，Sub2API 验收到 10 条 Key/18 个聚合模型；两站点均只执行登录、资源读取、Key 详情和 `/v1/models` 探测 | 交付文档、审计边界和后续回归 | Chrome DevTools MCP 隔离上下文；验收结束已关闭真实站点页面且未生成临时文件 |
+
+## 17. 2026-10-02 平台站点认证、会话清理与自动配置
+
+**变更前**
+
+- 当前同步链路可能把历史 Access Token、Refresh Token、Cookie、Session ID 或
+  NewAPI Dashboard Refresh 作为密码同步的 fallback；
+- NewAPI/Sub2API 资源获取完成后没有统一记录本轮会话注销、精确 SID/Refresh Token
+  边界，清理失败与快照状态的关系不清楚；
+- 自动配置的候选顺序、用户验证、Helper 版本、诊断字段和跨节点一次性消费规则
+  没有与现有资源快照链路统一。
+
+**变更后**
+
+- NewAPI 密码登录固定从 `POST /api/user/login?turnstile=` 开始，清除内存旧认证
+  材料，不调用 Dashboard Refresh；Sub2API 密码登录固定调用
+  `POST /api/v1/auth/login`。NewAPI 结束后调用 `POST /api/user/auth/logout`，有
+  SID 时继续调用 `DELETE /api/user/sessions/{sid}`；`AUTH_SESSION_MISMATCH` 和
+  401/403/404/405 属于幂等完成，禁止 `/api/user/sessions/revoke-others`。
+- Sub2API 结束后只调用 `POST /api/v1/auth/logout` 并提交本轮 `refresh_token`，
+  禁止 `/api/v1/auth/revoke-all-sessions`。无 Refresh Token、网络错误或意外 5xx
+  只产生脱敏告警，清理仍清除本地临时材料，最近成功快照不被覆盖。
+- 两个平台的 `PlatformSiteAdapter.Cleanup` 在认证错误、资源错误、部分分页失败和
+  快照写库前后执行；Access Token、Admin Key、Cookie 和浏览器 Capture 登录态不执行
+  后台注销。自动配置 Helper 当前版本为 `1.5.0`，先验证当前用户或 Admin 管理权限，
+  仅保留存在性、存储键、验证接口、版本、失败阶段和来源诊断。
+- Capture 结果继续使用 `PlatformSiteCredential` 的现有加密字段。解析后使用
+  Redis `SET NX` 或单进程内存 claim 独占，渠道保存成功后一次性消费，后续失败释放
+  claim；claim token 不进入 API 响应，历史旧凭据继续可读但不再提供新的手动输入入口。
+- 资源失败、分页失败、权限不足、安全验证和 Cleanup 告警不会删除或降级已有
+  `UpstreamKey`、模型能力、额度、倍率、权重和 RoutingKey 候选；只有完整资源同步
+  允许执行密钥缺失判定。
+
+本次没有新增数据库字段。当前本地矩阵仅覆盖真实 SQLite 3.50.4、MySQL 8.2.0 和
+PostgreSQL 15.19；MySQL 5.7.8、PostgreSQL 9.6、独立日志数据库和真实生产上游注销
+结果仍按“待持续核验”记录。
