@@ -115,7 +115,7 @@ HTTP
 Redis 兼容模式。SQLite 文件不会自动迁移到 PostgreSQL；已有生产数据切换前必须备份，
 并单独执行经过验证的数据迁移。
 
-本次发布镜像为 `c1cadabob/nexustok:v0.2.4` 和 `c1cadabob/nexustok:latest`，Dockerfile
+本次发布镜像为 `c1cadabob/nexustok:v0.2.5` 和 `c1cadabob/nexustok:latest`，Dockerfile
 通过当前 `web/` 的 Bun/Rsbuild `bun run build` 生成并嵌入新版前端，不新增路由、DTO、
 数据库模型或字段。
 
@@ -164,6 +164,20 @@ Docker 多架构发布和真实生产切换仍以 GitHub Actions 结果和实际
 本版本未新增数据库模型、字段、API 路由、DTO、Token 格式或前端路由契约。发布镜像为
 `c1cadabob/nexustok:v0.2.4` 和 `c1cadabob/nexustok:latest`；用户需要在清理后自行
 重新克隆仓库并执行 `bash scripts/deploy.sh`，本次不会自动部署。
+
+### v0.2.5 Sub2API 登录服务条款兼容与发布基线（2026-10-02）
+
+**变更前**：Sub2API 账号密码登录没有读取公开服务条款设置，二次验证阶段不会重新
+读取条款版本；条款拒绝无法与凭据错误和安全验证错误稳定区分，后台同步也没有专用
+状态。New API 是否读取或发送同名条款字段的边界没有在发布基线中明确。
+
+**变更后**：仅 Sub2API 账号密码登录复用已规范化并通过安全校验的管理 Session，
+读取 `GET /api/v1/settings/public`。只有 `login_agreement_enabled=true` 且
+`login_agreement_revision` 非空时，才向初次登录和二次验证请求发送 `agreed_revision`；
+设置接口不可用时回退旧协议。条款拒绝归类为 `login_agreement_required`，不触发主体
+回退，后台同步保留最近成功资源快照。New API 不读取该接口、不发送条款字段；本版本
+不发送 `not_in_cn_confirmed`，不新增数据库结构。发布镜像为
+`c1cadabob/nexustok:v0.2.5` 和 `c1cadabob/nexustok:latest`。
 
 ### Master/Slave
 

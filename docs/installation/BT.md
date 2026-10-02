@@ -123,7 +123,7 @@ docker run --name nexustok -d --restart always \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  c1cadabob/nexustok:v0.2.4
+  c1cadabob/nexustok:v0.2.5
 ```
 
 `/var/run/docker.sock` 等同授予容器宿主机 Docker 管理权限，只能在可信管理员可访问的
@@ -248,7 +248,7 @@ Compose 网络以及 `/opt/nexustok/data` 和 `/opt/nexustok/logs`。保留 `.en
 
 ```bash
 uname -m
-docker image inspect c1cadabob/nexustok:v0.2.4 --format '{{.Architecture}}'
+docker image inspect c1cadabob/nexustok:v0.2.5 --format '{{.Architecture}}'
 ```
 
 主机应为 `x86_64`/`amd64` 或 `aarch64`/`arm64`。老旧 CPU、32 位系统和受限的镜像仓库
