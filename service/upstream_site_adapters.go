@@ -1497,50 +1497,67 @@ func loginSub2APIWithPassword(ctx context.Context, session *PlatformSiteSession,
 		return nil, fmt.Errorf("%w: 缺少账号密码", ErrPlatformSiteAuth)
 	}
 
-	agreedRevision := sub2APILoginAgreementRevision(ctx, session)
 	email := ""
 	if strings.Contains(identity, "@") {
 		email = identity
 	}
-	bodies := []map[string]string{{
-		"username": identity,
-		"password": password,
-	}}
+	bodies := []map[string]string{{"username": identity, "password": password}}
 	if email != "" {
-		bodies = uniqueStringMaps([]map[string]string{
-			{
-				"email":    email,
-				"password": password,
-			},
-			{
-				"username": identity,
-				"password": password,
-			},
-			{
-				"email":    email,
-				"username": identity,
-				"password": password,
-			},
-		})
+		bodies = []map[string]string{
+			{"email": email, "password": password},
+			{"username": identity, "password": password},
+		}
 	}
+	loginPaths := []string{"/api/v1/auth/login", "/auth/login"}
+	selectedPath := 0
+	routeFallbackAllowed := true
 	var lastErr error
 	for _, body := range bodies {
-		if agreedRevision != "" {
-			body["agreed_revision"] = agreedRevision
-		}
-		payload, requestErr := platformSiteRequest(
-			ctx,
-			session,
-			http.MethodPost,
-			"/api/v1/auth/login",
-			nil,
-			body,
-		)
-		if requestErr == nil {
-			return payload, nil
-		}
-		lastErr = classifySub2APILoginError(requestErr)
-		if !platformSiteLoginCredentialRetryAllowed(lastErr) {
+		for {
+			payload, requestErr := platformSiteRequest(
+				ctx,
+				session,
+				http.MethodPost,
+				loginPaths[selectedPath],
+				nil,
+				body,
+			)
+			if requestErr == nil {
+				return payload, nil
+			}
+			lastErr = classifySub2APILoginError(requestErr)
+			if platformSiteLoginAgreementRequired(lastErr) {
+				agreedRevision := sub2APILoginAgreementRevision(ctx, session)
+				if agreedRevision == "" {
+					return nil, lastErr
+				}
+				agreedBody := make(map[string]string, len(body)+1)
+				maps.Copy(agreedBody, body)
+				agreedBody["agreed_revision"] = agreedRevision
+				agreedPayload, agreedErr := platformSiteRequest(
+					ctx,
+					session,
+					http.MethodPost,
+					loginPaths[selectedPath],
+					nil,
+					agreedBody,
+				)
+				if agreedErr == nil {
+					return agreedPayload, nil
+				}
+				return nil, classifySub2APILoginError(agreedErr)
+			}
+			if platformSiteRouteMissing(lastErr) &&
+				routeFallbackAllowed &&
+				selectedPath+1 < len(loginPaths) {
+				selectedPath++
+				routeFallbackAllowed = false
+				continue
+			}
+			routeFallbackAllowed = false
+			if sub2APILoginCredentialRetryAllowed(lastErr) {
+				break
+			}
 			return nil, lastErr
 		}
 	}
@@ -1591,6 +1608,14 @@ func platformSiteLoginCredentialRetryAllowed(err error) bool {
 		return false
 	}
 	return true
+}
+
+func sub2APILoginCredentialRetryAllowed(err error) bool {
+	if !platformSiteLoginCredentialRetryAllowed(err) {
+		return false
+	}
+	statusCode, hasStatus := platformSiteHTTPStatusCode(err)
+	return hasStatus && statusCode == http.StatusUnauthorized
 }
 
 func classifySub2APILoginError(err error) error {
@@ -3956,14 +3981,22 @@ func discoverSub2APIModelBaseURL(ctx context.Context, session *PlatformSiteSessi
 	if session == nil || session.Client == nil || strings.TrimSpace(session.BaseURL) == "" {
 		return "", false
 	}
-	normalized, ok := discoverSub2APIPageModelBaseURL(ctx, session.Client, session.BaseURL)
+	normalized, finalPageURL, ok := discoverSub2APIPageModelBaseURL(
+		ctx,
+		session.Client,
+		session.BaseURL,
+	)
 	if !ok {
 		return "", false
 	}
 	if validatePlatformSiteURL(normalized) != nil {
 		return "", false
 	}
-	if !relatedPlatformSiteBaseURL(session.BaseURL, normalized) {
+	if !sub2APIPageDeclaredRelayURLAllowed(
+		session.BaseURL,
+		finalPageURL,
+		normalized,
+	) {
 		return "", false
 	}
 	return normalized, true
@@ -3986,12 +4019,21 @@ func discoverSub2APIManagementBaseURL(
 	}
 	anonymousClient := *session.Client
 	anonymousClient.Jar = nil
-	modelBaseURL, ok := discoverSub2APIPageModelBaseURL(
+	modelBaseURL, finalPageURL, ok := discoverSub2APIPageModelBaseURL(
 		ctx,
 		&anonymousClient,
 		managementBaseURL,
 	)
-	if !ok || !samePlatformSiteOrigin(originalBaseURL, modelBaseURL) {
+	if !ok ||
+		!sub2APIPageDeclaredRelayURLAllowed(
+			originalBaseURL,
+			finalPageURL,
+			modelBaseURL,
+		) {
+		return "", "", false
+	}
+	if !samePlatformSiteOrigin(originalBaseURL, modelBaseURL) &&
+		validatePlatformSiteURL(modelBaseURL) != nil {
 		return "", "", false
 	}
 	return managementBaseURL, modelBaseURL, true
@@ -4001,52 +4043,69 @@ func discoverSub2APIPageModelBaseURL(
 	ctx context.Context,
 	client *http.Client,
 	pageBaseURL string,
-) (string, bool) {
+) (string, string, bool) {
 	if client == nil || strings.TrimSpace(pageBaseURL) == "" {
-		return "", false
+		return "", "", false
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, pageBaseURL, nil)
 	if err != nil {
-		return "", false
+		return "", "", false
 	}
 	request.Header.Set("Accept", "text/html,application/xhtml+xml")
 	response, err := client.Do(request)
 	if err != nil {
-		return "", false
+		return "", "", false
 	}
 	defer response.Body.Close()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return "", false
+		return "", "", false
 	}
 	contentType := strings.ToLower(response.Header.Get("Content-Type"))
 	if !strings.Contains(contentType, "text/html") &&
 		!strings.Contains(contentType, "application/xhtml+xml") {
-		return "", false
+		return "", "", false
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, upstreamSiteResponseLimit+1))
 	if err != nil || len(data) > upstreamSiteResponseLimit {
-		return "", false
+		return "", "", false
 	}
 	match := sub2APIAppConfigAPIBaseURLPattern.FindStringSubmatch(string(data))
 	if len(match) < 2 {
-		return "", false
+		return "", "", false
+	}
+	finalPageURL := pageBaseURL
+	if response.Request != nil && response.Request.URL != nil {
+		finalPageURL = response.Request.URL.String()
+	}
+	finalPageURL, err = normalizePlatformSiteURL(finalPageURL)
+	if err != nil {
+		return "", "", false
 	}
 	candidate := strings.TrimSpace(strings.ReplaceAll(match[1], `\/`, `/`))
 	if decoded, err := url.QueryUnescape(candidate); err == nil {
 		candidate = decoded
 	}
 	if parsedCandidate, err := url.Parse(candidate); err == nil && !parsedCandidate.IsAbs() {
-		baseURL, baseErr := url.Parse(pageBaseURL)
+		baseURL, baseErr := url.Parse(finalPageURL)
 		if baseErr != nil {
-			return "", false
+			return "", "", false
 		}
 		candidate = baseURL.ResolveReference(parsedCandidate).String()
 	}
 	normalized, err := normalizePlatformSiteURL(candidate)
 	if err != nil {
-		return "", false
+		return "", "", false
 	}
-	return normalized, true
+	return normalized, finalPageURL, true
+}
+
+func sub2APIPageDeclaredRelayURLAllowed(
+	managementBaseURL string,
+	finalPageURL string,
+	relayBaseURL string,
+) bool {
+	return samePlatformSiteOrigin(finalPageURL, relayBaseURL) ||
+		samePlatformSiteOrigin(managementBaseURL, relayBaseURL)
 }
 
 func sub2APIManagementBaseURLCandidate(raw string) (string, bool) {

@@ -353,9 +353,11 @@ Admin Key step-up 拒绝只标记资源为 `secure_verification_required`，不�
 `relay_base_url`，父渠道基础地址使用实际转发地址并避免重复 `/v1`。
 
 平台站点的 `password` 认证继续手动输入用户名和密码；New API 主体优先使用
-`username/password`，邮箱输入仅在明确 401 凭据错误时兼容 `email/password` 和混合
-主体；Sub2API 邮箱输入依次兼容 email、username 和混合主体，非邮箱输入使用
-username。其它认证统一通过“自动配置”
+`username/password`，邮箱输入仅在明确凭据错误或 HTTP 401 后兼容其它主体；Sub2API
+邮箱首请求严格使用 `email/password`，仅在明确凭据错误或 HTTP 401 后最多一次使用
+`username/password`，不发送混合主体。Sub2API 首路由只有 404/405 才回退
+`/auth/login`，400 `INVALID_REQUEST`、WAF、安全验证、限流、权限和网络错误不触发
+登录重试。其它认证统一通过“自动配置”
 入口和短期、管理员绑定、Origin 精确匹配、一次性消费的浏览器 Capture Session
 采集。采集过程中按 Access Token/Refresh Token、Admin Key、Cookie 的顺序自动选择；
 采集不到任何可用凭据时失败，不允许手动补填或静默改变认证类型。安全验证、WAF、限流、
@@ -551,6 +553,39 @@ CookieJar、Cookie 轮换、30 秒超时和重定向校验保持不变。代理�
   Token；渠道代理读取 `setting.proxy`，不进入路由文档中的固定地址或源码常量。当前
   前端页面和资源展示模型保持不变。
 
+### 14.9 2026-10-03 Sub2API Relay 地址发现与模型候选
+
+**变更前**：Sub2API 页面配置中的 `api_base_url` 只按最初输入的管理地址解析，
+跨注册域的 Relay 地址会因为“同注册域”限制被丢弃；之后单个 Key 的模型探测可能
+错误地访问管理站点，导致认证成功但资源快照没有可路由模型能力。
+
+**变更后**：
+
+- 页面配置请求保留 HTTP 客户端跟随重定向后的最终 HTML URL。相对
+  `api_base_url` 以最终 HTML 页面 URL 为解析基准，而不是以原始管理地址为基准；
+- 页面明确声明的 Relay 地址只有在与最终 HTML 页面来源或原始管理地址具有相同
+  协议、主机和有效端口时才接受。页面从 `hhw1231.com` 跳转到
+  `hengwenapi.com`，并声明 `https://hengwenapi.com/v1` 的场景可以通过校验；
+  未在页面配置中明确声明的第三方地址仍拒绝，不放宽 HTTP/HTTPS、端口、重定向
+  和 SSRF 校验；
+- 管理地址只用于登录、当前用户、Profile、分组、额度和密钥接口；发现的 Relay
+  地址只用于单 Key 的 `/v1/models` 或 `/models` 探测以及后续转发。管理地址和
+  Relay 地址分别写入平台站点快照，父渠道基础地址使用实际 Relay 根地址；
+- 只有单个 Key 成功读取到真实模型能力后才会进入可路由模型候选。单 Key 的模型
+  读取失败、部分分页失败或本轮资源同步失败时，保留最近一次成功快照，不把密钥
+  误判为缺失或把认证失败覆盖为凭据失效；
+- Sub2API 首次邮箱登录只发送 `email/password`；`/api/v1/auth/login` 仅在明确
+  404/405 时回退 `/auth/login`，`400 INVALID_REQUEST`、安全验证、限流、权限和
+  网络错误不触发路由或主体字段扩展。只有明确的 401 凭据错误允许邮箱主体最多
+  一次回退为 `username/password`，条款 revision 只在上游明确要求时读取并重试
+  一次；
+- Relay 发现属于管理页面声明的受信范围，不等同于浏览器 Capture 登录态。浏览器
+  Capture 产生的登录材料不执行后台注销；账号密码同步只清理本轮由 NexusTok
+  创建的临时密码会话。
+
+**变更记录**：2026-10-03，补充重定向后的页面来源、跨域 Relay 可信规则、单 Key
+模型确认和 Sub2API 严格登录请求边界。
+
 ### 14.6 2026-09-30 NewAPI 站点路由身份与 Relay 地址
 
 **变更前**：平台站点前端可能把 `UpstreamKey.ID` 当作规范 `key_id`，已有错误、
@@ -615,7 +650,9 @@ Relay 地址和渠道请求根地址没有统一校验，模型别名判断可�
   403、5xx、网络错误和无效加密配置直接结束认证，不发送第二种明文请求，不触碰已有
   `RoutingKey`、`UpstreamKeyAbility` 或模型能力；
 - Sub2API 的邮箱优先和凭据错误后用户名回退属于认证主体兼容阶段，条款、安全验证、
-  限流、权限和网络错误不重试主体。资源失败、分页失败或 Cleanup 告警只影响本轮
-  同步状态，继续按最近成功快照进行候选过滤；
+  限流、权限和网络错误不重试主体；400 `INVALID_REQUEST` 也不视为凭据错误。只有
+  首路由 404/405 才回退 `/auth/login`，只有响应明确要求条款时才读取公开设置并携带
+  revision。资源失败、分页失败或 Cleanup 告警只影响本轮同步状态，继续按最近成功
+  快照进行候选过滤；
 - 管理员诊断仅保留阶段、脱敏 URL、HTTP 状态、错误类别和快照回退信息，不记录密码、
   Token、Cookie、Session ID、Admin Key 或完整上游响应。

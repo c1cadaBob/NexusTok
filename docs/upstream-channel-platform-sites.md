@@ -308,11 +308,13 @@ Origin、平台、认证类型和可选渠道，默认有效期 10 分钟，完�
 短期缓存中传递，最终仍使用现有整体加密字段保存。`auto` 只存在于表单和采集会话
 期间，成功后按实际采集结果持久化为 `access_token`、`admin_key` 或 `cookie`。
 
-2026-09-30 旧版资源同步迁移不改变上述凭据加密边界。New API 密码登录主请求使用
-`username/password`，当输入为邮箱时只在明确凭据错误或 HTTP 401 后依次兼容
-`email/password` 和混合主体；Sub2API 当输入为邮箱时依次尝试 `email/password`、
-`username/password` 和混合主体，非邮箱输入使用 `username/password`。安全验证、
-WAF、限流、权限拒绝、网络错误和其它非 401 结果都立即停止兼容登录。
+2026-10-03 登录兼容修复不改变上述凭据加密边界。New API 密码登录主请求使用
+`username/password`；邮箱输入的兼容主体仅在明确凭据错误或 HTTP 401 后尝试。Sub2API
+邮箱登录首请求严格使用 `email/password`，仅在明确凭据错误或 HTTP 401 后最多一次
+尝试 `username/password`，不再发送混合主体。Sub2API 首路由
+`/api/v1/auth/login` 只有明确返回 404/405 时才回退 `/auth/login`；400
+`INVALID_REQUEST`、403、429、WAF、安全验证、权限、网络和 5xx 都不触发路由或主体
+回退。只有上游明确返回条款要求时才读取公开设置并携带 `agreed_revision`。
 
 浏览器脚本只读取明确命名的 Access Token、Refresh Token、Admin Key、Cookie 和
 用户对象。NewAPI 优先读取当前 Dashboard 登录态和明确的 Access Token，再尝试
@@ -326,9 +328,13 @@ HttpOnly Cookie 无法被脚本读取时直接跳过。三者都不可用时失�
 Sub2API 管理地址和转发地址分离处理：账号、分组和密钥接口始终使用
 `base_url` 指向的管理站地址；页面配置中的 `api_base_url` 用于发现 OpenAI
 兼容转发地址。`api_base_url` 可以是绝对 URL，也可以是相对路径。相对路径会按
-同源解析，并继续执行 SSRF、重定向和关联主机校验。发现到的转发地址保存到
-`relay_base_url`，写入渠道 `base_url` 前会移除结尾 `/v1`，避免转发时形成
-`/v1/v1/...`。
+最终 HTML 页面地址解析，并继续执行 SSRF、重定向和来源校验。页面声明的 Relay
+地址只有在与最终 HTML 页面来源或原始管理地址使用相同协议、主机和有效端口时才接受；
+不再以同一注册域名作为放宽条件。发现到的转发地址保存到 `relay_base_url`，写入
+渠道 `base_url` 前会移除结尾 `/v1`，避免转发时形成 `/v1/v1/...`。例如，
+`hhw1231.com` 跳转到 `hengwenapi.com` 后，只要最终页面明确声明
+`https://hengwenapi.com`，该地址可以作为 Relay；管理接口仍继续请求
+`hhw1231.com`。
 
 如果管理员保存的是以 `api.` 开头的 Sub2API 转发地址，首次同步只会匿名探测去掉
 首个 `api.` 标签后的同协议、同端口主机。只有该候选站点返回 HTML，且页面配置中的
@@ -374,11 +380,11 @@ Sub2API 普通用户接口如果只能返回掩码密钥，不会伪造真实密
 - 仅 Sub2API 的账号密码登录在已规范化且已通过 SSRF、重定向和渠道代理校验的管理地址
   上，复用当前平台 Session 的 HTTP Client、CookieJar、超时和重定向策略读取
   `GET /api/v1/settings/public`；
-- 只有响应中的 `login_agreement_enabled` 严格为 `true`，且
-  `login_agreement_revision` 是非空字符串时，才向每个邮箱、用户名和混合主体候选的
-  `POST /api/v1/auth/login` 增加 `agreed_revision`。设置接口失败、404、网络错误、响应
-  格式异常、条款关闭或 revision 缺失均回退旧登录请求，主体顺序和仅在明确凭据错误或
-  HTTP 401 时重试的规则不变；
+- 只有初次登录响应明确包含条款要求 marker 时，才读取
+  `GET /api/v1/settings/public`；响应中的 `login_agreement_enabled` 严格为 `true`，
+  且 `login_agreement_revision` 是非空字符串时，才使用相同登录路由和相同主体重试，
+  并增加 `agreed_revision`。设置接口失败、404、网络错误、响应格式异常、条款关闭或
+  revision 缺失时直接返回条款错误，不扩展主体或路由组合；
 - 如果初次登录返回 2FA challenge，验证前重新读取公开设置，并把当时最新的
   `agreed_revision` 发送到 `POST /api/v1/auth/login/2fa`。不在 NexusTok 本地持久化
   “已同意”记录，不接受客户端传入的条款版本，不发送未由参考源确认的
@@ -760,9 +766,10 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
   响应类别和有限错误码；完整响应正文、密码、Cookie、Access Token、Refresh Token 和
   临时令牌均不进入错误摘要或日志；
 - New API 密码登录主请求使用 `/api/user/login?turnstile=` 的 `username/password`；
-  当输入为邮箱时，仅在明确凭据错误或 HTTP 401 后兼容 `email/password` 和混合主体；
-  Sub2API 使用 `/api/v1/auth/login`，邮箱输入依次兼容 `email/password`、
-  `username/password` 和混合主体，非邮箱输入使用 `username/password`；
+  当输入为邮箱时，仅在明确凭据错误或 HTTP 401 后兼容其它主体；
+- Sub2API 使用 `/api/v1/auth/login`，邮箱首请求只包含 `email/password`，仅在明确凭据
+  错误或 HTTP 401 后最多一次使用 `username/password`；只有 404/405 才回退到
+  `/auth/login`，400 `INVALID_REQUEST` 不触发任何额外登录请求；
 - 只有明确的 404/405 才继续兼容资源路径；认证失败、Turnstile/验证码、WAF、step-up
   安全验证和网络错误立即停止重复请求；
 - HTTP 200 的 `success=false`、数值错误码和 HTML/挑战页分别归类为业务认证失败、
@@ -982,6 +989,31 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
   Key、完整上游响应和真实站点账号不会写入日志、错误响应、文档、测试 fixture 或
   Git 提交。
 
+### 9.9 2026-10-03 Sub2API Relay 发现与严格登录请求
+
+**变更前**
+
+- 页面声明的相对 `api_base_url` 按原始管理地址解析，页面重定向到独立 Relay
+  域名时会被错误丢弃；
+- Relay 地址校验曾以同源或同注册域名作为主要边界，无法覆盖
+  `hhw1231.com -> hengwenapi.com` 这类由最终页面明确声明的跨域 Relay；
+- 普通登录可能在首请求中携带条款 revision、混合 `email`/`username` 字段，严格
+  校验的站点会返回 `400 INVALID_REQUEST`。
+
+**变更后**
+
+- HTML 请求保留最终响应 URL；相对 `api_base_url` 以最终页面地址解析；
+- 页面明确声明的 Relay 仅在与最终 HTML 页面来源或原始管理地址协议、主机和有效端口
+  一致时接受，并继续执行 HTTP/HTTPS、端口、重定向和 SSRF 校验；未经页面声明的
+  第三方地址仍拒绝；
+- 管理地址继续用于登录、当前用户、分组、额度和 Key 接口，Relay 地址只用于
+  `/v1/models` 和最终转发。认证成功但 Key 或模型资源失败时仍保留最近成功快照，
+  不把资源失败误判为凭据失效；
+- Sub2API 邮箱首请求严格只发送 `email/password`；`/api/v1/auth/login` 只有
+  404/405 才回退 `/auth/login`，400 `INVALID_REQUEST`、403、429、WAF、安全验证、
+  网络和 5xx 不触发路由或主体重试。只有响应明确要求条款时，才读取公开设置并使用
+  同一路由、同一主体携带 revision 重试一次。
+
 ## 与架构文档的关系
 
 本文保留平台站点、账号同步、子密钥字段、倍率/权重公式、权限、SSRF 和测试验收等详细规则；架构文档描述平台站点如何进入渠道过滤、Routing Key 和 Relay 转发。新增平台类型或调整同步/路由语义时，必须同时更新本文、能力矩阵和偏差表。
@@ -997,3 +1029,4 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
 | 2026-09-29 | 平台站点资源获取比较文档与管理端字段校准 | 专项文档将 `GET /api/channel/:id/upstream-keys` 描述为不返回额度、过期时间和最近使用时间，且没有链接旧版/参考源/当前实现的完整资源链路比较 | 明确该接口实际返回 `UsedQuota`、`RemainQuota`、`ExpiresAt`、`Models`、`ModelsSynced`、`Status`、可路由诊断和脱敏 `KeyPreview`；完整 Secret 仍不返回，并增加完整比较文档入口 | 平台站点资源查询、管理员诊断、额度和模型能力边界 | `controller/upstream_channel.go:75-104`、`controller/upstream_channel.go:667-710`、[`docs/platform-site-resource-acquisition-comparison.md`](platform-site-resource-acquisition-comparison.md) |
 | 2026-10-02 | 密码同步会话清理与自动配置边界 | 密码同步可能复用历史登录态；NewAPI/Sub2API 注销路径、资源失败快照保护、浏览器会话所有权和自动配置一次性消费边界未统一 | 每轮密码同步直接登录并清理本轮会话；NewAPI 登出后精确删除 SID，Sub2API 仅 Refresh Token 登出，禁止撤销其他会话；清理失败不覆盖快照；自动配置完成验证、脱敏诊断、现有加密保存和 Redis/内存 claim 一次性消费，表单仅保留账号密码/自动配置 | 平台站点认证、资源同步、Capture Helper、前端表单和缓存 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_capture.go`、`pkg/cachex/hybrid_cache.go`、`controller/channel.go`、前端平台站点组件、本机参考源和定向测试 |
 | 2026-10-03 | 认证流程保存兼容与 NewAPI 加密登录 | 认证流程请求中的残留用户名被误判为手动凭据；NewAPI 新版密码加密登录协议和 Sub2API 邮箱主体/精确登出边界未在专项文档集中登记 | 有 `auth_flow_id` 时前端不再提交用户名/密码，后端仅兼容用户名残留并以流程真实身份为准；NewAPI 实现加密密钥读取、RSA-OAEP/v2 信封和仅 404/405 明文回退；Sub2API 保持邮箱优先、凭据错误后回退用户名和本轮 Refresh Token 登出 | 渠道保存、NewAPI/Sub2API 密码认证、认证流程一次性消费、脱敏诊断和最近成功快照 | `web/src/features/channels/lib/channel-form.ts`、`controller/upstream_channel.go`、`service/newapi_password_encryption.go`、`service/upstream_site_adapters.go`、相关 Go/React 定向测试；New API/Sub2API/all-api-hub 本机参考源 |
+| 2026-10-03 | Sub2API Relay 发现与登录请求兼容修复 | 重定向后的页面相对地址解析错误，独立 Relay 域名无法用于 Key 模型探测；登录请求可能因混合字段或无条件条款字段返回 `400 INVALID_REQUEST` | 相对地址按最终 HTML URL 解析；页面明确声明且与最终页面或原始管理地址同协议/主机/有效端口的 Relay 才接受；邮箱首请求只发 `email/password`，仅 404/405 回退登录路由，400 不重试；资源失败继续保留最近成功快照 | Sub2API 管理/Relay 地址、密码登录、Key 模型能力、渠道资源同步和路由候选 | `service/upstream_site_adapters.go`、`service/upstream_site_test.go`、Sub2API 参考源 `auth_handler.go`、all-api-hub 真实站点请求策略和脱敏 fixture |

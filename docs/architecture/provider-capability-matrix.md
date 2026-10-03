@@ -98,11 +98,12 @@ NexusTok 适配器请求清单中，因此平台窗口额度仍属于未完整�
 
 **变更后**
 
-- Sub2API 密码登录会在规范化管理 Session 上读取 `GET /api/v1/settings/public`。仅当
-  `login_agreement_enabled` 为 `true` 且 `login_agreement_revision` 为非空字符串时，
-  `/api/v1/auth/login` 的邮箱、用户名和混合主体候选才携带 `agreed_revision`；
-- 公开设置失败、404、网络错误、响应格式异常、条款未启用或 revision 缺失时回退旧登录
-  请求，不改变现有主体顺序，也不改变仅在明确凭据错误或 HTTP 401 后重试的边界；
+- Sub2API 密码登录默认不读取公开设置，首请求严格按参考 DTO 发送邮箱/密码或用户名/
+  密码。只有初次登录响应明确包含条款要求 marker 时，才读取
+  `GET /api/v1/settings/public`；
+- `login_agreement_enabled=true` 且 `login_agreement_revision` 非空时，使用相同登录
+  路由和相同主体携带 `agreed_revision` 重试一次。设置失败、404、网络错误、响应格式
+  异常、条款关闭或 revision 缺失时直接返回条款错误，不扩展主体或路由组合；
 - 2FA 阶段重新读取公开设置，并将当时最新 revision 发送到
   `/api/v1/auth/login/2fa`。条款 marker 独立归类为 `login_agreement_required`，
   优先于凭据错误和安全验证错误，不触发主体回退；
@@ -112,6 +113,29 @@ NexusTok 适配器请求清单中，因此平台窗口额度仍属于未完整�
 - 本能力只属于 Sub2API。New API 不读取 `/api/v1/settings/public`，不发送
   `agreed_revision` 或 `not_in_cn_confirmed`；NexusTok 不接受客户端条款版本、不持久化
   “已同意”记录，也不会猜测参考源未确认的额外字段。
+
+### 2.3 2026-10-03 Sub2API Relay 地址与登录回退能力
+
+**变更前**
+
+- 页面重定向后的 HTML 仍按原始管理地址解析相对 `api_base_url`，独立 Relay 域名
+  可能被丢弃；
+- 登录请求可能带有混合主体或无条件条款字段，严格 DTO 部署会返回
+  `400 INVALID_REQUEST`，路由回退和主体回退边界不够明确。
+
+**变更后**
+
+- 页面请求使用最终响应 URL；相对 `api_base_url` 按最终页面地址解析。页面明确声明的
+  Relay 只有在与最终页面来源或原始管理地址同协议、同主机、同有效端口时才接受，
+  并继续执行 SSRF、端口和重定向安全校验；
+- 管理地址继续负责登录、用户、分组、用量和 Key；Relay 只负责单 Key
+  `/v1/models`/`/models` 探测和最终转发。`hhw1231.com -> hengwenapi.com` 属于允许的
+  “最终页面明确声明”场景，未经页面声明的第三方地址仍拒绝；
+- 邮箱首请求只包含 `email/password`；`/api/v1/auth/login` 只在 404/405 时回退
+  `/auth/login`，只有 401 凭据错误才允许邮箱到用户名的一次回退。400
+  `INVALID_REQUEST`、403、429、WAF、安全验证、权限、网络和 5xx 不触发额外尝试；
+- 资源、分页或单 Key 模型失败继续使用最近成功快照，不把认证成功后的资源错误
+  写成凭据失效或错误执行 Key 缺失判定。
 
 ## 3. 维护解释
 
@@ -133,6 +157,7 @@ NexusTok 适配器请求清单中，因此平台窗口额度仍属于未完整�
 | 2026-10-01 | Sub2API 登录服务条款兼容能力 | 矩阵只登记 Sub2API 的一般密码/2FA 入口，未记录公开条款设置、可选 revision、错误分类和 New API 隔离 | 增加 `GET /api/v1/settings/public` 的条件读取、`agreed_revision` 发送和 2FA 最新 revision；设置故障回退旧协议，条款拒绝独立分类并保留快照；不发送 `not_in_cn_confirmed`，New API 不读取或发送同名字段 | Sub2API 认证、Auth Flow、同步状态、资源面板和平台能力边界 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go`；Sub2API 参考源 DTO/路由；SQLite 3.50.4、MySQL 8.2.0、PostgreSQL 15.19 矩阵 |
 | 2026-10-02 | 平台站点密码会话清理与自动配置能力 | 密码同步复用历史登录态的边界、NewAPI/Sub2API 精确注销路径、浏览器采集所有权和表单隐藏旧凭据入口未在矩阵中统一登记 | 密码同步每次重新登录；NewAPI 登出后精确删除 SID，Sub2API 仅 Refresh Token 登出；资源失败保留快照；自动配置完成验证后加密保存并一次性消费，平台从渠道类型派生 | 平台站点认证、资源同步、Capture Helper、渠道表单和跨节点缓存 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_capture.go`、`web/src/features/channels/components/drawers/platform-site-fields.tsx`、本机参考源和定向测试 |
 | 2026-10-03 | 认证流程保存兼容与 NewAPI 加密登录 | 完成认证流程后残留用户名可能被当作手动凭据；NewAPI 加密登录密钥、RSA-OAEP/v2 信封和明文回退边界未在矩阵中登记 | 有流程 ID 时只提交流程材料，后端兼容用户名残留并使用流程真实身份；NewAPI 按新版协议读取密钥并仅在 404/405 回退明文；Sub2API 保持邮箱优先和本轮 Refresh Token 精确登出 | 平台站点创建/编辑、账号密码认证、错误回退和会话清理 | `web/src/features/channels/lib/channel-form.ts`、`controller/upstream_channel.go`、`service/newapi_password_encryption.go`、`service/upstream_site_adapters.go`、定向测试和本机 New API/Sub2API/all-api-hub 参考源 |
+| 2026-10-03 | Sub2API Relay 发现与严格登录请求 | 重定向页面的相对 Relay 地址和独立 Relay 域名无法稳定进入 Key 模型探测；无条件条款/混合主体字段可能导致 `400 INVALID_REQUEST` | 使用最终 HTML URL 解析相对地址，仅接受最终页面或原始管理地址明确声明的同协议/主机/有效端口 Relay；邮箱首请求严格 `email/password`，400 不回退，只有 404/405 回退路由、401 凭据错误回退主体；资源失败保留快照 | Sub2API 管理/Relay 地址、认证、Key 能力和路由可用性 | `service/upstream_site_adapters.go`、`service/upstream_site_test.go`、Sub2API `auth_handler.go`、all-api-hub 真实站点辅助实现和脱敏 fixture |
 
 ### 3.2 2026-09-26 实现校准
 
@@ -244,9 +269,11 @@ Admin 权限，诊断脱敏，Capture 记录用 Redis/内存 claim 防止并发�
 - 认证流程完成后，前端仅提交平台、管理地址、认证方式、一次性流程 ID 和金额配置；
   后端允许仅有用户名残留的旧请求继续解析流程，但拒绝任何密码、Token、Cookie、
   Session ID、Admin Key 或其它真实登录材料；
-- Sub2API 账号密码请求先使用邮箱主体，只有明确凭据错误或 HTTP 401 才尝试用户名；
-  条款、安全验证、WAF、限流、权限和网络错误不触发主体重试。资源完成后只以本轮
-  Refresh Token 调用 `/api/v1/auth/logout`；
+- Sub2API 账号密码请求首选严格的 `email/password`，只有明确凭据错误或 HTTP 401
+  才最多一次尝试 `username/password`；首路由只有 404/405 才回退
+  `/auth/login`，400 `INVALID_REQUEST`、条款、安全验证、WAF、限流、权限和网络错误
+  不触发主体或路由重试。资源完成后只以本轮 Refresh Token 调用
+  `/api/v1/auth/logout`；
 - NewAPI 先读取 `/api/user/login/encryption-key`。加密开启时使用 RSA-OAEP-SHA256，
   长密码使用 AES-GCM v2 信封；只有 404/405 的缺路由才发送旧版明文字段，403、5xx、
   网络错误和无效加密配置不降级；

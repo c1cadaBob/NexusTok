@@ -34,17 +34,6 @@ import (
 )
 
 func TestRealPlatformSiteAdaptersReadOnly(t *testing.T) {
-	newAPIBaseURL := strings.TrimSpace(os.Getenv("NEXUSTOK_REAL_NEWAPI_BASE_URL"))
-	newAPIUsername := strings.TrimSpace(os.Getenv("NEXUSTOK_REAL_NEWAPI_USERNAME"))
-	newAPIPassword := os.Getenv("NEXUSTOK_REAL_NEWAPI_PASSWORD")
-	sub2APIBaseURL := strings.TrimSpace(os.Getenv("NEXUSTOK_REAL_SUB2API_BASE_URL"))
-	sub2APIUsername := strings.TrimSpace(os.Getenv("NEXUSTOK_REAL_SUB2API_USERNAME"))
-	sub2APIPassword := os.Getenv("NEXUSTOK_REAL_SUB2API_PASSWORD")
-	if newAPIBaseURL == "" || newAPIUsername == "" || newAPIPassword == "" ||
-		sub2APIBaseURL == "" || sub2APIUsername == "" || sub2APIPassword == "" {
-		t.Skip("未配置真实平台只读验证环境变量")
-	}
-
 	testCases := []struct {
 		name       string
 		adapter    PlatformSiteAdapter
@@ -56,23 +45,28 @@ func TestRealPlatformSiteAdaptersReadOnly(t *testing.T) {
 		{
 			name:       "NewAPI",
 			adapter:    NewNewAPIAdapter(nil),
-			baseURL:    newAPIBaseURL,
-			username:   newAPIUsername,
-			password:   newAPIPassword,
+			baseURL:    strings.TrimSpace(os.Getenv("NEXUSTOK_REAL_NEWAPI_BASE_URL")),
+			username:   strings.TrimSpace(os.Getenv("NEXUSTOK_REAL_NEWAPI_USERNAME")),
+			password:   os.Getenv("NEXUSTOK_REAL_NEWAPI_PASSWORD"),
 			wantModels: true,
 		},
 		{
 			name:       "Sub2API",
 			adapter:    NewSub2APIAdapter(nil),
-			baseURL:    sub2APIBaseURL,
-			username:   sub2APIUsername,
-			password:   sub2APIPassword,
+			baseURL:    strings.TrimSpace(os.Getenv("NEXUSTOK_REAL_SUB2API_BASE_URL")),
+			username:   strings.TrimSpace(os.Getenv("NEXUSTOK_REAL_SUB2API_USERNAME")),
+			password:   os.Getenv("NEXUSTOK_REAL_SUB2API_PASSWORD"),
 			wantModels: true,
 		},
 	}
 
+	enabled := false
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
+			if testCase.baseURL == "" || testCase.username == "" || testCase.password == "" {
+				t.Skip("未配置该平台真实只读验证环境变量")
+			}
+			enabled = true
 			session, err := testCase.adapter.Authenticate(
 				context.Background(),
 				testCase.baseURL,
@@ -82,6 +76,16 @@ func TestRealPlatformSiteAdaptersReadOnly(t *testing.T) {
 					Password: testCase.password,
 				},
 			)
+			if session != nil {
+				t.Cleanup(func() {
+					if cleanupErr := testCase.adapter.Cleanup(context.Background(), session); cleanupErr != nil {
+						t.Logf(
+							"真实平台临时会话清理失败: %s",
+							SafePlatformSiteSessionCleanupError(cleanupErr),
+						)
+					}
+				})
+			}
 			require.NoError(t, err)
 			snapshot, err := testCase.adapter.FetchSnapshot(context.Background(), session)
 			require.NoError(t, err)
@@ -96,6 +100,9 @@ func TestRealPlatformSiteAdaptersReadOnly(t *testing.T) {
 			}
 			assert.Equal(t, testCase.wantModels, hasModels)
 		})
+	}
+	if !enabled {
+		t.Skip("未配置真实平台只读验证环境变量")
 	}
 }
 
@@ -3245,21 +3252,17 @@ func TestSub2APIAuthFlowTwoFAUsesLatestLoginAgreementRevision(t *testing.T) {
 		switch request.URL.Path {
 		case "/api/v1/settings/public":
 			settingsRequests++
-			revision := "terms-rev-initial"
-			if settingsRequests > 1 {
-				revision = "terms-rev-latest"
-			}
 			_, _ = fmt.Fprintf(
 				writer,
-				`{"code":0,"data":{"login_agreement_enabled":true,"login_agreement_revision":"%s"}}`,
-				revision,
+				`{"code":0,"data":{"login_agreement_enabled":true,"login_agreement_revision":"terms-rev-latest"}}`,
 			)
 		case "/api/v1/auth/login":
 			body, readErr := io.ReadAll(request.Body)
 			require.NoError(t, readErr)
 			var loginPayload map[string]any
 			require.NoError(t, common.Unmarshal(body, &loginPayload))
-			assert.Equal(t, "terms-rev-initial", loginPayload["agreed_revision"])
+			_, hasAgreedRevision := loginPayload["agreed_revision"]
+			assert.False(t, hasAgreedRevision)
 			_, _ = writer.Write([]byte(
 				`{"code":0,"data":{"requires_2fa":true,"temp_token":"sub2-temp"}}`,
 			))
@@ -3301,7 +3304,7 @@ func TestSub2APIAuthFlowTwoFAUsesLatestLoginAgreementRevision(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.Equal(t, PlatformSiteAuthFlowStatusAuthenticated, verified.Status)
-	assert.Equal(t, 2, settingsRequests)
+	assert.Equal(t, 1, settingsRequests)
 }
 
 func TestSub2APIAuthFlowTwoFAAgreementRejectionPersistsDedicatedStatus(t *testing.T) {
@@ -3351,7 +3354,7 @@ func TestSub2APIAuthFlowTwoFAAgreementRejectionPersistsDedicatedStatus(t *testin
 	assert.ErrorIs(t, err, ErrSub2APILoginAgreement)
 	assert.NotContains(t, err.Error(), "upstream-secret-response")
 	assert.NotContains(t, err.Error(), "synthetic-password")
-	assert.Equal(t, 2, settingsRequests)
+	assert.Equal(t, 1, settingsRequests)
 
 	record, err := getPlatformSiteAuthFlowRecord(started.FlowID)
 	require.NoError(t, err)
@@ -3895,6 +3898,7 @@ func TestSub2APILoginTriesEmailThenUsernameBody(t *testing.T) {
 			require.NoError(t, readErr)
 			loginBodies = append(loginBodies, string(body))
 			if len(loginBodies) == 1 {
+				writer.WriteHeader(http.StatusUnauthorized)
 				_, _ = writer.Write([]byte(`{"code":401,"message":"invalid credentials"}`))
 				return
 			}
@@ -3923,6 +3927,72 @@ func TestSub2APILoginTriesEmailThenUsernameBody(t *testing.T) {
 	assert.Contains(t, loginBodies[1], `"username":"operator@example.com"`)
 	assert.NotContains(t, loginBodies[1], `"email"`)
 	assert.Equal(t, "Bearer sub2api-session", session.Headers.Get("Authorization"))
+}
+
+func TestSub2APILoginDoesNotRetryBusinessCredentialErrorWithoutHTTP401(t *testing.T) {
+	loginRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodPost && request.URL.Path == "/api/v1/auth/login" {
+			loginRequests++
+			_, _ = writer.Write([]byte(`{"code":401,"message":"invalid credentials"}`))
+			return
+		}
+		if request.Method == http.MethodPost && request.URL.Path == "/auth/login" {
+			t.Fatalf("HTTP 200 业务凭据错误不应回退旧登录路由")
+		}
+		http.NotFound(writer, request)
+	}))
+	defer server.Close()
+
+	_, err := NewSub2APIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType: model.UpstreamAuthPassword,
+			Username: "operator@example.com",
+			Password: "synthetic-password",
+		},
+	)
+	require.Error(t, err)
+	assert.Equal(t, 1, loginRequests)
+	assert.ErrorIs(t, err, ErrPlatformSiteCredentials)
+}
+
+func TestSub2APILoginDoesNotFallbackRouteAfterPrimaryCredentialError(t *testing.T) {
+	primaryRequests := 0
+	legacyRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/v1/auth/login":
+			primaryRequests++
+			if primaryRequests == 1 {
+				writer.WriteHeader(http.StatusUnauthorized)
+				_, _ = writer.Write([]byte(`{"code":401,"message":"invalid credentials"}`))
+				return
+			}
+			writer.WriteHeader(http.StatusNotFound)
+			_, _ = writer.Write([]byte(`{"code":404,"message":"route not found"}`))
+		case "/auth/login":
+			legacyRequests++
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"access_token":"legacy-session"}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	_, err := NewSub2APIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType: model.UpstreamAuthPassword,
+			Username: "operator@example.com",
+			Password: "synthetic-password",
+		},
+	)
+	require.Error(t, err)
+	assert.Equal(t, 2, primaryRequests)
+	assert.Zero(t, legacyRequests)
 }
 
 func TestSub2APILoginStopsOnSecurityVerification(t *testing.T) {
@@ -4234,11 +4304,14 @@ func TestSub2APIAdapterResolvesRelativeRelayURLFromPageConfig(t *testing.T) {
 		Transport: platformSiteRoundTripFunc(func(request *http.Request) (*http.Response, error) {
 			switch {
 			case request.Method == http.MethodGet && (request.URL.Path == "" || request.URL.Path == "/"):
-				return &http.Response{
+				response := &http.Response{
 					StatusCode: http.StatusOK,
 					Header:     http.Header{"Content-Type": []string{"text/html"}},
 					Body:       io.NopCloser(strings.NewReader(`<script>window.__APP_CONFIG__={"api_base_url":"/v1"}</script>`)),
-				}, nil
+				}
+				response.Request = request.Clone(request.Context())
+				response.Request.URL, _ = url.Parse("https://example.com/zh/home")
+				return response, nil
 			case request.Method == http.MethodPost && request.URL.Path == "/api/v1/auth/login":
 				return platformSiteJSONResponse(http.StatusOK, `{"code":0,"message":"success","data":{"access_token":"sub2api-session"}}`), nil
 			case request.Method == http.MethodGet && request.URL.Path == "/api/v1/auth/me":
@@ -4251,7 +4324,7 @@ func TestSub2APIAdapterResolvesRelativeRelayURLFromPageConfig(t *testing.T) {
 
 	session, err := NewSub2APIAdapter(client).Authenticate(
 		context.Background(),
-		"https://example.com/",
+		"https://management.example.com/",
 		model.PlatformSiteCredential{
 			AuthType: model.UpstreamAuthPassword,
 			Username: "operator@example.com",
@@ -4260,6 +4333,158 @@ func TestSub2APIAdapterResolvesRelativeRelayURLFromPageConfig(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.Equal(t, "https://example.com/v1", session.ModelBaseURL)
+}
+
+func TestSub2APIAdapterAcceptsRelayURLDeclaredByRedirectedPage(t *testing.T) {
+	modelRequests := 0
+	client := &http.Client{
+		Transport: platformSiteRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+			switch {
+			case request.URL.Host == "hhw1231.com" &&
+				request.Method == http.MethodGet &&
+				(request.URL.Path == "" || request.URL.Path == "/"):
+				response := &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"text/html; charset=utf-8"}},
+					Body: io.NopCloser(strings.NewReader(
+						`<script>window.__APP_CONFIG__={"api_base_url":"https://127.0.0.1:9443/v1"}</script>`,
+					)),
+				}
+				response.Request = request.Clone(request.Context())
+				response.Request.URL, _ = url.Parse("https://127.0.0.1:9443/zh/home")
+				return response, nil
+			case request.URL.Host == "hhw1231.com" &&
+				request.Method == http.MethodPost &&
+				request.URL.Path == "/api/v1/auth/login":
+				body, readErr := io.ReadAll(request.Body)
+				require.NoError(t, readErr)
+				var loginPayload map[string]any
+				require.NoError(t, common.Unmarshal(body, &loginPayload))
+				assert.Equal(t, "operator@example.com", loginPayload["email"])
+				_, hasUsername := loginPayload["username"]
+				assert.False(t, hasUsername)
+				return platformSiteJSONResponse(
+					http.StatusOK,
+					`{"code":0,"data":{"access_token":"sub2api-session"}}`,
+				), nil
+			case request.URL.Host == "hhw1231.com" &&
+				request.Method == http.MethodGet &&
+				request.URL.Path == "/api/v1/auth/me":
+				return platformSiteJSONResponse(
+					http.StatusOK,
+					`{"code":0,"data":{"id":9,"username":"operator","balance":3}}`,
+				), nil
+			case request.URL.Host == "hhw1231.com" &&
+				request.Method == http.MethodGet &&
+				request.URL.Path == "/api/v1/user/profile":
+				return platformSiteJSONResponse(http.StatusNotFound, `{"code":404}`), nil
+			case request.URL.Host == "hhw1231.com" &&
+				request.Method == http.MethodGet &&
+				request.URL.Path == "/api/v1/groups/available":
+				return platformSiteJSONResponse(http.StatusOK, `{"code":0,"data":[]}`), nil
+			case request.URL.Host == "hhw1231.com" &&
+				request.Method == http.MethodGet &&
+				request.URL.Path == "/api/v1/groups/rates":
+				return platformSiteJSONResponse(http.StatusOK, `{"code":0,"data":{}}`), nil
+			case request.URL.Host == "hhw1231.com" &&
+				request.Method == http.MethodGet &&
+				(request.URL.Path == "/api/v1/usage/dashboard/stats" ||
+					request.URL.Path == "/api/v1/usage/stats"):
+				return platformSiteJSONResponse(http.StatusNotFound, `{"code":404}`), nil
+			case request.URL.Host == "hhw1231.com" &&
+				request.Method == http.MethodGet &&
+				request.URL.Path == "/api/v1/keys":
+				return platformSiteJSONResponse(
+					http.StatusOK,
+					`{"code":0,"data":{"items":[{"id":"key-1","name":"primary","key":"sk-upstream"}],"total":1,"page_size":100}}`,
+				), nil
+			case request.URL.Host == "127.0.0.1:9443" &&
+				request.Method == http.MethodGet &&
+				request.URL.Path == "/v1/models":
+				modelRequests++
+				assert.Equal(t, "Bearer sk-upstream", request.Header.Get("Authorization"))
+				assert.Equal(t, "sk-upstream", request.Header.Get("x-api-key"))
+				return platformSiteJSONResponse(
+					http.StatusOK,
+					`{"data":[{"id":"gpt-5.5"}]}`,
+				), nil
+			default:
+				return platformSiteJSONResponse(http.StatusNotFound, `{"code":404}`), nil
+			}
+		}),
+	}
+
+	adapter := NewSub2APIAdapter(client)
+	session, err := adapter.Authenticate(
+		context.Background(),
+		"https://hhw1231.com",
+		model.PlatformSiteCredential{
+			AuthType: model.UpstreamAuthPassword,
+			Username: "operator@example.com",
+			Password: "synthetic-password",
+		},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "https://127.0.0.1:9443/v1", session.ModelBaseURL)
+	assert.Equal(t, "https://hhw1231.com", session.ManagementBaseURL)
+
+	snapshot, err := adapter.FetchSnapshot(context.Background(), session)
+	require.NoError(t, err)
+	require.Len(t, snapshot.Keys, 1)
+	assert.True(t, snapshot.Keys[0].ModelsSynced)
+	assert.Equal(t, []string{"gpt-5.5"}, snapshot.Keys[0].Models)
+	assert.Equal(t, 1, modelRequests)
+}
+
+func TestSub2APIAdapterRejectsUnverifiedRelayURLFromRedirectedPage(t *testing.T) {
+	client := &http.Client{
+		Transport: platformSiteRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+			switch {
+			case request.Method == http.MethodGet &&
+				request.URL.Host == "hhw1231.com" &&
+				(request.URL.Path == "" || request.URL.Path == "/"):
+				response := &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"text/html"}},
+					Body: io.NopCloser(strings.NewReader(
+						`<script>window.__APP_CONFIG__={"api_base_url":"https://192.0.2.1/v1"}</script>`,
+					)),
+				}
+				response.Request = request.Clone(request.Context())
+				response.Request.URL, _ = url.Parse("https://example.com/zh/home")
+				return response, nil
+			case request.Method == http.MethodPost &&
+				request.URL.Host == "hhw1231.com" &&
+				request.URL.Path == "/api/v1/auth/login":
+				return platformSiteJSONResponse(
+					http.StatusOK,
+					`{"code":0,"data":{"access_token":"sub2api-session"}}`,
+				), nil
+			case request.Method == http.MethodGet &&
+				request.URL.Host == "hhw1231.com" &&
+				request.URL.Path == "/api/v1/auth/me":
+				return platformSiteJSONResponse(
+					http.StatusOK,
+					`{"code":0,"data":{"id":9,"username":"operator"}}`,
+				), nil
+			default:
+				return platformSiteJSONResponse(http.StatusNotFound, `{"code":404}`), nil
+			}
+		}),
+	}
+
+	session, err := NewSub2APIAdapter(client).Authenticate(
+		context.Background(),
+		"https://hhw1231.com",
+		model.PlatformSiteCredential{
+			AuthType: model.UpstreamAuthPassword,
+			Username: "operator@example.com",
+			Password: "synthetic-password",
+		},
+	)
+	require.NoError(t, err)
+	assert.Empty(t, session.ModelBaseURL)
+	assert.Equal(t, "https://hhw1231.com", session.ManagementBaseURL)
 }
 
 func TestSub2APIAdapterDiscoversManagementURLFromStrictAPISubdomain(t *testing.T) {
@@ -4317,6 +4542,148 @@ func TestSub2APIAdapterDiscoversManagementURLFromStrictAPISubdomain(t *testing.T
 	assert.Equal(t, "https://example.com", session.ManagementBaseURL)
 	assert.Equal(t, "https://api.example.com/v1", session.ModelBaseURL)
 	assert.Equal(t, 1, candidateLoginRequests)
+}
+
+func TestSub2APILoginUsesStrictEmailBodyWithoutPublicSettings(t *testing.T) {
+	settingsRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v1/settings/public":
+			settingsRequests++
+			t.Fatalf("普通登录成功时不应读取公开条款设置")
+		case "/api/v1/auth/login":
+			body, readErr := io.ReadAll(request.Body)
+			require.NoError(t, readErr)
+			var loginPayload map[string]any
+			require.NoError(t, common.Unmarshal(body, &loginPayload))
+			assert.Equal(t, map[string]any{
+				"email":    "operator@example.com",
+				"password": "synthetic-password",
+			}, loginPayload)
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"access_token":"sub2api-session"}}`))
+		case "/api/v1/auth/me":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"id":9,"username":"operator"}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	session, err := NewSub2APIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType: model.UpstreamAuthPassword,
+			Username: "operator@example.com",
+			Password: "synthetic-password",
+		},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "Bearer sub2api-session", session.Headers.Get("Authorization"))
+	assert.Zero(t, settingsRequests)
+}
+
+func TestSub2APILoginRouteFallbackOnlyOnMissingRoute(t *testing.T) {
+	tests := []struct {
+		name              string
+		primaryStatus     int
+		wantLegacyRoute   bool
+		wantLoginRequests int
+	}{
+		{
+			name:              "not found",
+			primaryStatus:     http.StatusNotFound,
+			wantLegacyRoute:   true,
+			wantLoginRequests: 1,
+		},
+		{
+			name:              "method not allowed",
+			primaryStatus:     http.StatusMethodNotAllowed,
+			wantLegacyRoute:   true,
+			wantLoginRequests: 1,
+		},
+		{
+			name:              "invalid request",
+			primaryStatus:     http.StatusBadRequest,
+			wantLegacyRoute:   false,
+			wantLoginRequests: 1,
+		},
+		{
+			name:              "unauthorized",
+			primaryStatus:     http.StatusUnauthorized,
+			wantLegacyRoute:   false,
+			wantLoginRequests: 2,
+		},
+		{
+			name:              "forbidden",
+			primaryStatus:     http.StatusForbidden,
+			wantLegacyRoute:   false,
+			wantLoginRequests: 1,
+		},
+		{
+			name:              "rate limited",
+			primaryStatus:     http.StatusTooManyRequests,
+			wantLegacyRoute:   false,
+			wantLoginRequests: 1,
+		},
+		{
+			name:              "server error",
+			primaryStatus:     http.StatusInternalServerError,
+			wantLegacyRoute:   false,
+			wantLoginRequests: 1,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			primaryRequests := 0
+			legacyRequests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(
+				writer http.ResponseWriter,
+				request *http.Request,
+			) {
+				writer.Header().Set("Content-Type", "application/json")
+				switch request.URL.Path {
+				case "/api/v1/auth/login":
+					primaryRequests++
+					writer.WriteHeader(testCase.primaryStatus)
+					_, _ = writer.Write([]byte(fmt.Sprintf(
+						`{"code":%d,"reason":"INVALID_REQUEST"}`,
+						testCase.primaryStatus,
+					)))
+				case "/auth/login":
+					legacyRequests++
+					_, _ = writer.Write([]byte(`{"code":0,"data":{"access_token":"legacy-session"}}`))
+				case "/api/v1/auth/me":
+					_, _ = writer.Write([]byte(`{"code":0,"data":{"id":9,"username":"operator"}}`))
+				default:
+					http.NotFound(writer, request)
+				}
+			}))
+
+			adapter := NewSub2APIAdapter(server.Client())
+			session, err := adapter.Authenticate(
+				context.Background(),
+				server.URL,
+				model.PlatformSiteCredential{
+					AuthType: model.UpstreamAuthPassword,
+					Username: "operator@example.com",
+					Password: "synthetic-password",
+				},
+			)
+			if testCase.wantLegacyRoute {
+				require.NoError(t, err)
+				require.NotNil(t, session)
+				assert.Equal(t, "Bearer legacy-session", session.Headers.Get("Authorization"))
+			} else {
+				require.Error(t, err)
+			}
+			assert.Equal(t, testCase.wantLoginRequests, primaryRequests)
+			assert.Equal(t, testCase.wantLegacyRoute, legacyRequests == 1)
+			server.Close()
+		})
+	}
 }
 
 func TestSub2APIAdapterDoesNotUseUnverifiedManagementCandidate(t *testing.T) {
@@ -4511,8 +4878,8 @@ func TestSub2APILoginUsesUsernameBody(t *testing.T) {
 	assert.Equal(t, "Bearer username-session", session.Headers.Get("Authorization"))
 }
 
-func TestSub2APILoginAgreementRevisionIsSentForAllCredentialBodies(t *testing.T) {
-	loginBodies := make([]map[string]any, 0, 3)
+func TestSub2APILoginAgreementRevisionIsSentOnlyAfterExplicitRequirement(t *testing.T) {
+	loginBodies := make([]map[string]any, 0, 2)
 	settingsRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
@@ -4528,11 +4895,13 @@ func TestSub2APILoginAgreementRevisionIsSentForAllCredentialBodies(t *testing.T)
 			var loginPayload map[string]any
 			require.NoError(t, common.Unmarshal(body, &loginPayload))
 			loginBodies = append(loginBodies, loginPayload)
-			if len(loginBodies) < 3 {
-				writer.WriteHeader(http.StatusUnauthorized)
-				_, _ = writer.Write([]byte(`{"code":401,"message":"invalid credentials"}`))
+			if len(loginBodies) == 1 {
+				writer.WriteHeader(http.StatusBadRequest)
+				_, _ = writer.Write([]byte(`{"code":400,"message":"agreement required"}`))
 				return
 			}
+			assert.Equal(t, "operator@example.com", loginPayload["email"])
+			assert.Equal(t, "terms-rev-2026-10-01", loginPayload["agreed_revision"])
 			_, _ = writer.Write([]byte(`{"code":0,"data":{"access_token":"sub2api-session"}}`))
 		case "/api/v1/auth/me":
 			_, _ = writer.Write([]byte(`{"code":0,"data":{"balance":1}}`))
@@ -4553,22 +4922,21 @@ func TestSub2APILoginAgreementRevisionIsSentForAllCredentialBodies(t *testing.T)
 	)
 	require.NoError(t, err)
 	require.NotNil(t, session)
-	require.Len(t, loginBodies, 3)
+	require.Len(t, loginBodies, 2)
 	assert.Equal(t, 1, settingsRequests)
-	for _, body := range loginBodies {
-		assert.Equal(t, "terms-rev-2026-10-01", body["agreed_revision"])
-		assert.Equal(t, "synthetic-password", body["password"])
-		_, hasNotInCNConfirmed := body["not_in_cn_confirmed"]
-		assert.False(t, hasNotInCNConfirmed)
-	}
 	assert.Equal(t, "operator@example.com", loginBodies[0]["email"])
+	assert.Equal(t, "synthetic-password", loginBodies[0]["password"])
 	_, firstHasUsername := loginBodies[0]["username"]
 	assert.False(t, firstHasUsername)
-	assert.Equal(t, "operator@example.com", loginBodies[1]["username"])
-	_, secondHasEmail := loginBodies[1]["email"]
-	assert.False(t, secondHasEmail)
-	assert.Equal(t, "operator@example.com", loginBodies[2]["username"])
-	assert.Equal(t, "operator@example.com", loginBodies[2]["email"])
+	_, firstHasAgreement := loginBodies[0]["agreed_revision"]
+	assert.False(t, firstHasAgreement)
+	assert.Equal(t, "operator@example.com", loginBodies[1]["email"])
+	assert.Equal(t, "synthetic-password", loginBodies[1]["password"])
+	assert.Equal(t, "terms-rev-2026-10-01", loginBodies[1]["agreed_revision"])
+	_, secondHasUsername := loginBodies[1]["username"]
+	assert.False(t, secondHasUsername)
+	_, secondHasNotInCNConfirmed := loginBodies[1]["not_in_cn_confirmed"]
+	assert.False(t, secondHasNotInCNConfirmed)
 }
 
 func TestSub2APILoginAgreementRevisionFailureFallsBackToLegacyLogin(t *testing.T) {
@@ -4719,7 +5087,7 @@ func TestSub2APILoginAgreementStopsCredentialFallbackAndIsNotCredentialError(t *
 		},
 	)
 	require.Error(t, err)
-	assert.Equal(t, 1, loginRequests)
+	assert.Equal(t, 2, loginRequests)
 	assert.ErrorIs(t, err, ErrSub2APILoginAgreement)
 	assert.NotErrorIs(t, err, ErrPlatformSiteCredentials)
 	assert.NotErrorIs(t, err, ErrPlatformSiteSecurity)
@@ -4763,7 +5131,7 @@ func TestSub2APILoginAgreementMarkerPrecedesSecurityVerification(t *testing.T) {
 		},
 	)
 	require.Error(t, err)
-	assert.Equal(t, 1, loginRequests)
+	assert.Equal(t, 2, loginRequests)
 	assert.ErrorIs(t, err, ErrSub2APILoginAgreement)
 	assert.NotErrorIs(t, err, ErrPlatformSiteSecurity)
 }
@@ -5981,8 +6349,8 @@ func TestSyncPlatformSiteLoginAgreementFailurePreservesLastSuccessfulSnapshot(t 
 	err = SyncUpstreamSite(context.Background(), channel.Id)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrSub2APILoginAgreement)
-	assert.Equal(t, 2, loginRequests)
-	assert.Equal(t, 2, settingsRequests)
+	assert.Equal(t, 3, loginRequests)
+	assert.Equal(t, 1, settingsRequests)
 
 	require.NoError(t, db.First(&savedAccount, account.ID).Error)
 	assert.Equal(t, model.UpstreamSiteSyncFailed, savedAccount.SyncStatus)

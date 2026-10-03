@@ -1,7 +1,7 @@
 # Sub2API 与 New API 平台站点资源获取链路分析及版本差异
 
 > 文档状态：源码事实分析
-> 分析日期：2026-10-02
+> 分析日期：2026-10-03
 > 适用范围：旧版备份、Sub2API/New API/all-api-hub 本机参考源、当前 NexusTok
 > 安全边界：本文只记录接口契约、字段语义、代码入口和失败处理，不记录任何真实密码、Cookie、Access Token、Refresh Token、Admin Key、测试账号、环境变量或完整密钥。
 
@@ -603,7 +603,8 @@ New API Admin Key 可以附带：
 2. 从管理页面 HTML 中读取 `api_base_url`，作为 Relay 地址候选。
 3. 如果输入是 `api.` 子域名，尝试恢复去掉 `api.` 的管理地址。
 4. 恢复候选时要求相同协议、相同端口，并且页面明确回指原始 API 地址。
-5. `relatedPlatformSiteBaseURL` 校验同源或同注册域名；localhost、IP、跨注册域名和不明确的地址不发送凭据。
+5. 页面声明的 Relay 地址必须与最终 HTML 页面来源或原始管理地址使用相同协议、主机
+   和有效端口；localhost、IP、跨来源且未经页面明确声明的地址不发送凭据。
 6. `NormalizeSub2APIRelayBaseURL` 去掉结尾 `/v1`，因为 Relay 请求自身会追加 `/v1`。
 
 因此：
@@ -613,6 +614,10 @@ New API Admin Key 可以附带：
 - 管理接口使用管理地址；
 - `/v1/models` 和最终 Relay 请求使用 Relay 地址；
 - 管理地址缺失或 Relay 发现失败时，不把一方无条件当成另一方。
+- HTML 请求保留最终响应 URL，相对 `api_base_url` 按最终页面地址解析。管理页面从
+  `hhw1231.com` 跳转到 `hengwenapi.com` 时，若最终页面明确声明
+  `https://hengwenapi.com`，该地址可作为 Relay；登录、当前用户、分组、额度和 Key
+  接口仍使用 `hhw1231.com`。
 
 ### 9.2 当前认证和 Refresh
 
@@ -623,10 +628,14 @@ POST /api/v1/auth/login
 Body: {"email":"<email>","password":"<password>"} 或 {"username":"<identity>","password":"<password>"}
 ```
 
-当前实现恢复旧版兼容主体顺序：当输入是邮箱时先发 `email/password`，仅在明确凭据
-错误或 HTTP 401 后尝试 `username/password`，再尝试混合主体；非邮箱输入只发
-`username/password`。成功后从响应中读取 Access Token；登录要求交互验证、安全验证、
-WAF、限流、权限拒绝或网络错误时立即停止，不把这些结果当作可继续尝试的凭据错误。
+当前实现按参考源真实 DTO 收敛请求：当输入是邮箱时首请求只发
+`email/password`，仅在明确凭据错误或 HTTP 401 后最多一次尝试
+`username/password`，不发送混合主体；非邮箱输入只发 `username/password`。首路由
+`/api/v1/auth/login` 只有明确返回 404/405 时才回退 `/auth/login`。400
+`INVALID_REQUEST`、403、429、WAF、安全验证、权限拒绝、网络错误和 5xx 不触发路由或
+主体重试。只有上游响应明确要求条款时，才读取 `/api/v1/settings/public` 并使用相同
+路由、相同主体携带 `agreed_revision` 重试一次；普通登录成功时不主动读取公开设置。
+成功后从响应中读取 Access Token；登录要求交互验证时立即停止。
 
 Access Token：
 
@@ -1049,3 +1058,30 @@ Sub2API 站点验收结果：
 本次没有新增数据库字段。当前本地矩阵仅覆盖真实 SQLite 3.50.4、MySQL 8.2.0 和
 PostgreSQL 15.19；MySQL 5.7.8、PostgreSQL 9.6、独立日志数据库和真实生产上游注销
 结果仍按“待持续核验”记录。
+
+## 18. 2026-10-03 Sub2API 资源同步与登录兼容修复
+
+**变更前**
+
+- 重定向后的管理页面仍按原始输入地址解析相对 `api_base_url`，并以同注册域名规则
+  处理 Relay，导致页面从管理域跳转到独立 Relay 域名时无法探测单 Key 模型；
+- 普通邮箱登录可能携带 `agreed_revision`、`username` 等参考 DTO 未声明的字段，
+  严格部署会返回 `400 INVALID_REQUEST`；400 之后的主体/路由边界不够明确。
+
+**变更后**
+
+- `discoverSub2APIPageModelBaseURL` 使用 HTTP 响应最终 URL；相对地址按最终 HTML
+  页面解析。页面声明的 Relay 只有在与最终页面来源或原始管理地址协议、主机和有效
+  端口一致时接受，并继续执行 SSRF、重定向和协议/端口校验；
+- 管理地址与 Relay 地址保持职责分离。管理地址用于认证、用户、分组、用量和 Key；
+  Relay 只用于每条完整 Key 的 `/v1/models` 或 `/models` 探测和转发。模型探测成功后
+  才写入 Key 能力、`upstream_keys` 和父渠道模型并集；
+- Sub2API 首次邮箱登录只发送 `email/password`，`/api/v1/auth/login` 只在 404/405
+  回退 `/auth/login`；400 `INVALID_REQUEST` 不被当作密码错误，也不触发路由或主体
+  重试。只有明确条款 marker 才读取公开设置并提交 revision；
+- 资源、分页或单 Key 模型失败仍保留最近成功快照；认证成功但资源失败只记录资源级
+  失败或 partial/stale 状态，不把账号直接标记为凭据失效，也不执行错误的 Key 缺失
+  判定。
+
+本次使用脱敏 HTTP fixture、参考源静态核对和现有本地数据库测试；未在文档、测试、
+日志或 Git 中保存真实账号、密码、Token、Cookie、Admin Key、完整响应或完整密钥。
