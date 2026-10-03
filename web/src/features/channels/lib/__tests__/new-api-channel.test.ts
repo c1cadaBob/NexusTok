@@ -171,9 +171,9 @@ describe('New API channel', () => {
       platform: 'sub2api',
       auth_type: 'password',
       auth_flow_id: 'flow-123',
-      username: 'operator@example.com',
-      password: 'synthetic-password',
     })
+    expect(payload.platform_site?.username).toBeUndefined()
+    expect(payload.platform_site?.password).toBeUndefined()
   })
 
   test('sends the last successful username while leaving an unchanged password blank', () => {

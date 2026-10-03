@@ -843,6 +843,86 @@ func TestPlatformSiteInputDerivesPlatformAndPreservesLegacyAutomaticCredentials(
 	}
 }
 
+func TestApplyPlatformSiteAuthFlowAllowsLegacyUsernameOnly(t *testing.T) {
+	legacyUsernameInput := &PlatformSiteInput{
+		Platform:   model.PlatformNewAPI,
+		BaseURL:    "http://127.0.0.1:8089",
+		AuthType:   model.UpstreamAuthPassword,
+		AuthFlowID: "missing-flow",
+		Username:   "legacy-user",
+	}
+	_, err := applyPlatformSiteAuthFlow(1, 0, legacyUsernameInput)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "认证流程不能与其他平台凭据或采集会话同时提交")
+
+	conflictingInputs := []struct {
+		name  string
+		input func(*PlatformSiteInput)
+	}{
+		{
+			name: "password",
+			input: func(input *PlatformSiteInput) {
+				input.Password = "synthetic-password"
+			},
+		},
+		{
+			name: "user id",
+			input: func(input *PlatformSiteInput) {
+				input.UserID = "17"
+			},
+		},
+		{
+			name: "access token",
+			input: func(input *PlatformSiteInput) {
+				input.AccessToken = "synthetic-access-token"
+			},
+		},
+		{
+			name: "refresh token",
+			input: func(input *PlatformSiteInput) {
+				input.RefreshToken = "synthetic-refresh-token"
+			},
+		},
+		{
+			name: "session id",
+			input: func(input *PlatformSiteInput) {
+				input.SessionID = "synthetic-session"
+			},
+		},
+		{
+			name: "admin key",
+			input: func(input *PlatformSiteInput) {
+				input.AdminKey = "synthetic-admin-key"
+			},
+		},
+		{
+			name: "cookie",
+			input: func(input *PlatformSiteInput) {
+				input.Cookie = "session=synthetic-cookie"
+			},
+		},
+	}
+	for _, testCase := range conflictingInputs {
+		t.Run(testCase.name, func(t *testing.T) {
+			input := &PlatformSiteInput{
+				Platform:   model.PlatformNewAPI,
+				BaseURL:    "http://127.0.0.1:8089",
+				AuthType:   model.UpstreamAuthPassword,
+				AuthFlowID: "missing-flow",
+				Username:   "legacy-user",
+			}
+			testCase.input(input)
+
+			_, err := applyPlatformSiteAuthFlow(1, 0, input)
+			require.EqualError(
+				t,
+				err,
+				"认证流程不能与其他平台凭据或采集会话同时提交",
+			)
+		})
+	}
+}
+
 func TestValidatePlatformSiteInputKeepsExplicitCookieWithAccessToken(t *testing.T) {
 	credential, _, err := validatePlatformSiteInput(&PlatformSiteInput{
 		Platform:    model.PlatformNewAPI,

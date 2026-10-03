@@ -1,7 +1,7 @@
 # 上游渠道与平台站点设计
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-02
+> 事实基线日期：2026-10-03
 > 主要代码来源：`model/upstream_channel.go`、`model/routing_key.go`、`service/upstream_site.go`、`controller/upstream_channel.go`、`controller/channel-test.go`
 > 关联架构文档：[`docs/architecture/relay-routing-and-conversion.md`](architecture/relay-routing-and-conversion.md)、[`docs/architecture/provider-capability-matrix.md`](architecture/provider-capability-matrix.md)、[`docs/architecture/data-cache-and-background-jobs.md`](architecture/data-cache-and-background-jobs.md)、[`平台站点资源获取比较`](platform-site-resource-acquisition-comparison.md)
 
@@ -946,6 +946,42 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
   前端；历史 Access Token、Admin Key、Cookie 渠道继续可读可同步，但新版界面不再
   新增手动录入入口。
 
+### 9.8 2026-10-03 认证流程保存兼容与 NewAPI 加密登录
+
+**变更前**
+
+- 账号密码认证流程完成后，渠道表单仍可能把用户名和密码残留在
+  `platform_site_auth_flow_id` 请求中；后端把用户名误判为流程与手动凭据混用，导致
+  创建或保存渠道时在认证流程解析前失败；
+- NewAPI 新版密码登录已经要求读取加密密钥，但平台同步客户端仍可能按旧版明文
+  `password` 字段登录，未覆盖 RSA-OAEP 和长密码信封；
+- Sub2API 的邮箱主体优先、凭据错误后才尝试用户名主体，以及 Refresh Token 精确登出
+  的事实边界没有在本专项文档中集中记录。
+
+**变更后**
+
+- 账号密码认证已经取得 `auth_flow_id` 时，前端只提交平台、站点地址、认证方式、
+  流程 ID 和金额配置，不再提交用户名、密码或其它登录材料。后端兼容旧版客户端
+  残留的用户名字段，但以一次性认证流程解析出的真实用户名、User ID 和凭据为准；
+  密码、User ID、Access/Refresh Token、Token 过期信息、Token 类型、Session ID、
+  Admin Key、Cookie 和 Capture ID 仍与流程同时提交时拒绝；
+- 认证流程解析成功后继续由服务端写入最终账号、真实用户名、User ID 和加密凭据，
+  并执行一次性消费。未完成认证流程的账号密码请求仍提交用户名和密码；编辑已有
+  密码渠道时，空密码仍由后端合并已保存密码；
+- Sub2API 密码登录先提交 `email`，仅在明确凭据错误或 HTTP 401 时回退
+  `username`；条款、安全验证、WAF、限流、权限和网络错误不触发主体盲目重试。
+  当前用户读取 `/api/v1/auth/me`，后台清理只向 `/api/v1/auth/logout` 提交本轮
+  Refresh Token，不撤销其它会话；上游只返回邮箱时，邮箱作为统一用户名回填值；
+- NewAPI 密码登录先读取 `GET /api/user/login/encryption-key`。启用加密时，短密码
+  使用 RSA-OAEP-SHA256，长密码使用 `v2.<wrapped-key>.<nonce>.<ciphertext>` 的
+  AES-GCM 信封，并使用 `password-v2` OAEP 标签和 `password-v2:<kid>` AAD；请求
+  只包含 `username`、`password_encrypted` 和 `encryption_key_id`。加密路由明确返回
+  404 或 405 时才回退旧版明文 `password`，网络错误、403、5xx、无效公钥或无效
+  配置均不静默降级；
+- 测试和诊断只使用脱敏 HTTP fixture 与本机参考源码。密码、Token、Cookie、Admin
+  Key、完整上游响应和真实站点账号不会写入日志、错误响应、文档、测试 fixture 或
+  Git 提交。
+
 ## 与架构文档的关系
 
 本文保留平台站点、账号同步、子密钥字段、倍率/权重公式、权限、SSRF 和测试验收等详细规则；架构文档描述平台站点如何进入渠道过滤、Routing Key 和 Relay 转发。新增平台类型或调整同步/路由语义时，必须同时更新本文、能力矩阵和偏差表。
@@ -960,3 +996,4 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
 | 2026-09-27 | 接入渠道代理与 NewAPI 错误分类 | 平台站点同步、密码登录和 2FA 没有读取渠道代理；通用客户端注入可能覆盖平台会话 CookieJar、超时和重定向策略；真实账号错误消息分类不完整 | 按渠道配置复用代理 Transport，保留平台会话策略和 Cookie 轮换；同步与 Auth Flow 统一使用代理；识别 `username or password`/封禁消息并保持认证、网络、安全验证和资源失败分层 | 渠道 4 代理同步、渠道 5 认证诊断、NewAPI/Sub2API 平台站点认证和资源请求 | `service/upstream_site.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go`；代理、CookieJar、Auth Flow 和同步回归 |
 | 2026-09-29 | 平台站点资源获取比较文档与管理端字段校准 | 专项文档将 `GET /api/channel/:id/upstream-keys` 描述为不返回额度、过期时间和最近使用时间，且没有链接旧版/参考源/当前实现的完整资源链路比较 | 明确该接口实际返回 `UsedQuota`、`RemainQuota`、`ExpiresAt`、`Models`、`ModelsSynced`、`Status`、可路由诊断和脱敏 `KeyPreview`；完整 Secret 仍不返回，并增加完整比较文档入口 | 平台站点资源查询、管理员诊断、额度和模型能力边界 | `controller/upstream_channel.go:75-104`、`controller/upstream_channel.go:667-710`、[`docs/platform-site-resource-acquisition-comparison.md`](platform-site-resource-acquisition-comparison.md) |
 | 2026-10-02 | 密码同步会话清理与自动配置边界 | 密码同步可能复用历史登录态；NewAPI/Sub2API 注销路径、资源失败快照保护、浏览器会话所有权和自动配置一次性消费边界未统一 | 每轮密码同步直接登录并清理本轮会话；NewAPI 登出后精确删除 SID，Sub2API 仅 Refresh Token 登出，禁止撤销其他会话；清理失败不覆盖快照；自动配置完成验证、脱敏诊断、现有加密保存和 Redis/内存 claim 一次性消费，表单仅保留账号密码/自动配置 | 平台站点认证、资源同步、Capture Helper、前端表单和缓存 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_capture.go`、`pkg/cachex/hybrid_cache.go`、`controller/channel.go`、前端平台站点组件、本机参考源和定向测试 |
+| 2026-10-03 | 认证流程保存兼容与 NewAPI 加密登录 | 认证流程请求中的残留用户名被误判为手动凭据；NewAPI 新版密码加密登录协议和 Sub2API 邮箱主体/精确登出边界未在专项文档集中登记 | 有 `auth_flow_id` 时前端不再提交用户名/密码，后端仅兼容用户名残留并以流程真实身份为准；NewAPI 实现加密密钥读取、RSA-OAEP/v2 信封和仅 404/405 明文回退；Sub2API 保持邮箱优先、凭据错误后回退用户名和本轮 Refresh Token 登出 | 渠道保存、NewAPI/Sub2API 密码认证、认证流程一次性消费、脱敏诊断和最近成功快照 | `web/src/features/channels/lib/channel-form.ts`、`controller/upstream_channel.go`、`service/newapi_password_encryption.go`、`service/upstream_site_adapters.go`、相关 Go/React 定向测试；New API/Sub2API/all-api-hub 本机参考源 |

@@ -874,6 +874,9 @@ function buildPlatformSitePayload(
       : undefined,
   }
   if (formData.platform_site_auth_type === 'password') {
+    if (payload.auth_flow_id) {
+      return payload
+    }
     payload.username =
       formData.platform_site_username?.trim() || undefined
     payload.password = formData.platform_site_password || undefined

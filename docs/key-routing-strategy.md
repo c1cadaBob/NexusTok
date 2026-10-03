@@ -1,7 +1,7 @@
 # 密钥调度策略与日志可观测性
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-02
+> 事实基线日期：2026-10-03
 > 主要代码来源：`model/routing_key.go`、`model/upstream_routing.go`、`middleware/distributor.go`、`service/channel_select.go`、`controller/channel-test.go`、`model/channel_cache.go`
 > 关联架构文档：[`docs/architecture/relay-routing-and-conversion.md`](architecture/relay-routing-and-conversion.md)、[`docs/architecture/provider-capability-matrix.md`](architecture/provider-capability-matrix.md)、[`docs/architecture/implementation-deviations.md`](architecture/implementation-deviations.md)、[`平台站点资源获取比较`](platform-site-resource-acquisition-comparison.md)
 
@@ -449,6 +449,7 @@ username。其它认证统一通过“自动配置”
 | 2026-09-27 | 平台站点渠道代理出站 | 平台站点认证和资源同步未读取渠道代理，代理网络失败可能被误判为密钥不可用 | NewAPI/Sub2API 的管理面请求按渠道配置复用 Transport；认证成功后的资源失败继续保留最近成功密钥、模型、倍率和权重快照，代理配置错误单独诊断 | 渠道 4 代理同步、渠道 5 认证、平台站点路由候选和管理员可见错误 | `service/upstream_site.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go` |
 | 2026-09-29 | 校准平台站点 Key 资源与上游用量路由边界 | 文档没有集中说明管理端 `upstream-keys` 的额度/过期/模型字段、Sub2API 窗口额度缺口、账号级模型边界和父渠道 `UsedQuota` 来源 | 明确管理端返回 `UsedQuota`、`RemainQuota`、`ExpiresAt`、`Models`、`Status` 和脱敏 `KeyPreview`；完整 Secret 仍不返回；Sub2API 平台窗口额度未接入，账号级模型不能复制给所有 Key；父渠道 `UsedQuota` 来自平台同步上游累计用量 | 平台站点子密钥过滤、模型能力、额度展示、快照回退和路由调度 | `controller/upstream_channel.go`、`service/upstream_site.go`、`service/upstream_site_adapters.go`、[`平台站点资源获取比较`](platform-site-resource-acquisition-comparison.md) |
 | 2026-09-30 | 旧版资源同步迁移与脱敏 fixture 验收 | New API/Sub2API 资源分页上限、登录主体兼容、Sub2API 读取顺序和完整 Key 优先级未与旧版完全对齐 | 三类 Key 资源恢复独立 1000 页；恢复受限主体兼容、New API 批量 Key 补偿、Sub2API 列表优先/详情补齐、单 Key 模型探测和失败快照边界；使用脱敏 fixture 验证路由与资源边界 | 路由候选、Key 模型能力、额度和资源状态 | `service/upstream_site_adapters.go`、`service/upstream_site_test.go`、脱敏 HTTP fixture 和 SQLite；未使用真实账号或站点 |
+| 2026-10-03 | 平台认证协议修复与路由快照边界 | 认证流程保存失败可能阻断渠道创建；NewAPI 加密登录失败可能被误解为凭据或路由不可用；认证清理与快照保护的边界未记录 | 认证流程只以服务端流程身份保存，Sub2API 仅在凭据错误/401 后回退主体，NewAPI 仅在 404/405 回退明文；登录协议错误、清理告警和资源失败不删除最近成功路由快照 | 平台站点认证、路由候选、资源同步失败和管理员诊断 | `controller/upstream_channel.go`、`service/newapi_password_encryption.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`、脱敏 fixture 和本机参考源 |
 
 ### 14.1 2026-09-26 实现校准
 
@@ -600,3 +601,21 @@ Relay 地址和渠道请求根地址没有统一校验，模型别名判断可�
   凭据结构并参与后续同步，但只从已验证的 `capture_id` 进入保存链路。Capture
   解析后由 Redis/内存 claim 一次性占用，保存成功消费，校验或数据库失败释放，避免
   同一完整凭据快照被并发创建多个渠道。
+
+### 14.8 2026-10-03 平台认证流程与登录协议失败边界
+
+**变更前**：渠道创建阶段的认证流程失败可能被误认为平台站点不可用，认证协议失败
+也没有明确说明是否会影响已有路由候选和最近成功快照。
+
+**变更后**：
+
+- 有 `auth_flow_id` 时，保存请求不再携带表单中的用户名和密码；旧客户端仅残留用户名
+  时由后端兼容，最终用户名来自一次性流程解析，不把客户端残留值用于路由或凭据；
+- NewAPI 的加密密钥读取、RSA-OAEP/v2 信封和 404/405 明文回退属于认证协议阶段。
+  403、5xx、网络错误和无效加密配置直接结束认证，不发送第二种明文请求，不触碰已有
+  `RoutingKey`、`UpstreamKeyAbility` 或模型能力；
+- Sub2API 的邮箱优先和凭据错误后用户名回退属于认证主体兼容阶段，条款、安全验证、
+  限流、权限和网络错误不重试主体。资源失败、分页失败或 Cleanup 告警只影响本轮
+  同步状态，继续按最近成功快照进行候选过滤；
+- 管理员诊断仅保留阶段、脱敏 URL、HTTP 状态、错误类别和快照回退信息，不记录密码、
+  Token、Cookie、Session ID、Admin Key 或完整上游响应。

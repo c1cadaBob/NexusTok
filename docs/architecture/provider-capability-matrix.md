@@ -1,7 +1,7 @@
 # 渠道能力矩阵
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-02
+> 事实基线日期：2026-10-03
 > 主要代码来源：`constant/channel.go`、`constant/api_type.go`、`common/api_type.go`、`relay/relay_adaptor.go`、`relay/common/relay_info.go`、`relay/channel/*/adaptor.go`、`router/relay-router.go`、`router/task-plugin-protocol-router.go`
 > 关联详细文档：[`README.md`](./README.md)、[`relay-routing-and-conversion.md`](./relay-routing-and-conversion.md)、[`implementation-deviations.md`](./implementation-deviations.md)、[`../key-routing-strategy.md`](../key-routing-strategy.md)
 
@@ -132,6 +132,7 @@ NexusTok 适配器请求清单中，因此平台窗口额度仍属于未完整�
 | 2026-09-30 | 旧版资源同步迁移与脱敏 fixture 验收 | Key 资源分页、登录主体兼容、Sub2API 资源顺序和完整 Key 读取优先级与旧版不完全一致；脱敏路由和地址验收未集中记录 | New API Token、Sub2API 普通 Key/Admin Key 分页恢复独立 1000 页；主体兼容、列表完整 Key 优先、详情补齐、单 Key 模型探测、RoutingKey 关系修复、模型映射和 Relay 地址规范化与旧版对齐 | 平台站点管理面、路由前置资源、Key 能力、请求地址和容量验证 | `service/upstream_site_adapters.go`、`service/upstream_site_test.go`、`model/upstream_channel_test.go`、脱敏 HTTP fixture 和 SQLite；未使用真实账号或站点 |
 | 2026-10-01 | Sub2API 登录服务条款兼容能力 | 矩阵只登记 Sub2API 的一般密码/2FA 入口，未记录公开条款设置、可选 revision、错误分类和 New API 隔离 | 增加 `GET /api/v1/settings/public` 的条件读取、`agreed_revision` 发送和 2FA 最新 revision；设置故障回退旧协议，条款拒绝独立分类并保留快照；不发送 `not_in_cn_confirmed`，New API 不读取或发送同名字段 | Sub2API 认证、Auth Flow、同步状态、资源面板和平台能力边界 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go`；Sub2API 参考源 DTO/路由；SQLite 3.50.4、MySQL 8.2.0、PostgreSQL 15.19 矩阵 |
 | 2026-10-02 | 平台站点密码会话清理与自动配置能力 | 密码同步复用历史登录态的边界、NewAPI/Sub2API 精确注销路径、浏览器采集所有权和表单隐藏旧凭据入口未在矩阵中统一登记 | 密码同步每次重新登录；NewAPI 登出后精确删除 SID，Sub2API 仅 Refresh Token 登出；资源失败保留快照；自动配置完成验证后加密保存并一次性消费，平台从渠道类型派生 | 平台站点认证、资源同步、Capture Helper、渠道表单和跨节点缓存 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_capture.go`、`web/src/features/channels/components/drawers/platform-site-fields.tsx`、本机参考源和定向测试 |
+| 2026-10-03 | 认证流程保存兼容与 NewAPI 加密登录 | 完成认证流程后残留用户名可能被当作手动凭据；NewAPI 加密登录密钥、RSA-OAEP/v2 信封和明文回退边界未在矩阵中登记 | 有流程 ID 时只提交流程材料，后端兼容用户名残留并使用流程真实身份；NewAPI 按新版协议读取密钥并仅在 404/405 回退明文；Sub2API 保持邮箱优先和本轮 Refresh Token 精确登出 | 平台站点创建/编辑、账号密码认证、错误回退和会话清理 | `web/src/features/channels/lib/channel-form.ts`、`controller/upstream_channel.go`、`service/newapi_password_encryption.go`、`service/upstream_site_adapters.go`、定向测试和本机 New API/Sub2API/all-api-hub 参考源 |
 
 ### 3.2 2026-09-26 实现校准
 
@@ -231,3 +232,23 @@ Refresh Token 的 `POST /api/v1/auth/logout` 清理；两者均不撤销其他�
 Capture 属于用户已有会话，不进入后台 Cleanup。自动配置候选在提交前验证当前用户或
 Admin 权限，诊断脱敏，Capture 记录用 Redis/内存 claim 防止并发重复消费；无数据库
 字段变更。
+
+### 3.8 2026-10-03 认证流程与密码协议能力
+
+**变更前**：平台能力矩阵只描述了账号密码认证和会话清理，没有标出认证流程保存请求
+与旧客户端残留用户名的兼容边界，也没有区分 NewAPI 新版加密登录和旧版明文协议的
+降级条件。
+
+**变更后**：
+
+- 认证流程完成后，前端仅提交平台、管理地址、认证方式、一次性流程 ID 和金额配置；
+  后端允许仅有用户名残留的旧请求继续解析流程，但拒绝任何密码、Token、Cookie、
+  Session ID、Admin Key 或其它真实登录材料；
+- Sub2API 账号密码请求先使用邮箱主体，只有明确凭据错误或 HTTP 401 才尝试用户名；
+  条款、安全验证、WAF、限流、权限和网络错误不触发主体重试。资源完成后只以本轮
+  Refresh Token 调用 `/api/v1/auth/logout`；
+- NewAPI 先读取 `/api/user/login/encryption-key`。加密开启时使用 RSA-OAEP-SHA256，
+  长密码使用 AES-GCM v2 信封；只有 404/405 的缺路由才发送旧版明文字段，403、5xx、
+  网络错误和无效加密配置不降级；
+- 上述协议不改变历史 Access Token、Admin Key、Cookie 和浏览器采集渠道的读取兼容性，
+  这些登录态不属于密码同步创建的临时会话，也不执行后台注销。

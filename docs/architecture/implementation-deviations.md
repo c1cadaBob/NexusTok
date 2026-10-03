@@ -1,7 +1,7 @@
 # 实现偏差登记
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-02
+> 事实基线日期：2026-10-03
 > 主要代码来源：`router/relay-router.go`、`common/api_type.go`、`relay/relay_adaptor.go`、`relay/channel/*/adaptor.go`、`router/task-plugin-protocol-router.go`、`docs/architecture/*.md`
 > 关联详细文档：[`README.md`](./README.md)、[`relay-routing-and-conversion.md`](./relay-routing-and-conversion.md)、[`provider-capability-matrix.md`](./provider-capability-matrix.md)、[`../plugin-api/README.md`](../plugin-api/README.md)
 
@@ -57,6 +57,7 @@
 | DEV-022 | 平台 Key 分页上限 | 旧版 New API/Sub2API Key 分页最多尝试 1000 页，每页 100 条 | New API Token、Sub2API 普通 Key 和 Sub2API Admin Key 各自最多尝试 1000 页、每页 100 条；分页中途失败时保留最近成功快照且不执行缺失判定。New API Admin channel 等非本次迁移的管理资源继续使用原独立分页限制 | 已实现/待持续容量验证 | 旧版 `service/upstreamaccount/`、`service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go` | 2026-09-30 |
 | DEV-023 | Sub2API 登录服务条款 | 开启登录条款的站点要求账号密码登录或 2FA 提交当前公开 revision；未确认的额外字段不得由客户端猜测或代填 | 仅 Sub2API 密码登录读取 `GET /api/v1/settings/public`，在启用且 revision 非空时发送 `agreed_revision`；设置失败回退旧协议，2FA 重新读取；条款拒绝独立归类为 `login_agreement_required`，不触发主体回退，后台保留最近成功快照；不发送 `not_in_cn_confirmed`，New API 不读取或发送同名字段 | 已实现/待真实站点持续核验 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_auth_flow.go`、`model/upstream_channel.go`、`controller/upstream_channel.go`、`web/src/features/channels/types.ts`；Sub2API 参考源 `setting_handler.go`、`auth_handler.go` | 2026-10-01 |
 | DEV-024 | 平台站点密码会话与自动配置 | 密码同步可能复用旧 Access/Refresh Token、Cookie、Session ID 或 Dashboard Refresh；同步结束没有统一的本轮会话清理；自动配置与浏览器既有会话的所有权、表单隐藏旧凭据入口和并发消费边界不完整 | NewAPI/Sub2API 密码模式每次直接登录；NewAPI `POST /api/user/auth/logout` 后按 SID `DELETE /api/user/sessions/{sid}`，Sub2API 仅提交本轮 Refresh Token 到 `POST /api/v1/auth/logout`；禁止撤销其他会话，清理失败只告警并保留快照；Capture Helper 通过验证、脱敏诊断、现有加密凭据和 Redis/内存 claim 一次性消费，浏览器登录态不由后台注销 | 已实现/待真实站点持续核验 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_capture.go`、`pkg/cachex/hybrid_cache.go`、`controller/channel.go`、`controller/upstream_channel.go`；New API/Sub2API/all-api-hub 参考源 | 2026-10-02 |
+| DEV-025 | 认证流程保存与 NewAPI 加密登录 | 认证流程 ID 与表单残留用户名、密码的兼容边界不清，用户名会在流程解析前触发手动凭据冲突；NewAPI 新版加密登录、旧版路由回退和 Sub2API 邮箱主体顺序未完整记录 | 有 `auth_flow_id` 时前端只提交流程材料，后端兼容用户名残留但以流程解析的真实身份为准，拒绝其它真实凭据；NewAPI 读取加密密钥并使用 RSA-OAEP/v2 信封，仅 404/405 回退明文；Sub2API 仅在凭据错误/401 后从邮箱回退用户名并以本轮 Refresh Token 登出 | 已实现/待真实站点持续核验 | `web/src/features/channels/lib/channel-form.ts`、`controller/upstream_channel.go`、`service/newapi_password_encryption.go`、`service/upstream_site_adapters.go`、`controller/channel_upstream_update_test.go`、`service/upstream_site_test.go`；本机参考源 | 2026-10-03 |
 
 ### 3.2 2026-09-26 实现核对结果
 
@@ -209,6 +210,23 @@ Redis 密码、Cookie、Token、API Key 或完整环境变量值。本次不新�
 `ResolvePlatformSiteCapture` 后由 Redis/内存 claim 独占，保存成功后删除并释放，
 保存链路中途失败释放 claim。该记录仍不增加数据库字段；真实最低版本数据库和真实
 上游注销结果保持“待持续核验”，不能由本地单元测试推断完成。
+
+### 3.11 2026-10-03 认证流程保存与 NewAPI 密码加密
+
+**变更前**：账号密码 Auth Flow 成功后，前端仍可能将用户名和密码一并提交；控制器
+在解析一次性流程前将用户名判为手动凭据冲突。NewAPI 新版站点的密码加密路由也未被
+同步客户端实现，容易在加密开启的真实站点上直接发送不兼容的明文登录请求。
+
+**变更后**：有 `platform_site_auth_flow_id` 时，前端只提交流程 ID、平台、站点地址、
+认证方式和金额配置；控制器允许旧客户端仅残留用户名，但拒绝密码、User ID、Access/
+Refresh Token、Cookie、Session ID、Admin Key 和 Capture ID，并以流程解析结果覆盖
+客户端身份。没有流程 ID 的新建账号密码渠道和编辑空密码合并逻辑保持不变。
+
+NewAPI 登录先读取 `/api/user/login/encryption-key`，启用加密时短密码使用
+RSA-OAEP-SHA256，长密码使用 `v2` AES-GCM 信封；明确 404/405 才允许明文回退，其它
+网络、权限、5xx 或无效配置均直接失败。Sub2API 继续邮箱优先，仅在明确凭据错误或
+401 后回退用户名。此偏差仍标记“待真实站点持续核验”，本次只使用脱敏 fixture 和
+本机参考源，未使用真实账号、密码、Token、Cookie 或完整上游响应。
 
 ## 4. 维护规则
 

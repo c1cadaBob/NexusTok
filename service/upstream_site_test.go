@@ -2,6 +2,14 @@ package service
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -861,6 +869,249 @@ func TestNewAPIAdapterPasswordAuthenticationAndSnapshot(t *testing.T) {
 	assert.Equal(t, []string{"gpt-4o", "claude-3-7-sonnet"}, snapshot.Keys[0].Models)
 	assert.Equal(t, 0.7, snapshot.Keys[0].SourceConversionRatio)
 	assert.Zero(t, groupFallbackRequests)
+}
+
+func decryptNewAPIPasswordFixture(
+	t *testing.T,
+	ciphertext string,
+	privateKey *rsa.PrivateKey,
+	keyID string,
+) string {
+	t.Helper()
+	if !strings.HasPrefix(ciphertext, "v2.") {
+		decoded, err := base64.StdEncoding.DecodeString(ciphertext)
+		require.NoError(t, err)
+		plaintext, err := rsa.DecryptOAEP(
+			sha256.New(),
+			rand.Reader,
+			privateKey,
+			decoded,
+			nil,
+		)
+		require.NoError(t, err)
+		return string(plaintext)
+	}
+
+	parts := strings.Split(ciphertext, ".")
+	require.Len(t, parts, 4)
+	wrappedKey, err := base64.StdEncoding.DecodeString(parts[1])
+	require.NoError(t, err)
+	nonce, err := base64.StdEncoding.DecodeString(parts[2])
+	require.NoError(t, err)
+	encrypted, err := base64.StdEncoding.DecodeString(parts[3])
+	require.NoError(t, err)
+	secret, err := rsa.DecryptOAEP(
+		sha256.New(),
+		rand.Reader,
+		privateKey,
+		wrappedKey,
+		[]byte(newAPIPasswordV2Label),
+	)
+	require.NoError(t, err)
+	block, err := aes.NewCipher(secret)
+	require.NoError(t, err)
+	gcm, err := cipher.NewGCM(block)
+	require.NoError(t, err)
+	plaintext, err := gcm.Open(
+		nil,
+		nonce,
+		encrypted,
+		[]byte(newAPIPasswordV2Label+":"+keyID),
+	)
+	require.NoError(t, err)
+	return string(plaintext)
+}
+
+func TestNewAPIAdapterPasswordUsesEncryptedLoginWhenEnabled(t *testing.T) {
+	passwords := []struct {
+		name     string
+		password string
+	}{
+		{name: "short RSA password", password: "synthetic-password"},
+		{name: "long AES envelope password", password: strings.Repeat("long-password-", 32)},
+	}
+
+	for _, testCase := range passwords {
+		t.Run(testCase.name, func(t *testing.T) {
+			privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+			require.NoError(t, err)
+			publicKeyDER, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+			require.NoError(t, err)
+			publicKeyPEM := pem.EncodeToMemory(&pem.Block{
+				Type:  "PUBLIC KEY",
+				Bytes: publicKeyDER,
+			})
+			const keyID = "synthetic-kid"
+			loginRequests := 0
+
+			server := httptest.NewServer(http.HandlerFunc(func(
+				writer http.ResponseWriter,
+				request *http.Request,
+			) {
+				writer.Header().Set("Content-Type", "application/json")
+				switch request.URL.Path {
+				case newAPIPasswordEncryptionPath:
+					_, _ = writer.Write([]byte(fmt.Sprintf(
+						`{"success":true,"data":{"enabled":true,"kid":%q,"public_key":%q}}`,
+						keyID,
+						string(publicKeyPEM),
+					)))
+				case "/api/user/login":
+					loginRequests++
+					body, readErr := io.ReadAll(request.Body)
+					require.NoError(t, readErr)
+					var loginPayload map[string]string
+					require.NoError(t, common.Unmarshal(body, &loginPayload))
+					assert.Equal(t, "operator", loginPayload["username"])
+					assert.Empty(t, loginPayload["password"])
+					assert.Equal(t, keyID, loginPayload["encryption_key_id"])
+					assert.NotContains(t, string(body), testCase.password)
+					assert.Equal(
+						t,
+						testCase.password,
+						decryptNewAPIPasswordFixture(
+							t,
+							loginPayload["password_encrypted"],
+							privateKey,
+							keyID,
+						),
+					)
+					_, _ = writer.Write([]byte(
+						`{"success":true,"data":{"token":"encrypted-login-access","user":{"id":17}}}`,
+					))
+				case "/api/user/self":
+					assert.Equal(t, "Bearer encrypted-login-access", request.Header.Get("Authorization"))
+					_, _ = writer.Write([]byte(
+						`{"success":true,"data":{"id":17,"username":"operator"}}`,
+					))
+				default:
+					http.NotFound(writer, request)
+				}
+			}))
+			t.Cleanup(server.Close)
+
+			_, err = NewNewAPIAdapter(server.Client()).Authenticate(
+				context.Background(),
+				server.URL,
+				model.PlatformSiteCredential{
+					AuthType: model.UpstreamAuthPassword,
+					Username: "operator",
+					Password: testCase.password,
+				},
+			)
+			require.NoError(t, err)
+			assert.Equal(t, 1, loginRequests)
+		})
+	}
+}
+
+func TestNewAPIAdapterPasswordFallsBackToPlaintextOnlyWhenEncryptionRouteMissing(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusMethodNotAllowed} {
+		t.Run(fmt.Sprintf("status-%d", status), func(t *testing.T) {
+			loginRequests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(
+				writer http.ResponseWriter,
+				request *http.Request,
+			) {
+				writer.Header().Set("Content-Type", "application/json")
+				switch request.URL.Path {
+				case newAPIPasswordEncryptionPath:
+					writer.WriteHeader(status)
+					_, _ = writer.Write([]byte(`{"message":"route missing"}`))
+				case "/api/user/login":
+					loginRequests++
+					body, readErr := io.ReadAll(request.Body)
+					require.NoError(t, readErr)
+					var loginPayload map[string]string
+					require.NoError(t, common.Unmarshal(body, &loginPayload))
+					assert.Equal(t, "synthetic-password", loginPayload["password"])
+					assert.Empty(t, loginPayload["password_encrypted"])
+					assert.Empty(t, loginPayload["encryption_key_id"])
+					_, _ = writer.Write([]byte(
+						`{"success":true,"data":{"token":"plaintext-login-access","user":{"id":17}}}`,
+					))
+				case "/api/user/self":
+					assert.Equal(t, "Bearer plaintext-login-access", request.Header.Get("Authorization"))
+					_, _ = writer.Write([]byte(`{"success":true,"data":{"id":17}}`))
+				default:
+					http.NotFound(writer, request)
+				}
+			}))
+			t.Cleanup(server.Close)
+
+			_, err := NewNewAPIAdapter(server.Client()).Authenticate(
+				context.Background(),
+				server.URL,
+				model.PlatformSiteCredential{
+					AuthType: model.UpstreamAuthPassword,
+					Username: "operator",
+					Password: "synthetic-password",
+				},
+			)
+			require.NoError(t, err)
+			assert.Equal(t, 1, loginRequests)
+		})
+	}
+}
+
+func TestNewAPIAdapterPasswordDoesNotFallbackWhenEncryptionConfigFails(t *testing.T) {
+	testCases := []struct {
+		name       string
+		statusCode int
+		body       string
+	}{
+		{
+			name:       "forbidden",
+			statusCode: http.StatusForbidden,
+			body:       `{"message":"permission denied"}`,
+		},
+		{
+			name:       "server error",
+			statusCode: http.StatusInternalServerError,
+			body:       `{"message":"temporary failure"}`,
+		},
+		{
+			name:       "invalid enabled configuration",
+			statusCode: http.StatusOK,
+			body:       `{"success":true,"data":{"enabled":true}}`,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			loginRequests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(
+				writer http.ResponseWriter,
+				request *http.Request,
+			) {
+				writer.Header().Set("Content-Type", "application/json")
+				if request.URL.Path == newAPIPasswordEncryptionPath {
+					writer.WriteHeader(testCase.statusCode)
+					_, _ = writer.Write([]byte(testCase.body))
+					return
+				}
+				if request.URL.Path == "/api/user/login" {
+					loginRequests++
+					t.Fatalf("密码加密配置失败时不应回退明文登录")
+				}
+				http.NotFound(writer, request)
+			}))
+			t.Cleanup(server.Close)
+
+			_, err := NewNewAPIAdapter(server.Client()).Authenticate(
+				context.Background(),
+				server.URL,
+				model.PlatformSiteCredential{
+					AuthType: model.UpstreamAuthPassword,
+					Username: "operator",
+					Password: "synthetic-password",
+				},
+			)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrPlatformSiteAuth)
+			assert.Zero(t, loginRequests)
+		})
+	}
 }
 
 func TestNewAPITokenPaginationUsesLegacyOneBasedParameters(t *testing.T) {
@@ -4582,6 +4833,10 @@ func TestNewAPILoginDistinguishesHTTP200InteractiveAndCredentialFailures(t *test
 		t.Run(testCase.name, func(t *testing.T) {
 			loginRequests := 0
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if request.Method == http.MethodGet && request.URL.Path == newAPIPasswordEncryptionPath {
+					http.NotFound(writer, request)
+					return
+				}
 				if request.Method == http.MethodPost && request.URL.Path == "/api/user/login" {
 					loginRequests++
 					writer.Header().Set("Content-Type", "application/json")

@@ -596,7 +596,8 @@ func applyPlatformSiteAuthFlow(userID, channelID int, input *PlatformSiteInput) 
 	if flowID == "" {
 		return "", nil
 	}
-	if strings.TrimSpace(input.CaptureID) != "" || hasCredentialInput(input) {
+	if strings.TrimSpace(input.CaptureID) != "" ||
+		hasPlatformSiteAuthFlowCredentialConflict(input) {
 		return "", errors.New("认证流程不能与其他平台凭据或采集会话同时提交")
 	}
 	resolution, err := service.ResolvePlatformSiteAuthFlow(
@@ -624,6 +625,22 @@ func applyPlatformSiteAuthFlow(userID, channelID int, input *PlatformSiteInput) 
 	input.AdminKey = resolution.Credential.AdminKey
 	input.Cookie = resolution.Credential.Cookie
 	return flowID, nil
+}
+
+func hasPlatformSiteAuthFlowCredentialConflict(input *PlatformSiteInput) bool {
+	if input == nil {
+		return false
+	}
+	return input.Password != "" ||
+		input.UserID != "" ||
+		input.AccessToken != "" ||
+		input.RefreshToken != "" ||
+		input.TokenExpiresAt != 0 ||
+		input.TokenType != "" ||
+		input.SessionID != "" ||
+		input.SessionCurrent ||
+		input.AdminKey != "" ||
+		input.Cookie != ""
 }
 
 func platformSiteAuthFlowErrorMessage(err error) string {

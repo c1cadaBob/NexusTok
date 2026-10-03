@@ -1426,26 +1426,45 @@ func loginNewAPIWithPassword(ctx context.Context, session *PlatformSiteSession, 
 		return nil, fmt.Errorf("%w: 缺少账号密码", ErrPlatformSiteAuth)
 	}
 
+	encryptionConfig, encryptionErr := fetchNewAPIPasswordEncryptionConfig(ctx, session)
+	if encryptionErr != nil && !platformSiteRouteMissing(encryptionErr) {
+		return nil, fmt.Errorf("%w: NewAPI 密码加密配置读取失败: %w", ErrPlatformSiteAuth, encryptionErr)
+	}
+	encryptedPassword := ""
+	encryptionKeyID := ""
+	if encryptionErr == nil && encryptionConfig != nil && encryptionConfig.enabled {
+		encryptedPassword, encryptionErr = encryptNewAPIPassword(password, encryptionConfig)
+		if encryptionErr != nil {
+			return nil, fmt.Errorf("%w: %w", ErrPlatformSiteAuth, encryptionErr)
+		}
+		encryptionKeyID = encryptionConfig.keyID
+	}
+
 	email := ""
 	if strings.Contains(identity, "@") {
 		email = identity
 	}
 	bodies := []map[string]string{{
 		"username": identity,
-		"password": password,
 	}}
 	if email != "" {
 		bodies = uniqueStringMaps(append(bodies,
 			map[string]string{
-				"email":    email,
-				"password": password,
+				"email": email,
 			},
 			map[string]string{
 				"username": identity,
 				"email":    email,
-				"password": password,
 			},
 		))
+	}
+	for _, body := range bodies {
+		if encryptedPassword != "" {
+			body["password_encrypted"] = encryptedPassword
+			body["encryption_key_id"] = encryptionKeyID
+		} else {
+			body["password"] = password
+		}
 	}
 	var lastErr error
 	for _, body := range bodies {

@@ -1,7 +1,7 @@
 # 鉴权、会话与授权原理
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-02
+> 事实基线日期：2026-10-03
 > 主要代码来源：`middleware/auth.go`、`middleware/token_auth.go`、`service/auth_session.go`、`model/user_session.go`、`service/authz/`、`controller/`、`oauth/`
 > 关联详细文档：[`../authentication.md`](../authentication.md)、[`../rate-limiting.md`](../rate-limiting.md)、[`system-overview.md`](./system-overview.md)
 
@@ -159,6 +159,7 @@ Cookie、Token、Refresh Token 和 Session ID 不写入日志、审计字段、U
 | 2026-09-30 | 旧版平台登录主体与脱敏 fixture 验收 | 上游登录主体兼容顺序与旧版不一致，脱敏资源和认证失败边界未在鉴权架构记录 | 恢复受限主体兼容；使用脱敏 fixture 验证登录 envelope、资源权限失败和快照边界；保留 Refresh 轮换、Bundle 完整性和安全验证分类 | NewAPI/Sub2API 上游认证、资源读取和安全审计 | `service/upstream_site_adapters.go`、`service/upstream_site_test.go`、脱敏 HTTP fixture；未使用真实账号或站点 |
 | 2026-09-30 | 系统维护 Root 敏感操作 | 维护页只有浏览器侧 GitHub 读取，更新、回滚和重启没有 Root/审计/脱敏边界 | 后端经 `RootAuth()` 检查 Release 并创建系统任务，更新、回滚、重启沿用管理审计；管理响应、任务、日志和 helper 边界不输出敏感环境或认证值 | 系统维护接口、Root 权限、管理审计、任务响应和 Docker helper | `router/api-router.go`、`middleware/audit.go`、`controller/system_update.go`、`model/system_task.go`、OWASP ASVS 5.0.0 与认证/会话/日志 Cheat Sheet |
 | 2026-10-01 | Sub2API 登录服务条款兼容 | Sub2API 密码认证没有读取公开条款 revision，2FA 和后台同步无法区分条款拒绝与凭据/安全验证错误 | 仅 Sub2API 密码登录按公开设置可选发送 `agreed_revision`，2FA 重新读取最新 revision；条款错误独立分类、停止主体回退、写入 `login_agreement_required` 并保留成功快照；New API 不读取或发送条款字段 | Sub2API 上游认证、Auth Flow、后台同步、资源状态和脱敏提示 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go`；Sub2API 参考源；OWASP ASVS 5.0.0、Authentication/Session Management/Logging/SSRF Cheat Sheet |
+| 2026-10-03 | 平台认证流程保存与密码登录协议 | 完成认证流程后客户端仍可能提交用户名和密码，后端在解析流程前误报凭据冲突；New API 新版密码加密请求、旧版路由回退和 Sub2API 邮箱主体边界未集中登记 | `auth_flow_id` 请求仅保留流程材料，后端兼容用户名残留并以服务端流程身份为准；New API 读取加密密钥并使用 RSA-OAEP/v2 信封，仅 404/405 回退明文；Sub2API 仅在明确凭据错误/401 后从邮箱回退用户名，后台只撤销本轮 Refresh Token | 平台站点认证流程、NewAPI/Sub2API 密码同步、凭据保护和错误分类 | `controller/upstream_channel.go`、`service/newapi_password_encryption.go`、`service/upstream_site_adapters.go`、`web/src/features/channels/lib/channel-form.ts`、定向测试和本机参考源 |
 
 ### 9.1 2026-09-26 实现校准
 
@@ -292,3 +293,22 @@ Refresh Token、Cookie 或 Session ID；资源读取完成后没有统一的“�
 - Capture 会话被解析后由 Redis `SET NX` 或单进程内存 claim 原子占用，成功保存渠道
   后一次性消费；后续校验、数据库保存或同步入队失败会释放 claim，claim token 不返回
   给前端或普通 API 响应。
+
+### 9.7 2026-10-03 平台认证流程兼容与 NewAPI 密码加密
+
+**变更前**：认证流程 ID 与表单残留用户名、密码的边界没有区分，导致完成账号密码
+认证后保存渠道时，后端可能把用户名当作与流程并存的手动凭据并提前失败。NewAPI
+新版上游启用密码加密时，NexusTok 也没有在认证架构中明确密钥读取、长密码封装和旧版
+回退条件。
+
+**变更后**：前端在账号密码流程完成后只提交 `auth_flow_id` 等流程元数据；后端允许
+旧客户端残留用户名，但拒绝密码、User ID、Access/Refresh Token、Cookie、Session ID、
+Admin Key 和其它真实认证材料，并使用流程服务端解析出的真实身份写入最终凭据。未有
+流程 ID 的新建请求仍使用账号密码，编辑已有密码渠道的空密码仍由后端合并旧密码。
+
+NewAPI 密码同步先读取 `/api/user/login/encryption-key`。启用加密时，短密码使用
+RSA-OAEP-SHA256，长密码使用 `password-v2` OAEP 标签和
+`password-v2:<kid>` AAD 的 AES-GCM 信封；只有密钥路由明确返回 404/405 才使用明文
+协议，其它网络、权限、5xx 或无效配置直接失败。Sub2API 保持邮箱优先、明确凭据错误
+或 401 后才回退用户名的顺序，并只用本轮 Refresh Token 执行精确登出。所有路径均
+不把密码、Token、Cookie、Session ID 或完整上游响应写入日志、审计字段或普通响应。
