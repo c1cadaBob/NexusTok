@@ -11,6 +11,7 @@ import (
 	"mime"
 	"net/http"
 	"net/http/cookiejar"
+	"net/mail"
 	"net/url"
 	"strconv"
 	"strings"
@@ -1428,6 +1429,10 @@ func syncPlatformSite(ctx context.Context, channelID int) error {
 			err = wrapPlatformSiteStage("认证方式", errors.New("平台站点认证方式未配置"))
 		}
 		credential.AuthType = authType
+		if account.Platform == model.PlatformSub2API &&
+			authType == model.UpstreamAuthPassword {
+			restoreSub2APIPasswordLoginIdentity(account.ChannelID, &credential)
+		}
 	}
 	if err == nil {
 		siteClient, clientErr := platformSiteHTTPClientForChannel(account.ChannelID)
@@ -1491,7 +1496,7 @@ func syncPlatformSite(ctx context.Context, channelID int) error {
 						err = persistPlatformSiteSnapshot(ctx, &account, snapshot)
 						if err != nil {
 							err = wrapPlatformSiteStage("同步写库", err)
-						} else if platformSiteSnapshotHasBlockingResourceFailure(snapshot) {
+						} else if platformSiteSnapshotHasBlockingResourceFailure(&account, snapshot) {
 							err = wrapPlatformSiteStage("资源同步", ErrPlatformSiteResource)
 						}
 					}
@@ -1552,6 +1557,39 @@ func syncPlatformSite(ctx context.Context, channelID int) error {
 	}
 	model.InitChannelCache()
 	return nil
+}
+
+func restoreSub2APIPasswordLoginIdentity(
+	channelID int,
+	credential *model.PlatformSiteCredential,
+) {
+	if channelID <= 0 ||
+		credential == nil ||
+		credential.AuthType != model.UpstreamAuthPassword ||
+		model.DB == nil ||
+		!model.DB.Migrator().HasTable(&model.PlatformSiteIdentity{}) {
+		return
+	}
+
+	var identity model.PlatformSiteIdentity
+	if err := model.DB.Select("username", "email").
+		Where("channel_id = ?", channelID).
+		First(&identity).Error; err != nil {
+		return
+	}
+	historicalEmail := strings.TrimSpace(identity.Email)
+	parsedEmail, err := mail.ParseAddress(historicalEmail)
+	if err != nil ||
+		!strings.EqualFold(strings.TrimSpace(parsedEmail.Address), historicalEmail) {
+		return
+	}
+
+	currentUsername := strings.TrimSpace(credential.Username)
+	historicalUsername := strings.TrimSpace(identity.Username)
+	if currentUsername == "" ||
+		(historicalUsername != "" && strings.EqualFold(currentUsername, historicalUsername)) {
+		credential.Username = historicalEmail
+	}
 }
 
 func platformSiteSnapshotHasData(snapshot PlatformSiteSnapshot) bool {
@@ -1661,14 +1699,28 @@ func mergePlatformSiteResourceReasons(left, right string) string {
 	return strings.Join(uniqueStrings([]string{left, right}), "；")
 }
 
-func platformSiteSnapshotHasBlockingResourceFailure(snapshot PlatformSiteSnapshot) bool {
+func platformSiteSnapshotHasBlockingResourceFailure(
+	account *model.PlatformSiteAccount,
+	snapshot PlatformSiteSnapshot,
+) bool {
+	modelProbeFailureWithSecret := false
 	for _, key := range snapshot.Keys {
-		if key.SyncError != "" ||
-			strings.TrimSpace(key.Secret) == "" ||
-			!key.ModelsSynced ||
-			len(uniqueStrings(key.Models)) == 0 {
+		if key.SyncError == upstreamKeySyncErrorModelsUnavailable &&
+			strings.TrimSpace(key.Secret) != "" {
+			modelProbeFailureWithSecret = true
 			continue
 		}
+		if key.SyncError == "" &&
+			strings.TrimSpace(key.Secret) != "" &&
+			key.ModelsSynced &&
+			len(uniqueStrings(key.Models)) > 0 {
+			return false
+		}
+	}
+	// 部分 Sub2API 部署会在管理资源仍可读取时拒绝所有密钥的 /v1/models，
+	// 例如账号没有剩余额度。此时保留最近一次完整的密钥和模型快照，
+	// 不把本次部分刷新误判为凭据失效。
+	if modelProbeFailureWithSecret && account != nil && account.LastSyncAt > 0 {
 		return false
 	}
 	return true

@@ -348,9 +348,11 @@ Admin Key step-up 拒绝只标记资源为 `secure_verification_required`，不�
 
 平台站点可以使用 `http://`、`localhost`、回环地址、私有 IPv4/IPv6 和内网 DNS
 地址。私有地址和 HTTP 仅由平台站点专用同步客户端放行，其他用户可控 URL 仍受
-全局 SSRF 规则约束。Sub2API 的管理地址与转发地址分开保存：管理接口使用
+全局 SSRF 规则约束。Sub2API 的管理地址与转发地址分开保存：持久化管理地址使用
 `PlatformSiteAccount.base_url`，页面配置发现的 OpenAI 兼容地址使用
-`relay_base_url`，父渠道基础地址使用实际转发地址并避免重复 `/v1`。
+`relay_base_url`，父渠道基础地址使用实际转发地址并避免重复 `/v1`。如果最终 HTML
+来源与明确声明的 Relay 同源，本轮管理请求根地址使用最终可信来源，但不覆盖持久化
+管理地址；如果 Relay 是 `api.` 直接父子域，则管理请求仍使用管理地址。
 
 平台站点的 `password` 认证继续手动输入用户名和密码；New API 主体优先使用
 `username/password`，邮箱输入仅在明确凭据错误或 HTTP 401 后兼容其它主体；Sub2API
@@ -452,6 +454,7 @@ Admin Key step-up 拒绝只标记资源为 `secure_verification_required`，不�
 | 2026-09-29 | 校准平台站点 Key 资源与上游用量路由边界 | 文档没有集中说明管理端 `upstream-keys` 的额度/过期/模型字段、Sub2API 窗口额度缺口、账号级模型边界和父渠道 `UsedQuota` 来源 | 明确管理端返回 `UsedQuota`、`RemainQuota`、`ExpiresAt`、`Models`、`Status` 和脱敏 `KeyPreview`；完整 Secret 仍不返回；Sub2API 平台窗口额度未接入，账号级模型不能复制给所有 Key；父渠道 `UsedQuota` 来自平台同步上游累计用量 | 平台站点子密钥过滤、模型能力、额度展示、快照回退和路由调度 | `controller/upstream_channel.go`、`service/upstream_site.go`、`service/upstream_site_adapters.go`、[`平台站点资源获取比较`](platform-site-resource-acquisition-comparison.md) |
 | 2026-09-30 | 旧版资源同步迁移与脱敏 fixture 验收 | New API/Sub2API 资源分页上限、登录主体兼容、Sub2API 读取顺序和完整 Key 优先级未与旧版完全对齐 | 三类 Key 资源恢复独立 1000 页；恢复受限主体兼容、New API 批量 Key 补偿、Sub2API 列表优先/详情补齐、单 Key 模型探测和失败快照边界；使用脱敏 fixture 验证路由与资源边界 | 路由候选、Key 模型能力、额度和资源状态 | `service/upstream_site_adapters.go`、`service/upstream_site_test.go`、脱敏 HTTP fixture 和 SQLite；未使用真实账号或站点 |
 | 2026-10-03 | 平台认证协议修复与路由快照边界 | 认证流程保存失败可能阻断渠道创建；NewAPI 加密登录失败可能被误解为凭据或路由不可用；认证清理与快照保护的边界未记录 | 认证流程只以服务端流程身份保存，Sub2API 仅在凭据错误/401 后回退主体，NewAPI 仅在 404/405 回退明文；登录协议错误、清理告警和资源失败不删除最近成功路由快照 | 平台站点认证、路由候选、资源同步失败和管理员诊断 | `controller/upstream_channel.go`、`service/newapi_password_encryption.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`、脱敏 fixture 和本机参考源 |
+| 2026-10-04 | Sub2API 管理资源成功与单 Key 模型失败分层 | 所有单 Key `/v1/models` 因余额不足或分组停用失败时，渠道刷新会覆盖管理资源成功结果并阻断历史路由快照 | 已有 `last_sync_at` 的渠道保留最近成功 Key 能力和路由候选，管理资源照常更新，`keys=partial`、`models=stale`；没有历史快照时仍禁止未确认模型路由，模型广场和分组目录不作为单 Key 能力 | Sub2API 资源同步、Key 候选过滤、模型能力和剩余额度刷新 | `service/upstream_site.go`、`service/upstream_site_test.go`、`docs/platform-site-resource-acquisition-comparison.md` |
 
 ### 14.1 2026-09-26 实现校准
 
@@ -546,9 +549,14 @@ CookieJar、Cookie 轮换、30 秒超时和重定向校验保持不变。代理�
 - `model_limits`/`models` 等 Token 字段是单个 Key 的首选模型来源；没有字段时才
   用该 Key 自己访问 `/v1/models`。账号级模型、价格和 Admin channel 模型不能复制
   为所有 Key；
-- 认证成功、分页完整、至少一个完整 Key 和真实模型能力确认后，父渠道更新
-  `sync_status=success` 与 `last_sync_at`；可选资源失败保留最近成功的余额、模型、
-  倍率、权重和能力，并在资源状态中区分权限、安全验证、WAF、代理和网络错误；
+- 没有历史成功快照时，认证成功、分页完整、至少一个完整 Key 和真实模型能力确认
+  后，父渠道更新 `sync_status=success` 与 `last_sync_at`。已有 `last_sync_at` 的
+  Sub2API 渠道如果管理面、身份、余额/用量和 Key 列表成功，但所有单 Key
+  `/v1/models` 因 `INSUFFICIENT_BALANCE`、`GROUP_DISABLED` 等资源条件失败，则本轮
+  仍更新管理资源并保持父渠道成功；`keys` 为 `partial`、`models` 为 `stale`，
+  最近成功的 `UpstreamKey`、模型能力、倍率和权重继续作为路由候选。模型广场、
+  分组目录或账号级模型不得冒充单 Key 能力；可选资源失败继续区分权限、安全验证、
+  WAF、代理和网络错误；
 - NewAPI Dashboard Refresh 继续使用 `new_api_refresh`、`X-Auth-Session` 和 Bearer
   Token；渠道代理读取 `setting.proxy`，不进入路由文档中的固定地址或源码常量。当前
   前端页面和资源展示模型保持不变。
@@ -564,13 +572,18 @@ CookieJar、Cookie 轮换、30 秒超时和重定向校验保持不变。代理�
 - 页面配置请求保留 HTTP 客户端跟随重定向后的最终 HTML URL。相对
   `api_base_url` 以最终 HTML 页面 URL 为解析基准，而不是以原始管理地址为基准；
 - 页面明确声明的 Relay 地址只有在与最终 HTML 页面来源或原始管理地址具有相同
-  协议、主机和有效端口时才接受。页面从 `hhw1231.com` 跳转到
+  协议、主机和有效端口，或与原始管理地址构成严格直接 `api.` 父子域关系时才接受。
+  页面从 `hhw1231.com` 跳转到
   `hengwenapi.com`，并声明 `https://hengwenapi.com/v1` 的场景可以通过校验；
   未在页面配置中明确声明的第三方地址仍拒绝，不放宽 HTTP/HTTPS、端口、重定向
   和 SSRF 校验；
-- 管理地址只用于登录、当前用户、Profile、分组、额度和密钥接口；发现的 Relay
-  地址只用于单 Key 的 `/v1/models` 或 `/models` 探测以及后续转发。管理地址和
-  Relay 地址分别写入平台站点快照，父渠道基础地址使用实际 Relay 根地址；
+- 管理地址用于登录、当前用户、Profile、分组、额度和密钥接口；最终页面同源场景下
+  本轮请求根地址切换为最终可信来源，持久化管理地址不变。发现的 Relay 地址只用于
+  单 Key 的 `/v1/models` 或 `/models` 探测以及后续转发。管理地址和 Relay 地址分别
+  写入平台站点快照，父渠道基础地址使用实际 Relay 根地址；
+- Relay 模型探测只发送当前完整 Key 的 `Authorization` 和 `x-api-key`，清空 Cookie
+  Jar，不复制管理 Cookie、Origin、Referer、`X-Requested-With` 或 `X-Auth-Session`；
+  分组/账号模型目录不能替代单 Key 确认，未确认模型的 Key 不进入路由；
 - 只有单个 Key 成功读取到真实模型能力后才会进入可路由模型候选。单 Key 的模型
   读取失败、部分分页失败或本轮资源同步失败时，保留最近一次成功快照，不把密钥
   误判为缺失或把认证失败覆盖为凭据失效；

@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
 	"os"
@@ -2478,6 +2479,7 @@ func TestPlatformSitePasswordAuthenticationPersistsCurrentUsername(t *testing.T)
 		selfBody  string
 		wantID    string
 		wantName  string
+		username  string
 	}{
 		{
 			name:      "NewAPI username",
@@ -2496,6 +2498,16 @@ func TestPlatformSitePasswordAuthenticationPersistsCurrentUsername(t *testing.T)
 			selfBody:  `{"code":0,"data":{"id":23,"user_name":"sub2-user","email":"sub2@example.com"}}`,
 			wantID:    "23",
 			wantName:  "sub2-user",
+		},
+		{
+			name:      "Sub2API email keeps login identity",
+			adapter:   func(client *http.Client) PlatformSiteAdapter { return NewSub2APIAdapter(client) },
+			loginPath: "/api/v1/auth/login",
+			selfPath:  "/api/v1/auth/me",
+			selfBody:  `{"code":0,"data":{"id":24,"username":"sub2-display-name","email":"operator@example.com"}}`,
+			wantID:    "24",
+			wantName:  "operator@example.com",
+			username:  "operator@example.com",
 		},
 	}
 
@@ -2532,7 +2544,7 @@ func TestPlatformSitePasswordAuthenticationPersistsCurrentUsername(t *testing.T)
 				server.URL,
 				model.PlatformSiteCredential{
 					AuthType: model.UpstreamAuthPassword,
-					Username: "operator",
+					Username: firstNonEmptyString(testCase.username, "operator"),
 					Password: "synthetic-password",
 				},
 			)
@@ -3456,7 +3468,7 @@ func TestNewAPIAdminResourceFailureIsolatedFromAuthentication(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, snapshot.Identity)
 	assert.Equal(t, float64(1), snapshot.Balance)
-	assert.True(t, platformSiteSnapshotHasBlockingResourceFailure(snapshot))
+	assert.True(t, platformSiteSnapshotHasBlockingResourceFailure(nil, snapshot))
 
 	var modelResource *PlatformSiteResourceSyncSnapshot
 	for index := range snapshot.ResourceSyncs {
@@ -3495,10 +3507,32 @@ func TestPlatformSiteSnapshotCoreResourcesDefineBlockingFailure(t *testing.T) {
 			},
 		},
 	}
-	assert.False(t, platformSiteSnapshotHasBlockingResourceFailure(snapshot))
+	assert.False(t, platformSiteSnapshotHasBlockingResourceFailure(nil, snapshot))
 
 	snapshot.Keys[0].SyncError = upstreamKeySyncErrorModelsUnavailable
-	assert.True(t, platformSiteSnapshotHasBlockingResourceFailure(snapshot))
+	assert.True(t, platformSiteSnapshotHasBlockingResourceFailure(nil, snapshot))
+}
+
+func TestPlatformSiteSnapshotModelProbeFailureUsesExistingSnapshot(t *testing.T) {
+	snapshot := PlatformSiteSnapshot{
+		Keys: []UpstreamKeySnapshot{
+			{
+				ExternalID:   "key-with-secret",
+				Secret:       "sk-current",
+				SyncError:    upstreamKeySyncErrorModelsUnavailable,
+				ModelsSynced: false,
+			},
+		},
+	}
+	account := &model.PlatformSiteAccount{
+		LastSyncAt: 1_700_000_000,
+		SyncStatus: model.UpstreamSiteSyncSuccess,
+	}
+
+	assert.False(t, platformSiteSnapshotHasBlockingResourceFailure(account, snapshot))
+
+	account.LastSyncAt = 0
+	assert.True(t, platformSiteSnapshotHasBlockingResourceFailure(account, snapshot))
 }
 
 func TestNewAPIResourceFailuresKeepIdentityAndClassifyOptionalResources(t *testing.T) {
@@ -3828,6 +3862,83 @@ func TestSub2APIAdapterUsesAccountQuotaPriorityAndKeyFallback(t *testing.T) {
 	}
 }
 
+func TestSub2APIAdapterAllowsNegativeBalanceAndStructuredQuotaAliases(t *testing.T) {
+	previousQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 500000
+	t.Cleanup(func() {
+		common.QuotaPerUnit = previousQuotaPerUnit
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v1/auth/login":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"access_token":"sub2api-session"}}`))
+		case "/api/v1/auth/me":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"id":7,"balance":-1.25,"quota":{"window":"monthly"},"used_quota":{"total":3}}}`))
+		case "/api/v1/user/profile":
+			writer.WriteHeader(http.StatusNotFound)
+			_, _ = writer.Write([]byte(`{"code":404}`))
+		case "/api/v1/usage/dashboard/stats":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"total_actual_cost":2}}`))
+		case "/api/v1/groups/available", "/api/v1/groups/rates":
+			_, _ = writer.Write([]byte(`{"code":0,"data":[]}`))
+		case "/api/v1/keys":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"items":[{"id":"key-1","name":"primary","key":"sk-one","models":["gpt-4o"],"quota":{"limit":10},"quota_used":1}],"total":1,"page_size":100}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	adapter := NewSub2APIAdapter(server.Client())
+	session, err := adapter.Authenticate(context.Background(), server.URL, model.PlatformSiteCredential{
+		AuthType: model.UpstreamAuthPassword,
+		Username: "operator@example.com",
+		Password: "synthetic-password",
+	})
+	require.NoError(t, err)
+
+	snapshot, err := adapter.FetchSnapshot(context.Background(), session)
+	require.NoError(t, err)
+	assert.True(t, snapshot.BalanceSet)
+	assert.Equal(t, -1.25, snapshot.Balance)
+	assert.True(t, snapshot.UsedQuotaSet)
+	assert.Equal(t, int64(1000000), snapshot.UsedQuota)
+	require.Len(t, snapshot.Keys, 1)
+	assert.Nil(t, snapshot.Keys[0].RemainQuota)
+	assert.Equal(t, int64(500000), snapshot.Keys[0].UsedQuota)
+	assert.True(t, snapshot.Keys[0].UsedQuotaSet)
+}
+
+func TestSub2APIAdapterRejectsNegativeUsedQuota(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v1/auth/login":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"access_token":"sub2api-session"}}`))
+		case "/api/v1/auth/me":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"balance":1,"used_quota":-1}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	adapter := NewSub2APIAdapter(server.Client())
+	session, err := adapter.Authenticate(context.Background(), server.URL, model.PlatformSiteCredential{
+		AuthType: model.UpstreamAuthPassword,
+		Username: "operator@example.com",
+		Password: "synthetic-password",
+	})
+	require.NoError(t, err)
+
+	_, err = adapter.FetchSnapshot(context.Background(), session)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPlatformSiteResponse)
+	assert.Contains(t, err.Error(), "Sub2API 当前用户用量字段")
+}
+
 func TestSub2APIAdapterDiscoversRelayModelsAndTreatsZeroQuotaAsUnlimited(t *testing.T) {
 	loginAttempts := 0
 	modelRequests := 0
@@ -3886,6 +3997,51 @@ func TestSub2APIAdapterDiscoversRelayModelsAndTreatsZeroQuotaAsUnlimited(t *test
 	assert.Equal(t, []string{"gpt-5.5"}, snapshot.Keys[0].Models)
 	assert.True(t, snapshot.Keys[0].ModelsSynced)
 	assert.Equal(t, 1, modelRequests)
+}
+
+func TestSub2APIAdapterDoesNotUseGroupModelsWhenRelayRejectsKey(t *testing.T) {
+	relayModelRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v1/auth/login":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"access_token":"sub2api-session"}}`))
+		case "/api/v1/auth/me":
+			assert.Equal(t, "Bearer sub2api-session", request.Header.Get("Authorization"))
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"id":7,"balance":1}}`))
+		case "/api/v1/user/profile", "/api/v1/usage/dashboard/stats", "/api/v1/usage/stats":
+			http.NotFound(writer, request)
+		case "/api/v1/groups/available", "/api/v1/groups/rates":
+			_, _ = writer.Write([]byte(`{"code":0,"data":[]}`))
+		case "/api/v1/keys":
+			assert.Equal(t, "Bearer sub2api-session", request.Header.Get("Authorization"))
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"items":[{"id":"key-1","name":"primary","key":"sk-upstream","group":{"id":20,"name":"Grok-heavy"}}],"total":1,"page_size":100}}`))
+		case "/v1/models":
+			relayModelRequests++
+			writer.WriteHeader(http.StatusForbidden)
+			_, _ = writer.Write([]byte(`{"error":{"code":"ACCESS_DENIED"}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	adapter := NewSub2APIAdapter(server.Client())
+	session, err := adapter.Authenticate(context.Background(), server.URL, model.PlatformSiteCredential{
+		AuthType: model.UpstreamAuthPassword,
+		Username: "operator@example.com",
+		Password: "synthetic-password",
+	})
+	require.NoError(t, err)
+
+	snapshot, err := adapter.FetchSnapshot(context.Background(), session)
+	require.NoError(t, err)
+	require.Len(t, snapshot.Keys, 1)
+	assert.Empty(t, snapshot.Keys[0].Models)
+	assert.False(t, snapshot.Keys[0].ModelsSynced)
+	assert.Equal(t, upstreamKeySyncErrorModelsUnavailable, snapshot.Keys[0].SyncError)
+	assert.Equal(t, 1, relayModelRequests)
+	assert.Empty(t, snapshot.Models)
 }
 
 func TestSub2APILoginTriesEmailThenUsernameBody(t *testing.T) {
@@ -4353,7 +4509,7 @@ func TestSub2APIAdapterAcceptsRelayURLDeclaredByRedirectedPage(t *testing.T) {
 				response.Request = request.Clone(request.Context())
 				response.Request.URL, _ = url.Parse("https://127.0.0.1:9443/zh/home")
 				return response, nil
-			case request.URL.Host == "hhw1231.com" &&
+			case request.URL.Host == "127.0.0.1:9443" &&
 				request.Method == http.MethodPost &&
 				request.URL.Path == "/api/v1/auth/login":
 				body, readErr := io.ReadAll(request.Body)
@@ -4367,31 +4523,31 @@ func TestSub2APIAdapterAcceptsRelayURLDeclaredByRedirectedPage(t *testing.T) {
 					http.StatusOK,
 					`{"code":0,"data":{"access_token":"sub2api-session"}}`,
 				), nil
-			case request.URL.Host == "hhw1231.com" &&
+			case request.URL.Host == "127.0.0.1:9443" &&
 				request.Method == http.MethodGet &&
 				request.URL.Path == "/api/v1/auth/me":
 				return platformSiteJSONResponse(
 					http.StatusOK,
 					`{"code":0,"data":{"id":9,"username":"operator","balance":3}}`,
 				), nil
-			case request.URL.Host == "hhw1231.com" &&
+			case request.URL.Host == "127.0.0.1:9443" &&
 				request.Method == http.MethodGet &&
 				request.URL.Path == "/api/v1/user/profile":
 				return platformSiteJSONResponse(http.StatusNotFound, `{"code":404}`), nil
-			case request.URL.Host == "hhw1231.com" &&
+			case request.URL.Host == "127.0.0.1:9443" &&
 				request.Method == http.MethodGet &&
 				request.URL.Path == "/api/v1/groups/available":
 				return platformSiteJSONResponse(http.StatusOK, `{"code":0,"data":[]}`), nil
-			case request.URL.Host == "hhw1231.com" &&
+			case request.URL.Host == "127.0.0.1:9443" &&
 				request.Method == http.MethodGet &&
 				request.URL.Path == "/api/v1/groups/rates":
 				return platformSiteJSONResponse(http.StatusOK, `{"code":0,"data":{}}`), nil
-			case request.URL.Host == "hhw1231.com" &&
+			case request.URL.Host == "127.0.0.1:9443" &&
 				request.Method == http.MethodGet &&
 				(request.URL.Path == "/api/v1/usage/dashboard/stats" ||
 					request.URL.Path == "/api/v1/usage/stats"):
 				return platformSiteJSONResponse(http.StatusNotFound, `{"code":404}`), nil
-			case request.URL.Host == "hhw1231.com" &&
+			case request.URL.Host == "127.0.0.1:9443" &&
 				request.Method == http.MethodGet &&
 				request.URL.Path == "/api/v1/keys":
 				return platformSiteJSONResponse(
@@ -4404,6 +4560,11 @@ func TestSub2APIAdapterAcceptsRelayURLDeclaredByRedirectedPage(t *testing.T) {
 				modelRequests++
 				assert.Equal(t, "Bearer sk-upstream", request.Header.Get("Authorization"))
 				assert.Equal(t, "sk-upstream", request.Header.Get("x-api-key"))
+				assert.Empty(t, request.Header.Get("Cookie"))
+				assert.Empty(t, request.Header.Get("Origin"))
+				assert.Empty(t, request.Header.Get("Referer"))
+				assert.Empty(t, request.Header.Get("X-Requested-With"))
+				assert.Empty(t, request.Header.Get("X-Auth-Session"))
 				return platformSiteJSONResponse(
 					http.StatusOK,
 					`{"data":[{"id":"gpt-5.5"}]}`,
@@ -4427,6 +4588,21 @@ func TestSub2APIAdapterAcceptsRelayURLDeclaredByRedirectedPage(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "https://127.0.0.1:9443/v1", session.ModelBaseURL)
 	assert.Equal(t, "https://hhw1231.com", session.ManagementBaseURL)
+	assert.Equal(t, "https://127.0.0.1:9443", session.BaseURL)
+	session.Headers.Set("Cookie", "management=session")
+	session.Headers.Set("Origin", "https://hhw1231.com")
+	session.Headers.Set("Referer", "https://hhw1231.com/login")
+	session.Headers.Set("X-Requested-With", "XMLHttpRequest")
+	session.Headers.Set("X-Auth-Session", "management-session")
+	jar, jarErr := cookiejar.New(nil)
+	require.NoError(t, jarErr)
+	relayURL, parseErr := url.Parse(session.ModelBaseURL)
+	require.NoError(t, parseErr)
+	jar.SetCookies(relayURL, []*http.Cookie{{
+		Name:  "management_cookie",
+		Value: "session",
+	}})
+	session.Client.Jar = jar
 
 	snapshot, err := adapter.FetchSnapshot(context.Background(), session)
 	require.NoError(t, err)
@@ -4542,6 +4718,50 @@ func TestSub2APIAdapterDiscoversManagementURLFromStrictAPISubdomain(t *testing.T
 	assert.Equal(t, "https://example.com", session.ManagementBaseURL)
 	assert.Equal(t, "https://api.example.com/v1", session.ModelBaseURL)
 	assert.Equal(t, 1, candidateLoginRequests)
+}
+
+func TestSub2APIDirectAPIOriginRelationRequiresMatchingSchemeAndPort(t *testing.T) {
+	tests := []struct {
+		name  string
+		left  string
+		right string
+		want  bool
+	}{
+		{
+			name:  "same scheme and default port",
+			left:  "https://aiapipay.com",
+			right: "https://api.aiapipay.com/v1",
+			want:  true,
+		},
+		{
+			name:  "scheme differs",
+			left:  "https://aiapipay.com",
+			right: "http://api.aiapipay.com/v1",
+		},
+		{
+			name:  "port differs",
+			left:  "https://aiapipay.com:8443",
+			right: "https://api.aiapipay.com/v1",
+		},
+		{
+			name:  "unrelated subdomain",
+			left:  "https://aiapipay.com",
+			right: "https://relay.aiapipay.com/v1",
+		},
+		{
+			name:  "different registrable domain",
+			left:  "https://aiapipay.com",
+			right: "https://api.other.example/v1",
+		},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			assert.Equal(t, testCase.want, sub2APIDirectAPIOriginRelation(
+				testCase.left,
+				testCase.right,
+			))
+		})
+	}
 }
 
 func TestSub2APILoginUsesStrictEmailBodyWithoutPublicSettings(t *testing.T) {
@@ -5638,6 +5858,84 @@ func TestPersistPlatformSiteSnapshotSeparatesManagementAndRelayURLs(t *testing.T
 	require.NoError(t, db.First(&savedChannel, channel.Id).Error)
 	require.NotNil(t, savedChannel.BaseURL)
 	assert.Equal(t, "https://new-relay.example", *savedChannel.BaseURL)
+}
+
+func TestRestoreSub2APIPasswordLoginIdentityUsesHistoricalEmail(t *testing.T) {
+	previousDB := model.DB
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = previousDB
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	missingTableCredential := model.PlatformSiteCredential{
+		AuthType: model.UpstreamAuthPassword,
+		Username: "operator",
+	}
+	restoreSub2APIPasswordLoginIdentity(1, &missingTableCredential)
+	assert.Equal(t, "operator", missingTableCredential.Username)
+
+	require.NoError(t, db.AutoMigrate(&model.PlatformSiteIdentity{}))
+	tests := []struct {
+		name           string
+		channelID      int
+		historicalName string
+		credentialName string
+		wantCredential string
+	}{
+		{
+			name:           "empty credential username",
+			channelID:      101,
+			historicalName: "display-name",
+			wantCredential: "operator@example.com",
+		},
+		{
+			name:           "historical username drift",
+			channelID:      102,
+			historicalName: "operator",
+			credentialName: "operator",
+			wantCredential: "operator@example.com",
+		},
+		{
+			name:           "explicit username is preserved",
+			channelID:      103,
+			historicalName: "operator",
+			credentialName: "manual-login",
+			wantCredential: "manual-login",
+		},
+		{
+			name:           "invalid historical email is ignored",
+			channelID:      104,
+			historicalName: "operator",
+			credentialName: "operator",
+			wantCredential: "operator",
+		},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			email := "operator@example.com"
+			if testCase.name == "invalid historical email is ignored" {
+				email = "not-an-email"
+			}
+			require.NoError(t, db.Create(&model.PlatformSiteIdentity{
+				ChannelID: testCase.channelID,
+				Username:  testCase.historicalName,
+				Email:     email,
+			}).Error)
+			credential := model.PlatformSiteCredential{
+				AuthType: model.UpstreamAuthPassword,
+				Username: testCase.credentialName,
+			}
+			restoreSub2APIPasswordLoginIdentity(testCase.channelID, &credential)
+			assert.Equal(t, testCase.wantCredential, credential.Username)
+		})
+	}
 }
 
 func TestPersistPlatformSiteCredentialStoresOnlyEncryptedRotatedValues(t *testing.T) {

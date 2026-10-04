@@ -175,7 +175,11 @@ New API/Sub2API 旧版资源同步迁移和脱敏真实站点黑盒验收。本�
 - 创建的父渠道使用账号池模式，父渠道模型和分组由启用账号的能力汇总。
 - 旧版创建时 `Channel.UsedQuota` 固定初始化为 `0`，表示 NexusTok 本地消费累计，不直接写入上游账号累计用量。
 - 每条 `ChannelAccount.UsedQuota` 可以写入该 Key 的已用额度换算值。
-- 启用账号必须有完整 Key、模型和访问分组；模型探测失败的账号可按旧版回退逻辑禁用并保留脱敏错误。
+- 启用账号必须有完整 Key、模型和访问分组；这是旧版创建/刷新逻辑的约束，不能直接
+  推断当前后台同步的成功判定。当前实现对已有成功快照的 Sub2API 账号允许在管理面
+  资源成功、但所有单 Key 模型探测因余额不足或分组停用失败时更新身份、额度和 Key
+  状态，保留最近成功模型能力并标记 `keys=partial`、`models=stale`；没有历史成功
+  快照时仍要求真实单 Key 模型能力，不使用模型广场或分组目录替代。
 
 `service/upstreamaccount/refresh.go`：
 
@@ -604,20 +608,26 @@ New API Admin Key 可以附带：
 3. 如果输入是 `api.` 子域名，尝试恢复去掉 `api.` 的管理地址。
 4. 恢复候选时要求相同协议、相同端口，并且页面明确回指原始 API 地址。
 5. 页面声明的 Relay 地址必须与最终 HTML 页面来源或原始管理地址使用相同协议、主机
-   和有效端口；localhost、IP、跨来源且未经页面明确声明的地址不发送凭据。
+   和有效端口，或与原始管理地址构成严格的直接 `api.` 父子域关系；localhost、IP、
+   跨来源且未经页面明确声明的地址不发送凭据。
 6. `NormalizeSub2APIRelayBaseURL` 去掉结尾 `/v1`，因为 Relay 请求自身会追加 `/v1`。
 
 因此：
 
 - `PlatformSiteAccount.BaseURL` 保存管理地址；
 - `PlatformSiteAccount.RelayBaseURL` 保存页面发现或验证后的 Relay 地址；
-- 管理接口使用管理地址；
+- 管理接口通常使用管理地址；若页面重定向后的最终 HTML 来源与明确声明的 Relay
+  同源，本轮请求根地址切换到该最终可信来源，持久化管理地址不变；
 - `/v1/models` 和最终 Relay 请求使用 Relay 地址；
 - 管理地址缺失或 Relay 发现失败时，不把一方无条件当成另一方。
 - HTML 请求保留最终响应 URL，相对 `api_base_url` 按最终页面地址解析。管理页面从
   `hhw1231.com` 跳转到 `hengwenapi.com` 时，若最终页面明确声明
-  `https://hengwenapi.com`，该地址可作为 Relay；登录、当前用户、分组、额度和 Key
-  接口仍使用 `hhw1231.com`。
+  `https://hengwenapi.com`，该地址可作为 Relay；本轮登录、当前用户、分组、额度和
+  Key 请求直接使用最终可信页面来源，持久化的管理地址仍为 `hhw1231.com`。
+- `aiapipay.com` 页面明确声明 `api.aiapipay.com` 时，直接 `api.` 父子域关系允许
+  Relay；管理请求仍使用管理地址。Relay 模型探测只发送当前完整 Key 的 Bearer 和
+  `x-api-key`，清空 Cookie Jar，不复制管理 Cookie、Origin、Referer、
+  `X-Requested-With` 或 `X-Auth-Session`。
 
 ### 9.2 当前认证和 Refresh
 
@@ -702,7 +712,8 @@ GET /api/v1/user/platform-quotas
 - Key 列表或 Key 详情中的 `models` 字段优先。
 - 缺少模型字段时，当前主要通过完整 Key 调用 Relay `/v1/models`。
 - 单 Key Relay 失败只把该 Key 标记为模型能力不可用或保留最近成功模型，不影响其它 Key。
-- 不能把 Sub2API 管理页面、分组或平台窗口额度中的模型信息复制给所有 Key。
+- 不能把 Sub2API 管理页面、分组或平台窗口额度中的模型信息复制给所有 Key；分组
+  模型目录不能替代单 Key 能力确认，未确认模型的 Key 不进入可路由集合。
 
 ## 10. Key 生命周期和刷新匹配
 
@@ -806,7 +817,7 @@ Key 详情失败、单 Key 模型探测失败、Admin step-up 拒绝、分页中
 
 ### 11.3 持久化和路由回退
 
-当前 `syncPlatformSite` 在认证成功但资源阶段失败时可以先落身份、余额或资源状态，再保留旧 Key/模型。`persistPlatformSiteResources` 对非 `success` 资源设置 `UsingSnapshot`，资源查询能同时显示本次失败和最近成功时间。
+当前 `syncPlatformSite` 在认证成功但资源阶段失败时可以先落身份、余额或资源状态，再保留旧 Key/模型。`persistPlatformSiteResources` 对非 `success` 资源设置 `UsingSnapshot`，资源查询能同时显示本次失败和最近成功时间。对于已有 `last_sync_at` 的 Sub2API 渠道，如果管理面和 Key 列表成功、但所有单 Key `/v1/models` 因 `INSUFFICIENT_BALANCE`、`GROUP_DISABLED` 等资源条件失败，本轮父渠道仍可标记同步成功；Key 资源为 `partial`、模型资源为 `stale`，旧模型能力继续路由。没有历史快照的新渠道仍保持失败，避免把未确认模型加入路由。
 
 父站点是否可路由由以下事实共同决定：
 
@@ -1072,7 +1083,8 @@ PostgreSQL 15.19；MySQL 5.7.8、PostgreSQL 9.6、独立日志数据库和真实
 
 - `discoverSub2APIPageModelBaseURL` 使用 HTTP 响应最终 URL；相对地址按最终 HTML
   页面解析。页面声明的 Relay 只有在与最终页面来源或原始管理地址协议、主机和有效
-  端口一致时接受，并继续执行 SSRF、重定向和协议/端口校验；
+  端口一致，或与原始管理地址满足严格直接 `api.` 父子域关系时接受，并继续执行
+  SSRF、重定向和协议/端口校验；
 - 管理地址与 Relay 地址保持职责分离。管理地址用于认证、用户、分组、用量和 Key；
   Relay 只用于每条完整 Key 的 `/v1/models` 或 `/models` 探测和转发。模型探测成功后
   才写入 Key 能力、`upstream_keys` 和父渠道模型并集；
@@ -1082,6 +1094,8 @@ PostgreSQL 15.19；MySQL 5.7.8、PostgreSQL 9.6、独立日志数据库和真实
 - 资源、分页或单 Key 模型失败仍保留最近成功快照；认证成功但资源失败只记录资源级
   失败或 partial/stale 状态，不把账号直接标记为凭据失效，也不执行错误的 Key 缺失
   判定。
+- 可信重定向页面来源在本轮会话中作为管理请求根地址使用，避免 Go 客户端跨主机重定向
+  时删除 Authorization；Relay 请求与管理会话 Header/Cookie 隔离。
 
 本次使用脱敏 HTTP fixture、参考源静态核对和现有本地数据库测试；未在文档、测试、
 日志或 Git 中保存真实账号、密码、Token、Cookie、Admin Key、完整响应或完整密钥。

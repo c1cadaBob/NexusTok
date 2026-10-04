@@ -45,7 +45,15 @@ func firstSub2APIQuota(record map[string]any, keys ...string) (int64, bool, erro
 		}
 		value, ok := upstreamFloatValue(raw)
 		if !ok {
-			return 0, false, fmt.Errorf("%w: Sub2API 额度字段无效", ErrPlatformSiteResponse)
+			if isStructuredUpstreamValue(raw) {
+				continue
+			}
+			return 0, false, fmt.Errorf(
+				"%w: Sub2API 额度字段无效（字段：%s，类型：%T）",
+				ErrPlatformSiteResponse,
+				key,
+				raw,
+			)
 		}
 		quota, err := sub2APIQuotaToInternal(value)
 		if err != nil {
@@ -54,6 +62,55 @@ func firstSub2APIQuota(record map[string]any, keys ...string) (int64, bool, erro
 		return quota, true, nil
 	}
 	return 0, false, nil
+}
+
+func firstSub2APIFiniteFloat(
+	record map[string]any,
+	keys ...string,
+) (float64, bool, error) {
+	for _, key := range keys {
+		raw, exists := record[key]
+		if !exists || raw == nil {
+			continue
+		}
+		value, ok := upstreamFloatValue(raw)
+		if !ok {
+			if isStructuredUpstreamValue(raw) {
+				continue
+			}
+			return 0, false, fmt.Errorf(
+				"%w: Sub2API 数值字段无效（字段：%s，类型：%T）",
+				ErrPlatformSiteResponse,
+				key,
+				raw,
+			)
+		}
+		return value, true, nil
+	}
+	return 0, false, nil
+}
+
+func firstSub2APINonNegativeFloat(
+	record map[string]any,
+	keys ...string,
+) (float64, bool, error) {
+	value, found, err := firstSub2APIFiniteFloat(record, keys...)
+	if err != nil {
+		return 0, false, err
+	}
+	if found && value < 0 {
+		return 0, false, fmt.Errorf("%w: Sub2API 数值必须是非负数", ErrPlatformSiteResponse)
+	}
+	return value, found, nil
+}
+
+func isStructuredUpstreamValue(value any) bool {
+	switch value.(type) {
+	case map[string]any, []any:
+		return true
+	default:
+		return false
+	}
 }
 
 func firstSub2APIUsedQuota(record map[string]any) (int64, bool, error) {
@@ -801,6 +858,8 @@ func (adapter *Sub2APIAdapter) Authenticate(ctx context.Context, baseURL string,
 		resetSub2APISessionBeforePasswordLogin(session, &credential)
 	}
 	prepareSub2APIManagementSession(ctx, session)
+	loginIdentity := strings.TrimSpace(credential.Username)
+	loginIdentityIsEmail := strings.Contains(loginIdentity, "@")
 	switch platformSiteCredentialAuthType(credential) {
 	case model.UpstreamAuthPassword:
 		payload, requestErr := loginSub2APIWithPassword(ctx, session, credential)
@@ -870,7 +929,12 @@ func (adapter *Sub2APIAdapter) Authenticate(ctx context.Context, baseURL string,
 		credential.UserID = userID
 	}
 	if username := platformSiteUsernameFromRecord(firstNestedRecord(currentUser, "user", "account", "profile")); username != "" {
-		credential.Username = username
+		if platformSiteCredentialAuthType(credential) != model.UpstreamAuthPassword ||
+			!loginIdentityIsEmail {
+			credential.Username = username
+		} else {
+			credential.Username = loginIdentity
+		}
 	}
 	credential.LastAuthAt = common.GetTimestamp()
 	credential.RefreshStatus = "active"
@@ -889,20 +953,16 @@ func prepareSub2APIManagementSession(ctx context.Context, session *PlatformSiteS
 	}
 	session.Platform = model.PlatformSub2API
 	session.BaseURL = normalizeSub2APIBaseURL(session.BaseURL)
+	session.ManagementBaseURL = session.BaseURL
 	setSub2APIBrowserHeaders(session)
-	if modelBaseURL, ok := discoverSub2APIModelBaseURL(ctx, session); ok {
-		session.ModelBaseURL = modelBaseURL
-	}
-	if managementBaseURL, modelBaseURL, ok := discoverSub2APIManagementBaseURL(
+	if managementBaseURL, requestBaseURL, modelBaseURL, ok := discoverSub2APIManagementBaseURL(
 		ctx,
 		session,
 	); ok {
-		session.BaseURL = managementBaseURL
+		session.BaseURL = requestBaseURL
 		session.ManagementBaseURL = managementBaseURL
 		setSub2APIBrowserHeaders(session)
 		session.ModelBaseURL = modelBaseURL
-	} else {
-		session.ManagementBaseURL = session.BaseURL
 	}
 }
 
@@ -924,16 +984,16 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 	me := firstNestedRecord(mePayload, "user", "account", "profile")
 	usedQuota, usedQuotaSet, quotaErr := firstSub2APIUsedQuota(me)
 	if quotaErr != nil {
-		return PlatformSiteSnapshot{}, quotaErr
+		return PlatformSiteSnapshot{}, wrapPlatformSiteStage("Sub2API 当前用户用量字段", quotaErr)
 	}
-	balance, balanceSet, balanceErr := firstValidatedNonNegativeFloat(
+	balance, balanceSet, balanceErr := firstSub2APIFiniteFloat(
 		me,
 		"balance",
 		"quota",
 		"credit",
 	)
 	if balanceErr != nil {
-		return PlatformSiteSnapshot{}, balanceErr
+		return PlatformSiteSnapshot{}, wrapPlatformSiteStage("Sub2API 当前用户余额字段", balanceErr)
 	}
 	snapshot := PlatformSiteSnapshot{
 		Balance:           balance,
@@ -958,7 +1018,7 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 	var profileErr error
 	if payload, requestErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/user/profile", nil, nil); requestErr == nil {
 		profile := firstNestedRecord(payload, "profile", "user", "account")
-		if profileBalance, profileBalanceSet, profileBalanceErr := firstValidatedNonNegativeFloat(
+		if profileBalance, profileBalanceSet, profileBalanceErr := firstSub2APIFiniteFloat(
 			profile,
 			"balance",
 			"quota",
@@ -3168,6 +3228,8 @@ func modelsFromRecord(record map[string]any) []string {
 		"modelIds",
 		"model_names",
 		"modelNames",
+		"supported_models",
+		"supportedModels",
 	} {
 		if value, ok := record[key]; ok {
 			if models := stringsFromPayload(value); len(models) > 0 {
@@ -3189,12 +3251,16 @@ func fetchModelsForSecret(ctx context.Context, session *PlatformSiteSession, sec
 		for _, path := range paths {
 			keySession := *session
 			keySession.BaseURL = baseURL
-			keySession.Headers = session.Headers.Clone()
-			keySession.Headers.Del("x-api-key")
-			keySession.Headers.Del("New-Api-Key")
-			keySession.Headers.Del("Cookie")
+			keySession.ManagementBaseURL = ""
+			keySession.CredentialUpdate = nil
+			keySession.Headers = make(http.Header)
 			keySession.Headers.Set("Authorization", bearerToken(secret))
 			keySession.Headers.Set("x-api-key", secret)
+			if session.Client != nil {
+				client := *session.Client
+				client.Jar = nil
+				keySession.Client = &client
+			}
 			payload, err := platformSiteRequest(ctx, &keySession, http.MethodGet, path, nil, nil)
 			if err != nil {
 				lastErr = err
@@ -3888,7 +3954,7 @@ func sub2APIRemainQuota(record map[string]any) (*int64, error) {
 		return nil, nil
 	}
 	if hasAnyField(record, "quota") {
-		quota, quotaSet, err := firstValidatedNonNegativeFloat(record, "quota")
+		quota, quotaSet, err := firstSub2APINonNegativeFloat(record, "quota")
 		if err != nil {
 			return nil, err
 		}
@@ -3898,7 +3964,7 @@ func sub2APIRemainQuota(record map[string]any) (*int64, error) {
 		if quota <= 0 {
 			return nil, nil
 		}
-		used, usedSet, err := firstValidatedNonNegativeFloat(
+		used, usedSet, err := firstSub2APINonNegativeFloat(
 			record,
 			"quota_used",
 			"used_quota",
@@ -3926,7 +3992,7 @@ func sub2APIRemainQuota(record map[string]any) (*int64, error) {
 		}
 		return &converted, nil
 	}
-	if remain, ok, err := firstValidatedNonNegativeFloat(
+	if remain, ok, err := firstSub2APINonNegativeFloat(
 		record,
 		"remain_quota",
 		"remaining_quota",
@@ -4005,38 +4071,58 @@ func discoverSub2APIModelBaseURL(ctx context.Context, session *PlatformSiteSessi
 func discoverSub2APIManagementBaseURL(
 	ctx context.Context,
 	session *PlatformSiteSession,
-) (string, string, bool) {
+) (string, string, string, bool) {
 	if session == nil || session.Client == nil {
-		return "", "", false
+		return "", "", "", false
 	}
 	originalBaseURL, err := normalizePlatformSiteURL(session.BaseURL)
 	if err != nil {
-		return "", "", false
-	}
-	managementBaseURL, ok := sub2APIManagementBaseURLCandidate(originalBaseURL)
-	if !ok {
-		return "", "", false
+		return "", "", "", false
 	}
 	anonymousClient := *session.Client
 	anonymousClient.Jar = nil
 	modelBaseURL, finalPageURL, ok := discoverSub2APIPageModelBaseURL(
 		ctx,
 		&anonymousClient,
+		originalBaseURL,
+	)
+	if ok &&
+		validatePlatformSiteURL(finalPageURL) == nil &&
+		(samePlatformSiteOrigin(originalBaseURL, modelBaseURL) ||
+			validatePlatformSiteURL(modelBaseURL) == nil) &&
+		sub2APIPageDeclaredRelayURLAllowed(originalBaseURL, finalPageURL, modelBaseURL) {
+		requestBaseURL := originalBaseURL
+		if samePlatformSiteOrigin(finalPageURL, modelBaseURL) {
+			requestBaseURL = platformSiteOriginBaseURL(finalPageURL)
+		}
+		return originalBaseURL, requestBaseURL, modelBaseURL, true
+	}
+
+	managementBaseURL, ok := sub2APIManagementBaseURLCandidate(originalBaseURL)
+	if !ok {
+		return "", "", "", false
+	}
+	modelBaseURL, finalPageURL, ok = discoverSub2APIPageModelBaseURL(
+		ctx,
+		&anonymousClient,
 		managementBaseURL,
 	)
 	if !ok ||
+		validatePlatformSiteURL(finalPageURL) != nil ||
+		(samePlatformSiteOrigin(originalBaseURL, modelBaseURL) == false &&
+			validatePlatformSiteURL(modelBaseURL) != nil) ||
 		!sub2APIPageDeclaredRelayURLAllowed(
 			originalBaseURL,
 			finalPageURL,
 			modelBaseURL,
 		) {
-		return "", "", false
+		return "", "", "", false
 	}
-	if !samePlatformSiteOrigin(originalBaseURL, modelBaseURL) &&
-		validatePlatformSiteURL(modelBaseURL) != nil {
-		return "", "", false
+	requestBaseURL := managementBaseURL
+	if samePlatformSiteOrigin(finalPageURL, modelBaseURL) {
+		requestBaseURL = platformSiteOriginBaseURL(finalPageURL)
 	}
-	return managementBaseURL, modelBaseURL, true
+	return managementBaseURL, requestBaseURL, modelBaseURL, true
 }
 
 func discoverSub2APIPageModelBaseURL(
@@ -4105,7 +4191,42 @@ func sub2APIPageDeclaredRelayURLAllowed(
 	relayBaseURL string,
 ) bool {
 	return samePlatformSiteOrigin(finalPageURL, relayBaseURL) ||
-		samePlatformSiteOrigin(managementBaseURL, relayBaseURL)
+		samePlatformSiteOrigin(managementBaseURL, relayBaseURL) ||
+		sub2APIDirectAPIOriginRelation(managementBaseURL, relayBaseURL)
+}
+
+func platformSiteOriginBaseURL(raw string) string {
+	normalized, err := normalizePlatformSiteURL(raw)
+	if err != nil {
+		return ""
+	}
+	parsed, err := url.Parse(normalized)
+	if err != nil {
+		return ""
+	}
+	parsed.Path = ""
+	parsed.RawPath = ""
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return strings.TrimRight(parsed.String(), "/")
+}
+
+func sub2APIDirectAPIOriginRelation(left string, right string) bool {
+	leftNormalized, leftErr := normalizePlatformSiteURL(left)
+	rightNormalized, rightErr := normalizePlatformSiteURL(right)
+	if leftErr != nil || rightErr != nil {
+		return false
+	}
+	leftURL, leftErr := url.Parse(leftNormalized)
+	rightURL, rightErr := url.Parse(rightNormalized)
+	if leftErr != nil || rightErr != nil ||
+		!strings.EqualFold(leftURL.Scheme, rightURL.Scheme) ||
+		platformSiteEffectivePort(leftURL) != platformSiteEffectivePort(rightURL) {
+		return false
+	}
+	leftHost := normalizePlatformHostname(leftURL.Hostname())
+	rightHost := normalizePlatformHostname(rightURL.Hostname())
+	return leftHost == "api."+rightHost || rightHost == "api."+leftHost
 }
 
 func sub2APIManagementBaseURLCandidate(raw string) (string, bool) {

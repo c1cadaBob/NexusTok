@@ -1,7 +1,7 @@
 # 上游渠道与平台站点设计
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-03
+> 事实基线日期：2026-10-04
 > 主要代码来源：`model/upstream_channel.go`、`model/routing_key.go`、`service/upstream_site.go`、`controller/upstream_channel.go`、`controller/channel-test.go`
 > 关联架构文档：[`docs/architecture/relay-routing-and-conversion.md`](architecture/relay-routing-and-conversion.md)、[`docs/architecture/provider-capability-matrix.md`](architecture/provider-capability-matrix.md)、[`docs/architecture/data-cache-and-background-jobs.md`](architecture/data-cache-and-background-jobs.md)、[`平台站点资源获取比较`](platform-site-resource-acquisition-comparison.md)
 
@@ -325,16 +325,25 @@ HttpOnly Cookie 无法被脚本读取时直接跳过。三者都不可用时失�
 凭据冒充成另一种认证方式，也不保存混合认证结果。前端只提交 `capture_id`，不提交
 原始令牌、Cookie 或 Admin Key。
 
-Sub2API 管理地址和转发地址分离处理：账号、分组和密钥接口始终使用
-`base_url` 指向的管理站地址；页面配置中的 `api_base_url` 用于发现 OpenAI
-兼容转发地址。`api_base_url` 可以是绝对 URL，也可以是相对路径。相对路径会按
-最终 HTML 页面地址解析，并继续执行 SSRF、重定向和来源校验。页面声明的 Relay
-地址只有在与最终 HTML 页面来源或原始管理地址使用相同协议、主机和有效端口时才接受；
-不再以同一注册域名作为放宽条件。发现到的转发地址保存到 `relay_base_url`，写入
-渠道 `base_url` 前会移除结尾 `/v1`，避免转发时形成 `/v1/v1/...`。例如，
-`hhw1231.com` 跳转到 `hengwenapi.com` 后，只要最终页面明确声明
-`https://hengwenapi.com`，该地址可以作为 Relay；管理接口仍继续请求
-`hhw1231.com`。
+Sub2API 管理地址和转发地址分离处理：账号、分组和密钥接口使用管理站地址；页面配置
+中的 `api_base_url` 用于发现 OpenAI 兼容转发地址。`api_base_url` 可以是绝对 URL，
+也可以是相对路径。相对路径会按最终 HTML 页面地址解析，并继续执行 SSRF、重定向和
+来源校验。页面声明的 Relay 地址只有在与最终 HTML 页面来源或原始管理地址使用相同
+协议、主机和有效端口时才接受；另外允许严格的直接 `api.` 父子域关系（协议和有效
+端口仍必须一致），不再以同一注册域名作为放宽条件。发现到的转发地址保存到
+`relay_base_url`，写入渠道 `base_url` 前会移除结尾 `/v1`，避免转发时形成
+`/v1/v1/...`。
+
+当管理页面从 `hhw1231.com` 跳转到 `hengwenapi.com`，且最终页面明确声明
+`https://hengwenapi.com` 时，本轮管理请求会直接使用最终可信页面来源，避免跨主机
+重定向丢失认证 Header；持久化的管理地址仍保持 `https://hhw1231.com`，Relay 地址
+单独保存。`aiapipay.com` 与页面明确声明的 `api.aiapipay.com` 属于允许的直接
+`api.` 父子域关系，管理接口仍使用 `aiapipay.com`，单 Key 模型探测才使用 Relay。
+
+Relay 模型探测只发送该 Key 的 `Authorization` 和 `x-api-key`，不复制管理会话的
+Cookie、Origin、Referer、X-Requested-With、X-Auth-Session 或 Cookie Jar。分组/账号
+模型目录不能替代单 Key `/v1/models` 或 `/models` 的成功确认；未确认模型的 Key
+保留资源记录但不可路由。
 
 如果管理员保存的是以 `api.` 开头的 Sub2API 转发地址，首次同步只会匿名探测去掉
 首个 `api.` 标签后的同协议、同端口主机。只有该候选站点返回 HTML，且页面配置中的
@@ -1014,6 +1023,26 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
   网络和 5xx 不触发路由或主体重试。只有响应明确要求条款时，才读取公开设置并使用
   同一路由、同一主体携带 revision 重试一次。
 
+### 9.10 2026-10-04 Sub2API 单 Key 模型探测失败与历史快照
+
+**变更前**
+
+- Sub2API 管理面登录、当前用户、分组、用量和 Key 列表均成功，但所有单 Key
+  `/v1/models` 因余额不足或分组停用失败时，父渠道仍会被判定为资源同步失败；
+- 已有成功同步的 Key、模型能力和路由快照无法通过“剩余额度刷新”继续保留，管理面
+  的身份和额度更新也会被整体失败状态遮蔽。
+
+**变更后**
+
+- `syncPlatformSite` 区分管理资源成功与单 Key 模型探测失败。已有 `last_sync_at` 的
+  Sub2API 渠道在本轮取得完整 Secret、但模型探测返回 `INSUFFICIENT_BALANCE`、
+  `GROUP_DISABLED` 等资源条件错误时，继续更新身份、余额、用量、分组和 Key 状态；
+- `keys` 资源标记为 `partial`，`models` 资源标记为 `stale`，保留最近成功的
+  `UpstreamKey`、`UpstreamKeyAbility`、父渠道模型并集和路由候选，父渠道同步状态
+  允许为成功；该情况不标记为凭据失效；
+- 没有历史成功快照的新渠道仍必须等待至少一个真实单 Key 模型能力确认。模型广场、
+  分组模型目录和账号级模型不会被复制为单 Key 能力。
+
 ## 与架构文档的关系
 
 本文保留平台站点、账号同步、子密钥字段、倍率/权重公式、权限、SSRF 和测试验收等详细规则；架构文档描述平台站点如何进入渠道过滤、Routing Key 和 Relay 转发。新增平台类型或调整同步/路由语义时，必须同时更新本文、能力矩阵和偏差表。
@@ -1029,4 +1058,4 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
 | 2026-09-29 | 平台站点资源获取比较文档与管理端字段校准 | 专项文档将 `GET /api/channel/:id/upstream-keys` 描述为不返回额度、过期时间和最近使用时间，且没有链接旧版/参考源/当前实现的完整资源链路比较 | 明确该接口实际返回 `UsedQuota`、`RemainQuota`、`ExpiresAt`、`Models`、`ModelsSynced`、`Status`、可路由诊断和脱敏 `KeyPreview`；完整 Secret 仍不返回，并增加完整比较文档入口 | 平台站点资源查询、管理员诊断、额度和模型能力边界 | `controller/upstream_channel.go:75-104`、`controller/upstream_channel.go:667-710`、[`docs/platform-site-resource-acquisition-comparison.md`](platform-site-resource-acquisition-comparison.md) |
 | 2026-10-02 | 密码同步会话清理与自动配置边界 | 密码同步可能复用历史登录态；NewAPI/Sub2API 注销路径、资源失败快照保护、浏览器会话所有权和自动配置一次性消费边界未统一 | 每轮密码同步直接登录并清理本轮会话；NewAPI 登出后精确删除 SID，Sub2API 仅 Refresh Token 登出，禁止撤销其他会话；清理失败不覆盖快照；自动配置完成验证、脱敏诊断、现有加密保存和 Redis/内存 claim 一次性消费，表单仅保留账号密码/自动配置 | 平台站点认证、资源同步、Capture Helper、前端表单和缓存 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_capture.go`、`pkg/cachex/hybrid_cache.go`、`controller/channel.go`、前端平台站点组件、本机参考源和定向测试 |
 | 2026-10-03 | 认证流程保存兼容与 NewAPI 加密登录 | 认证流程请求中的残留用户名被误判为手动凭据；NewAPI 新版密码加密登录协议和 Sub2API 邮箱主体/精确登出边界未在专项文档集中登记 | 有 `auth_flow_id` 时前端不再提交用户名/密码，后端仅兼容用户名残留并以流程真实身份为准；NewAPI 实现加密密钥读取、RSA-OAEP/v2 信封和仅 404/405 明文回退；Sub2API 保持邮箱优先、凭据错误后回退用户名和本轮 Refresh Token 登出 | 渠道保存、NewAPI/Sub2API 密码认证、认证流程一次性消费、脱敏诊断和最近成功快照 | `web/src/features/channels/lib/channel-form.ts`、`controller/upstream_channel.go`、`service/newapi_password_encryption.go`、`service/upstream_site_adapters.go`、相关 Go/React 定向测试；New API/Sub2API/all-api-hub 本机参考源 |
-| 2026-10-03 | Sub2API Relay 发现与登录请求兼容修复 | 重定向后的页面相对地址解析错误，独立 Relay 域名无法用于 Key 模型探测；登录请求可能因混合字段或无条件条款字段返回 `400 INVALID_REQUEST` | 相对地址按最终 HTML URL 解析；页面明确声明且与最终页面或原始管理地址同协议/主机/有效端口的 Relay 才接受；邮箱首请求只发 `email/password`，仅 404/405 回退登录路由，400 不重试；资源失败继续保留最近成功快照 | Sub2API 管理/Relay 地址、密码登录、Key 模型能力、渠道资源同步和路由候选 | `service/upstream_site_adapters.go`、`service/upstream_site_test.go`、Sub2API 参考源 `auth_handler.go`、all-api-hub 真实站点请求策略和脱敏 fixture |
+| 2026-10-03 | Sub2API Relay 发现与登录请求兼容修复 | 重定向后的页面相对地址解析错误，独立 Relay 域名无法用于 Key 模型探测；登录请求可能因混合字段或无条件条款字段返回 `400 INVALID_REQUEST`；Relay 探测可能携带管理态 | 相对地址按最终 HTML URL 解析；页面明确声明且与最终页面或原始管理地址同协议/主机/有效端口，或与管理地址满足严格 `api.` 父子域关系的 Relay 才接受；可信最终页面来源会作为本轮管理请求地址，持久化管理地址不变；Relay 探测只发送单 Key Header 且清空 Cookie Jar；邮箱首请求只发 `email/password`，仅 404/405 回退登录路由，400 不重试；未确认单 Key 模型不进入路由，资源失败继续保留最近成功快照 | Sub2API 管理/Relay 地址、密码登录、Key 模型能力、渠道资源同步和路由候选 | `service/upstream_site_adapters.go`、`service/upstream_site_test.go`、Sub2API 参考源 `auth_handler.go`、all-api-hub 真实站点请求策略和脱敏 fixture |

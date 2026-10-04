@@ -118,19 +118,25 @@ NexusTok 适配器请求清单中，因此平台窗口额度仍属于未完整�
 
 **变更前**
 
-- 页面重定向后的 HTML 仍按原始管理地址解析相对 `api_base_url`，独立 Relay 域名
-  可能被丢弃；
+- 页面重定向后的 HTML 可能仍按原始管理地址解析相对 `api_base_url`，独立 Relay
+  域名可能被丢弃；
 - 登录请求可能带有混合主体或无条件条款字段，严格 DTO 部署会返回
   `400 INVALID_REQUEST`，路由回退和主体回退边界不够明确。
 
 **变更后**
 
 - 页面请求使用最终响应 URL；相对 `api_base_url` 按最终页面地址解析。页面明确声明的
-  Relay 只有在与最终页面来源或原始管理地址同协议、同主机、同有效端口时才接受，
-  并继续执行 SSRF、端口和重定向安全校验；
+  Relay 只有在与最终页面来源或原始管理地址同协议、同主机、同有效端口，或与原始
+  管理地址满足严格直接 `api.` 父子域关系时才接受，并继续执行 SSRF、端口和重定向
+  安全校验；
 - 管理地址继续负责登录、用户、分组、用量和 Key；Relay 只负责单 Key
   `/v1/models`/`/models` 探测和最终转发。`hhw1231.com -> hengwenapi.com` 属于允许的
   “最终页面明确声明”场景，未经页面声明的第三方地址仍拒绝；
+- 对 `hhw1231.com -> hengwenapi.com`，本轮管理请求使用最终可信页面来源，持久化管理
+  地址仍保持原始地址；Relay 探测清空 Cookie Jar，只发送当前 Key 的 Bearer 和
+  `x-api-key`，不复制管理 Cookie、Origin、Referer、`X-Requested-With` 或
+  `X-Auth-Session`。分组/账号模型目录不能替代单 Key 能力确认，未确认模型的 Key
+  不进入路由；
 - 邮箱首请求只包含 `email/password`；`/api/v1/auth/login` 只在 404/405 时回退
   `/auth/login`，只有 401 凭据错误才允许邮箱到用户名的一次回退。400
   `INVALID_REQUEST`、403、429、WAF、安全验证、权限、网络和 5xx 不触发额外尝试；
@@ -157,7 +163,7 @@ NexusTok 适配器请求清单中，因此平台窗口额度仍属于未完整�
 | 2026-10-01 | Sub2API 登录服务条款兼容能力 | 矩阵只登记 Sub2API 的一般密码/2FA 入口，未记录公开条款设置、可选 revision、错误分类和 New API 隔离 | 增加 `GET /api/v1/settings/public` 的条件读取、`agreed_revision` 发送和 2FA 最新 revision；设置故障回退旧协议，条款拒绝独立分类并保留快照；不发送 `not_in_cn_confirmed`，New API 不读取或发送同名字段 | Sub2API 认证、Auth Flow、同步状态、资源面板和平台能力边界 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go`；Sub2API 参考源 DTO/路由；SQLite 3.50.4、MySQL 8.2.0、PostgreSQL 15.19 矩阵 |
 | 2026-10-02 | 平台站点密码会话清理与自动配置能力 | 密码同步复用历史登录态的边界、NewAPI/Sub2API 精确注销路径、浏览器采集所有权和表单隐藏旧凭据入口未在矩阵中统一登记 | 密码同步每次重新登录；NewAPI 登出后精确删除 SID，Sub2API 仅 Refresh Token 登出；资源失败保留快照；自动配置完成验证后加密保存并一次性消费，平台从渠道类型派生 | 平台站点认证、资源同步、Capture Helper、渠道表单和跨节点缓存 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_capture.go`、`web/src/features/channels/components/drawers/platform-site-fields.tsx`、本机参考源和定向测试 |
 | 2026-10-03 | 认证流程保存兼容与 NewAPI 加密登录 | 完成认证流程后残留用户名可能被当作手动凭据；NewAPI 加密登录密钥、RSA-OAEP/v2 信封和明文回退边界未在矩阵中登记 | 有流程 ID 时只提交流程材料，后端兼容用户名残留并使用流程真实身份；NewAPI 按新版协议读取密钥并仅在 404/405 回退明文；Sub2API 保持邮箱优先和本轮 Refresh Token 精确登出 | 平台站点创建/编辑、账号密码认证、错误回退和会话清理 | `web/src/features/channels/lib/channel-form.ts`、`controller/upstream_channel.go`、`service/newapi_password_encryption.go`、`service/upstream_site_adapters.go`、定向测试和本机 New API/Sub2API/all-api-hub 参考源 |
-| 2026-10-03 | Sub2API Relay 发现与严格登录请求 | 重定向页面的相对 Relay 地址和独立 Relay 域名无法稳定进入 Key 模型探测；无条件条款/混合主体字段可能导致 `400 INVALID_REQUEST` | 使用最终 HTML URL 解析相对地址，仅接受最终页面或原始管理地址明确声明的同协议/主机/有效端口 Relay；邮箱首请求严格 `email/password`，400 不回退，只有 404/405 回退路由、401 凭据错误回退主体；资源失败保留快照 | Sub2API 管理/Relay 地址、认证、Key 能力和路由可用性 | `service/upstream_site_adapters.go`、`service/upstream_site_test.go`、Sub2API `auth_handler.go`、all-api-hub 真实站点辅助实现和脱敏 fixture |
+| 2026-10-03 | Sub2API Relay 发现与严格登录请求 | 重定向页面的相对 Relay 地址和独立 Relay 域名无法稳定进入 Key 模型探测；无条件条款/混合主体字段可能导致 `400 INVALID_REQUEST`；管理态可能被带到 Relay | 使用最终 HTML URL 解析相对地址，接受最终页面或原始管理地址明确声明的同协议/主机/有效端口 Relay，以及严格 `api.` 父子域；可信最终页面来源作为本轮管理请求根地址但不覆盖持久化地址；Relay 请求隔离管理 Header/Cookie Jar；邮箱首请求严格 `email/password`，400 不回退，只有 404/405 回退路由、401 凭据错误回退主体；未确认单 Key 模型不进入路由，资源失败保留快照 | Sub2API 管理/Relay 地址、认证、Key 能力和路由可用性 | `service/upstream_site_adapters.go`、`service/upstream_site_test.go`、Sub2API `auth_handler.go`、all-api-hub 真实站点辅助实现和脱敏 fixture |
 
 ### 3.2 2026-09-26 实现校准
 
@@ -239,8 +245,13 @@ CookieJar、显式 Cookie 合并、30 秒超时和允许内网管理地址的重
 - 批量 Key 缺少部分 ID 时仅补偿缺失项，掩码 Key 不能进入路由；Token 自带的
   `model_limits`/`models` 优先作为单个 Key 能力，账号级模型目录只作为诊断和展示；
 - 认证成功但可选资源失败时，资源矩阵分别记录 identity、usage、groups、endpoints、
-  keys、models 和 admin 状态，保留最近成功快照。父渠道成功要求至少一个完整 Key
-  和已确认模型能力；否则保持 failed 但不删除身份、余额和旧快照；
+  keys、models 和 admin 状态，保留最近成功快照。没有历史成功快照时，父渠道成功
+  要求至少一个完整 Key 和已确认模型能力；已有 `last_sync_at` 的 Sub2API 渠道如果
+  管理面和 Key 列表成功、但所有单 Key `/v1/models` 因 `INSUFFICIENT_BALANCE`、
+  `GROUP_DISABLED` 等资源条件失败，则父渠道仍可成功更新管理资源，`keys` 为
+  `partial`、`models` 为 `stale`，继续使用旧 Key 能力和路由候选；模型广场或分组
+  模型目录不能替代单 Key 能力。其它没有历史快照的情况保持 failed，但不删除身份、
+  余额和旧快照；
 - Dashboard Refresh 仍要求 `new_api_refresh`、`X-Auth-Session` 和旧 Bearer Token，
   渠道代理只从 `setting.proxy` 读取，管理 `BaseURL` 与 Relay 地址继续分离。当前
   前端资源模型不变。
