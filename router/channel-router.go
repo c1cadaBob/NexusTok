@@ -30,6 +30,12 @@ func registerChannelRoutes(apiRouter *gin.RouterGroup) {
 		controller.GetPlatformSiteCaptureUserscript,
 	)
 	apiRouter.GET(
+		"/channel/platform-site/capture-session/:captureID/bridge.js",
+		middleware.CriticalRateLimit(),
+		middleware.DisableCache(),
+		controller.GetPlatformSiteCaptureBridge,
+	)
+	apiRouter.GET(
 		"/channel/platform-site/capture-helper.user.js",
 		middleware.CriticalRateLimit(),
 		middleware.DisableCache(),

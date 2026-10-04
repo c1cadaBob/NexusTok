@@ -954,7 +954,7 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
   网络错误或意外 5xx 只写脱敏告警，临时材料仍清除，不覆盖已经获得的快照或把账号
   直接标记为凭据失效。
 - Cleanup 延迟路径覆盖认证失败、资源失败、部分分页失败和快照写库前后；浏览器
-  Capture 登录态属于用户已有会话，不执行后台注销。Capture Helper `1.6.1` 先做当前
+  Capture 登录态属于用户已有会话，不执行后台注销。Capture Helper `1.7.0` 先做当前
   用户或 Admin 权限验证，诊断只保存候选存在性、存储键、尝试接口、版本、失败阶段
   和来源；结果通过现有加密凭据结构保存。
 - `ResolvePlatformSiteCapture` 成功后使用 Redis `SET NX` 或进程内 claim 独占记录，
@@ -1069,9 +1069,42 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
   `sub2api-auth-coordination/values/sub2api_auth_client_id` IndexedDB 读取，通过
   `X-Sub2API-Auth-Client` 调用 Session Restore；浏览器 Capture 登录态仍不进入后台
   密码会话 Cleanup。
-- Helper `1.6.1` 同时合并页面可见 Cookie 与同站 `GM_cookie.list` 结果并按名称去重，
+- Helper `1.7.0` 同时合并页面可见 Cookie 与同站 `GM_cookie.list` 结果并按名称去重，
   不再在已有可见 Cookie 时跳过 HttpOnly Cookie 读取；回传前删除完整 `auth_user`，
   `base_url` 和 `management_base_url` 保留 handoff 中的管理地址路径。
+
+### 9.12 2026-10-04 无扩展页面桥接与采集会话过期处理
+
+**变更前**
+
+- 自动配置主要依赖浏览器 UserScript 扩展。没有 Tampermonkey/Violentmonkey 时，
+  上游页面不会执行 Helper，前端仍可能持续轮询已过期的 Capture Session；
+- HTTPS 上游页面直接请求本机 NexusTok 回调地址时，可能受到 CORS 或 Private
+  Network Access 限制，已验证登录态无法回传。
+
+**变更后**
+
+- Capture Helper 版本升级为 `1.7.0`，保留原有 UserScript 路径，并新增带一次性
+  `install_token` 的 `bridge.js` 页面桥接地址。桥接脚本复用同一套 NewAPI/Sub2API
+  候选、用户验证、`uid + New-Api-User`、IndexedDB Session Restore 和脱敏诊断逻辑；
+- 无扩展时，NexusTok 在用户点击后从短期 `bridge.js` 地址获取采集脚本，并复制不含
+  Capture Secret 的短启动片段。用户在已打开的上游页面上下文运行片段后，片段通过
+  `window.opener.postMessage` 请求脚本；NexusTok 仅向当前活动窗口返回桥接脚本。上游
+  页面只在 `window.opener` 存在且当前用户验证成功后，通过 `postMessage` 把一次性采集
+  结果交给 NexusTok 同源页面；NexusTok 校验窗口、Origin、Capture ID 和 Helper 版本后
+  再调用完成接口，成功后返回定向确认；
+- 上游站点登录重定向导致地址栏 handoff 参数丢失时，桥接脚本会向活动 opener 请求
+  一次性 handoff。管理页只向当前 Capture Session 的活动窗口、匹配 Origin 和匹配
+  Capture ID 响应；浏览器拒绝跨源 `javascript:` 导航是预期安全边界，前端保留短启动
+  片段复制入口，用户仍需在上游页面上下文执行该片段；
+- 桥接脚本 URL 不携带 Capture Secret，脚本响应不保存 Token、Cookie、密码或完整
+  响应。Capture Secret 只在当前页面内存消息和后端一次性校验链路中使用；
+- Capture Session 查询返回“不存在/已过期”时，前端停止轮询、清理无效 ID 和桥接状态，
+  显示重新创建入口，不再继续显示“正在检测 Capture Helper”。上游 Turnstile、WAF、
+  验证码和 Passkey 仍必须由用户完成，桥接不绕过安全验证；
+- `capture_helper` 与 `capture_bridge` 都必须通过现有用户或 Admin 验证、加密保存和
+  一次性消费流程；浏览器登录态仍不进入后台密码会话 Cleanup，资源同步失败也不覆盖
+  最近成功快照。
 
 ## 与架构文档的关系
 

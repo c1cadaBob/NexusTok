@@ -41,6 +41,7 @@ import type {
   SearchChannelsResponse,
   TagOperationParams,
   PlatformSiteInput,
+  PlatformSiteCaptureCompletePayload,
   PlatformSiteCaptureStartRequest,
   PlatformSiteCaptureStartResponse,
   PlatformSiteCaptureStatusResponse,
@@ -263,6 +264,18 @@ export async function getPlatformSiteCaptureStatus(
 ): Promise<PlatformSiteCaptureStatusResponse> {
   const res = await api.get(
     `/api/channel/platform-site/capture-session/${encodeURIComponent(captureID)}`
+  )
+  return res.data
+}
+
+export async function completePlatformSiteCapture(
+  captureID: string,
+  data: PlatformSiteCaptureCompletePayload
+): Promise<PlatformSiteCaptureStatusResponse> {
+  const res = await api.post(
+    `/api/channel/platform-site/capture-session/${encodeURIComponent(captureID)}/complete`,
+    data,
+    channelActionConfig()
   )
   return res.data
 }

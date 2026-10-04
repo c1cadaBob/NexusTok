@@ -149,7 +149,7 @@ NexusTok 适配器请求清单中，因此平台窗口额度仍属于未完整�
 `localStorage.uid` 的旧版页面缺少稳定的 `New-Api-User` 兼容，Sub2API 旧版
 Session Restore 所需的 IndexedDB 客户端 ID 也可能无法读取。
 
-**变更后**：Capture Helper `1.6.1` 在 `DOMContentLoaded` 后启动，并以固定间隔和手动
+**变更后**：Capture Helper `1.7.0` 在 `DOMContentLoaded` 后启动，并以固定间隔和手动
 按钮等待登录态形成。NewAPI 候选依次检查 Dashboard Refresh、Access Token、Admin Key
 和 Cookie；Cookie 验证使用数字 `New-Api-User`，用户 ID 来源包括 `localStorage.uid`、
 用户状态对象、页面状态和 JWT，同源脚本 API 路径发现只用于兼容部署前缀。Sub2API
@@ -162,6 +162,12 @@ Session Restore 所需的 IndexedDB 客户端 ID 也可能无法读取。
 存在性、版本和错误类别。Helper 合并可见与 `GM_cookie` 的同站 Cookie，并只提交扁平
 身份字段；管理地址路径从 handoff 保持。Cloudflare/Turnstile、WAF、验证码和 Passkey 仍属于上游
 浏览器人工验证能力，不在矩阵中宣称由 NexusTok 自动绕过。
+
+无扩展时，`capture_bridge_url` 返回与 UserScript 相同的采集核心。桥接脚本优先读取
+当前页面 handoff；登录重定向丢失查询参数时，通过 `window.opener.postMessage` 向活动
+管理页请求一次性 handoff。跨源 `javascript:` 导航被浏览器安全策略拒绝时，管理页复制
+不含敏感值的短启动片段；片段在上游页面上下文请求桥接脚本后再执行。该降级不会绕过
+上游 Turnstile/WAF，也不会放宽 Origin、窗口、Capture ID 或版本校验。
 
 ## 3. 维护解释
 

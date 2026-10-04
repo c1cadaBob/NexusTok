@@ -843,6 +843,65 @@ func TestPlatformSiteCaptureHelperGeneratedScriptIsValidJavaScript(t *testing.T)
 	require.NoError(t, err, string(output))
 }
 
+func TestPlatformSiteCaptureBridgeUsesSignedInstallAndPostMessage(t *testing.T) {
+	start, err := StartPlatformSiteCaptureSession(20, PlatformSiteCaptureStartRequest{
+		Platform: model.PlatformNewAPI,
+		BaseURL:  "http://127.0.0.1:8184",
+		AuthType: PlatformSiteCaptureAuthAuto,
+	}, "https://nexus.example.com")
+	require.NoError(t, err)
+	require.Contains(t, start.BridgeURL, "/bridge.js?install_token=")
+
+	record, found, err := platformSiteCaptureCache.Get(start.CaptureID)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.NotEmpty(t, record.InstallToken)
+	require.NotContains(t, start.BridgeURL, record.Secret)
+
+	script, err := RenderPlatformSiteCaptureBridge(
+		start.CaptureID,
+		record.InstallToken,
+		"https://nexus.example.com",
+	)
+	require.NoError(t, err)
+	require.Contains(t, script, "nexustok-upstream-capture-bridge-result")
+	require.Contains(t, script, "nexustok-upstream-capture-bridge-ack")
+	require.Contains(t, script, "nexustok-upstream-capture-bridge-request")
+	require.Contains(t, script, "nexustok-upstream-capture-bridge-handoff")
+	require.Contains(t, script, "requestBridgeHandoff")
+	require.Contains(t, script, "handoffFromURL")
+	require.Contains(t, script, "window.opener.postMessage")
+	require.Contains(t, script, "capture_source: 'capture_bridge'")
+	require.Contains(t, script, `"transport":"bridge"`)
+	require.NotContains(t, script, record.Secret)
+
+	nodePath, err := exec.LookPath("node")
+	if err == nil {
+		scriptPath := t.TempDir() + "/capture-bridge.js"
+		require.NoError(t, os.WriteFile(scriptPath, []byte(script), 0o600))
+		output, checkErr := exec.Command(nodePath, "--check", scriptPath).CombinedOutput()
+		require.NoError(t, checkErr, string(output))
+	}
+
+	status, err := CompletePlatformSiteCaptureSession(start.CaptureID, PlatformSiteCaptureCompleteRequest{
+		CaptureSecret: record.Secret,
+		CaptureSource: "capture_bridge",
+		HelperVersion: platformSiteCaptureHelperVersion,
+		Platform:      model.PlatformNewAPI,
+		AuthType:      PlatformSiteCaptureAuthAuto,
+		Origin:        record.Origin,
+		AccessToken:   "bridge-access-token",
+		Diagnostics: &PlatformSiteCaptureDiagnostics{
+			AuthUserVerified: true,
+			Source:           "capture_bridge",
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, platformSiteCaptureStatusComplete, status.Status)
+	require.NotNil(t, status.Summary)
+	assert.Equal(t, "capture_bridge", status.Summary.CaptureSource)
+}
+
 type platformSiteRoundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn platformSiteRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {

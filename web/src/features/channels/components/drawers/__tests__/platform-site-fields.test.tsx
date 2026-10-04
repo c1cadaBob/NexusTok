@@ -49,12 +49,14 @@ vi.mock('@/features/channels/api', async () => {
     getTaskPluginOptions: vi.fn(),
     startPlatformSiteCapture: vi.fn(),
     getPlatformSiteCaptureStatus: vi.fn(),
+    completePlatformSiteCapture: vi.fn(),
   }
 })
 
 type PlatformSiteFormProps = {
   isEditing?: boolean
   authType?: ChannelFormValues['platform_site_auth_type']
+  captureID?: string
   onSubmit?: (values: ChannelFormValues) => void
 }
 
@@ -93,10 +95,38 @@ beforeEach(() => {
       origin: 'https://upstream.example',
       userscript_url:
         'https://nexustok.example/api/channel/platform-site/capture-session/capture-123/userscript.user.js',
+      capture_bridge_url:
+        'https://nexustok.example/api/channel/platform-site/capture-session/capture-123/bridge.js?install_token=install-token',
       helper_install_url:
         'https://nexustok.example/api/channel/platform-site/capture-helper.user.js',
       handoff_url: 'https://upstream.example/?nexustok_capture=payload',
       login_url: 'https://upstream.example',
+    },
+  })
+  vi.mocked(channelsApi.getPlatformSiteCaptureStatus).mockResolvedValue({
+    success: true,
+    data: {
+      capture_id: 'capture-123',
+      status: 'pending',
+      expires_at: Math.floor(Date.now() / 1000) + 600,
+      platform: 'newapi',
+      base_url: 'https://upstream.example',
+      auth_type: 'auto',
+      origin: 'https://upstream.example',
+      capture_bridge_url:
+        'https://nexustok.example/api/channel/platform-site/capture-session/capture-123/bridge.js?install_token=install-token',
+    },
+  })
+  vi.mocked(channelsApi.completePlatformSiteCapture).mockResolvedValue({
+    success: true,
+    data: {
+      capture_id: 'capture-123',
+      status: 'completed',
+      expires_at: Math.floor(Date.now() / 1000) + 600,
+      platform: 'newapi',
+      base_url: 'https://upstream.example',
+      auth_type: 'auto',
+      origin: 'https://upstream.example',
     },
   })
 })
@@ -111,6 +141,7 @@ function PlatformSiteForm(props: PlatformSiteFormProps) {
       base_url: 'https://upstream.example',
       models: 'gpt-4o',
       platform_site_auth_type: props.authType ?? 'password',
+      platform_site_capture_id: props.captureID ?? '',
     },
   })
 
@@ -385,7 +416,9 @@ test('凭证区域仅显示账号密码和自动配置，不显示高级认证�
   expect(screen.queryByLabelText('Access token')).not.toBeInTheDocument()
   expect(screen.queryByLabelText('Admin Key')).not.toBeInTheDocument()
   expect(screen.queryByLabelText('Cookie')).not.toBeInTheDocument()
-  expect(screen.queryByLabelText('Dashboard Session ID')).not.toBeInTheDocument()
+  expect(
+    screen.queryByLabelText('Dashboard Session ID')
+  ).not.toBeInTheDocument()
   expect(screen.queryByText('Advanced authentication')).not.toBeInTheDocument()
 })
 
@@ -481,6 +514,216 @@ test('预开窗口被拦截时保留会话并提供手动打开按钮', async ()
     '_blank'
   )
   openSpy.mockRestore()
+})
+
+test('页面桥接只接受正确窗口和来源并回传完成确认', async () => {
+  const user = userEvent.setup()
+  const postMessage = vi.fn()
+  const upstreamWindow = {
+    closed: false,
+    focus: vi.fn(),
+    location: { href: '' },
+    opener: window,
+    postMessage,
+  } as unknown as Window
+  const openSpy = vi.spyOn(window, 'open').mockReturnValue(upstreamWindow)
+  vi.mocked(channelsApi.completePlatformSiteCapture).mockClear()
+
+  render(<PlatformSiteForm authType='auto' />)
+  await user.click(
+    screen.getByRole('button', { name: 'Capture upstream login state' })
+  )
+  await screen.findByRole('button', { name: 'Run page bridge' })
+  await waitFor(() => {
+    expect(channelsApi.getPlatformSiteCaptureStatus).toHaveBeenCalledWith(
+      'capture-123'
+    )
+  })
+
+  const payload = {
+    type: 'nexustok-upstream-capture-bridge-result',
+    capture_id: 'capture-123',
+    payload: {
+      capture_secret: 'capture-secret',
+      capture_source: 'capture_bridge',
+      helper_version: '1.7.0',
+      platform: 'newapi',
+      auth_type: 'auto',
+      access_token: 'temporary-access-token',
+      diagnostics: { auth_user_verified: true },
+    },
+  }
+  const dispatchMessage = (
+    source: Window,
+    origin: string,
+    data: typeof payload
+  ) => {
+    const event = Object.assign(new Event('message'), {
+      source,
+      origin,
+      data,
+    }) as MessageEvent
+    window.dispatchEvent(event)
+  }
+
+  dispatchMessage({} as Window, 'https://upstream.example', payload)
+  dispatchMessage(upstreamWindow, 'https://wrong.example', payload)
+  expect(channelsApi.completePlatformSiteCapture).not.toHaveBeenCalled()
+
+  dispatchMessage(upstreamWindow, 'https://upstream.example', payload)
+  await waitFor(() => {
+    expect(channelsApi.completePlatformSiteCapture).toHaveBeenCalledWith(
+      'capture-123',
+      expect.objectContaining({
+        capture_source: 'capture_bridge',
+        auth_type: 'auto',
+        origin: 'https://upstream.example',
+      })
+    )
+  })
+  expect(postMessage).toHaveBeenCalledWith(
+    {
+      type: 'nexustok-upstream-capture-bridge-ack',
+      capture_id: 'capture-123',
+      success: true,
+    },
+    'https://upstream.example'
+  )
+  openSpy.mockRestore()
+})
+
+test('桥接页面丢失 URL handoff 时可从活动上游窗口请求一次性 handoff', async () => {
+  const user = userEvent.setup()
+  const postMessage = vi.fn()
+  const upstreamWindow = {
+    closed: false,
+    focus: vi.fn(),
+    location: { href: '' },
+    opener: window,
+    postMessage,
+  } as unknown as Window
+  const openSpy = vi.spyOn(window, 'open').mockReturnValue(upstreamWindow)
+
+  render(<PlatformSiteForm authType='auto' />)
+  await user.click(
+    screen.getByRole('button', { name: 'Capture upstream login state' })
+  )
+  await screen.findByRole('button', { name: 'Run page bridge' })
+
+  const request = {
+    type: 'nexustok-upstream-capture-bridge-request',
+    capture_id: 'capture-123',
+  }
+  const event = Object.assign(new Event('message'), {
+    source: upstreamWindow,
+    origin: 'https://upstream.example',
+    data: request,
+  }) as MessageEvent
+  window.dispatchEvent(event)
+
+  await waitFor(() => {
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'nexustok-upstream-capture-bridge-handoff',
+        capture_id: 'capture-123',
+        handoff_url: 'https://upstream.example/?nexustok_capture=payload',
+      }),
+      'https://upstream.example'
+    )
+  })
+  openSpy.mockRestore()
+})
+
+test('运行页面桥接前获取内联脚本并保留可复制降级代码', async () => {
+  const user = userEvent.setup()
+  const bridgeSource =
+    'window.postMessage({type:"nexustok-upstream-capture-bridge-result"},"*")'
+  const fetchMock = vi.fn().mockResolvedValue({
+    ok: true,
+    text: async () => bridgeSource,
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  const upstreamWindow = {
+    closed: false,
+    focus: vi.fn(),
+    location: { href: '' },
+    opener: window,
+    postMessage: vi.fn(),
+  } as unknown as Window
+  const openSpy = vi.spyOn(window, 'open').mockReturnValue(upstreamWindow)
+
+  render(<PlatformSiteForm authType='auto' />)
+  await user.click(
+    screen.getByRole('button', { name: 'Capture upstream login state' })
+  )
+  const runBridgeButton = await screen.findByRole('button', {
+    name: 'Run page bridge',
+  })
+  await user.click(runBridgeButton)
+
+  await waitFor(() => {
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/bridge.js?install_token='),
+      expect.objectContaining({
+        credentials: 'include',
+        cache: 'no-store',
+      })
+    )
+  })
+  expect(upstreamWindow.location.href).toBe(
+    'https://upstream.example/?nexustok_capture=payload'
+  )
+  expect(
+    await screen.findByRole('button', { name: 'Copy page bridge code' })
+  ).toBeInTheDocument()
+
+  const request = {
+    type: 'nexustok-upstream-capture-bridge-script-request',
+    capture_id: 'capture-123',
+  }
+  const event = Object.assign(new Event('message'), {
+    source: upstreamWindow,
+    origin: 'https://upstream.example',
+    data: request,
+  }) as MessageEvent
+  window.dispatchEvent(event)
+
+  await waitFor(() => {
+    expect(upstreamWindow.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'nexustok-upstream-capture-bridge-script',
+        capture_id: 'capture-123',
+        script: bridgeSource,
+      }),
+      'https://upstream.example'
+    )
+  })
+
+  openSpy.mockRestore()
+  vi.unstubAllGlobals()
+})
+
+test('采集会话过期后停止轮询并显示重新创建入口', async () => {
+  vi.mocked(channelsApi.getPlatformSiteCaptureStatus).mockResolvedValue({
+    success: false,
+    message: '采集会话不存在或已过期',
+  })
+
+  render(<PlatformSiteForm authType='auto' captureID='expired-capture' />)
+
+  await waitFor(() => {
+    expect(
+      screen.getByText(
+        'Capture session expired. Create a new session to continue.'
+      )
+    ).toBeInTheDocument()
+  })
+  expect(
+    screen.getByRole('button', { name: 'Create a new capture session' })
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: 'Refresh capture status' })
+  ).not.toBeInTheDocument()
 })
 
 test('从 Capture Helper 回跳参数恢复采集会话并清理地址栏参数', async () => {

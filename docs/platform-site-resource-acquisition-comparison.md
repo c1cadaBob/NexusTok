@@ -1057,7 +1057,7 @@ Sub2API 站点验收结果：
   只产生脱敏告警，清理仍清除本地临时材料，最近成功快照不被覆盖。
 - 两个平台的 `PlatformSiteAdapter.Cleanup` 在认证错误、资源错误、部分分页失败和
   快照写库前后执行；Access Token、Admin Key、Cookie 和浏览器 Capture 登录态不执行
-  后台注销。自动配置 Helper 当前版本为 `1.6.1`，先验证当前用户或 Admin 管理权限，
+  后台注销。自动配置 Helper 当前版本为 `1.7.0`，先验证当前用户或 Admin 管理权限，
   仅保留存在性、存储键、验证接口、版本、失败阶段和来源诊断。
 - Capture 结果继续使用 `PlatformSiteCredential` 的现有加密字段。解析后使用
   Redis `SET NX` 或单进程内存 claim 独占，渠道保存成功后一次性消费，后续失败释放
@@ -1126,3 +1126,27 @@ PostgreSQL 15.19；MySQL 5.7.8、PostgreSQL 9.6、独立日志数据库和真实
   Helper 还会合并页面可见 Cookie 与同站 `GM_cookie` 结果，并在回传前删除完整
   `auth_user`，仅保留安全身份字段；handoff 中的管理地址路径用于 `base_url` 和
   `management_base_url`，避免部署在子路径时丢失地址。
+
+## 20. 2026-10-04 无扩展页面桥接
+
+**变更前**：自动配置只能依赖 UserScript 扩展执行；MCP 或普通浏览器没有安装
+Tampermonkey/Violentmonkey 时，上游页面不会运行采集逻辑，HTTPS 页面访问本机回调还
+可能被 CORS/PNA 拦截；过期 Capture Session 仍可能在前端显示为持续检测。
+
+**变更后**：Capture Helper 升级为 `1.7.0`，在保留 UserScript 的同时，为每个短期
+Capture Session 返回带 `install_token` 的 `capture_bridge_url`。桥接代码在上游页面中
+复用现有 NewAPI/Sub2API 采集策略，通过 `window.opener.postMessage` 将经过当前用户或
+Admin 验证的结果交给 NexusTok 页面；NexusTok 校验来源窗口、Origin、Capture ID 和
+版本后调用同源完成接口，并向上游页面发送一次性成功/失败回执。桥接地址不包含
+Capture Secret，诊断和消息不保存密码、完整 Cookie、Token 或上游响应。
+
+若上游登录重定向丢失 handoff 查询参数，桥接脚本会通过 opener 向管理页请求同一
+Capture Session 的一次性 handoff；管理页只向活动上游窗口、匹配 Origin 和匹配 Capture
+ID 响应。浏览器拒绝跨源 `javascript:` 导航时，前端先获取桥接脚本并提供不含敏感值的
+短启动片段复制入口；片段在上游页面上下文运行后再通过 opener 请求脚本，仍不允许管理页
+直接跨源执行代码。
+
+Capture Session 状态查询遇到不存在或过期时，前端立即停止轮询并清理无效状态，允许
+重新创建会话；未完成登录、Turnstile/WAF 或验证码仍只保持 pending 并等待重试，桥接
+不绕过上游安全验证。浏览器采集态与后台账号密码同步会话继续分离，资源失败仍保留
+最近成功快照。

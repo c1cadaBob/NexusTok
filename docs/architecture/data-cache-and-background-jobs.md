@@ -83,11 +83,17 @@ Cookie 尚未形成或 Cloudflare/Turnstile 尚未结束时只显示脱敏状态
 成功后凭据继续使用现有加密结构，渠道保存成功消费记录，校验或入队失败释放 claim。
 
 NewAPI 的浏览器态候选允许从 `uid`、页面用户状态和 JWT 得到数字用户 ID，并使用
-`New-Api-User + Cookie` 验证当前用户；Helper `1.6.1` 会合并当前页面可见 Cookie
+`New-Api-User + Cookie` 验证当前用户；Helper `1.7.0` 会合并当前页面可见 Cookie
 与同站 `GM_cookie` 结果，回传只保留扁平身份字段。Sub2API 的 Session Restore 允许读取
 `sub2api-auth-coordination/values/sub2api_auth_client_id` 并发送
 `X-Sub2API-Auth-Client`。浏览器 Capture 的 Cookie、Session 和 Token 属于用户已有会话，
 不进入后台账号密码同步清理，也不写入长期诊断。
+
+无扩展页面桥接的脚本不把 Capture Secret 放入脚本地址。若上游登录重定向导致 handoff
+查询参数丢失，桥接脚本会通过 `window.opener.postMessage` 向活动管理页请求一次性
+handoff；管理页仅在窗口、Origin 和 Capture ID 匹配时回复。跨源 `javascript:` 导航
+被浏览器拒绝时，前端复制不含敏感值的短启动片段；片段在上游页面上下文请求一次性桥接
+脚本后再执行。该复制降级不会改变 Capture 缓存的 TTL、claim 或一次性消费语义。
 
 ## 2. 数据库选择和迁移
 

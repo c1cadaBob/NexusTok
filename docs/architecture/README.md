@@ -65,7 +65,7 @@
 ## 2026-10-04 Capture Helper 登录态兼容
 
 本次变更将 Capture Helper 从“页面立即采集”调整为 DOM 就绪后等待登录、自动重试和手动
-重试；只有当前用户或 Admin 权限验证成功才进入完成接口。Helper `1.6.1` 合并当前
+重试；只有当前用户或 Admin 权限验证成功才进入完成接口。Helper `1.7.0` 合并当前
 站点可见 Cookie 与 `GM_cookie` 结果并去重，回传前删除完整 `auth_user`。NewAPI 兼容
 `localStorage.uid + New-Api-User + Cookie`、页面状态和同源脚本 API 路径发现，Sub2API
 兼容 localStorage、页面状态、IndexedDB 客户端 ID 和 Session Restore。暂时未登录不再
@@ -98,6 +98,22 @@
 新增渠道时至少同步 `constant/channel.go`、`common/api_type.go`、`relay/relay_adaptor.go`、流式支持列表、模型获取入口、能力矩阵和偏差登记。新增 Endpoint 或 Relay Format 时同步路由、`relaykit` DTO/转换器、Usage/计费入口、能力矩阵和相关专项文档。调整密钥路由、模型限制、平台站点子密钥或日志可观测字段时，以 [`key-routing-strategy.md`](../key-routing-strategy.md) 为细节基准。
 
 新增配置、数据库模型、缓存键、后台任务或插件协议时，同时更新对应功能文档、代码来源和变更记录。只修改文档时，也必须静态检查链接、路径、方法名、接口参数和偏差状态。
+
+### 2026-10-04 自动配置页面桥接
+
+平台站点自动配置当前有两条传输路径：安装扩展时使用 `capture_helper` UserScript，
+无扩展时使用短期 `capture_bridge_url` 页面桥接。两者共享
+`service/platform_site_capture.go` 的 NewAPI/Sub2API 登录态候选和验证逻辑；桥接通过
+上游窗口的 `window.opener.postMessage` 回传，管理页面校验来源窗口、上游 Origin、Capture
+ID 和版本后调用同源完成接口。没有登录态或尚未完成 Turnstile 时仍保持 pending，Capture
+Session 过期则停止前端轮询并要求重新创建。该路径不改变后台密码会话 Cleanup、资源快照
+回退或路由模型能力边界。
+
+桥接脚本若发现登录重定向丢失 handoff 查询参数，会向活动 opener 请求一次性 handoff；
+管理页只在活动窗口、Origin 和 Capture ID 匹配时响应。跨源 `javascript:` 导航不能由管理页
+直接代替上游页面执行，因此管理页先获取一次性桥接脚本，再复制不含敏感凭据的短启动片段；
+用户在上游页面上下文运行片段后，管理页才通过 `postMessage` 返回桥接脚本。该限制不能绕过
+目标站 Turnstile、WAF 或验证码。
 
 ## 变更记录
 

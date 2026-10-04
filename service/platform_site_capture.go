@@ -21,7 +21,7 @@ const (
 	platformSiteCaptureStatusPending  = "pending"
 	platformSiteCaptureStatusComplete = "completed"
 	platformSiteCaptureStatusFailed   = "failed"
-	platformSiteCaptureHelperVersion  = "1.6.1"
+	platformSiteCaptureHelperVersion  = "1.7.0"
 	platformSiteCaptureHandoffParam   = "nexustok_capture"
 
 	PlatformSiteCaptureAuthAuto = "auto"
@@ -43,6 +43,7 @@ type PlatformSiteCaptureStartResult struct {
 	AuthType              string `json:"auth_type"`
 	Origin                string `json:"origin"`
 	UserscriptURL         string `json:"userscript_url"`
+	BridgeURL             string `json:"capture_bridge_url"`
 	HelperInstallURL      string `json:"helper_install_url"`
 	HandoffURL            string `json:"handoff_url"`
 	LoginURL              string `json:"login_url"`
@@ -136,6 +137,7 @@ type PlatformSiteCaptureStatusResult struct {
 	AuthType              string                          `json:"auth_type"`
 	Origin                string                          `json:"origin"`
 	UserscriptURL         string                          `json:"userscript_url,omitempty"`
+	BridgeURL             string                          `json:"capture_bridge_url,omitempty"`
 	HelperInstallURL      string                          `json:"helper_install_url,omitempty"`
 	HandoffURL            string                          `json:"handoff_url,omitempty"`
 	LoginURL              string                          `json:"login_url,omitempty"`
@@ -264,6 +266,7 @@ func StartPlatformSiteCaptureSession(
 		return nil, fmt.Errorf("保存采集会话失败")
 	}
 	userscriptURL := captureUserscriptURL(nexusBaseURL, record.ID, record.InstallToken)
+	bridgeURL := captureBridgeURL(nexusBaseURL, record.ID, record.InstallToken)
 	handoffURL := captureHandoffURL(record, nexusBaseURL)
 	return &PlatformSiteCaptureStartResult{
 		CaptureID:             record.ID,
@@ -273,6 +276,7 @@ func StartPlatformSiteCaptureSession(
 		AuthType:              record.AuthType,
 		Origin:                record.Origin,
 		UserscriptURL:         userscriptURL,
+		BridgeURL:             bridgeURL,
 		HelperInstallURL:      strings.TrimRight(nexusBaseURL, "/") + "/api/channel/platform-site/capture-helper.user.js",
 		HandoffURL:            handoffURL,
 		LoginURL:              record.BaseURL,
@@ -316,13 +320,20 @@ func CompletePlatformSiteCaptureSession(
 		return nil, errorsForCapture("采集会话已完成，请重新创建采集会话")
 	}
 	captureSource := strings.ToLower(strings.TrimSpace(request.CaptureSource))
-	if captureSource != "" && captureSource != "capture_helper" {
+	if captureSource != "" && captureSource != "capture_helper" && captureSource != "capture_bridge" {
 		return nil, errorsForCapture("采集来源不受支持")
 	}
-	if record.AuthType == PlatformSiteCaptureAuthAuto && captureSource != "capture_helper" {
+	if record.AuthType == PlatformSiteCaptureAuthAuto &&
+		captureSource != "capture_helper" &&
+		captureSource != "capture_bridge" {
 		return nil, errorsForCapture("自动配置必须通过 Capture Helper 完成采集")
 	}
-	if (record.AuthType == PlatformSiteCaptureAuthAuto || captureSource == "capture_helper") &&
+	if captureSource == "capture_bridge" && record.AuthType != PlatformSiteCaptureAuthAuto {
+		return nil, errorsForCapture("页面桥接只能用于自动配置")
+	}
+	if (record.AuthType == PlatformSiteCaptureAuthAuto ||
+		captureSource == "capture_helper" ||
+		captureSource == "capture_bridge") &&
 		strings.TrimSpace(request.HelperVersion) != platformSiteCaptureHelperVersion {
 		return nil, errorsForCapture("采集助手版本不匹配")
 	}
@@ -522,7 +533,36 @@ func RenderPlatformSiteCaptureUserscript(captureID, installToken, nexusBaseURL s
 	if err != nil {
 		return "", err
 	}
-	return renderPlatformSiteCaptureScript(nexusBaseURL, record.BaseURL, record.Platform, record.AuthType, record.ID), nil
+	return renderPlatformSiteCaptureScript(
+		nexusBaseURL,
+		record.BaseURL,
+		record.Platform,
+		record.AuthType,
+		record.ID,
+		"userscript",
+	), nil
+}
+
+func RenderPlatformSiteCaptureBridge(captureID, installToken, nexusBaseURL string) (string, error) {
+	record, err := getPlatformSiteCaptureRecord(captureID)
+	if err != nil {
+		return "", err
+	}
+	if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(installToken)), []byte(record.InstallToken)) != 1 {
+		return "", errorsForCapture("采集安装签名无效")
+	}
+	nexusBaseURL, err = normalizeCaptureNexusBaseURL(nexusBaseURL)
+	if err != nil {
+		return "", err
+	}
+	return renderPlatformSiteCaptureScript(
+		nexusBaseURL,
+		record.BaseURL,
+		record.Platform,
+		record.AuthType,
+		record.ID,
+		"bridge",
+	), nil
 }
 
 func RenderPlatformSiteCaptureHelper(nexusBaseURL string) (string, error) {
@@ -530,7 +570,7 @@ func RenderPlatformSiteCaptureHelper(nexusBaseURL string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return renderPlatformSiteCaptureScript(nexusBaseURL, "", "", "", ""), nil
+	return renderPlatformSiteCaptureScript(nexusBaseURL, "", "", "", "", "userscript"), nil
 }
 
 func getPlatformSiteCaptureRecord(captureID string) (platformSiteCaptureRecord, error) {
@@ -604,6 +644,7 @@ func sanitizePlatformSiteCaptureRecord(
 	}
 	if normalized, err := normalizeCaptureNexusBaseURL(nexusBaseURL); err == nil {
 		result.UserscriptURL = captureUserscriptURL(normalized, record.ID, record.InstallToken)
+		result.BridgeURL = captureBridgeURL(normalized, record.ID, record.InstallToken)
 		result.HelperInstallURL = strings.TrimRight(normalized, "/") + "/api/channel/platform-site/capture-helper.user.js"
 		result.HandoffURL = captureHandoffURL(record, normalized)
 	}
@@ -1027,6 +1068,13 @@ func captureUserscriptURL(nexusBaseURL, captureID, installToken string) string {
 		"/api/channel/platform-site/capture-session/" +
 		url.PathEscape(captureID) +
 		"/userscript.user.js?install_token=" + url.QueryEscape(installToken)
+}
+
+func captureBridgeURL(nexusBaseURL, captureID, installToken string) string {
+	return strings.TrimRight(nexusBaseURL, "/") +
+		"/api/channel/platform-site/capture-session/" +
+		url.PathEscape(captureID) +
+		"/bridge.js?install_token=" + url.QueryEscape(installToken)
 }
 
 func captureHandoffURL(record platformSiteCaptureRecord, nexusBaseURL string) string {
@@ -1566,6 +1614,20 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
     }
   }
 
+  function handoffFromURL(rawURL) {
+    try {
+      const current = new URL(text(rawURL), window.location.href);
+      const rawHash = text(current.hash || '').replace(/^#/, '');
+      const hashParams = new URLSearchParams(rawHash);
+      const encoded =
+        current.searchParams.get('nexustok_capture') ||
+        hashParams.get('nexustok_capture');
+      return encoded ? decodeHandoff(encoded) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   function handoff() {
     const current = new URL(window.location.href);
     const handoffParam = 'nexustok_capture';
@@ -1597,6 +1659,70 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
     } catch (_) {
       return null;
     }
+  }
+
+  function bridgeTargetOrigin() {
+    try {
+      return new URL(text(config.nexus_base), window.location.href).origin;
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function requestBridgeHandoff() {
+    if (
+      config.transport !== 'bridge' ||
+      !window.opener ||
+      window.opener.closed
+    ) {
+      return Promise.resolve(null);
+    }
+    const targetOrigin = bridgeTargetOrigin();
+    if (!targetOrigin) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      let settled = false;
+      let timeoutID = 0;
+      const cleanup = () => {
+        window.removeEventListener('message', handleMessage);
+        if (timeoutID) window.clearTimeout(timeoutID);
+      };
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(value);
+      };
+      const handleMessage = (event) => {
+        const data = event.data || {};
+        if (
+          event.source !== window.opener ||
+          event.origin !== targetOrigin ||
+          data.type !== 'nexustok-upstream-capture-bridge-handoff' ||
+          text(data.capture_id || data.captureID) !== text(config.capture_id)
+        ) {
+          return;
+        }
+        const value =
+          data.handoff && typeof data.handoff === 'object'
+            ? data.handoff
+            : handoffFromURL(data.handoff_url || data.handoffURL);
+        finish(value);
+      };
+      window.addEventListener('message', handleMessage);
+      timeoutID = window.setTimeout(() => finish(null), 3000);
+      try {
+        window.opener.postMessage(
+          {
+            type: 'nexustok-upstream-capture-bridge-request',
+            capture_id: config.capture_id,
+            captureID: config.capture_id,
+          },
+          targetOrigin
+        );
+      } catch (_) {
+        finish(null);
+      }
+    });
   }
 
   function clearStoredHandoff() {
@@ -2078,6 +2204,69 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
   }
 
   async function send(payload) {
+    if (config.transport === 'bridge') {
+      if (!window.opener || window.opener.closed) {
+        throw new Error('bridge opener is unavailable');
+      }
+      const returnURL = text(payload.return_url || '');
+      let targetOrigin = '';
+      try {
+        targetOrigin = new URL(returnURL, window.location.href).origin;
+      } catch (_) {}
+      if (!targetOrigin) {
+        targetOrigin = text(config.nexus_base);
+        try {
+          targetOrigin = new URL(targetOrigin, window.location.href).origin;
+        } catch (_) {
+          targetOrigin = '';
+        }
+      }
+      if (!targetOrigin) throw new Error('bridge target origin is unavailable');
+      const messagePayload = { ...payload };
+      delete messagePayload.complete_url;
+      return await new Promise((resolve, reject) => {
+        let settled = false;
+        const cleanup = () => {
+          window.removeEventListener('message', handleMessage);
+          if (timeoutID) window.clearTimeout(timeoutID);
+        };
+        const finish = (callback, value) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          callback(value);
+        };
+        const handleMessage = (event) => {
+          const data = event.data || {};
+          if (event.source !== window.opener || event.origin !== targetOrigin) return;
+          if (data.type !== 'nexustok-upstream-capture-bridge-ack') return;
+          if (text(data.capture_id || data.captureID) !== text(payload.capture_id)) return;
+          if (data.success) {
+            finish(resolve, data);
+          } else {
+            finish(reject, new Error('capture bridge callback was rejected'));
+          }
+        };
+        const timeoutID = window.setTimeout(() => {
+          finish(reject, new Error('capture bridge callback timed out'));
+        }, 30000);
+        window.addEventListener('message', handleMessage);
+        try {
+          window.opener.postMessage({
+            type: 'nexustok-upstream-capture-bridge-result',
+            capture_id: payload.capture_id,
+            captureID: payload.capture_id,
+            helper_version: payload.helper_version,
+            payload: {
+              ...messagePayload,
+              capture_source: 'capture_bridge',
+            },
+          }, targetOrigin);
+        } catch (_) {
+          finish(reject, new Error('capture bridge callback failed'));
+        }
+      });
+    }
     const body = JSON.stringify(payload);
     if (typeof GM_xmlhttpRequest === 'function') {
       return new Promise((resolve, reject) => {
@@ -2179,7 +2368,9 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
   async function fillCookieCredential(result, platform) {
     result.cookie = await readCookieHeader(result.api_base_url);
     result.diagnostics.cookie_present = Boolean(result.cookie);
-    if (!result.cookie) throw new Error('cookie is not readable; HttpOnly cookie cannot be captured');
+    if (!result.cookie && platform !== 'newapi') {
+      throw new Error('cookie is not readable; HttpOnly cookie cannot be captured');
+    }
     await verifyCurrentUser(result, platform, '', result.cookie, '');
     if (platform === 'newapi' && result.user_id) {
       const tokenPaths = await expandedAPIPaths(
@@ -2206,6 +2397,9 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
           }
         } catch (_) {}
       }
+    }
+    if (!result.cookie) {
+      throw new Error('cookie is not readable and no NewAPI access token could be issued');
     }
   }
 
@@ -2502,9 +2696,12 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
     const platform = text(payload.platform).toLowerCase();
     const authType = text(payload.auth_type).toLowerCase();
     const result = {
+      capture_id: text(payload.capture_id),
       capture_secret: payload.capture_secret,
       complete_url: payload.complete_url,
-      capture_source: 'capture_helper',
+      capture_source: config.transport === 'bridge'
+        ? 'capture_bridge'
+        : 'capture_helper',
       helper_version: config.version || '__NEXUSTOK_HELPER_VERSION__',
       platform,
       auth_type: authType,
@@ -2512,7 +2709,9 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
       management_base_url: text(payload.management_base_url || payload.base_url) || window.location.origin,
       origin: window.location.origin,
       api_base_url: apiBaseURL(payload),
-      diagnostics: diagnosticsBase('capture_helper'),
+      diagnostics: diagnosticsBase(
+        config.transport === 'bridge' ? 'capture_bridge' : 'capture_helper'
+      ),
     };
     result.diagnostics.api_base_url_seen = result.api_base_url;
     if (authType === 'auto') {
@@ -2600,9 +2799,23 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
   }
 
   async function boot() {
-    const payload = handoff();
+    let payload = handoff();
+    if (!payload && config.transport === 'bridge') {
+      payload = await requestBridgeHandoff();
+    }
     markReady(payload);
-    if (!payload) return;
+    if (!payload) {
+      if (config.transport === 'bridge') {
+        showStatus(
+          window.opener && !window.opener.closed
+            ? '未收到 NexusTok 采集参数，请回到管理页重新运行页面桥接。'
+            : '页面桥接需要从 NexusTok 管理页打开的上游页面，请回到管理页重新创建采集会话。',
+          'error',
+          '请重新打开采集页面'
+        );
+      }
+      return;
+    }
     runtimeConfig = {
       ...payload,
       capture_secret: capturePayloadValue(payload, 'capture_secret', 'captureSecret'),
@@ -2653,7 +2866,8 @@ func renderPlatformSiteCaptureScript(
 	targetBaseURL,
 	platform,
 	authType,
-	captureID string,
+	captureID,
+	transport string,
 ) string {
 	match := "http://*/*\n// @match        https://*/*"
 	if targetBaseURL != "" {
@@ -2704,6 +2918,7 @@ func renderPlatformSiteCaptureScript(
 		"platform":   platform,
 		"auth_type":  authType,
 		"capture_id": captureID,
+		"transport":  transport,
 	})
 	script := strings.ReplaceAll(platformSiteCaptureScriptTemplate, "__NEXUSTOK_MATCH__", match)
 	script = strings.ReplaceAll(script, "__NEXUSTOK_CONNECT__", connectHost)

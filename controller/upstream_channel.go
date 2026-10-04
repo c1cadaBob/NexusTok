@@ -1446,6 +1446,22 @@ func GetPlatformSiteCaptureUserscript(c *gin.Context) {
 	c.String(http.StatusOK, script)
 }
 
+func GetPlatformSiteCaptureBridge(c *gin.Context) {
+	script, err := service.RenderPlatformSiteCaptureBridge(
+		c.Param("captureID"),
+		c.Query("install_token"),
+		externalRequestBaseURL(c),
+	)
+	if err != nil {
+		c.Header("Cache-Control", "no-store")
+		c.String(http.StatusForbidden, "capture bridge unavailable")
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	c.Header("Content-Type", "application/javascript; charset=utf-8")
+	c.String(http.StatusOK, script)
+}
+
 func GetPlatformSiteCaptureHelper(c *gin.Context) {
 	script, err := service.RenderPlatformSiteCaptureHelper(externalRequestBaseURL(c))
 	if err != nil {

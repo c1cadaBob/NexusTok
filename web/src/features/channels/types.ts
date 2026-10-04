@@ -676,6 +676,30 @@ export interface PlatformSiteCaptureStartRequest {
   return_url?: string
 }
 
+export interface PlatformSiteCaptureCompletePayload {
+  capture_secret: string
+  capture_source?: 'capture_helper' | 'capture_bridge'
+  helper_version?: string
+  platform?: string
+  auth_type?: PlatformSiteCaptureAuthType
+  base_url?: string
+  management_base_url?: string
+  relay_base_url?: string
+  api_base_url?: string
+  origin?: string
+  access_token?: string
+  refresh_token?: string
+  admin_key?: string
+  cookie?: string
+  session_id?: string
+  user_id?: string
+  username?: string
+  email?: string
+  token_expires_at?: number
+  expires_in?: number
+  diagnostics?: PlatformSiteCaptureDiagnostics
+}
+
 export interface PlatformSiteCaptureSummary {
   platform: string
   auth_type: Exclude<PlatformSiteCaptureAuthType, 'auto'>
@@ -735,6 +759,7 @@ export interface PlatformSiteCaptureStartResponse {
     auth_type: PlatformSiteCaptureAuthType
     origin: string
     userscript_url: string
+    capture_bridge_url?: string
     helper_install_url: string
     handoff_url: string
     login_url: string
@@ -758,6 +783,7 @@ export interface PlatformSiteCaptureStatusResponse {
     auth_type: PlatformSiteCaptureAuthType
     origin: string
     userscript_url?: string
+    capture_bridge_url?: string
     helper_install_url?: string
     handoff_url?: string
     login_url?: string

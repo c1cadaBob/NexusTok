@@ -287,7 +287,7 @@ Refresh Token、Cookie 或 Session ID；资源读取完成后没有统一的“�
   和刷新状态不会写回长期凭据。当前用户用户名统一从 `username`、`user_name`、`login`
   或邮箱字段提取，并通过同步状态接口安全回填编辑表单。
 - 自动配置只对外提交 `auth_type=auto` 和已完成的 `capture_id`。Capture Helper
-  版本为 `1.6.1`，候选登录态在提交前通过当前用户接口或 Admin 权限验证，诊断只保留
+  版本为 `1.7.0`，候选登录态在提交前通过当前用户接口或 Admin 权限验证，诊断只保留
   存在性、存储键、验证接口、版本和失败阶段。采集结果继续使用现有加密凭据结构；
   浏览器会话属于用户既有登录态，不纳入后台密码会话清理。
 - Capture 会话被解析后由 Redis `SET NX` 或单进程内存 claim 原子占用，成功保存渠道
@@ -322,6 +322,12 @@ Sub2API Session Restore 也没有稳定读取旧版 IndexedDB 客户端 ID。
 - Helper 读取 Cookie 时合并页面可见 Cookie 与当前目标站点的 `GM_cookie.list` 结果，
   按名称去重且只允许当前站点或严格 `api.` 父子域；回传只包含扁平身份字段，不携带
   完整 `auth_user` 响应，并保留 handoff 中的管理地址路径。
+- 无扩展浏览器使用 `capture_bridge_url` 时，桥接脚本在上游页面通过
+  `window.opener.postMessage` 请求一次性 handoff；这样即使登录重定向丢失地址栏参数，
+  仍可从管理页恢复同一 Capture Session。管理页只响应活动窗口、目标 Origin 和
+  Capture ID 均匹配的请求。由于浏览器禁止跨源 `javascript:` 导航，前端先获取桥接
+  脚本并复制不含敏感凭据的短启动片段；用户在上游页面上下文运行片段后，管理页才通过
+  `postMessage` 返回桥接脚本，浏览器不会允许 NexusTok 代替用户执行跨源脚本。
 
 ### 9.7 2026-10-03 平台认证流程兼容与 NewAPI 密码加密
 

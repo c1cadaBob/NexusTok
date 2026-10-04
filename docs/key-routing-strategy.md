@@ -687,6 +687,12 @@ Capture 产生的浏览器登录态不执行后台密码会话 Cleanup。渠道�
 Sub2API/NewAPI Key 的真实模型能力为准：单 Key 探测失败保留最近成功的
 `UpstreamKeyAbility` 和渠道模型，不使用账号级模型、分组目录或未验证模型扩张路由。
 Helper 诊断只参与管理员故障定位，不参与密钥优先级、权重、倍率或可路由资格判断；
-Helper `1.6.1` 合并当前站点可见 Cookie 与 `GM_cookie` Cookie，并删除完整
+Helper `1.7.0` 合并当前站点可见 Cookie 与 `GM_cookie` Cookie，并删除完整
 `auth_user` 后才提交已验证登录态；管理地址路径保持为渠道管理地址，不改变路由候选来源；
 Cloudflare/Turnstile 等人工验证未完成时不产生路由变化。
+
+无扩展 `capture_bridge` 只改变浏览器登录态回传方式，不改变路由候选判断。管理页先获取
+桥接脚本并复制不含敏感值的短启动片段；片段在上游页面通过 `window.opener.postMessage`
+请求脚本，随后请求或回传一次性 handoff/result。管理页校验活动窗口、Origin、Capture ID
+和 Helper 版本后再完成同源提交。未经过当前用户或 Admin 验证的结果仍不会创建
+`RoutingKey`、`UpstreamKeyAbility` 或渠道模型候选。

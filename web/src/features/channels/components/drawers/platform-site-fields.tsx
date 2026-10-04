@@ -11,6 +11,7 @@ import { useFormContext, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { CopyButton } from '@/components/copy-button'
 import { Button } from '@/components/ui/button'
 import {
   FormControl,
@@ -32,13 +33,17 @@ import { Switch } from '@/components/ui/switch'
 
 import {
   cancelPlatformSiteAuthFlow,
+  completePlatformSiteCapture,
   getPlatformSiteCaptureStatus,
   startPlatformSiteAuthFlow,
   startPlatformSiteCapture,
   verifyPlatformSiteAuthFlow,
 } from '../../api'
 import { platformForChannelType, type ChannelFormValues } from '../../lib'
-import type { UpstreamSiteStatus } from '../../types'
+import type {
+  PlatformSiteCaptureCompletePayload,
+  UpstreamSiteStatus,
+} from '../../types'
 
 type PlatformSiteFieldsProps = {
   disabled: boolean
@@ -51,28 +56,28 @@ type PlatformSiteFieldsProps = {
 const RATIO_COMPARE_EPSILON = 0.0000001
 const RATIO_INPUT_PRECISION = 1000000
 
-function openPlatformCaptureURL(
+function openPlatformCaptureWindow(
   url: string,
   targetWindow?: Window | null
-): boolean {
+): Window | null {
   const targetURL = url.trim()
-  if (!targetURL) return false
+  if (!targetURL) return null
   try {
     if (targetWindow && !targetWindow.closed) {
       targetWindow.location.href = targetURL
       targetWindow.focus()
-      return true
+      return targetWindow
     }
   } catch {
     // 复用预打开窗口失败时继续尝试创建新标签页。
   }
   try {
     const opened = window.open(targetURL, '_blank')
-    if (!opened) return false
+    if (!opened) return null
     opened.focus()
-    return true
+    return opened
   } catch {
-    return false
+    return null
   }
 }
 
@@ -101,6 +106,36 @@ function formatPlatformCaptureAuthType(
 
 function formatPlatformRatioInput(value: number): string {
   return String(normalizePlatformRatio(normalizePlatformNumber(value, 1)))
+}
+
+function isCaptureSessionExpiredMessage(value: string | undefined): boolean {
+  const message = (value || '').toLowerCase()
+  return (
+    message.includes('采集会话不存在') ||
+    message.includes('采集会话已过期') ||
+    (message.includes('capture session') && message.includes('expired')) ||
+    (message.includes('capture session') && message.includes('not found'))
+  )
+}
+
+function isPlatformSiteCapturePayload(
+  value: unknown
+): value is PlatformSiteCaptureCompletePayload {
+  if (!value || typeof value !== 'object') return false
+  const payload = value as Partial<PlatformSiteCaptureCompletePayload>
+  return (
+    typeof payload.capture_secret === 'string' &&
+    Boolean(payload.capture_secret.trim())
+  )
+}
+
+function createCaptureBridgeBootstrap(
+  captureID: string,
+  targetOrigin: string
+): string {
+  const encodedCaptureID = JSON.stringify(captureID)
+  const encodedTargetOrigin = JSON.stringify(targetOrigin)
+  return `javascript:(()=>{const o=window.opener;if(!o||o.closed)return;const c=${encodedCaptureID};const t=${encodedTargetOrigin};let timer=0;const cleanup=()=>{window.removeEventListener('message',onMessage);if(timer)window.clearTimeout(timer)};const onMessage=e=>{const d=e.data||{};if(e.source!==o||e.origin!==t||d.type!=='nexustok-upstream-capture-bridge-script'||String(d.capture_id||d.captureID||'')!==c||typeof d.script!=='string'||!d.script)return;cleanup();const s=document.createElement('script');s.textContent=d.script;(document.head||document.documentElement).appendChild(s)};window.addEventListener('message',onMessage);timer=window.setTimeout(cleanup,15000);o.postMessage({type:'nexustok-upstream-capture-bridge-script-request',capture_id:c,captureID:c},t)})()`
 }
 
 export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
@@ -162,9 +197,18 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
   const completedCaptureRef = useRef('')
   const pendingCaptureWindowRef = useRef<Window | null>(null)
   const activeCaptureWindowRef = useRef<Window | null>(null)
+  const bridgeScriptRef = useRef('')
+  const bridgeCompletionRef = useRef(false)
+  const [captureOrigin, setCaptureOrigin] = useState('')
+  const [captureRequiredHelperVersion, setCaptureRequiredHelperVersion] =
+    useState('')
   const [handoffURL, setHandoffURL] = useState('')
+  const [bridgeURL, setBridgeURL] = useState('')
+  const [bridgeBookmarklet, setBridgeBookmarklet] = useState('')
+  const [bridgeLoading, setBridgeLoading] = useState(false)
   const [helperInstallURL, setHelperInstallURL] = useState('')
   const [showHandoffFallback, setShowHandoffFallback] = useState(false)
+  const [captureSessionExpired, setCaptureSessionExpired] = useState(false)
   const [helperVersion, setHelperVersion] = useState('')
   const [helperDetection, setHelperDetection] = useState<
     'idle' | 'probing' | 'ready' | 'missing' | 'outdated'
@@ -179,9 +223,11 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
   const captureStatusQuery = useQuery({
     queryKey: ['platform-site-capture-status', captureID],
     queryFn: () => getPlatformSiteCaptureStatus(captureID || ''),
-    enabled: Boolean(captureID),
+    enabled: Boolean(captureID) && !captureSessionExpired,
     refetchInterval: (query) => {
-      const status = query.state.data?.data?.status
+      const response = query.state.data
+      if (!response?.success) return false
+      const status = response.data?.status
       return status === 'completed' || status === 'failed' ? false : 2000
     },
   })
@@ -208,8 +254,19 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
         shouldDirty: true,
         shouldValidate: true,
       })
+      setCaptureSessionExpired(false)
+      setCaptureOrigin(response.data.origin || '')
+      setCaptureRequiredHelperVersion(
+        response.data.helper_required_version ||
+          response.data.helper_version ||
+          ''
+      )
       completedCaptureRef.current = ''
+      bridgeCompletionRef.current = false
       setHandoffURL(response.data.handoff_url)
+      setBridgeURL(response.data.capture_bridge_url || '')
+      setBridgeBookmarklet('')
+      bridgeScriptRef.current = ''
       setHelperInstallURL(
         response.data.helper_install_url || response.data.userscript_url || ''
       )
@@ -227,9 +284,10 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
       if (hasTargetWindow) {
         activeCaptureWindowRef.current = targetWindow
       }
-      const opened =
-        hasTargetWindow &&
-        openPlatformCaptureURL(response.data.handoff_url, targetWindow)
+      const openedWindow = hasTargetWindow
+        ? openPlatformCaptureWindow(response.data.handoff_url, targetWindow)
+        : null
+      const opened = Boolean(openedWindow)
       if (!opened) {
         setShowHandoffFallback(true)
         toast.info(
@@ -329,8 +387,78 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
     },
   })
 
-  const captureStatus = captureStatusQuery.data?.data
+  const captureStatusResponse = captureStatusQuery.data
+  const captureStatus = captureStatusResponse?.data
   const onCaptureCompleted = props.onCaptureCompleted
+
+  useEffect(() => {
+    if (!captureStatus) return
+    setCaptureOrigin(captureStatus.origin || '')
+    setCaptureRequiredHelperVersion(
+      captureStatus.helper_required_version ||
+        captureStatus.helper_version ||
+        ''
+    )
+  }, [
+    captureStatus,
+    captureStatus?.helper_required_version,
+    captureStatus?.helper_version,
+    captureStatus?.origin,
+  ])
+
+  useEffect(() => {
+    if (
+      !captureID ||
+      !captureStatusResponse ||
+      captureStatusResponse.success ||
+      !isCaptureSessionExpiredMessage(captureStatusResponse.message)
+    ) {
+      return
+    }
+    setCaptureSessionExpired(true)
+    bridgeCompletionRef.current = false
+    setHandoffURL('')
+    setBridgeURL('')
+    setBridgeBookmarklet('')
+    bridgeScriptRef.current = ''
+    setCaptureOrigin('')
+    setCaptureRequiredHelperVersion('')
+    setShowHandoffFallback(false)
+    completedCaptureRef.current = ''
+    form.setValue('platform_site_capture_id', '', {
+      shouldDirty: true,
+      shouldValidate: true,
+    })
+  }, [captureID, captureStatusResponse, form])
+
+  useEffect(() => {
+    if (!captureStatusQuery.isError || !captureID) return
+    const error = captureStatusQuery.error as {
+      response?: { data?: { message?: string } }
+      message?: string
+    }
+    if (
+      !isCaptureSessionExpiredMessage(
+        error.response?.data?.message || error.message
+      )
+    ) {
+      return
+    }
+    setCaptureSessionExpired(true)
+    bridgeCompletionRef.current = false
+    setHandoffURL('')
+    setBridgeURL('')
+    setBridgeBookmarklet('')
+    bridgeScriptRef.current = ''
+    setCaptureOrigin('')
+    setCaptureRequiredHelperVersion('')
+    setShowHandoffFallback(false)
+    completedCaptureRef.current = ''
+    form.setValue('platform_site_capture_id', '', {
+      shouldDirty: true,
+      shouldValidate: true,
+    })
+  }, [captureID, captureStatusQuery.error, captureStatusQuery.isError, form])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -383,11 +511,18 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
             helperVersion?: string
             capture_id?: string
             captureID?: string
+            handoff_url?: string
+            handoffURL?: string
+            script?: string
+            payload?: unknown
           }
         | undefined
       if (
         !data ||
-        data.type !== 'nexustok-upstream-capture-helper-ready'
+        (data.type !== 'nexustok-upstream-capture-helper-ready' &&
+          data.type !== 'nexustok-upstream-capture-bridge-request' &&
+          data.type !== 'nexustok-upstream-capture-bridge-script-request' &&
+          data.type !== 'nexustok-upstream-capture-bridge-result')
       ) {
         return
       }
@@ -395,10 +530,125 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
       const messageCaptureID = String(
         data.capture_id || data.captureID || ''
       ).trim()
-      if (messageCaptureID && messageCaptureID !== expectedCaptureID) return
-      const expectedOrigin = captureStatus?.origin?.trim()
+      const expectedOrigin =
+        captureStatus?.origin?.trim() || captureOrigin.trim()
       if (expectedOrigin && event.origin !== expectedOrigin) return
       const expectedWindow = activeCaptureWindowRef.current
+
+      if (data.type === 'nexustok-upstream-capture-bridge-request') {
+        if (
+          !expectedCaptureID ||
+          messageCaptureID !== expectedCaptureID ||
+          !expectedOrigin ||
+          !expectedWindow ||
+          event.source !== expectedWindow
+        ) {
+          return
+        }
+        const handoff = handoffURL || captureStatus?.handoff_url || ''
+        if (!handoff) return
+        const sourceWindow = event.source as Window
+        sourceWindow.postMessage(
+          {
+            type: 'nexustok-upstream-capture-bridge-handoff',
+            capture_id: expectedCaptureID,
+            captureID: expectedCaptureID,
+            handoff_url: handoff,
+            handoffURL: handoff,
+          },
+          event.origin
+        )
+        return
+      }
+
+      if (data.type === 'nexustok-upstream-capture-bridge-script-request') {
+        if (
+          !expectedCaptureID ||
+          messageCaptureID !== expectedCaptureID ||
+          !expectedOrigin ||
+          !expectedWindow ||
+          event.source !== expectedWindow ||
+          !bridgeScriptRef.current
+        ) {
+          return
+        }
+        const sourceWindow = event.source as Window
+        sourceWindow.postMessage(
+          {
+            type: 'nexustok-upstream-capture-bridge-script',
+            capture_id: expectedCaptureID,
+            captureID: expectedCaptureID,
+            script: bridgeScriptRef.current,
+          },
+          event.origin
+        )
+        return
+      }
+
+      if (messageCaptureID && messageCaptureID !== expectedCaptureID) return
+
+      if (data.type === 'nexustok-upstream-capture-bridge-result') {
+        if (
+          !expectedCaptureID ||
+          messageCaptureID !== expectedCaptureID ||
+          !expectedOrigin ||
+          event.origin !== expectedOrigin ||
+          !expectedWindow ||
+          event.source !== expectedWindow ||
+          bridgeCompletionRef.current ||
+          !isPlatformSiteCapturePayload(data.payload)
+        ) {
+          return
+        }
+        bridgeCompletionRef.current = true
+        const completionPayload: PlatformSiteCaptureCompletePayload = {
+          ...data.payload,
+          capture_source: 'capture_bridge',
+          helper_version:
+            captureStatus?.helper_required_version ||
+            captureStatus?.helper_version ||
+            captureRequiredHelperVersion ||
+            helperVersion,
+          platform: captureStatus?.platform || platform,
+          auth_type: 'auto',
+          origin: event.origin,
+        }
+        void completePlatformSiteCapture(expectedCaptureID, completionPayload)
+          .then((response) => {
+            const sourceWindow = event.source as Window
+            sourceWindow.postMessage(
+              {
+                type: 'nexustok-upstream-capture-bridge-ack',
+                capture_id: expectedCaptureID,
+                success: response.success === true,
+              },
+              event.origin
+            )
+            if (!response.success) {
+              toast.error(
+                response.message ||
+                  t('Page bridge capture failed. Please retry.')
+              )
+            }
+          })
+          .catch(() => {
+            const sourceWindow = event.source as Window
+            sourceWindow.postMessage(
+              {
+                type: 'nexustok-upstream-capture-bridge-ack',
+                capture_id: expectedCaptureID,
+                success: false,
+              },
+              event.origin
+            )
+            toast.error(t('Page bridge capture failed. Please retry.'))
+          })
+          .finally(() => {
+            bridgeCompletionRef.current = false
+          })
+        return
+      }
+
       if (expectedWindow && event.source && event.source !== expectedWindow) {
         return
       }
@@ -412,7 +662,11 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
           ''
       ).trim()
       setHelperVersion(detectedVersion)
-      if (detectedVersion && requiredVersion && detectedVersion !== requiredVersion) {
+      if (
+        detectedVersion &&
+        requiredVersion &&
+        detectedVersion !== requiredVersion
+      ) {
         setHelperDetection('outdated')
         return
       }
@@ -432,11 +686,109 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
     }
   }, [
     captureID,
+    captureStatus,
     captureStatus?.origin,
+    captureStatus?.handoff_url,
     captureStatus?.helper_required_version,
     captureStatus?.helper_version,
+    captureStatus?.platform,
+    captureOrigin,
+    captureRequiredHelperVersion,
+    handoffURL,
     helperVersion,
+    platform,
+    t,
   ])
+
+  async function prepareCaptureBridge(rawURL: string): Promise<string> {
+    const targetURL = rawURL.trim()
+    if (!targetURL) {
+      throw new Error(t('Page bridge is not available yet.'))
+    }
+    if (bridgeScriptRef.current && bridgeURL === targetURL) {
+      return bridgeScriptRef.current
+    }
+    setBridgeLoading(true)
+    try {
+      const response = await fetch(targetURL, {
+        credentials: 'include',
+        cache: 'no-store',
+      })
+      if (!response.ok) {
+        throw new Error(t('Page bridge is not available yet.'))
+      }
+      const script = await response.text()
+      if (!script.includes('nexustok-upstream-capture-bridge-result')) {
+        throw new Error(t('Page bridge is not available yet.'))
+      }
+      bridgeScriptRef.current = script
+      return script
+    } finally {
+      setBridgeLoading(false)
+    }
+  }
+
+  async function handleRunCaptureBridge() {
+    const targetURL = bridgeURL || captureStatus?.capture_bridge_url || ''
+    if (!targetURL) {
+      toast.error(t('Page bridge is not available yet.'))
+      return
+    }
+    const targetWindow = activeCaptureWindowRef.current
+    if (!targetWindow || targetWindow.closed) {
+      const opened = openPlatformCaptureWindow(
+        handoffURL || captureStatus?.handoff_url || '',
+        targetWindow
+      )
+      if (!opened) {
+        toast.error(t('Open the upstream capture page first.'))
+        return
+      }
+      activeCaptureWindowRef.current = opened
+      toast.info(t('Open the upstream page, then run the page bridge again.'))
+      return
+    }
+    let script = ''
+    try {
+      script = await prepareCaptureBridge(targetURL)
+      const targetOrigin =
+        captureStatus?.origin?.trim() ||
+        captureOrigin.trim() ||
+        (() => {
+          try {
+            return new URL(
+              handoffURL || captureStatus?.handoff_url || ''
+            ).origin
+          } catch {
+            return ''
+          }
+        })()
+      if (!targetOrigin) {
+        throw new Error(t('Page bridge is not available yet.'))
+      }
+      const bootstrap = createCaptureBridgeBootstrap(
+        captureID || '',
+        targetOrigin
+      )
+      setBridgeBookmarklet(bootstrap)
+      try {
+        await navigator.clipboard?.writeText(bootstrap)
+        toast.success(t('Page bridge code copied'))
+      } catch {
+        toast.info(
+          t('Copy the page bridge code and run it in the upstream page.')
+        )
+      }
+      targetWindow.focus()
+      setShowHandoffFallback(false)
+    } catch {
+      toast.error(
+        script
+          ? t('Copy the page bridge code and run it in the upstream page.')
+          : t('Page bridge is not available yet.')
+      )
+    }
+  }
 
   function handleStartCapture() {
     if (
@@ -446,6 +798,12 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
     ) {
       return
     }
+    setCaptureSessionExpired(false)
+    setCaptureOrigin('')
+    setCaptureRequiredHelperVersion('')
+    setBridgeURL('')
+    setBridgeBookmarklet('')
+    bridgeCompletionRef.current = false
     try {
       pendingCaptureWindowRef.current = window.open('about:blank', '_blank')
       activeCaptureWindowRef.current = pendingCaptureWindowRef.current
@@ -465,7 +823,7 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
   }
 
   function handleOpenHandoff() {
-    const opened = openPlatformCaptureURL(
+    const opened = openPlatformCaptureWindow(
       handoffURL || captureStatus?.handoff_url || '',
       activeCaptureWindowRef.current
     )
@@ -473,6 +831,7 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
       toast.error(t('Capture page is not ready yet'))
       return
     }
+    activeCaptureWindowRef.current = opened
     setShowHandoffFallback(false)
   }
 
@@ -514,7 +873,14 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
     form.setValue('platform_site_capture_id', '')
     setTwoFactorCode('')
     setHandoffURL('')
+    setBridgeURL('')
+    setBridgeBookmarklet('')
+    bridgeScriptRef.current = ''
+    setCaptureOrigin('')
+    setCaptureRequiredHelperVersion('')
     setShowHandoffFallback(false)
+    setCaptureSessionExpired(false)
+    bridgeCompletionRef.current = false
     completedCaptureRef.current = ''
   }
 
@@ -586,7 +952,11 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
             <FormItem>
               <FormLabel>{t('Site URL *')}</FormLabel>
               <FormControl>
-                <Input type='url' placeholder='https://example.com' {...field} />
+                <Input
+                  type='url'
+                  placeholder='https://example.com'
+                  {...field}
+                />
               </FormControl>
               <FormDescription>
                 {t(
@@ -716,11 +1086,15 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
               </span>
             )}
           </div>
+          {captureSessionExpired && (
+            <p className='text-destructive text-xs' aria-live='polite'>
+              {t('Capture session expired. Create a new session to continue.')}
+            </p>
+          )}
           {helperDetection !== 'idle' && (
             <p
               className={
-                helperDetection === 'missing' ||
-                helperDetection === 'outdated'
+                helperDetection === 'missing' || helperDetection === 'outdated'
                   ? 'text-destructive text-xs'
                   : 'text-muted-foreground text-xs'
               }
@@ -733,18 +1107,14 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
                   version: helperVersion || 'unknown',
                 })}
               {helperDetection === 'missing' &&
-                t(
-                  'Capture Helper was not detected. Install it and try again.'
-                )}
+                t('Capture Helper was not detected. Install it and try again.')}
               {helperDetection === 'outdated' &&
-                t(
-                  'Capture Helper is outdated. Update it before continuing.'
-                )}
+                t('Capture Helper is outdated. Update it before continuing.')}
             </p>
           )}
           <p className='text-muted-foreground text-xs'>
             {t(
-              'Open the upstream site and let the Capture Helper choose the best available authentication method. Tokens, cookies, and Admin Keys are never entered here.'
+              'Open the upstream site, complete login, then run the Capture Helper or page bridge. Tokens, cookies, and Admin Keys are never entered here.'
             )}
           </p>
           <div className='flex flex-wrap gap-2'>
@@ -763,7 +1133,11 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
               ) : (
                 <ShieldCheck className='size-4' aria-hidden='true' />
               )}
-              {t('Capture upstream login state')}
+              {t(
+                captureSessionExpired
+                  ? 'Create a new capture session'
+                  : 'Capture upstream login state'
+              )}
             </Button>
             {showHandoffFallback &&
               (handoffURL || captureStatus?.handoff_url) && (
@@ -797,6 +1171,37 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
                 <ExternalLink className='size-4' aria-hidden='true' />
                 {t('Install Capture Helper')}
               </Button>
+            )}
+            {(bridgeURL || captureStatus?.capture_bridge_url) &&
+              captureStatus?.status !== 'completed' && (
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='sm'
+                  onClick={() => void handleRunCaptureBridge()}
+                  disabled={bridgeLoading}
+                >
+                  {bridgeLoading ? (
+                    <Loader2
+                      className='size-4 animate-spin'
+                      aria-hidden='true'
+                    />
+                  ) : (
+                    <ExternalLink className='size-4' aria-hidden='true' />
+                  )}
+                  {t('Run page bridge')}
+                </Button>
+              )}
+            {bridgeBookmarklet && captureStatus?.status !== 'completed' && (
+              <CopyButton
+                value={bridgeBookmarklet}
+                variant='ghost'
+                size='sm'
+                tooltip={t('Copy page bridge code')}
+                successTooltip={t('Page bridge code copied')}
+              >
+                {t('Copy page bridge code')}
+              </CopyButton>
             )}
             {captureID && captureStatus?.status !== 'completed' && (
               <Button

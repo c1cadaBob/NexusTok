@@ -235,7 +235,7 @@ RSA-OAEP-SHA256，长密码使用 `v2` AES-GCM 信封；明确 404/405 才允许
 完成接口错误；NewAPI `uid + Cookie` 页面没有稳定的 `New-Api-User` 头兼容，Sub2API
 Session Restore 没有覆盖旧版 IndexedDB 客户端 ID。
 
-**变更后**：Helper `1.6.1` 在 DOM 就绪后运行，候选失败只进入脱敏等待和自动/手动
+**变更后**：Helper `1.7.0` 在 DOM 就绪后运行，候选失败只进入脱敏等待和自动/手动
 重试；只有会话硬错误或已验证的登录态才调用完成接口。NewAPI 从 `uid`、页面状态、
 用户对象和 JWT 解析数字用户 ID，并用 `New-Api-User + Cookie` 验证 `/api/user/self`，
 验证成功后再通过 `/api/user/token` 获取可保存 Token。Sub2API 读取
@@ -244,6 +244,13 @@ Session Restore 没有覆盖旧版 IndexedDB 客户端 ID。
 同源脚本路径发现仅用于兼容部署前缀，不扩大跨站请求范围。
 Helper 同时合并可见与 `GM_cookie` 的当前站点 Cookie，提交时删除完整 `auth_user`，
 并保持 handoff 提供的管理地址路径。
+
+无扩展页面桥接已作为同一采集核心的传输路径接入。桥接脚本不包含 Capture Secret，
+优先读取当前页面 handoff；若登录重定向导致参数丢失，则向活动 opener 请求一次性
+handoff。管理页只在窗口、Origin 和 Capture ID 匹配时响应并完成同源回调。由于浏览器
+拒绝跨源 `javascript:` 导航，管理页先获取脚本并复制不含敏感值的短启动片段；片段在
+上游页面上下文请求脚本后再注入执行。不绕过上游 Turnstile/WAF，也不伪造当前用户验证
+成功。
 
 该项代码状态为“已实现，真实站点验收待完成”：本地定向 Go/Node 语法测试和参考源静态
 核对已通过；用户指定站点的 Cloudflare Turnstile 当前在浏览器环境返回挑战失败，尚未
