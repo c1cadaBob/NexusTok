@@ -1,7 +1,7 @@
 # 数据库、缓存与后台任务
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-03
+> 事实基线日期：2026-10-04
 > 主要代码来源：`model/main.go`、`common/database.go`、`common/redis.go`、`model/channel_cache.go`、`model/sync.go`、`service/system_task.go`、`service/task_polling.go`、`main.go`
 > 关联详细文档：[`system-overview.md`](./system-overview.md)、[`authentication-and-authorization.md`](./authentication-and-authorization.md)、[`tasks-and-plugins.md`](./tasks-and-plugins.md)、[`../rate-limiting.md`](../rate-limiting.md)
 
@@ -69,6 +69,25 @@ NexusTok 将主业务数据库、日志数据库、Redis 和进程内缓存分�
   要求条款时读取；
 - 资源读取、分页、模型探测或同步写库失败时，清理本轮密码会话但不删除最近成功
   快照、不把资源错误改写为凭据失效，也不执行错误的密钥缺失判定。
+
+### 7.8 2026-10-04 Capture Helper 等待与浏览器会话生命周期
+
+**变更前**：Helper 在上游 DOM/SPA 登录态形成前立即执行，临时未登录可能调用完成接口
+提交错误，短期 Capture Session 从 `pending` 变为 `failed`；页面脚本来源、Helper 重试
+和 Sub2API IndexedDB 客户端 ID 的生命周期没有在缓存文档中分开记录。
+
+**变更后**：Capture Session 仍使用现有短期加密缓存和一次性 claim，不增加数据库字段。
+Helper 在 `DOMContentLoaded` 后启动并持续等待；候选为空、当前用户接口暂时失败、
+Cookie 尚未形成或 Cloudflare/Turnstile 尚未结束时只显示脱敏状态并自动/手动重试，
+不会改写缓存状态。会话过期、来源/版本不匹配和完成回传硬错误才进入失败路径。Capture
+成功后凭据继续使用现有加密结构，渠道保存成功消费记录，校验或入队失败释放 claim。
+
+NewAPI 的浏览器态候选允许从 `uid`、页面用户状态和 JWT 得到数字用户 ID，并使用
+`New-Api-User + Cookie` 验证当前用户；Helper `1.6.1` 会合并当前页面可见 Cookie
+与同站 `GM_cookie` 结果，回传只保留扁平身份字段。Sub2API 的 Session Restore 允许读取
+`sub2api-auth-coordination/values/sub2api_auth_client_id` 并发送
+`X-Sub2API-Auth-Client`。浏览器 Capture 的 Cookie、Session 和 Token 属于用户已有会话，
+不进入后台账号密码同步清理，也不写入长期诊断。
 
 ## 2. 数据库选择和迁移
 

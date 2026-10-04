@@ -1,7 +1,7 @@
 # Sub2API 与 New API 平台站点资源获取链路分析及版本差异
 
 > 文档状态：源码事实分析
-> 分析日期：2026-10-03
+> 分析日期：2026-10-04
 > 适用范围：旧版备份、Sub2API/New API/all-api-hub 本机参考源、当前 NexusTok
 > 安全边界：本文只记录接口契约、字段语义、代码入口和失败处理，不记录任何真实密码、Cookie、Access Token、Refresh Token、Admin Key、测试账号、环境变量或完整密钥。
 
@@ -1057,7 +1057,7 @@ Sub2API 站点验收结果：
   只产生脱敏告警，清理仍清除本地临时材料，最近成功快照不被覆盖。
 - 两个平台的 `PlatformSiteAdapter.Cleanup` 在认证错误、资源错误、部分分页失败和
   快照写库前后执行；Access Token、Admin Key、Cookie 和浏览器 Capture 登录态不执行
-  后台注销。自动配置 Helper 当前版本为 `1.5.0`，先验证当前用户或 Admin 管理权限，
+  后台注销。自动配置 Helper 当前版本为 `1.6.1`，先验证当前用户或 Admin 管理权限，
   仅保留存在性、存储键、验证接口、版本、失败阶段和来源诊断。
 - Capture 结果继续使用 `PlatformSiteCredential` 的现有加密字段。解析后使用
   Redis `SET NX` 或单进程内存 claim 独占，渠道保存成功后一次性消费，后续失败释放
@@ -1099,3 +1099,30 @@ PostgreSQL 15.19；MySQL 5.7.8、PostgreSQL 9.6、独立日志数据库和真实
 
 本次使用脱敏 HTTP fixture、参考源静态核对和现有本地数据库测试；未在文档、测试、
 日志或 Git 中保存真实账号、密码、Token、Cookie、Admin Key、完整响应或完整密钥。
+
+## 19. 2026-10-04 自动配置 Capture Helper 兼容修复
+
+**变更前**
+
+- Helper 在目标站 DOM 尚未就绪或用户尚未完成登录时立即探测，失败回调会把临时未登录
+  状态提交为 Capture Session `failed`；
+- NewAPI 仅有页面 Cookie 和 `localStorage.uid` 时，`/api/user/self` 请求缺少
+  `New-Api-User`；Sub2API Session Restore 只读取页面存储，不能覆盖旧版 IndexedDB
+  客户端 ID。
+
+**变更后**
+
+- Helper 在 DOM 就绪后运行，认证候选失败只在页面显示脱敏等待信息并按 3 秒间隔自动
+  重试，同时提供手动重试按钮；只有已验证登录态才提交完成请求，暂时未登录不改变
+  后端 Capture Session 状态；
+- handoff 同时兼容下划线和驼峰字段，避免真实后端生成的 `capture_secret`、
+  `complete_url`、`capture_id`、`expires_at` 被误判为缺失；
+- NewAPI 从 `uid`、用户对象和 JWT 解析数字用户 ID，把 `New-Api-User` 与 Cookie/
+  Bearer 一起发送到用户验证、Dashboard Refresh 和用户 Token 接口；Sub2API 读取
+  `sub2api-auth-coordination` 数据库的 `values/sub2api_auth_client_id` 并通过
+  `X-Sub2API-Auth-Client` 进行 Session Restore；
+- 浏览器 Capture 登录态仍属于用户既有会话，不进入后台密码同步 Cleanup；诊断不保存
+  Token、Cookie、密码、完整响应或完整请求头。
+  Helper 还会合并页面可见 Cookie 与同站 `GM_cookie` 结果，并在回传前删除完整
+  `auth_user`，仅保留安全身份字段；handoff 中的管理地址路径用于 `base_url` 和
+  `management_base_url`，避免部署在子路径时丢失地址。

@@ -954,7 +954,7 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
   网络错误或意外 5xx 只写脱敏告警，临时材料仍清除，不覆盖已经获得的快照或把账号
   直接标记为凭据失效。
 - Cleanup 延迟路径覆盖认证失败、资源失败、部分分页失败和快照写库前后；浏览器
-  Capture 登录态属于用户已有会话，不执行后台注销。Capture Helper `1.5.0` 先做当前
+  Capture 登录态属于用户已有会话，不执行后台注销。Capture Helper `1.6.1` 先做当前
   用户或 Admin 权限验证，诊断只保存候选存在性、存储键、尝试接口、版本、失败阶段
   和来源；结果通过现有加密凭据结构保存。
 - `ResolvePlatformSiteCapture` 成功后使用 Redis `SET NX` 或进程内 claim 独占记录，
@@ -1043,6 +1043,36 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
 - 没有历史成功快照的新渠道仍必须等待至少一个真实单 Key 模型能力确认。模型广场、
   分组模型目录和账号级模型不会被复制为单 Key 能力。
 
+### 9.11 2026-10-04 Capture Helper 登录态等待与 NewAPI/Sub2API 兼容
+
+**变更前**
+
+- Capture Helper 在 `document-start` 阶段直接执行一次采集，页面尚未完成登录、
+  SPA 尚未写入登录态或 Cloudflare 验证尚未结束时，会把暂时未登录提交为永久失败；
+- handoff 由后端使用下划线字段生成，但 Helper 启动校验只读取部分驼峰字段，可能把
+  有效采集会话误判为参数无效；
+- NewAPI Cookie 验证没有稳定携带 `New-Api-User`，仅有 `uid + Cookie` 的老版本站点
+  无法通过 `/api/user/self`；Sub2API Session Restore 没有完整读取 IndexedDB 客户端 ID。
+
+**变更后**
+
+- Helper 在 DOM 就绪后启动，采集失败只显示脱敏等待状态并每 3 秒自动重试，同时提供
+  手动“重新采集”按钮；暂时未登录、Token 尚未写入、Cookie 尚未形成、WAF 或网络
+  短暂失败不会调用完成接口提交 `error`，Capture Session 继续保持 `pending`；
+- Helper 同时兼容 `capture_secret`/`captureSecret`、`complete_url`/`completeURL`、
+  `capture_id`/`captureID`、`expires_at`/`expiresAt` 和版本字段，修复真实 handoff
+  字段与启动校验不一致；
+- NewAPI 自动采集从 `localStorage.uid`、用户对象和 JWT 解析数字用户 ID，并在
+  `/api/user/self`、Dashboard Refresh 和 `/api/user/token` 请求中携带
+  `New-Api-User`；Cookie 验证成功后才尝试读取 Access Token；
+- Sub2API 继续读取 localStorage、hash 和页面状态，并增加
+  `sub2api-auth-coordination/values/sub2api_auth_client_id` IndexedDB 读取，通过
+  `X-Sub2API-Auth-Client` 调用 Session Restore；浏览器 Capture 登录态仍不进入后台
+  密码会话 Cleanup。
+- Helper `1.6.1` 同时合并页面可见 Cookie 与同站 `GM_cookie.list` 结果并按名称去重，
+  不再在已有可见 Cookie 时跳过 HttpOnly Cookie 读取；回传前删除完整 `auth_user`，
+  `base_url` 和 `management_base_url` 保留 handoff 中的管理地址路径。
+
 ## 与架构文档的关系
 
 本文保留平台站点、账号同步、子密钥字段、倍率/权重公式、权限、SSRF 和测试验收等详细规则；架构文档描述平台站点如何进入渠道过滤、Routing Key 和 Relay 转发。新增平台类型或调整同步/路由语义时，必须同时更新本文、能力矩阵和偏差表。
@@ -1058,4 +1088,4 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
 | 2026-09-29 | 平台站点资源获取比较文档与管理端字段校准 | 专项文档将 `GET /api/channel/:id/upstream-keys` 描述为不返回额度、过期时间和最近使用时间，且没有链接旧版/参考源/当前实现的完整资源链路比较 | 明确该接口实际返回 `UsedQuota`、`RemainQuota`、`ExpiresAt`、`Models`、`ModelsSynced`、`Status`、可路由诊断和脱敏 `KeyPreview`；完整 Secret 仍不返回，并增加完整比较文档入口 | 平台站点资源查询、管理员诊断、额度和模型能力边界 | `controller/upstream_channel.go:75-104`、`controller/upstream_channel.go:667-710`、[`docs/platform-site-resource-acquisition-comparison.md`](platform-site-resource-acquisition-comparison.md) |
 | 2026-10-02 | 密码同步会话清理与自动配置边界 | 密码同步可能复用历史登录态；NewAPI/Sub2API 注销路径、资源失败快照保护、浏览器会话所有权和自动配置一次性消费边界未统一 | 每轮密码同步直接登录并清理本轮会话；NewAPI 登出后精确删除 SID，Sub2API 仅 Refresh Token 登出，禁止撤销其他会话；清理失败不覆盖快照；自动配置完成验证、脱敏诊断、现有加密保存和 Redis/内存 claim 一次性消费，表单仅保留账号密码/自动配置 | 平台站点认证、资源同步、Capture Helper、前端表单和缓存 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_capture.go`、`pkg/cachex/hybrid_cache.go`、`controller/channel.go`、前端平台站点组件、本机参考源和定向测试 |
 | 2026-10-03 | 认证流程保存兼容与 NewAPI 加密登录 | 认证流程请求中的残留用户名被误判为手动凭据；NewAPI 新版密码加密登录协议和 Sub2API 邮箱主体/精确登出边界未在专项文档集中登记 | 有 `auth_flow_id` 时前端不再提交用户名/密码，后端仅兼容用户名残留并以流程真实身份为准；NewAPI 实现加密密钥读取、RSA-OAEP/v2 信封和仅 404/405 明文回退；Sub2API 保持邮箱优先、凭据错误后回退用户名和本轮 Refresh Token 登出 | 渠道保存、NewAPI/Sub2API 密码认证、认证流程一次性消费、脱敏诊断和最近成功快照 | `web/src/features/channels/lib/channel-form.ts`、`controller/upstream_channel.go`、`service/newapi_password_encryption.go`、`service/upstream_site_adapters.go`、相关 Go/React 定向测试；New API/Sub2API/all-api-hub 本机参考源 |
-| 2026-10-03 | Sub2API Relay 发现与登录请求兼容修复 | 重定向后的页面相对地址解析错误，独立 Relay 域名无法用于 Key 模型探测；登录请求可能因混合字段或无条件条款字段返回 `400 INVALID_REQUEST`；Relay 探测可能携带管理态 | 相对地址按最终 HTML URL 解析；页面明确声明且与最终页面或原始管理地址同协议/主机/有效端口，或与管理地址满足严格 `api.` 父子域关系的 Relay 才接受；可信最终页面来源会作为本轮管理请求地址，持久化管理地址不变；Relay 探测只发送单 Key Header 且清空 Cookie Jar；邮箱首请求只发 `email/password`，仅 404/405 回退登录路由，400 不重试；未确认单 Key 模型不进入路由，资源失败继续保留最近成功快照 | Sub2API 管理/Relay 地址、密码登录、Key 模型能力、渠道资源同步和路由候选 | `service/upstream_site_adapters.go`、`service/upstream_site_test.go`、Sub2API 参考源 `auth_handler.go`、all-api-hub 真实站点请求策略和脱敏 fixture |
+| 2026-10-04 | Capture Helper 等待重试与浏览器登录态兼容 | Helper 过早采集、下划线 handoff 字段被驼峰校验误判；NewAPI `uid + Cookie` 缺少 `New-Api-User`，Sub2API 缺少 IndexedDB 客户端 ID 兼容 | Helper DOM 就绪后等待登录并自动/手动重试，不把暂时未登录标记为失败；NewAPI 携带数字用户 ID 请求头并在 Cookie 验证后探测 Token；Sub2API 读取 IndexedDB Session Client ID；浏览器登录态不进入后台 Cleanup | 自动配置采集、NewAPI/Sub2API 登录态验证和渠道保存 | `service/platform_site_capture.go`、`service/upstream_site_test.go`、旧版 `service/upstreamaccount/capture.go`、New API/Sub2API/all-api-hub 参考源 |

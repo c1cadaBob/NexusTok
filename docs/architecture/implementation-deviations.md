@@ -1,7 +1,7 @@
 # 实现偏差登记
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-03
+> 事实基线日期：2026-10-04
 > 主要代码来源：`router/relay-router.go`、`common/api_type.go`、`relay/relay_adaptor.go`、`relay/channel/*/adaptor.go`、`router/task-plugin-protocol-router.go`、`docs/architecture/*.md`
 > 关联详细文档：[`README.md`](./README.md)、[`relay-routing-and-conversion.md`](./relay-routing-and-conversion.md)、[`provider-capability-matrix.md`](./provider-capability-matrix.md)、[`../plugin-api/README.md`](../plugin-api/README.md)
 
@@ -228,6 +228,27 @@ RSA-OAEP-SHA256，长密码使用 `v2` AES-GCM 信封；明确 404/405 才允许
 网络、权限、5xx 或无效配置均直接失败。Sub2API 继续邮箱优先，仅在明确凭据错误或
 401 后回退用户名。此偏差仍标记“待真实站点持续核验”，本次只使用脱敏 fixture 和
 本机参考源，未使用真实账号、密码、Token、Cookie 或完整上游响应。
+
+### 3.12 2026-10-04 Capture Helper 等待登录与旧版页面兼容
+
+**变更前**：Helper 在 DOM/SPA 登录态形成前立即执行候选读取，暂时未登录会被转换成
+完成接口错误；NewAPI `uid + Cookie` 页面没有稳定的 `New-Api-User` 头兼容，Sub2API
+Session Restore 没有覆盖旧版 IndexedDB 客户端 ID。
+
+**变更后**：Helper `1.6.1` 在 DOM 就绪后运行，候选失败只进入脱敏等待和自动/手动
+重试；只有会话硬错误或已验证的登录态才调用完成接口。NewAPI 从 `uid`、页面状态、
+用户对象和 JWT 解析数字用户 ID，并用 `New-Api-User + Cookie` 验证 `/api/user/self`，
+验证成功后再通过 `/api/user/token` 获取可保存 Token。Sub2API 读取
+`sub2api-auth-coordination/values/sub2api_auth_client_id`，发送
+`X-Sub2API-Auth-Client` 进行 Session Restore，并在 `/api/v1/auth/me` 成功后提交。
+同源脚本路径发现仅用于兼容部署前缀，不扩大跨站请求范围。
+Helper 同时合并可见与 `GM_cookie` 的当前站点 Cookie，提交时删除完整 `auth_user`，
+并保持 handoff 提供的管理地址路径。
+
+该项代码状态为“已实现，真实站点验收待完成”：本地定向 Go/Node 语法测试和参考源静态
+核对已通过；用户指定站点的 Cloudflare Turnstile 当前在浏览器环境返回挑战失败，尚未
+形成真实登录态，因此不能把真实 Capture Session 完成结果作为已验证证据。系统不绕过
+人机验证，也不伪造完成结果。
 
 ## 4. 维护规则
 

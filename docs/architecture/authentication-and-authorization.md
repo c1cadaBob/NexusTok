@@ -1,7 +1,7 @@
 # 鉴权、会话与授权原理
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-03
+> 事实基线日期：2026-10-04
 > 主要代码来源：`middleware/auth.go`、`middleware/token_auth.go`、`service/auth_session.go`、`model/user_session.go`、`service/authz/`、`controller/`、`oauth/`
 > 关联详细文档：[`../authentication.md`](../authentication.md)、[`../rate-limiting.md`](../rate-limiting.md)、[`system-overview.md`](./system-overview.md)
 
@@ -287,12 +287,41 @@ Refresh Token、Cookie 或 Session ID；资源读取完成后没有统一的“�
   和刷新状态不会写回长期凭据。当前用户用户名统一从 `username`、`user_name`、`login`
   或邮箱字段提取，并通过同步状态接口安全回填编辑表单。
 - 自动配置只对外提交 `auth_type=auto` 和已完成的 `capture_id`。Capture Helper
-  版本为 `1.5.0`，候选登录态在提交前通过当前用户接口或 Admin 权限验证，诊断只保留
+  版本为 `1.6.1`，候选登录态在提交前通过当前用户接口或 Admin 权限验证，诊断只保留
   存在性、存储键、验证接口、版本和失败阶段。采集结果继续使用现有加密凭据结构；
   浏览器会话属于用户既有登录态，不纳入后台密码会话清理。
 - Capture 会话被解析后由 Redis `SET NX` 或单进程内存 claim 原子占用，成功保存渠道
   后一次性消费；后续校验、数据库保存或同步入队失败会释放 claim，claim token 不返回
   给前端或普通 API 响应。
+
+### 9.7 2026-10-04 Capture Helper 登录态等待与平台兼容
+
+**变更前**：Capture Helper 在 `document-start` 阶段立即探测上游登录态，页面尚未完成
+登录、SPA 尚未写入 Token/Cookie 或 Cloudflare/Turnstile 尚未完成时，可能把可恢复的
+未登录状态提交给完成接口并使 Capture Session 进入失败。NewAPI 只覆盖部分存储键，
+Sub2API Session Restore 也没有稳定读取旧版 IndexedDB 客户端 ID。
+
+**变更后**：
+
+- Helper 在 `DOMContentLoaded` 后启动 `runCapture`。候选为空、当前用户接口暂时失败、
+  Cookie 尚未形成或登录流程仍在进行时，只显示脱敏等待状态并通过 `scheduleRetry`
+  每 3 秒重试，同时保留手动重新采集按钮；不会向完成接口提交 `error`。会话过期、
+  来源/版本不匹配或回传服务硬错误才停止重试。
+- NewAPI 按 `localStorage.uid`、用户状态对象、页面状态和 JWT 解析数字用户 ID；当前
+  用户、Dashboard Refresh 和 `/api/user/token` 请求在可用时携带
+  `New-Api-User`、Bearer 和当前站点 Cookie。只有当前用户验证成功并获得可保存 Token
+  后才提交采集结果。页面脚本 API 路径只从同源静态脚本发现，保持当前站点来源限制。
+- Sub2API 继续读取 `auth_token`、Access/Refresh Token、`auth_user`、hash 和页面状态，
+  并读取 `sub2api-auth-coordination` 数据库 `values` 仓库中的
+  `sub2api_auth_client_id`，通过 `X-Sub2API-Auth-Client` 调用 Session Restore；恢复
+  得到 Access Token 后仍必须通过 `/api/v1/auth/me` 验证。
+- Capture 浏览器会话属于用户已有登录态，不进入后台账号密码同步 Cleanup；诊断只保存
+  来源、版本、存在性、存储键、验证接口、失败阶段和脱敏错误类别，不保存密码、完整
+  Cookie、Token、Session ID、Admin Key 或完整上游响应。Turnstile、WAF、验证码和
+  Passkey 仍由目标站浏览器边界处理，NexusTok 不绕过或伪造验证结果。
+- Helper 读取 Cookie 时合并页面可见 Cookie 与当前目标站点的 `GM_cookie.list` 结果，
+  按名称去重且只允许当前站点或严格 `api.` 父子域；回传只包含扁平身份字段，不携带
+  完整 `auth_user` 响应，并保留 handoff 中的管理地址路径。
 
 ### 9.7 2026-10-03 平台认证流程兼容与 NewAPI 密码加密
 

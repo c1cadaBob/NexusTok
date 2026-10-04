@@ -1,7 +1,7 @@
 # NexusTok 功能原理与实现偏差文档
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-03
+> 事实基线日期：2026-10-04
 > 主要代码来源：`main.go`、`router/`、`middleware/`、`controller/`、`service/`、`model/`、`relay/`、`pkg/`、`constant/`
 > 关联详细文档：[`docs/authentication.md`](../authentication.md)、[`docs/rate-limiting.md`](../rate-limiting.md)、[`docs/key-routing-strategy.md`](../key-routing-strategy.md)、[`docs/upstream-channel-platform-sites.md`](../upstream-channel-platform-sites.md)、[`docs/plugin-api/`](../plugin-api/)
 
@@ -61,6 +61,18 @@
 `model/user_session.go`、`model/login_verification.go`、`controller/user.go` 和
 `controller/login_verification.go`；产品默认名称及旧配置兼容迁移入口为
 `common/constants.go`、`model/frontend_option_migration.go` 和 `main.go`。
+
+## 2026-10-04 Capture Helper 登录态兼容
+
+本次变更将 Capture Helper 从“页面立即采集”调整为 DOM 就绪后等待登录、自动重试和手动
+重试；只有当前用户或 Admin 权限验证成功才进入完成接口。Helper `1.6.1` 合并当前
+站点可见 Cookie 与 `GM_cookie` 结果并去重，回传前删除完整 `auth_user`。NewAPI 兼容
+`localStorage.uid + New-Api-User + Cookie`、页面状态和同源脚本 API 路径发现，Sub2API
+兼容 localStorage、页面状态、IndexedDB 客户端 ID 和 Session Restore。暂时未登录不再
+被写成 Capture Session 失败，浏览器 Capture 会话也不进入后台密码同步 Cleanup。
+
+这部分只保留脱敏诊断。Cloudflare/Turnstile、WAF、验证码和 Passkey 仍由目标站浏览器
+处理，不能用本地测试或未完成的人机验证冒充真实采集成功。
 
 ## 文档状态定义
 

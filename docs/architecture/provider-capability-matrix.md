@@ -1,7 +1,7 @@
 # 渠道能力矩阵
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-03
+> 事实基线日期：2026-10-04
 > 主要代码来源：`constant/channel.go`、`constant/api_type.go`、`common/api_type.go`、`relay/relay_adaptor.go`、`relay/common/relay_info.go`、`relay/channel/*/adaptor.go`、`router/relay-router.go`、`router/task-plugin-protocol-router.go`
 > 关联详细文档：[`README.md`](./README.md)、[`relay-routing-and-conversion.md`](./relay-routing-and-conversion.md)、[`implementation-deviations.md`](./implementation-deviations.md)、[`../key-routing-strategy.md`](../key-routing-strategy.md)
 
@@ -142,6 +142,26 @@ NexusTok 适配器请求清单中，因此平台窗口额度仍属于未完整�
   `INVALID_REQUEST`、403、429、WAF、安全验证、权限、网络和 5xx 不触发额外尝试；
 - 资源、分页或单 Key 模型失败继续使用最近成功快照，不把认证成功后的资源错误
   写成凭据失效或错误执行 Key 缺失判定。
+
+### 2.4 2026-10-04 浏览器 Capture Helper 兼容能力
+
+**变更前**：自动配置在页面尚未登录时可能立即结束，NewAPI 只有 Cookie 和
+`localStorage.uid` 的旧版页面缺少稳定的 `New-Api-User` 兼容，Sub2API 旧版
+Session Restore 所需的 IndexedDB 客户端 ID 也可能无法读取。
+
+**变更后**：Capture Helper `1.6.1` 在 `DOMContentLoaded` 后启动，并以固定间隔和手动
+按钮等待登录态形成。NewAPI 候选依次检查 Dashboard Refresh、Access Token、Admin Key
+和 Cookie；Cookie 验证使用数字 `New-Api-User`，用户 ID 来源包括 `localStorage.uid`、
+用户状态对象、页面状态和 JWT，同源脚本 API 路径发现只用于兼容部署前缀。Sub2API
+继续支持 localStorage、hash、页面状态、Refresh 和 Session Restore，并从
+`sub2api-auth-coordination/values/sub2api_auth_client_id` 读取客户端 ID，发送
+`X-Sub2API-Auth-Client`，恢复 Token 后必须通过 `/api/v1/auth/me`。
+
+候选必须通过当前用户或 Admin 权限验证才可完成采集；暂时未登录保持 `pending`，不向
+完成接口提交失败。浏览器 Capture 登录态不执行后台注销，诊断只保留脱敏阶段、路径、
+存在性、版本和错误类别。Helper 合并可见与 `GM_cookie` 的同站 Cookie，并只提交扁平
+身份字段；管理地址路径从 handoff 保持。Cloudflare/Turnstile、WAF、验证码和 Passkey 仍属于上游
+浏览器人工验证能力，不在矩阵中宣称由 NexusTok 自动绕过。
 
 ## 3. 维护解释
 

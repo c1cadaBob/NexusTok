@@ -163,6 +163,7 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
   const pendingCaptureWindowRef = useRef<Window | null>(null)
   const activeCaptureWindowRef = useRef<Window | null>(null)
   const [handoffURL, setHandoffURL] = useState('')
+  const [helperInstallURL, setHelperInstallURL] = useState('')
   const [showHandoffFallback, setShowHandoffFallback] = useState(false)
   const [helperVersion, setHelperVersion] = useState('')
   const [helperDetection, setHelperDetection] = useState<
@@ -209,6 +210,9 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
       })
       completedCaptureRef.current = ''
       setHandoffURL(response.data.handoff_url)
+      setHelperInstallURL(
+        response.data.helper_install_url || response.data.userscript_url || ''
+      )
       setHelperVersion(response.data.helper_version || '')
       setHelperDetection('probing')
       if (helperProbeTimerRef.current) {
@@ -395,7 +399,9 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
       const expectedOrigin = captureStatus?.origin?.trim()
       if (expectedOrigin && event.origin !== expectedOrigin) return
       const expectedWindow = activeCaptureWindowRef.current
-      if (expectedWindow && event.source && event.source !== expectedWindow) return
+      if (expectedWindow && event.source && event.source !== expectedWindow) {
+        return
+      }
       const detectedVersion = String(
         data.helper_version || data.helperVersion || ''
       ).trim()
@@ -771,15 +777,18 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
                   {t('Open upstream capture page')}
                 </Button>
               )}
-            {captureStatus?.helper_install_url && (
+            {(captureStatus?.helper_install_url ||
+              helperInstallURL ||
+              captureStatus?.userscript_url) && (
               <Button
                 type='button'
                 variant='outline'
                 size='sm'
                 onClick={() =>
                   window.open(
-                    captureStatus.userscript_url ||
-                      captureStatus.helper_install_url,
+                    captureStatus?.helper_install_url ||
+                      helperInstallURL ||
+                      captureStatus?.userscript_url,
                     '_blank',
                     'noopener,noreferrer'
                   )

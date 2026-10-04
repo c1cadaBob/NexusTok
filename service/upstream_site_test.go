@@ -18,6 +18,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -789,15 +790,57 @@ func TestPlatformSiteCaptureUserscriptsReadExplicitBrowserFieldsOnly(t *testing.
 	require.Contains(t, script, "api_base_url")
 	require.Contains(t, script, "readStructured")
 	require.Contains(t, script, "userIDFromToken")
+	require.Contains(t, script, "guessNewAPIUserID")
+	require.Contains(t, script, "expandedAPIPaths")
+	require.Contains(t, script, "discoverAPIPaths")
+	require.Contains(t, script, "__AUTH_USER__")
+	require.Contains(t, script, "New-Api-User")
+	require.Contains(t, script, "@grant        GM_cookie")
+	require.Contains(t, script, "headers.Authorization = 'Bearer '")
+	require.Contains(t, script, "mergeCookieHeaders")
+	require.Contains(t, script, "management_base_url")
+	require.Contains(t, script, "delete safePayload.auth_user")
+	require.Contains(t, script, "source !== 'refresh_token'")
+	require.Contains(t, script, "valueFromRecord")
+	require.Contains(t, script, "runCapture")
+	require.Contains(t, script, "scheduleRetry")
+	require.Contains(t, script, "DOMContentLoaded")
+	require.Contains(t, script, "typeof payload === 'string'")
+	require.Contains(t, script, "data && typeof data === 'object'")
+	require.Contains(t, script, "responseSucceeded(result)")
+	require.Contains(t, script, "sub2api-auth-coordination")
+	require.Contains(t, script, "sub2api_auth_client_id")
+	require.Contains(t, script, "captureStopped")
+	require.Contains(t, script, "isPermanentCaptureError")
+	require.Contains(t, script, "clearStoredHandoff")
+	require.Contains(t, script, "正在等待上游登录")
+	require.NotContains(t, script, "removeStoredHandoff")
+	require.NotContains(t, script, "error: safeMessage")
 	require.Contains(t, script, "GM_cookie.list({ url: cookieURL")
 	require.Contains(t, script, "credentials: 'include'")
 	require.NotContains(t, script, record.Secret)
+	require.NotContains(t, script, "result.auth_user = validatedUser")
 
 	helper, err := RenderPlatformSiteCaptureHelper("https://nexus.example.com")
 	require.NoError(t, err)
 	require.Contains(t, helper, "@match        http://*/*")
 	require.Contains(t, helper, "@match        https://*/*")
 	require.NotContains(t, helper, record.Secret)
+}
+
+func TestPlatformSiteCaptureHelperGeneratedScriptIsValidJavaScript(t *testing.T) {
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("未安装 Node.js，跳过 Capture Helper JavaScript 语法检查")
+	}
+
+	helper, err := RenderPlatformSiteCaptureHelper("https://nexus.example.com")
+	require.NoError(t, err)
+	scriptPath := t.TempDir() + "/capture-helper.user.js"
+	require.NoError(t, os.WriteFile(scriptPath, []byte(helper), 0o600))
+
+	output, err := exec.Command(nodePath, "--check", scriptPath).CombinedOutput()
+	require.NoError(t, err, string(output))
 }
 
 type platformSiteRoundTripFunc func(*http.Request) (*http.Response, error)

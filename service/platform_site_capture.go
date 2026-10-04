@@ -21,7 +21,7 @@ const (
 	platformSiteCaptureStatusPending  = "pending"
 	platformSiteCaptureStatusComplete = "completed"
 	platformSiteCaptureStatusFailed   = "failed"
-	platformSiteCaptureHelperVersion  = "1.5.0"
+	platformSiteCaptureHelperVersion  = "1.6.1"
 	platformSiteCaptureHandoffParam   = "nexustok_capture"
 
 	PlatformSiteCaptureAuthAuto = "auto"
@@ -1094,6 +1094,7 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
 // @run-at       document-start
 // @grant        GM_xmlhttpRequest
 // @grant        GM_cookie
+// @grant        GM_addStyle
 // @grant        unsafeWindow
 // @connect      __NEXUSTOK_CONNECT__
 // ==/UserScript==
@@ -1239,6 +1240,26 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
     return '';
   }
 
+  function directStorageValue(names) {
+    for (const name of names) {
+      const value = readStorage(name);
+      if (value) return value;
+    }
+    return '';
+  }
+
+  function isNumericUserID(value) {
+    return /^\d+$/.test(text(value));
+  }
+
+  function normalizeNewAPIUserID(value) {
+    let normalized = text(value);
+    const parsed = parseJSON(normalized);
+    if (parsed !== null && typeof parsed !== 'object') normalized = text(parsed);
+    normalized = normalized.replace(/^["']|["']$/g, '').trim();
+    return isNumericUserID(normalized) ? normalized : '';
+  }
+
   function readHashValue(names) {
     try {
       const rawHash = text(pageWindow.location.hash || '').replace(/^#/, '');
@@ -1290,6 +1311,7 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
       '__NUXT__',
       '__NEXT_DATA__',
       '__PINIA__',
+      '__AUTH_USER__',
     ]) {
       try {
         const value = nestedValue(pageWindow[stateName], nestedNames, 0);
@@ -1313,7 +1335,108 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
         if (value && typeof value === 'object') return value;
       }
     } catch (_) {}
+    try {
+      const authUser = pageWindow.__AUTH_USER__;
+      if (
+        authUser &&
+        typeof authUser === 'object' &&
+        names.some((name) => String(name).toLowerCase() === 'auth_user')
+      ) {
+        return authUser;
+      }
+    } catch (_) {}
     return null;
+  }
+
+  function readNewAPIAccessToken() {
+    return text(
+      readHashValue(['access_token', 'auth_token', 'token', 'jwt']) ||
+      directStorageValue([
+        'new_api_access_token',
+        'new-api-access-token',
+        'auth_token',
+        'access_token',
+        'token',
+        'jwt',
+      ]) ||
+      readNamed(
+        ['auth_token', 'access_token', 'accessToken', 'token', 'jwt'],
+        ['access_token', 'auth_token', 'token', 'jwt']
+      ) ||
+      readDeepStorageValue(['access_token', 'auth_token', 'token', 'jwt'])
+    ).replace(/^Bearer\s+/i, '').trim();
+  }
+
+  function guessNewAPIUserID() {
+    for (const storage of [pageWindow.localStorage, pageWindow.sessionStorage]) {
+      for (const key of ['uid', 'new-api-user', 'New-Api-User']) {
+        try {
+          const raw = storage.getItem(key) || '';
+          const direct = normalizeNewAPIUserID(raw);
+          if (direct) return direct;
+        } catch (_) {}
+      }
+      for (const key of ['user', 'user_info', 'userInfo', 'auth', 'auth_user']) {
+        try {
+          const raw = storage.getItem(key) || '';
+          if (!raw) continue;
+          const parsed = parseJSON(raw);
+          const direct = normalizeNewAPIUserID(raw);
+          if (direct) return direct;
+          const nested = normalizeNewAPIUserID(
+            parsed && typeof parsed === 'object'
+              ? nestedValue(parsed, ['id', 'userid', 'user_id', 'uid'], 0)
+              : ''
+          );
+          if (nested) return nested;
+        } catch (_) {}
+      }
+      try {
+        for (let index = 0; index < storage.length && index < 128; index += 1) {
+          const key = text(storage.key(index));
+          if (!/user|auth|profile|self/i.test(key)) continue;
+          const parsed = parseJSON(storage.getItem(key));
+          const nested = normalizeNewAPIUserID(
+            parsed && typeof parsed === 'object'
+              ? nestedValue(parsed, ['id', 'userid', 'user_id', 'uid'], 0)
+              : ''
+          );
+          if (nested) return nested;
+        }
+      } catch (_) {}
+    }
+    for (const stateName of [
+      '__AUTH_USER__',
+      '__INITIAL_STATE__',
+      '__APP_STATE__',
+      '__NUXT__',
+      '__NEXT_DATA__',
+      '__PINIA__',
+    ]) {
+      try {
+        const nested = normalizeNewAPIUserID(
+          nestedValue(
+            pageWindow[stateName],
+            ['id', 'userid', 'user_id', 'uid'],
+            0
+          )
+        );
+        if (nested) return nested;
+      } catch (_) {}
+    }
+    return normalizeNewAPIUserID(
+      readDeepStorageValue(['id', 'userid', 'user_id', 'uid']) ||
+      userIDFromToken(readNewAPIAccessToken())
+    );
+  }
+
+  function newAPIHeaders(userID, accessToken) {
+    const headers = {};
+    const token = text(accessToken).replace(/^Bearer\s+/i, '').trim();
+    if (token) headers.Authorization = 'Bearer ' + token;
+    const normalizedUserID = normalizeNewAPIUserID(userID);
+    if (normalizedUserID) headers['New-Api-User'] = normalizedUserID;
+    return headers;
   }
 
   function readCookieHeader(targetURL) {
@@ -1333,26 +1456,36 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
     try {
       visibleCookies = text(document.cookie);
     } catch (_) {}
-    if (cookieURL === window.location.origin && visibleCookies) {
-      return Promise.resolve(visibleCookies);
-    }
+    const mergeCookieHeaders = (headers) => {
+      const values = new Map();
+      for (const header of headers) {
+        for (const part of text(header).split(';')) {
+          const separator = part.indexOf('=');
+          if (separator <= 0) continue;
+          const name = text(part.slice(0, separator));
+          if (!name) continue;
+          values.set(name, name + '=' + text(part.slice(separator + 1)));
+        }
+      }
+      return Array.from(values.values()).join('; ');
+    };
     if (typeof GM_cookie !== 'object' || typeof GM_cookie.list !== 'function') {
-      return Promise.resolve(visibleCookies);
+      return Promise.resolve(mergeCookieHeaders([visibleCookies]));
     }
     return new Promise((resolve) => {
       try {
         GM_cookie.list({ url: cookieURL }, (cookies, error) => {
           if (error || !Array.isArray(cookies)) {
-            resolve(visibleCookies);
+            resolve(mergeCookieHeaders([visibleCookies]));
             return;
           }
           const values = cookies
             .filter((cookie) => cookie && text(cookie.name))
             .map((cookie) => text(cookie.name) + '=' + text(cookie.value));
-          resolve(values.join('; ') || visibleCookies);
+          resolve(mergeCookieHeaders([visibleCookies, values.join('; ')]));
         });
       } catch (_) {
-        resolve(visibleCookies);
+        resolve(mergeCookieHeaders([visibleCookies]));
       }
     });
   }
@@ -1382,8 +1515,30 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
   }
 
   function tokenFromResponse(payload) {
-    return nestedValue(payload, ['access_token', 'accessToken', 'auth_token', 'authToken', 'token', 'jwt'], 0)
-      .replace(/^Bearer\s+/i, '');
+    const tokenNames = [
+      'access_token',
+      'accessToken',
+      'auth_token',
+      'authToken',
+      'token',
+      'jwt',
+    ];
+    if (typeof payload === 'string') {
+      return text(payload).replace(/^Bearer\s+/i, '');
+    }
+    const direct = nestedValue(payload, tokenNames, 0);
+    if (direct) return direct.replace(/^Bearer\s+/i, '');
+    if (payload && typeof payload === 'object') {
+      const data = payload.data;
+      if (typeof data === 'string') {
+        return text(data).replace(/^Bearer\s+/i, '');
+      }
+      if (data && typeof data === 'object') {
+        const nested = nestedValue(data, tokenNames, 0);
+        if (nested) return nested.replace(/^Bearer\s+/i, '');
+      }
+    }
+    return '';
   }
 
   function refreshTokenFromResponse(payload) {
@@ -1413,10 +1568,17 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
 
   function handoff() {
     const current = new URL(window.location.href);
-    const encoded = current.searchParams.get('nexustok_capture');
+    const handoffParam = 'nexustok_capture';
+    const rawHash = text(current.hash || '').replace(/^#/, '');
+    const hashParams = new URLSearchParams(rawHash);
+    const encoded = current.searchParams.get(handoffParam) || hashParams.get(handoffParam);
     if (encoded) {
       const value = decodeHandoff(encoded);
-      current.searchParams.delete('nexustok_capture');
+      current.searchParams.delete(handoffParam);
+      if (hashParams.has(handoffParam)) {
+        hashParams.delete(handoffParam);
+        current.hash = hashParams.toString() ? '#' + hashParams.toString() : '';
+      }
       try { history.replaceState({}, document.title, current.toString()); } catch (_) {}
       if (value) {
         try {
@@ -1443,6 +1605,17 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
     } catch (_) {}
   }
 
+  function permanentCaptureError(message, status) {
+    const error = new Error(text(message));
+    error.capturePermanent = true;
+    if (status) error.status = status;
+    return error;
+  }
+
+  function isPermanentCaptureError(error) {
+    return Boolean(error && error.capturePermanent);
+  }
+
   function apiBaseURL(payload) {
     const candidates = [
       payload.api_base_url,
@@ -1462,6 +1635,158 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
       } catch (_) {}
     }
     return window.location.origin;
+  }
+
+  function cleanAPIPathPrefix(pathname) {
+    const pageSegments = new Set([
+      'login',
+      'register',
+      'dashboard',
+      'console',
+      'playground',
+      'token',
+      'tokens',
+      'channel',
+      'channels',
+      'setting',
+      'settings',
+      'models',
+      'pricing',
+      'wallet',
+      'topup',
+      'logs',
+      'about',
+      'home',
+      'panel',
+      'admin',
+      'sign-in',
+      'sign-up',
+    ]);
+    const parts = text(pathname).split('/').filter(Boolean);
+    while (
+      parts.length > 0 &&
+      pageSegments.has(parts[parts.length - 1].toLowerCase())
+    ) {
+      parts.pop();
+    }
+    if (parts.length === 0) return '';
+    return '/' + parts.join('/');
+  }
+
+  function candidateAPIPrefixes(payload) {
+    const prefixes = new Set(['']);
+    const candidates = [
+      payload && payload.base_url,
+      pageWindow.location && pageWindow.location.href,
+    ];
+    for (const raw of candidates) {
+      try {
+        const parsed = new URL(text(raw), window.location.href);
+        const prefix = cleanAPIPathPrefix(parsed.pathname);
+        if (!prefix || prefix === '/api' || prefix.includes('/api/')) continue;
+        prefixes.add(prefix);
+        const firstSegment = '/' + prefix.split('/').filter(Boolean)[0];
+        if (firstSegment && firstSegment !== '/') prefixes.add(firstSegment);
+      } catch (_) {}
+    }
+    return Array.from(prefixes);
+  }
+
+  function joinAPIPath(prefix, path) {
+    if (/^https?:\/\//i.test(path)) return path;
+    const left = text(prefix).replace(/\/+$/, '');
+    const right = text(path).replace(/^\/+/, '');
+    return (left ? left : '') + '/' + right;
+  }
+
+  function discoveredAPIPathPattern(kind) {
+    switch (kind) {
+      case 'self':
+        return /["'](\/[^"']*api\/user\/self[^"']*)["']/g;
+      case 'token':
+        return /["'](\/[^"']*api\/user\/(?:token|access_token|access-token)[^"']*)["']/g;
+      case 'sub2_me':
+        return /["'](\/[^"']*(?:api\/v1\/)?auth\/me[^"']*)["']/g;
+      case 'sub2_session_restore':
+        return /["'](\/[^"']*session\/restore[^"']*)["']/g;
+      default:
+        return null;
+    }
+  }
+
+  const discoveredAPIPathsPromises = {};
+
+  async function discoverAPIPaths(kind) {
+    if (!discoveredAPIPathsPromises[kind]) {
+      discoveredAPIPathsPromises[kind] = (async () => {
+        const sources = new Set();
+        try {
+          for (const script of Array.from(document.scripts || [])) {
+            if (script.src) sources.add(script.src);
+          }
+        } catch (_) {}
+        try {
+          const entries = pageWindow.performance &&
+            typeof pageWindow.performance.getEntriesByType === 'function'
+            ? pageWindow.performance.getEntriesByType('resource')
+            : [];
+          for (const entry of entries) {
+            if (entry && entry.name) sources.add(entry.name);
+          }
+        } catch (_) {}
+        const sameOriginScripts = Array.from(sources)
+          .map((source) => {
+            try {
+              return new URL(source, pageWindow.location.href);
+            } catch (_) {
+              return null;
+            }
+          })
+          .filter(
+            (source) =>
+              source &&
+              source.origin === pageWindow.location.origin &&
+              /\.js(?:$|\?)/i.test(source.href)
+          )
+          .slice(0, 16);
+        const found = new Set();
+        const pattern = discoveredAPIPathPattern(kind);
+        if (!pattern) return [];
+        for (const scriptURL of sameOriginScripts) {
+          try {
+            const response = await fetch(scriptURL.href, {
+              credentials: 'omit',
+              cache: 'force-cache',
+            });
+            if (!response.ok) continue;
+            const body = await response.text();
+            pattern.lastIndex = 0;
+            let match;
+            while ((match = pattern.exec(body)) !== null) {
+              const path = text(match[1])
+                .replace(/\\u0026/g, '&')
+                .split('?')[0];
+              if (path.startsWith('/')) found.add(path);
+            }
+          } catch (_) {}
+        }
+        return Array.from(found).slice(0, 16);
+      })();
+    }
+    return discoveredAPIPathsPromises[kind];
+  }
+
+  async function expandedAPIPaths(paths, kind, payload) {
+    const discovered = await discoverAPIPaths(kind);
+    const prefixes = candidateAPIPrefixes(payload || {});
+    const result = new Set();
+    for (const path of [...paths, ...discovered]) {
+      result.add(path);
+      for (const prefix of prefixes) {
+        if (prefix) result.add(joinAPIPath(prefix, path));
+      }
+    }
+    return Array.from(result);
   }
 
   function isRelatedUpstreamURL(rawURL) {
@@ -1484,6 +1809,14 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
         Accept: 'application/json',
         ...(requestOptions.headers || {}),
       };
+      const pageOrigin = text(pageWindow.location && pageWindow.location.origin);
+      if (
+        pageOrigin &&
+        !Object.prototype.hasOwnProperty.call(headers, 'Origin') &&
+        !Object.prototype.hasOwnProperty.call(headers, 'origin')
+      ) {
+        headers.Origin = pageOrigin;
+      }
       const cookie = text(requestOptions.cookie);
       if (cookie) headers.Cookie = cookie;
       const request = {
@@ -1563,19 +1896,104 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
     return true;
   }
 
+  function readIndexedDBValue(dbName, storeName, key) {
+    if (typeof indexedDB === 'undefined') return Promise.resolve('');
+    return new Promise((resolve) => {
+      let settled = false;
+      const valueFromRecord = (value, depth) => {
+        if (value == null || depth > 3) return '';
+        if (typeof value === 'string') {
+          const parsed = parseJSON(value);
+          if (parsed !== null && typeof parsed === 'object') {
+            return valueFromRecord(parsed, depth + 1);
+          }
+          return text(value);
+        }
+        if (typeof value !== 'object') return '';
+        for (const field of [
+          'value',
+          'client_id',
+          'clientId',
+          'auth_client_id',
+          'authClientId',
+          'authClientID',
+          'data',
+        ]) {
+          if (!Object.prototype.hasOwnProperty.call(value, field)) continue;
+          const found = valueFromRecord(value[field], depth + 1);
+          if (found) return found;
+        }
+        return '';
+      };
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        const normalized = valueFromRecord(value, 0).trim();
+        resolve(normalized && normalized.length <= 128 ? normalized : '');
+      };
+      let request;
+      try {
+        request = indexedDB.open(dbName);
+      } catch (_) {
+        finish('');
+        return;
+      }
+      request.onerror = () => finish('');
+      request.onblocked = () => finish('');
+      request.onsuccess = () => {
+        const db = request.result;
+        try {
+          if (!db.objectStoreNames.contains(storeName)) {
+            db.close();
+            finish('');
+            return;
+          }
+          const transaction = db.transaction(storeName, 'readonly');
+          const getRequest = transaction.objectStore(storeName).get(key);
+          getRequest.onsuccess = () => finish(getRequest.result);
+          getRequest.onerror = () => finish('');
+          transaction.oncomplete = () => db.close();
+          transaction.onerror = () => {
+            db.close();
+            finish('');
+          };
+          transaction.onabort = () => {
+            db.close();
+            finish('');
+          };
+        } catch (_) {
+          try { db.close(); } catch (__) {}
+          finish('');
+        }
+      };
+    });
+  }
+
   async function restoreSub2APIBrowserSession(apiBase) {
     const diagnostics = diagnosticsBase('browser_session_restore');
     let clientID = readNamed(
       ['sub2api_auth_client_id'],
       ['sub2api_auth_client_id']
     );
+    if (!clientID) {
+      clientID = await readIndexedDBValue(
+        'sub2api-auth-coordination',
+        'values',
+        'sub2api_auth_client_id'
+      );
+    }
     diagnostics.auth_client_id_present = Boolean(clientID);
     const paths = [
       '/api/v1/auth/session/restore',
       '/api/auth/session/restore',
       '/auth/session/restore',
     ];
-    for (const path of paths) {
+    const candidatePaths = await expandedAPIPaths(
+      paths,
+      'sub2_session_restore',
+      { base_url: apiBase }
+    );
+    for (const path of candidatePaths) {
       try {
         markAttempt(diagnostics, path);
         const restored = await jsonRequest(new URL(path, apiBase).toString(), {
@@ -1607,23 +2025,37 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
   async function readNewAPIAuthBundle(apiBase) {
     try {
       const cookie = await readCookieHeader(apiBase);
+      const userID = guessNewAPIUserID();
       const payload = await jsonRequest(
         new URL('/api/user/auth/refresh', apiBase).toString(),
         {
           method: 'POST',
-          headers: { Accept: 'application/json' },
+          headers: {
+            Accept: 'application/json',
+            ...newAPIHeaders(userID, ''),
+          },
           cookie,
         }
       );
       const data = payload && payload.data;
       const session = data && data.session;
+      const authUser = data && data.user;
+      const hasUserIdentity = Boolean(
+        authUser &&
+        typeof authUser === 'object' &&
+        (
+          nestedValue(authUser, ['id', 'user_id', 'userid', 'uid'], 0) ||
+          nestedValue(authUser, ['username', 'user_name', 'login', 'email', 'mail'], 0)
+        )
+      );
       if (
         !payload ||
         payload.success !== true ||
         !data ||
         data.token_type !== 'Bearer' ||
         !session ||
-        session.current !== true
+        session.current !== true ||
+        !hasUserIdentity
       ) {
         return null;
       }
@@ -1636,7 +2068,7 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
         accessToken,
         refreshToken: '',
         expiresAt,
-        authUser: data.user || {},
+        authUser,
         sessionID: text(session.sid),
         cookie,
       };
@@ -1657,29 +2089,55 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
           withCredentials: false,
           onload: (response) => {
             const result = parseJSON(response.responseText) || {};
-            if (response.status >= 200 && response.status < 300) resolve(result);
-            else reject(new Error('HTTP ' + response.status));
+            if (
+              response.status >= 200 &&
+              response.status < 300 &&
+              responseSucceeded(result)
+            ) {
+              resolve(result);
+            }
+            else reject(permanentCaptureError('HTTP ' + response.status, response.status));
           },
-          onerror: () => reject(new Error('capture callback failed')),
+          onerror: () => reject(permanentCaptureError('capture callback failed')),
+          ontimeout: () => reject(permanentCaptureError('capture callback timed out')),
         });
       });
     }
-    return jsonRequest(payload.complete_url, {
-      method: 'POST',
-      credentials: 'omit',
-      headers: { 'Content-Type': 'application/json' },
-      body,
-    });
+    try {
+      return await jsonRequest(payload.complete_url, {
+        method: 'POST',
+        credentials: 'omit',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      });
+    } catch (error) {
+      throw permanentCaptureError(
+        error && error.message ? error.message : 'capture callback failed',
+        error && error.status ? error.status : 0
+      );
+    }
   }
 
   async function verifyCurrentUser(result, platform, accessToken, cookie, sessionID) {
     const diagnostics = result.diagnostics || diagnosticsBase('verification');
     const strategy = platformStrategies[platform] || platformStrategies.newapi;
-    const headers = {};
-    if (accessToken) headers.Authorization = 'Bearer ' + accessToken;
+    const userID = platform === 'newapi'
+      ? normalizeNewAPIUserID(result.user_id || guessNewAPIUserID())
+      : '';
+    const headers = platform === 'newapi'
+      ? newAPIHeaders(userID, accessToken)
+      : {};
+    if (platform !== 'newapi' && text(accessToken)) {
+      headers.Authorization = 'Bearer ' + text(accessToken).replace(/^Bearer\s+/i, '').trim();
+    }
     if (sessionID) headers['X-Auth-Session'] = sessionID;
     let validatedUser = null;
-    for (const mePath of strategy.mePaths) {
+    const candidatePaths = await expandedAPIPaths(
+      strategy.mePaths,
+      platform === 'sub2api' ? 'sub2_me' : 'self',
+      result
+    );
+    for (const mePath of candidatePaths) {
       try {
         markAttempt(diagnostics, mePath);
         const me = await jsonRequest(
@@ -1703,11 +2161,13 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
     }
     if (!validatedUser) throw new Error('current user validation failed');
     diagnostics.auth_user_verified = true;
-    result.auth_user = validatedUser;
     const id = nestedValue(validatedUser, ['id', 'user_id', 'userid', 'uid', 'sub'], 0);
     if (/^\d+$/.test(text(id))) result.user_id = text(id);
     if (!result.user_id && platform === 'newapi' && accessToken) {
       result.user_id = userIDFromToken(accessToken);
+    }
+    if (!result.user_id && platform === 'newapi') {
+      result.user_id = userID;
     }
     result.username = text(
       nestedValue(validatedUser, ['username', 'user_name', 'login'], 0)
@@ -1721,6 +2181,32 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
     result.diagnostics.cookie_present = Boolean(result.cookie);
     if (!result.cookie) throw new Error('cookie is not readable; HttpOnly cookie cannot be captured');
     await verifyCurrentUser(result, platform, '', result.cookie, '');
+    if (platform === 'newapi' && result.user_id) {
+      const tokenPaths = await expandedAPIPaths(
+        ['/api/user/token', '/api/user/access_token', '/api/user/access-token'],
+        'token',
+        result
+      );
+      for (const path of tokenPaths) {
+        try {
+          markAttempt(result.diagnostics, path);
+          const tokenResult = await jsonRequest(
+            new URL(path, result.api_base_url).toString(),
+            {
+              headers: newAPIHeaders(result.user_id, ''),
+              cookie: result.cookie,
+            }
+          );
+          const accessToken = tokenFromResponse(tokenResult);
+          if (accessToken) {
+            result.access_token = accessToken.replace(/^Bearer\s+/i, '').trim();
+            result.auth_type = 'access_token';
+            result.diagnostics.access_token_present = true;
+            return;
+          }
+        } catch (_) {}
+      }
+    }
   }
 
   async function fillAdminKeyCredential(result, platform) {
@@ -1777,14 +2263,16 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
       expiresAt = restored.expiresAt || 0;
       storedAuthUser = restored.authUser;
     } else {
-      accessToken = readHashValue(
-        ['auth_token', 'access_token', 'token', 'jwt']
-      ) || readNamed(
-        ['auth_token', 'access_token', 'accessToken', 'token', 'jwt'],
-        ['auth_token', 'access_token', 'accesstoken', 'token', 'jwt']
-      ) || readDeepStorageValue(
-        ['access_token', 'auth_token', 'token', 'jwt']
-      );
+      if (source !== 'refresh_token') {
+        accessToken = readHashValue(
+          ['auth_token', 'access_token', 'token', 'jwt']
+        ) || readNamed(
+          ['auth_token', 'access_token', 'accessToken', 'token', 'jwt'],
+          ['auth_token', 'access_token', 'accesstoken', 'token', 'jwt']
+        ) || readDeepStorageValue(
+          ['access_token', 'auth_token', 'token', 'jwt']
+        );
+      }
       refreshToken = readHashValue(
         ['refresh_token', 'refreshToken', 'rt']
       ) || readNamed(
@@ -1814,7 +2302,11 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
       if (source === 'auth_user' && !accessToken) {
         accessToken = tokenFromResponse(storedAuthUser);
       }
-      if (!accessToken && platform === 'sub2api' && refreshToken) {
+      if (
+        platform === 'sub2api' &&
+        refreshToken &&
+        (source === 'refresh_token' || !accessToken)
+      ) {
         const refreshed = await jsonRequest(new URL('/api/v1/auth/refresh', apiBase).toString(), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1838,8 +2330,8 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
       0
     );
     if (/^\d+$/.test(text(storedUserID))) result.user_id = text(storedUserID);
-    if (storedAuthUser && typeof storedAuthUser === 'object') {
-      result.auth_user = storedAuthUser;
+    if (platform === 'newapi' && !result.user_id) {
+      result.user_id = guessNewAPIUserID();
     }
     result.diagnostics.cookie_present = Boolean(cookie);
     await verifyCurrentUser(result, platform, accessToken, cookie, sessionID);
@@ -1871,9 +2363,141 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
     throw new Error('unsupported capture candidate');
   }
 
+  const panelId = 'nexustok-upstream-capture-helper-panel';
+  const buttonId = 'nexustok-upstream-capture-helper-button';
+  let runtimeConfig = null;
+  let captureStarted = false;
+  let captureCompleted = false;
+  let captureStopped = false;
+  let retryTimer = 0;
+  let styleMounted = false;
+
+  function mountStatusStyle() {
+    if (styleMounted || typeof GM_addStyle !== 'function') return;
+    styleMounted = true;
+    GM_addStyle(
+      '#' + panelId + '{position:fixed;right:16px;bottom:64px;z-index:2147483647;max-width:360px;border-radius:8px;background:#fff;color:#111827;padding:10px 12px;font:12px system-ui;box-shadow:0 8px 24px rgba(0,0,0,.18);line-height:1.45}' +
+      '#' + panelId + '[data-tone=success]{border-left:4px solid #16a34a}' +
+      '#' + panelId + '[data-tone=error]{border-left:4px solid #dc2626}' +
+      '#' + panelId + '[data-tone=info]{border-left:4px solid #2563eb}' +
+      '#' + buttonId + '{position:fixed;right:16px;bottom:16px;z-index:2147483647;border:0;border-radius:8px;background:#111827;color:#fff;padding:10px 12px;font:13px system-ui;box-shadow:0 8px 24px rgba(0,0,0,.24);cursor:pointer}' +
+      '#' + buttonId + ':disabled{opacity:.65;cursor:default}'
+    );
+  }
+
+  function showStatus(message, tone, buttonLabel) {
+    if (!document.body) return;
+    mountStatusStyle();
+    let panel = document.getElementById(panelId);
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.id = panelId;
+      document.body.appendChild(panel);
+    }
+    panel.textContent = text(message);
+    panel.dataset.tone = tone || 'info';
+    let button = document.getElementById(buttonId);
+    if (!button) {
+      button = document.createElement('button');
+      button.id = buttonId;
+      button.type = 'button';
+      button.addEventListener('click', () => runCapture(true));
+      document.body.appendChild(button);
+    }
+    button.textContent = buttonLabel || '重新采集';
+    button.disabled = captureStarted || captureCompleted || captureStopped;
+  }
+
+  function capturePayloadValue(payload, snakeName, camelName) {
+    return payload && (payload[snakeName] || payload[camelName]);
+  }
+
+  function handoffExpired(payload) {
+    const expiresAt = Number.parseInt(
+      text(capturePayloadValue(payload, 'expires_at', 'expiresAt')),
+      10
+    );
+    return Number.isFinite(expiresAt) &&
+      expiresAt > 0 &&
+      Math.floor(Date.now() / 1000) >= expiresAt;
+  }
+
+  function scheduleRetry() {
+    if (
+      captureCompleted ||
+      captureStopped ||
+      !runtimeConfig ||
+      handoffExpired(runtimeConfig)
+    ) return;
+    if (retryTimer) window.clearTimeout(retryTimer);
+    showStatus('正在等待上游登录。完成登录后会自动继续，也可以点击“重新采集”。', 'info');
+    retryTimer = window.setTimeout(() => {
+      captureStarted = false;
+      void runCapture(false);
+    }, 3000);
+  }
+
+  function safeCaptureFailureMessage(error) {
+    const message = text(error && error.message).toLowerCase();
+    if (message.includes('expired') || message.includes('过期')) {
+      return '采集会话已过期，请回到 NexusTok 创建新的采集会话。';
+    }
+    return '暂未发现已验证的上游登录态，请完成登录后等待自动重试。';
+  }
+
+  function stopCapture(message) {
+    captureStarted = false;
+    captureStopped = true;
+    runtimeConfig = null;
+    if (retryTimer) {
+      window.clearTimeout(retryTimer);
+      retryTimer = 0;
+    }
+    clearStoredHandoff();
+    showStatus(message, 'error', '请重新创建采集会话');
+  }
+
+  function permanentCaptureFailureMessage(error) {
+    const message = text(error && error.message).toLowerCase();
+    if (message.includes('expired') || message.includes('过期')) {
+      return '采集会话已过期，请回到 NexusTok 重新创建采集会话。';
+    }
+    if (message.includes('callback') || message.includes('http ')) {
+      return '采集回传服务不可用，请回到 NexusTok 重新创建采集会话。';
+    }
+    return '采集会话不可用，请回到 NexusTok 重新创建采集会话。';
+  }
+
+  async function runCapture(manual) {
+    if (!runtimeConfig || captureStarted || captureCompleted || captureStopped) return;
+    if (handoffExpired(runtimeConfig)) {
+      stopCapture('采集会话已过期，请回到 NexusTok 重新创建采集会话。');
+      return;
+    }
+    captureStarted = true;
+    showStatus('正在验证并采集上游登录态...', 'info');
+    try {
+      await collect(runtimeConfig);
+      captureCompleted = true;
+      if (retryTimer) window.clearTimeout(retryTimer);
+      showStatus('采集完成，正在返回 NexusTok...', 'success');
+    } catch (error) {
+      captureStarted = false;
+      if (isPermanentCaptureError(error)) {
+        stopCapture(permanentCaptureFailureMessage(error));
+        return;
+      }
+      showStatus(
+        manual ? safeCaptureFailureMessage(error) : '正在等待上游登录...',
+        'info'
+      );
+      scheduleRetry();
+    }
+  }
+
   async function collect(payload) {
     if (!payload || !payload.capture_secret || payload.origin !== window.location.origin) {
-      throw new Error('capture handoff is invalid');
+      throw permanentCaptureError('capture handoff is invalid');
     }
     const platform = text(payload.platform).toLowerCase();
     const authType = text(payload.auth_type).toLowerCase();
@@ -1884,7 +2508,8 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
       helper_version: config.version || '__NEXUSTOK_HELPER_VERSION__',
       platform,
       auth_type: authType,
-      base_url: window.location.origin,
+      base_url: text(payload.management_base_url || payload.base_url) || window.location.origin,
+      management_base_url: text(payload.management_base_url || payload.base_url) || window.location.origin,
       origin: window.location.origin,
       api_base_url: apiBaseURL(payload),
       diagnostics: diagnosticsBase('capture_helper'),
@@ -1929,6 +2554,7 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
     }
     const safePayload = { ...result };
     delete safePayload.complete_url;
+    delete safePayload.auth_user;
     await send({ ...safePayload, complete_url: payload.complete_url });
     clearStoredHandoff();
     try {
@@ -1950,12 +2576,16 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
     }
   }
 
-  function markReady() {
+  function markReady(payload) {
     const readyPayload = {
       type: 'nexustok-upstream-capture-helper-ready',
       version: config.version || '__NEXUSTOK_HELPER_VERSION__',
       helper_version: config.version || '__NEXUSTOK_HELPER_VERSION__',
-      capture_id: text(config.capture_id || ''),
+      capture_id: text(
+        capturePayloadValue(payload, 'capture_id', 'captureID') ||
+        config.capture_id ||
+        ''
+      ),
     };
     try {
         window.dispatchEvent(new CustomEvent(readyEvent, {
@@ -1969,41 +2599,53 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
     } catch (_) {}
   }
 
-  const payload = handoff();
-  markReady();
-  if (!payload) {
-    return;
+  async function boot() {
+    const payload = handoff();
+    markReady(payload);
+    if (!payload) return;
+    runtimeConfig = {
+      ...payload,
+      capture_secret: capturePayloadValue(payload, 'capture_secret', 'captureSecret'),
+      complete_url: capturePayloadValue(payload, 'complete_url', 'completeURL'),
+      capture_id: capturePayloadValue(payload, 'capture_id', 'captureID'),
+      expires_at: capturePayloadValue(payload, 'expires_at', 'expiresAt'),
+      helper_version: capturePayloadValue(payload, 'helper_version', 'helperVersion'),
+    };
+    const normalizedPayload = runtimeConfig;
+    const expectedHelperVersion = text(
+      normalizedPayload.helper_version
+    );
+    if (expectedHelperVersion && expectedHelperVersion !== config.version) {
+      stopCapture('当前采集助手版本过旧，请回到 NexusTok 安装或更新 NexusTok Capture Helper。');
+      return;
+    }
+    const expectedOrigin = text(normalizedPayload.origin);
+    if (expectedOrigin && pageWindow.location.origin !== expectedOrigin) {
+      stopCapture('当前页面不是采集会话指定的上游站点，请重新创建采集会话。');
+      return;
+    }
+    if (handoffExpired(normalizedPayload)) {
+      stopCapture('采集会话已过期，请回到 NexusTok 重新创建采集会话。');
+      return;
+    }
+    if (
+      !normalizedPayload.capture_secret ||
+      !normalizedPayload.complete_url ||
+      !normalizedPayload.capture_id
+    ) {
+      stopCapture('采集参数无效，请回到 NexusTok 重新创建采集会话。');
+      return;
+    }
+    showStatus('NexusTok 采集助手已就绪，正在等待上游登录。', 'info');
+    window.setTimeout(() => void runCapture(false), 800);
   }
-  collect(payload).catch((error) => {
-    const requestedAuthType = text(payload.auth_type).toLowerCase();
-    const errorMessage = text(error && error.message).toLowerCase();
-    const safeMessage = requestedAuthType === 'auto'
-      ? 'automatic capture failed'
-      : errorMessage.includes('cookie')
-        ? 'cookie capture failed'
-        : errorMessage.includes('admin')
-        ? 'admin key capture failed'
-        : 'access token capture failed';
-    const diagnostics = error && error.captureDiagnostics
-      ? error.captureDiagnostics
-      : Object.assign(
-          diagnosticsBase('capture_helper'),
-          { failure_stage: 'capture', failure_reason: safeMessage }
-        );
-    diagnostics.failure_stage = diagnostics.failure_stage || 'capture';
-    diagnostics.failure_reason = diagnostics.failure_reason || safeMessage;
-    send({
-      capture_secret: payload.capture_secret,
-      complete_url: payload.complete_url,
-      capture_source: 'capture_helper',
-      helper_version: config.version || '__NEXUSTOK_HELPER_VERSION__',
-      platform: payload.platform,
-      auth_type: payload.auth_type,
-      origin: window.location.origin,
-      diagnostics,
-      error: safeMessage,
-    }).catch(() => {});
-  });
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot, { once: true });
+    markReady();
+  } else {
+    void boot();
+  }
 })();`
 
 func renderPlatformSiteCaptureScript(

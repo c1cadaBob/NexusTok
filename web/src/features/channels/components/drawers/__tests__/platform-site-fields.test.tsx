@@ -422,6 +422,34 @@ test('点击自动配置时同步预开窗口并仅提交自动认证方式', as
   openSpy.mockRestore()
 })
 
+test('安装采集助手时优先打开稳定助手地址', async () => {
+  const user = userEvent.setup()
+  const openedWindow = {
+    closed: false,
+    focus: vi.fn(),
+    location: { href: '' },
+    opener: null,
+  } as unknown as Window
+  const openSpy = vi.spyOn(window, 'open').mockReturnValue(openedWindow)
+
+  render(<PlatformSiteForm authType='auto' />)
+  await user.click(
+    screen.getByRole('button', { name: 'Capture upstream login state' })
+  )
+
+  const installButton = await screen.findByRole('button', {
+    name: 'Install Capture Helper',
+  })
+  await user.click(installButton)
+
+  expect(openSpy).toHaveBeenLastCalledWith(
+    'https://nexustok.example/api/channel/platform-site/capture-helper.user.js',
+    '_blank',
+    'noopener,noreferrer'
+  )
+  openSpy.mockRestore()
+})
+
 test('预开窗口被拦截时保留会话并提供手动打开按钮', async () => {
   const user = userEvent.setup()
   const openedWindow = {
@@ -444,6 +472,9 @@ test('预开窗口被拦截时保留会话并提供手动打开按钮', async ()
     name: 'Open upstream capture page',
   })
   expect(fallbackButton).toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: 'Install Capture Helper' })
+  ).toBeInTheDocument()
   await user.click(fallbackButton)
   expect(openSpy).toHaveBeenLastCalledWith(
     'https://upstream.example/?nexustok_capture=payload',

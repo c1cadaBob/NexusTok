@@ -1,7 +1,7 @@
 # 密钥调度策略与日志可观测性
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-03
+> 事实基线日期：2026-10-04
 > 主要代码来源：`model/routing_key.go`、`model/upstream_routing.go`、`middleware/distributor.go`、`service/channel_select.go`、`controller/channel-test.go`、`model/channel_cache.go`
 > 关联架构文档：[`docs/architecture/relay-routing-and-conversion.md`](architecture/relay-routing-and-conversion.md)、[`docs/architecture/provider-capability-matrix.md`](architecture/provider-capability-matrix.md)、[`docs/architecture/implementation-deviations.md`](architecture/implementation-deviations.md)、[`平台站点资源获取比较`](platform-site-resource-acquisition-comparison.md)
 
@@ -669,3 +669,24 @@ Relay 地址和渠道请求根地址没有统一校验，模型别名判断可�
   快照进行候选过滤；
 - 管理员诊断仅保留阶段、脱敏 URL、HTTP 状态、错误类别和快照回退信息，不记录密码、
   Token、Cookie、Session ID、Admin Key 或完整上游响应。
+
+### 14.10 2026-10-04 Capture 登录态与路由候选边界
+
+**变更前**：自动配置 Helper 在上游登录完成前可能提交失败，导致待保存渠道无法形成
+经过验证的登录态；NewAPI 旧版 Cookie 页面缺少稳定用户 ID 请求头，Sub2API 浏览器
+Session Restore 的旧版客户端协调键覆盖不足。
+
+**变更后**：只有 Capture Helper 验证当前用户或 Admin 权限成功后，Access Token、Cookie、
+Admin Key 或 Refresh Token 才能进入现有加密凭据结构；暂时未登录只保持 Capture
+Session `pending` 并自动/手动重试，不会创建任何路由候选。NewAPI 使用
+`localStorage.uid` 等安全来源生成数字 `New-Api-User`，Cookie 验证成功后才探测
+`/api/user/token`；Sub2API 使用 localStorage、页面状态和 IndexedDB 客户端 ID 恢复
+浏览器会话，并通过 `/api/v1/auth/me` 验证后才提交。
+
+Capture 产生的浏览器登录态不执行后台密码会话 Cleanup。渠道资源同步仍以每个完整
+Sub2API/NewAPI Key 的真实模型能力为准：单 Key 探测失败保留最近成功的
+`UpstreamKeyAbility` 和渠道模型，不使用账号级模型、分组目录或未验证模型扩张路由。
+Helper 诊断只参与管理员故障定位，不参与密钥优先级、权重、倍率或可路由资格判断；
+Helper `1.6.1` 合并当前站点可见 Cookie 与 `GM_cookie` Cookie，并删除完整
+`auth_user` 后才提交已验证登录态；管理地址路径保持为渠道管理地址，不改变路由候选来源；
+Cloudflare/Turnstile 等人工验证未完成时不产生路由变化。
