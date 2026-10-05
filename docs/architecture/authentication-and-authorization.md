@@ -409,3 +409,15 @@ Sub2API 站点可能无法把页面公开 Relay 配置带入完成结果；外�
 - 真实站点脱敏验收确认 Capture Session 完成并成功验证当前用户；部分资源失败仍
   保留最近成功快照。浏览器采集会话不由后台密码同步 Cleanup，未新增数据库字段、
   迁移或明文凭据结构。
+
+### 9.11 2026-10-05 Sub2API 过期时间标量与恢复前置条件
+
+**变更前**：Sub2API localStorage 的 `token_expires_at` 可能以数字标量保存，采集
+逻辑只按对象字段读取时会丢失有效期；缺少 Client ID 或恢复路由时，Session Restore
+也可能被误当作必需认证步骤。
+
+**变更后**：Helper 的命名存储读取支持对象和标量 JSON，并将毫秒值归一化为 Unix 秒；
+Sub2API 有 Access Token 时先验证 `/api/v1/auth/me`，Browser Restore 只有在发现
+`sub2api_auth_client_id` 和同源 `session/restore` 路由后才发送请求。否则仅保留
+`not_attempted` 诊断，不产生空请求。该边界不改变 Capture Secret、Origin、Helper
+Version、用户/渠道绑定、加密凭据和一次性 claim 校验。

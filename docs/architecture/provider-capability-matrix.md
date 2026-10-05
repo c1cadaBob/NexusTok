@@ -375,3 +375,15 @@ Admin 权限，诊断脱敏，Capture 记录用 Redis/内存 claim 防止并发�
 - 当前实现仍保留 Capture Session、加密 `PlatformSiteCredential`、一次性 claim、
   Helper/Bridge 来源校验，不恢复旧版账号池、Preview 或 `ChannelAccount` 同步，浏览器
   采集登录态不参与后台密码 Cleanup。
+
+### 3.10 2026-10-05 Sub2API 标量过期时间与 Session Restore 能力
+
+**变更前**：能力矩阵只记录了 Sub2API 的 Token、Refresh 和 IndexedDB 恢复来源，
+没有记录 `token_expires_at` 的数字标量兼容，也没有限定恢复请求必须具备 Client ID
+和真实同源路由。
+
+**变更后**：Capture Helper 可读取对象或标量形式的 `token_expires_at`，并归一化毫秒
+时间；Sub2API 只有在存在 `sub2api_auth_client_id` 且同源脚本发现
+`session/restore` 时才执行 Browser Restore。真实站点没有 Client ID 时直接沿
+`auth_token + auth_user + auth/me` 主路径完成，缺少恢复材料只标记
+`not_attempted`，不影响管理资源、Relay 模型探测或最近成功快照。

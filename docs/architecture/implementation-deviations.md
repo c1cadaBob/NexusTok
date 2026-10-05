@@ -312,8 +312,20 @@ Sub2API 站点认证和资源同步失败。
 存在 Refresh Token 才刷新；只有 Refresh Token 时直接刷新，刷新后重新调用兼容的
 `auth/me` 接口，并保存轮换后的令牌和过期时间。非 401、网络、WAF 和权限错误不触发
 Refresh。该偏差已通过适配器回归测试和指定站点脱敏验收关闭；管理/Relay 地址拆分、
-`custom_endpoints` 匿名复核、`partial/stale` 快照保护、Capture Session 加密保存、
-浏览器 Cleanup 隔离和旧版账号池不恢复的边界保持不变。
+  `custom_endpoints` 匿名复核、`partial/stale` 快照保护、Capture Session 加密保存、
+  浏览器 Cleanup 隔离和旧版账号池不恢复的边界保持不变。
+
+### 3.16 2026-10-05 Sub2API 标量过期时间与 Session Restore 误触发
+
+**变更前**：`token_expires_at` 以 JSON 数字保存时，Capture Helper 的对象字段读取
+会丢失过期时间；没有 `sub2api_auth_client_id` 或同源 `session/restore` 路由时，
+恢复分支仍可能发出空请求，诊断无法区分“未具备恢复条件”和“恢复失败”。
+
+**变更后**：`readNamed` 支持对象、数字、布尔值和字符串 JSON，过期时间统一归一化；
+Browser Session Restore 需要同时满足 Client ID 存在和同源路由发现，缺少条件时只记
+录脱敏 `not_attempted`。该偏差已由 `service/upstream_site_test.go` 和指定站点脱敏
+浏览器验收覆盖；Access Token、Refresh Token、管理/Relay 拆分、加密凭据、一次性
+claim、最近成功快照和浏览器 Cleanup 隔离保持不变。
 
 ## 4. 维护规则
 

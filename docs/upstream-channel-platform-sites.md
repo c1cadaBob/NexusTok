@@ -1218,3 +1218,28 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
   `PlatformSiteCredential`，不恢复旧版 `upstreamaccount` 账号池、Preview、
   `ChannelAccount` 同步链路；浏览器采集不参与后台密码同步 Cleanup，也不新增数据库
   字段、迁移或明文凭据结构。
+
+### 10.4 2026-10-05 Sub2API 标量过期时间与 Session Restore 触发边界
+
+**变更前**
+
+- 真实 Sub2API 页面可能把 `token_expires_at` 作为 localStorage 中的 JSON 数字或数字
+  字符串保存；采集脚本的对象字段读取分支可能丢失该过期时间，导致已采集的
+  Access Token 缺少有效期诊断；
+- Browser Session Restore 在没有 `sub2api_auth_client_id` 或没有从当前页面同源
+  JavaScript 发现 `session/restore` 路由时，容易发送空恢复请求或无依据地尝试固定
+  兼容地址。
+
+**变更后**
+
+- `readNamed` 同时处理 JSON 对象、数字、布尔值和字符串，`token_expires_at` 经过
+  毫秒 Unix 时间归一化后保存；Refresh Token 轮换仍要求 Access Token、Session
+  信息和有效过期字段完整；
+- Browser Session Restore 只有在存在 IndexedDB/localStorage 的
+  `sub2api_auth_client_id` 且发现真实同源 `session/restore` 路由时才发起，并携带
+  `X-Sub2API-Auth-Client`；缺少任一条件时记录脱敏的 `not_attempted`，不发送空请求，
+  不扩大跨站范围；
+- `https://tk.shour.bond` 当前以 `auth_token + auth_user + /api/v1/auth/me` 为
+  主路径，页面没有 Client ID 时不进入 Restore 分支，仍可正常完成 Capture、管理面
+  资源同步和 Relay 单 Key 模型探测。Capture Session、整体加密凭据、一次性 claim、
+  最近成功快照和浏览器 Cleanup 隔离保持不变。

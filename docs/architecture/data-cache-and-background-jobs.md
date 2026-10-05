@@ -479,3 +479,15 @@ Refresh Token 才进入轮换；只有 Refresh Token 时直接轮换，轮换成
 Key 成功时，Relay 单 Key 模型探测按独立资源状态记录；部分 Key/模型失败仍写入
 `partial/stale`、`using_snapshot` 并保留最近成功 Key、能力和渠道模型。Capture
 Session、加密凭据、一次性 claim 和浏览器 Cleanup 隔离不变，也不恢复旧版账号池同步。
+
+### 2026-10-05 Sub2API 采集标量过期时间与恢复请求抑制
+
+**变更前**：Capture 缓存记录只能稳定保留对象形式的浏览器认证字段；数字形式的
+`token_expires_at` 可能丢失，且没有 Client ID 的页面可能产生无效 Session Restore
+请求。
+
+**变更后**：Helper 接受 JSON 标量认证字段并在写入加密 Capture Credential 前归一化
+毫秒过期时间；只有明确存在 `sub2api_auth_client_id`、并由当前页面同源资源发现
+`session/restore` 路由时才执行恢复，否则记录脱敏 `not_attempted`。该逻辑保持
+Capture Session TTL、Redis/内存一次性 claim、失败 pending 语义和最近成功资源快照
+不变，浏览器登录态不进入后台密码 Cleanup。

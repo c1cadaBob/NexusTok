@@ -763,3 +763,15 @@ Session Restore 等兼容逻辑，但 Dashboard Refresh、Refresh Token 和代�
   `UpstreamKeyAbility` 或模型候选；
 - Capture 登录态仍通过当前加密凭据、用户/渠道绑定和一次性 claim 消费，不参与后台
   密码同步 Cleanup，也不恢复旧版账号池、Preview 或 `ChannelAccount` 同步链路。
+
+### 14.14 2026-10-05 Sub2API 过期时间解析与恢复候选边界
+
+**变更前**：浏览器存储中的 `token_expires_at` 若以 JSON 数字保存，采集阶段可能
+无法得到过期时间；没有 Browser Restore Client ID 或真实同源恢复路由时，空恢复请求
+还可能干扰有效 `auth_token` 的优先验证。
+
+**变更后**：采集脚本接受标量和对象两种存储形态，并将毫秒时间转换为 Unix 秒；
+Sub2API 仍先使用 `auth_token` 和 `auth_user` 验证 `/api/v1/auth/me`，只有存在
+`sub2api_auth_client_id` 且发现同源 `session/restore` 路由时才加入 Browser Restore
+候选。缺少材料时只记录 `not_attempted`，不产生跨站或空请求。路由资格仍只来自
+已确认 `ModelsSynced=true` 的完整 Key，失败时继续使用最近成功能力快照。

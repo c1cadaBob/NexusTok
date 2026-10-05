@@ -1242,3 +1242,17 @@ Capture Session 状态查询遇到不存在或过期时，前端立即停止轮�
 - 该链路仍使用 Capture Session、用户/渠道绑定、一次性 claim 和加密
   `PlatformSiteCredential`，不恢复旧版账号池、Preview 或 `ChannelAccount` 同步，
   浏览器采集登录态不进入后台密码 Cleanup。
+
+## 24. 2026-10-05 Sub2API 标量过期时间与 Session Restore 触发边界
+
+**变更前**：Sub2API 浏览器存储中的 `token_expires_at` 可能是 JSON 标量，通用的
+嵌套对象读取逻辑会把数字当成没有字段的对象；同时，缺少
+`sub2api_auth_client_id` 或同源 `session/restore` 路由时仍可能产生空恢复请求，
+使诊断把“没有恢复材料”误认为恢复失败。
+
+**变更后**：采集脚本的命名字段读取同时支持对象、数字、布尔值和字符串，并将毫秒
+时间归一化为 Unix 秒；只有明确存在 Client ID 且同源资源发现出真实
+`session/restore` 路由时才执行 Browser Restore，否则记录 `not_attempted` 并保持
+pending。指定站点实际走 `auth_token + auth_user + /api/v1/auth/me`，仍能保存过期
+时间并完成管理地址/Relay 地址拆分。该修复不改变单 Key `/v1/models` 探测、最近成功
+快照、加密凭据或旧版账号池不恢复的边界。

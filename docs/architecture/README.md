@@ -164,6 +164,19 @@ Refresh Token 才轮换令牌；只有 Refresh Token 时直接刷新，刷新后
 候选，不改变 Capture Session、整体加密凭据、一次性 claim、后台 Cleanup 隔离或
 最近成功快照语义，也不恢复旧版账号池和完整同步链路。
 
+### 2026-10-05 Sub2API 标量过期时间与 Session Restore 触发边界
+
+**变更前**：架构索引没有记录 Sub2API 浏览器存储中标量
+`token_expires_at` 的解析差异，也没有区分“没有 Browser Restore 材料”和“恢复接口
+失败”。
+
+**变更后**：Capture Helper 的命名字段读取支持 JSON 对象、数字、布尔值和字符串，
+并把毫秒过期时间归一化后写入脱敏采集结果。Browser Session Restore 只有在存在
+`sub2api_auth_client_id` 且同源 JavaScript 发现真实 `session/restore` 路由时才请求；
+否则记录 `not_attempted`，不发送空恢复请求。指定站点继续以
+`auth_token + auth_user + /api/v1/auth/me` 完成管理认证，Relay 与管理地址、加密
+凭据、一次性 claim、最近成功快照和浏览器 Cleanup 隔离保持不变。
+
 ## 变更记录
 
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |

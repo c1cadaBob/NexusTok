@@ -1456,7 +1456,9 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
       const raw = readStorage(name);
       if (!raw) continue;
       const parsed = parseJSON(raw);
-      const value = parsed ? nestedValue(parsed, nestedNames, 0) : text(raw);
+      const value = parsed !== null
+        ? (typeof parsed === 'object' ? nestedValue(parsed, nestedNames, 0) : text(parsed))
+        : text(raw);
       if (value) return value;
     }
     try {
@@ -2366,13 +2368,22 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
       );
     }
     diagnostics.auth_client_id_present = Boolean(clientID);
-    const paths = [
-      '/api/v1/auth/session/restore',
-      '/api/auth/session/restore',
-      '/auth/session/restore',
-    ];
+    if (!clientID) {
+      diagnostics.browser_session_restore_status = 'not_attempted';
+      diagnostics.browser_session_restore_message = '未发现浏览器会话恢复 Client ID';
+      return { diagnostics };
+    }
+    let discoveredPaths = [];
+    try {
+      discoveredPaths = await discoverAPIPaths('sub2_session_restore');
+    } catch (_) {}
+    if (!Array.isArray(discoveredPaths) || discoveredPaths.length === 0) {
+      diagnostics.browser_session_restore_status = 'not_attempted';
+      diagnostics.browser_session_restore_message = '未从同源 JavaScript 发现浏览器会话恢复接口';
+      return { diagnostics };
+    }
     const candidatePaths = await expandedAPIPaths(
-      paths,
+      discoveredPaths,
       'sub2_session_restore',
       result
     );
