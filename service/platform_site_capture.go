@@ -1763,6 +1763,17 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
     return window.location.origin;
   }
 
+  function apiBasePathPrefix(pathname) {
+    const normalized = cleanAPIPathPrefix(pathname);
+    for (const suffix of ['/api/v1', '/api']) {
+      if (normalized === suffix) return '';
+      if (normalized.endsWith(suffix)) {
+        return normalized.slice(0, -suffix.length) || '';
+      }
+    }
+    return normalized;
+  }
+
   function cleanAPIPathPrefix(pathname) {
     const pageSegments = new Set([
       'login',
@@ -1803,12 +1814,16 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
     const prefixes = new Set(['']);
     const candidates = [
       payload && payload.base_url,
+      payload && payload.api_base_url,
       pageWindow.location && pageWindow.location.href,
+      pageWindow.__APP_CONFIG__ && pageWindow.__APP_CONFIG__.api_base_url,
+      pageWindow.__APP_CONFIG__ && pageWindow.__APP_CONFIG__.apiBaseUrl,
+      readStorage('api_base_url'),
     ];
     for (const raw of candidates) {
       try {
         const parsed = new URL(text(raw), window.location.href);
-        const prefix = cleanAPIPathPrefix(parsed.pathname);
+        const prefix = apiBasePathPrefix(parsed.pathname);
         if (!prefix || prefix === '/api' || prefix.includes('/api/')) continue;
         prefixes.add(prefix);
         const firstSegment = '/' + prefix.split('/').filter(Boolean)[0];
@@ -1831,10 +1846,14 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
         return /["'](\/[^"']*api\/user\/self[^"']*)["']/g;
       case 'token':
         return /["'](\/[^"']*api\/user\/(?:token|access_token|access-token)[^"']*)["']/g;
+      case 'newapi_refresh':
+        return /["'](\/[^"']*api\/user\/auth\/refresh[^"']*)["']/g;
       case 'sub2_me':
         return /["'](\/[^"']*(?:api\/v1\/)?auth\/me[^"']*)["']/g;
       case 'sub2_session_restore':
         return /["'](\/[^"']*session\/restore[^"']*)["']/g;
+      case 'sub2_refresh':
+        return /["'](\/[^"']*(?:api\/v1\/)?auth\/refresh[^"']*)["']/g;
       default:
         return null;
     }
@@ -2095,7 +2114,8 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
     });
   }
 
-  async function restoreSub2APIBrowserSession(apiBase) {
+  async function restoreSub2APIBrowserSession(result) {
+    const apiBase = result.api_base_url;
     const diagnostics = diagnosticsBase('browser_session_restore');
     let clientID = readNamed(
       ['sub2api_auth_client_id'],
@@ -2117,7 +2137,7 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
     const candidatePaths = await expandedAPIPaths(
       paths,
       'sub2_session_restore',
-      { base_url: apiBase }
+      result
     );
     for (const path of candidatePaths) {
       try {
@@ -2148,59 +2168,67 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
     return { diagnostics };
   }
 
-  async function readNewAPIAuthBundle(apiBase) {
-    try {
-      const cookie = await readCookieHeader(apiBase);
-      const userID = guessNewAPIUserID();
-      const payload = await jsonRequest(
-        new URL('/api/user/auth/refresh', apiBase).toString(),
-        {
-          method: 'POST',
-          headers: {
-            Accept: 'application/json',
-            ...newAPIHeaders(userID, ''),
-          },
-          cookie,
+  async function readNewAPIAuthBundle(result) {
+    const apiBase = result.api_base_url;
+    const cookie = await readCookieHeader(apiBase);
+    const userID = guessNewAPIUserID();
+    const candidatePaths = await expandedAPIPaths(
+      ['/api/user/auth/refresh'],
+      'newapi_refresh',
+      result
+    );
+    for (const path of candidatePaths) {
+      try {
+        const payload = await jsonRequest(
+          new URL(path, apiBase).toString(),
+          {
+            method: 'POST',
+            headers: {
+              Accept: 'application/json',
+              ...newAPIHeaders(userID, ''),
+            },
+            cookie,
+          }
+        );
+        const data = payload && payload.data;
+        const session = data && data.session;
+        const authUser = data && data.user;
+        const hasUserIdentity = Boolean(
+          authUser &&
+          typeof authUser === 'object' &&
+          (
+            nestedValue(authUser, ['id', 'user_id', 'userid', 'uid'], 0) ||
+            nestedValue(authUser, ['username', 'user_name', 'login', 'email', 'mail'], 0)
+          )
+        );
+        if (
+          !payload ||
+          payload.success !== true ||
+          !data ||
+          data.token_type !== 'Bearer' ||
+          !session ||
+          session.current !== true ||
+          !hasUserIdentity
+        ) {
+          continue;
         }
-      );
-      const data = payload && payload.data;
-      const session = data && data.session;
-      const authUser = data && data.user;
-      const hasUserIdentity = Boolean(
-        authUser &&
-        typeof authUser === 'object' &&
-        (
-          nestedValue(authUser, ['id', 'user_id', 'userid', 'uid'], 0) ||
-          nestedValue(authUser, ['username', 'user_name', 'login', 'email', 'mail'], 0)
-        )
-      );
-      if (
-        !payload ||
-        payload.success !== true ||
-        !data ||
-        data.token_type !== 'Bearer' ||
-        !session ||
-        session.current !== true ||
-        !hasUserIdentity
-      ) {
-        return null;
-      }
-      const accessToken = text(data.access_token).replace(/^Bearer\s+/i, '');
-      const expiresAt = normalizeExpiresAt(data.access_expires_at);
-      if (!accessToken || !session.sid || !expiresAt || expiresAt <= Math.floor(Date.now() / 1000)) {
-        return null;
-      }
-      return {
-        accessToken,
-        refreshToken: '',
-        expiresAt,
-        authUser,
-        sessionID: text(session.sid),
-        cookie,
-      };
-    } catch (_) {
-      return null;
+        const accessToken = text(data.access_token).replace(/^Bearer\s+/i, '');
+        const expiresAt = normalizeExpiresAt(data.access_expires_at);
+        if (!accessToken || !session.sid || !expiresAt || expiresAt <= Math.floor(Date.now() / 1000)) {
+          continue;
+        }
+        return {
+          accessToken,
+          refreshToken: '',
+          expiresAt,
+          authUser,
+          sessionID: text(session.sid),
+          cookie,
+          path,
+        };
+      } catch (_) {}
     }
+    return null;
   }
 
   async function send(payload) {
@@ -2439,7 +2467,7 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
     let cookie = '';
     let storedAuthUser = null;
     if (source === 'dashboard_refresh') {
-      const bundle = await readNewAPIAuthBundle(apiBase);
+      const bundle = await readNewAPIAuthBundle(result);
       if (!bundle) throw new Error('NewAPI Dashboard refresh session is unavailable');
       accessToken = bundle.accessToken;
       refreshToken = bundle.refreshToken;
@@ -2447,9 +2475,9 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
       sessionID = bundle.sessionID || '';
       cookie = bundle.cookie || '';
       storedAuthUser = bundle.authUser;
-      markAttempt(result.diagnostics, '/api/user/auth/refresh');
+      markAttempt(result.diagnostics, bundle.path || '/api/user/auth/refresh');
     } else if (source === 'browser_restore') {
-      const restored = await restoreSub2APIBrowserSession(apiBase);
+      const restored = await restoreSub2APIBrowserSession(result);
       Object.assign(result.diagnostics, restored.diagnostics || {});
       if (!restored.accessToken) throw new Error('Sub2API browser session restore did not return an access token');
       accessToken = restored.accessToken;
@@ -2501,15 +2529,45 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
         refreshToken &&
         (source === 'refresh_token' || !accessToken)
       ) {
-        const refreshed = await jsonRequest(new URL('/api/v1/auth/refresh', apiBase).toString(), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ refresh_token: refreshToken }),
-        });
-        markAttempt(result.diagnostics, '/api/v1/auth/refresh');
-        accessToken = tokenFromResponse(refreshed);
-        refreshToken = refreshTokenFromResponse(refreshed) || refreshToken;
-        expiresAt = expiryFromResponse(refreshed) || expiresAt;
+        const refreshPaths = await expandedAPIPaths(
+          ['/api/v1/auth/refresh', '/api/auth/refresh', '/auth/refresh'],
+          'sub2_refresh',
+          result
+        );
+        let refreshedAccessToken = '';
+        let refreshedRefreshToken = '';
+        let refreshedExpiresAt = 0;
+        let refreshError = null;
+        let refreshPath = '';
+        for (const path of refreshPaths) {
+          try {
+            markAttempt(result.diagnostics, path);
+            const refreshed = await jsonRequest(new URL(path, apiBase).toString(), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ refresh_token: refreshToken }),
+            });
+            const candidateAccessToken = tokenFromResponse(refreshed);
+            if (!candidateAccessToken) {
+              refreshError = new Error('Sub2API refresh response did not return an access token');
+              continue;
+            }
+            refreshedAccessToken = candidateAccessToken;
+            refreshedRefreshToken = refreshTokenFromResponse(refreshed) || refreshToken;
+            refreshedExpiresAt = expiryFromResponse(refreshed) || expiresAt;
+            refreshPath = path;
+            break;
+          } catch (error) {
+            refreshError = error;
+          }
+        }
+        if (!refreshedAccessToken) {
+          throw refreshError || new Error('Sub2API refresh endpoint unavailable');
+        }
+        markAttempt(result.diagnostics, refreshPath);
+        accessToken = refreshedAccessToken;
+        refreshToken = refreshedRefreshToken;
+        expiresAt = refreshedExpiresAt;
       }
     }
     result.diagnostics.auth_token_present = Boolean(

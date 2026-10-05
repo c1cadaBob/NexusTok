@@ -1,7 +1,7 @@
 # 鉴权、会话与授权原理
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-04
+> 事实基线日期：2026-10-05
 > 主要代码来源：`middleware/auth.go`、`middleware/token_auth.go`、`service/auth_session.go`、`model/user_session.go`、`service/authz/`、`controller/`、`oauth/`
 > 关联详细文档：[`../authentication.md`](../authentication.md)、[`../rate-limiting.md`](../rate-limiting.md)、[`system-overview.md`](./system-overview.md)
 
@@ -347,3 +347,26 @@ RSA-OAEP-SHA256，长密码使用 `password-v2` OAEP 标签和
 协议，其它网络、权限、5xx 或无效配置直接失败。Sub2API 保持邮箱优先、明确凭据错误
 或 401 后才回退用户名的顺序，并只用本轮 Refresh Token 执行精确登出。所有路径均
 不把密码、Token、Cookie、Session ID 或完整上游响应写入日志、审计字段或普通响应。
+
+### 9.8 2026-10-05 旧版浏览器采集认证候选迁移
+
+**变更前**：浏览器 Capture 已有当前用户验证、Cookie 合并、Session Restore 和
+一次性保存边界，但 NewAPI Dashboard Refresh、Sub2API Refresh Token 以及带反向代理
+子路径的认证请求仍存在固定路径假设；旧版同源脚本 API 路径发现没有覆盖全部认证候选。
+
+**变更后**：
+
+- NewAPI 自动认证先尝试 Dashboard Refresh，再尝试 Access Token、Admin Key 和 Cookie。
+  Refresh 请求继续发送页面 Origin、可用 Cookie 和数字 `New-Api-User`，同时支持从同源
+  JavaScript 资源发现 `/api/user/auth/refresh` 的部署路径。新版只需要 Bearer 的
+  `/api/user/self` 等接口不强制要求用户头，旧版 Cookie 接口仍可使用数字用户头；
+- Sub2API 自动认证继续按 Auth Token、Auth User、Refresh Token、Browser Restore、
+  Access Token、Admin Key、Cookie 顺序工作。Refresh Token 只在需要恢复 Access Token
+  时请求 `/api/v1/auth/refresh` 及兼容路径，成功后重新调用 `/api/v1/auth/me`、
+  `/api/auth/me` 或 `/auth/me` 验证；
+- 认证路径会从 handoff 管理地址、回传 `api_base_url`、页面 URL、
+  `__APP_CONFIG__` 和存储状态生成候选，剥离 `/api` 与 `/api/v1` 后保留部署前缀。
+  同源脚本发现只扫描当前页面同源 JavaScript 和性能资源，不能扩大到任意注册域；
+- 认证来源、Origin、Helper 版本、Capture ID、Capture Secret 和用户/管理员验证仍由
+  服务端校验。自动模式只接受 `AuthUserVerified` 或 `AdminKeyVerified` 对应的结果，
+  不改变完整凭据加密保存、一次性 claim、桥接来源校验或诊断脱敏规则。

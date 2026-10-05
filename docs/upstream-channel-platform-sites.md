@@ -1,7 +1,7 @@
 # 上游渠道与平台站点设计
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-04
+> 事实基线日期：2026-10-05
 > 主要代码来源：`model/upstream_channel.go`、`model/routing_key.go`、`service/upstream_site.go`、`controller/upstream_channel.go`、`controller/channel-test.go`
 > 关联架构文档：[`docs/architecture/relay-routing-and-conversion.md`](architecture/relay-routing-and-conversion.md)、[`docs/architecture/provider-capability-matrix.md`](architecture/provider-capability-matrix.md)、[`docs/architecture/data-cache-and-background-jobs.md`](architecture/data-cache-and-background-jobs.md)、[`平台站点资源获取比较`](platform-site-resource-acquisition-comparison.md)
 
@@ -1106,6 +1106,38 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
   一次性消费流程；浏览器登录态仍不进入后台密码会话 Cleanup，资源同步失败也不覆盖
   最近成功快照。
 
+### 9.13 2026-10-05 旧版浏览器采集策略迁移校准
+
+**变更前**
+
+- 当前 `PlatformSiteCapture` 已复刻旧版大部分浏览器采集方式，但 NewAPI Dashboard
+  Refresh 仍只尝试固定 `/api/user/auth/refresh`，Sub2API Refresh Token 也只调用固定
+  `/api/v1/auth/refresh`，反向代理子路径或同源脚本中暴露的兼容路径无法参与这两个刷新
+  分支；
+- Sub2API 页面 `api_base_url` 指向带路径的相对 API 根时，脚本只保留 Origin，后续
+  `auth/me`、Session Restore 和 Refresh 候选需要依赖其它前缀推断，容易和旧版“按页面
+  子路径补全 API 路由”的采集方式不一致。
+
+**变更后**
+
+- 本次只迁移旧版浏览器登录态采集方式，不恢复旧版 `upstreamaccount` 账号池、Preview
+  或 ChannelAccount 同步链路。采集结果仍通过当前 Capture Session、
+  `PlatformSiteCredential` 整体加密、绑定用户/渠道和一次性 claim 保存；
+- NewAPI Dashboard Refresh 加入同源脚本路径发现和子路径前缀扩展，继续向
+  `POST /api/user/auth/refresh` 请求携带页面 Origin、当前站点 Cookie 和可用的数字
+  `New-Api-User`，兼容新版不要求 `New-Api-User` 的 Bearer 路径和旧版需要用户头的
+  Cookie 路径；
+- Sub2API Refresh Token 分支加入 `/api/v1/auth/refresh`、`/api/auth/refresh`、
+  `/auth/refresh` 及同源脚本发现路径，只有明确存在 Refresh Token 且需要恢复 Access
+  Token 时调用；恢复后仍必须通过 `auth/me` 验证当前用户；
+- API 前缀候选同时读取 handoff 管理地址、回传 `api_base_url`、当前页面 URL、页面
+  `__APP_CONFIG__.api_base_url/apiBaseUrl` 和本地 `api_base_url` 存储值。若候选路径以
+  `/api` 或 `/api/v1` 结尾，会剥离 API 后缀后再拼接 `auth/me`、Session Restore 或
+  Refresh 路径，保留代理子路径但不生成重复 `/api/v1/api/v1/...`；
+- 同源脚本发现仍只扫描当前页面同源 JS 资源，服务端仍只接受同 Host 或严格 `api.`
+  父子 Host 的管理/API 地址关系，不恢复旧版任意同注册域名放宽。浏览器采集态仍不进入
+  后台密码同步 Cleanup，资源失败继续保留最近成功快照。
+
 ## 与架构文档的关系
 
 本文保留平台站点、账号同步、子密钥字段、倍率/权重公式、权限、SSRF 和测试验收等详细规则；架构文档描述平台站点如何进入渠道过滤、Routing Key 和 Relay 转发。新增平台类型或调整同步/路由语义时，必须同时更新本文、能力矩阵和偏差表。
@@ -1122,3 +1154,4 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
 | 2026-10-02 | 密码同步会话清理与自动配置边界 | 密码同步可能复用历史登录态；NewAPI/Sub2API 注销路径、资源失败快照保护、浏览器会话所有权和自动配置一次性消费边界未统一 | 每轮密码同步直接登录并清理本轮会话；NewAPI 登出后精确删除 SID，Sub2API 仅 Refresh Token 登出，禁止撤销其他会话；清理失败不覆盖快照；自动配置完成验证、脱敏诊断、现有加密保存和 Redis/内存 claim 一次性消费，表单仅保留账号密码/自动配置 | 平台站点认证、资源同步、Capture Helper、前端表单和缓存 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_capture.go`、`pkg/cachex/hybrid_cache.go`、`controller/channel.go`、前端平台站点组件、本机参考源和定向测试 |
 | 2026-10-03 | 认证流程保存兼容与 NewAPI 加密登录 | 认证流程请求中的残留用户名被误判为手动凭据；NewAPI 新版密码加密登录协议和 Sub2API 邮箱主体/精确登出边界未在专项文档集中登记 | 有 `auth_flow_id` 时前端不再提交用户名/密码，后端仅兼容用户名残留并以流程真实身份为准；NewAPI 实现加密密钥读取、RSA-OAEP/v2 信封和仅 404/405 明文回退；Sub2API 保持邮箱优先、凭据错误后回退用户名和本轮 Refresh Token 登出 | 渠道保存、NewAPI/Sub2API 密码认证、认证流程一次性消费、脱敏诊断和最近成功快照 | `web/src/features/channels/lib/channel-form.ts`、`controller/upstream_channel.go`、`service/newapi_password_encryption.go`、`service/upstream_site_adapters.go`、相关 Go/React 定向测试；New API/Sub2API/all-api-hub 本机参考源 |
 | 2026-10-04 | Capture Helper 等待重试与浏览器登录态兼容 | Helper 过早采集、下划线 handoff 字段被驼峰校验误判；NewAPI `uid + Cookie` 缺少 `New-Api-User`，Sub2API 缺少 IndexedDB 客户端 ID 兼容 | Helper DOM 就绪后等待登录并自动/手动重试，不把暂时未登录标记为失败；NewAPI 携带数字用户 ID 请求头并在 Cookie 验证后探测 Token；Sub2API 读取 IndexedDB Session Client ID；浏览器登录态不进入后台 Cleanup | 自动配置采集、NewAPI/Sub2API 登录态验证和渠道保存 | `service/platform_site_capture.go`、`service/upstream_site_test.go`、旧版 `service/upstreamaccount/capture.go`、New API/Sub2API/all-api-hub 参考源 |
+| 2026-10-05 | 旧版浏览器自动采集方式迁移校准 | Dashboard Refresh、Sub2API Refresh 和带路径 API 根仍有固定路径/Origin 化处理，旧版同源脚本路径发现和代理子路径补全没有覆盖所有采集分支 | Refresh 分支纳入 `expandedAPIPaths` 与同源 JS 路径发现；API 前缀从管理地址、回传 API 地址、页面配置和当前页面共同推导，并剥离 `/api`/`/api/v1` 后缀；保留当前加密、一次性 claim、桥接和严格 Host 关系 | 自动配置采集、NewAPI Dashboard Refresh、Sub2API Refresh/Session Restore、反向代理子路径和渠道保存 | `service/platform_site_capture.go`、`service/upstream_site_test.go`、旧版 `service/upstreamaccount/capture.go`、New API/Sub2API/all-api-hub 本机参考源、定向 Go/React 测试 |

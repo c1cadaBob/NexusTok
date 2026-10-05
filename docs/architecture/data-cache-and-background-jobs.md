@@ -1,7 +1,7 @@
 # 数据库、缓存与后台任务
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-04
+> 事实基线日期：2026-10-05
 > 主要代码来源：`model/main.go`、`common/database.go`、`common/redis.go`、`model/channel_cache.go`、`model/sync.go`、`service/system_task.go`、`service/task_polling.go`、`main.go`
 > 关联详细文档：[`system-overview.md`](./system-overview.md)、[`authentication-and-authorization.md`](./authentication-and-authorization.md)、[`tasks-and-plugins.md`](./tasks-and-plugins.md)、[`../rate-limiting.md`](../rate-limiting.md)
 
@@ -94,6 +94,22 @@ NewAPI 的浏览器态候选允许从 `uid`、页面用户状态和 JWT 得到�
 handoff；管理页仅在窗口、Origin 和 Capture ID 匹配时回复。跨源 `javascript:` 导航
 被浏览器拒绝时，前端复制不含敏感值的短启动片段；片段在上游页面上下文请求一次性桥接
 脚本后再执行。该复制降级不会改变 Capture 缓存的 TTL、claim 或一次性消费语义。
+
+### 7.9 2026-10-05 旧版浏览器采集路径与缓存边界
+
+**变更前**：Capture Session 的缓存和 claim 生命周期已经独立于后台同步，但
+Dashboard Refresh、Sub2API Refresh Token 与 Session Restore 仍有固定路径假设，反向
+代理子路径未在所有浏览器认证分支共享。
+
+**变更后**：所有浏览器认证分支继续读写同一个短期加密 Capture Session，不新增缓存键、
+数据库字段或持久化明文凭据。NewAPI Refresh、Sub2API Refresh 和 Session Restore 统一
+从 handoff、`api_base_url`、页面配置、当前页面和存储状态推导 API 前缀，并通过同源
+JavaScript/性能资源发现兼容路径。候选调用只扩大路径兼容性，不改变一次性 claim、10
+分钟 TTL、用户/渠道绑定、Origin/Helper 版本校验或桥接来源校验。
+
+未登录、SPA 状态尚未形成、WAF/Turnstile 或临时上游错误仍保持 `pending`，不会写入
+永久失败，也不会删除最近成功资源快照。成功保存后仍消费 Capture 记录；后续校验、数据库
+保存或入队失败仍释放 claim。浏览器登录态不进入后台密码同步 Cleanup。
 
 ## 2. 数据库选择和迁移
 
@@ -319,6 +335,7 @@ SQLite、MySQL 8.2.0 和 PostgreSQL 15.19 均通过 AutoMigrate 二次执行、A
 | 2026-09-30 | 系统维护任务与缓存边界 | 维护页直连 GitHub，未有更新/回滚任务，旧版回滚会消耗 `.backup`；Docker helper 和租约接管未登记 | 后端缓存 Release 并经 Root 任务执行更新、回滚和重启；裸机稳定 `.backup` 可重复交换，Docker 使用 socket/helper、唯一候选容器和健康检查；不修改 SystemTask 表字段或新增迁移 | GitHub 缓存、SystemTask、任务租约、裸机文件交换、Docker 容器生命周期 | `service/system_update.go`、`service/system_update_docker.go`、`model/system_task.go`、`service/system_update_test.go`；未执行真实生产容器切换 |
 | 2026-10-02 | Docker 自动更新端口预检 | Docker 更新在旧容器仍占用宿主端口时直接启动同端口 staging 容器，可能在任务 55% 处失败并保持旧版本 | bridge/Compose 网络增加无宿主端口 preflight 探活，正式容器只在旧容器停止并改名后启动；端口冲突错误脱敏并提示检查其它宿主进程或容器 | Docker Engine helper、系统任务终态、维护页失败原因 | `go test ./service -run 'Docker(Update\|Updated\|Readiness\|Helper\|Pull\|Staging)' -count=1`；不新增数据库表、字段或迁移 |
 | 2026-10-03 | 平台认证流程与临时会话材料 | Auth Flow 表单残留字段、密码同步临时令牌和最近成功资源快照的生命周期边界未集中记录 | 流程保存只消费服务端流程身份；密码同步临时材料只在本轮会话内使用并清理；认证/清理失败不覆盖最近成功快照；Capture 登录态继续由独立 claim 管理 | 平台站点 Auth Flow、后台同步、Redis/内存缓存和资源快照 | `controller/upstream_channel.go`、`service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/newapi_password_encryption.go`、相关定向测试；无数据库结构变更 |
+| 2026-10-05 | 旧版浏览器采集路径迁移 | Capture 缓存文档未记录 Dashboard Refresh、Sub2API Refresh/Session Restore 对同源脚本发现和反向代理前缀的共享边界 | 刷新与恢复分支复用 `expandedAPIPaths`、同源 JS/性能资源发现和 API 后缀剥离；保持短期加密缓存、一次性 claim、pending 重试、最近成功快照和后台 Cleanup 隔离 | Capture Session、Redis/内存 claim、浏览器桥接和平台站点资源同步 | `service/platform_site_capture.go`、`service/upstream_site_test.go`、架构/专项文档和定向测试 |
 | 2026-09-30 | v0.2.2 生产数据库与缓存默认值 | Compose 使用浮动 Redis/PostgreSQL 标签、默认密码和未固定的应用数据路径；单容器与完整生产拓扑边界不清晰 | Compose 固定 PostgreSQL 15 + Redis 7，密码由 `.env`/部署脚本生成，服务健康后启动应用，端口为 `3030`，SQLite/无 Redis 回退和既有数据库兼容行为保持不变 | `docker-compose.yml`、`scripts/deploy.sh`、`model/main.go`、`common/redis.go`、中文部署文档 | `docker compose config`、脚本语法检查、隔离三服务栈和真实 SQLite 3.50.4/MySQL 8.2.0/PostgreSQL 15.19 矩阵已通过；生产 Dockerfile 完整构建因 `proxy.golang.org` 超时未完成，最低版本和独立日志库矩阵未覆盖 |
 | 2026-10-01 | v0.2.3 部署文档与依赖边界 | 文档没有完整记录单机/多机的共享服务、健康检查、备份和故障边界；Secret 名称与项目执行环境不一致 | 文档明确 Compose 生产默认、外部多机 DSN/Redis、主从任务职责、Redis 拓扑差异和数据迁移限制；Docker 工作流改用 `DOCKER_USERNAME`/`DOCKER_PASSWORD`；web/Electron 依赖最小安全升级不改变缓存、任务和数据库代码 | `README*.md`、`docs/installation/BT.md`、`.github/workflows/docker-*.yml`、web/Electron lockfile | Bun/npm 审计、govulncheck 和隔离 Compose 三服务健康检查已通过；未修改 GORM、数据库驱动、迁移或缓存代码；推送反馈仍有 1 条中等级 Dependabot 警报，认证 API、发布镜像和多架构 manifest 待验证 |
 | 2026-10-01 | v0.2.3 发布收尾 | 一次性 Dependabot 处理工作流仍在仓库，缓存与后台任务文档仍记录 #107 开放及正式发布待验证 | 删除一次性工作流；GitHub 远端安全页面确认 #107 已完成处理且没有开放警报；本次只保留发布后镜像、Release 和 Electron 工作流核验，不改变 Redis、Session、任务租约或数据库兼容行为 | `.github/release-notes/v0.2.3.md`、`.github/workflows/dependabot-v023-release.yml`、发布工作流 | 远端安全页面无开放 Dependabot 警报；正式标签推送后核验多架构 manifest、Cosign、Release 产物和镜像运行状态；未修改缓存代码、后台任务代码或数据库 Schema |

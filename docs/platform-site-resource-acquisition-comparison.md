@@ -1,7 +1,7 @@
 # Sub2API 与 New API 平台站点资源获取链路分析及版本差异
 
 > 文档状态：源码事实分析
-> 分析日期：2026-10-04
+> 分析日期：2026-10-05
 > 适用范围：旧版备份、Sub2API/New API/all-api-hub 本机参考源、当前 NexusTok
 > 安全边界：本文只记录接口契约、字段语义、代码入口和失败处理，不记录任何真实密码、Cookie、Access Token、Refresh Token、Admin Key、测试账号、环境变量或完整密钥。
 
@@ -1150,3 +1150,35 @@ Capture Session 状态查询遇到不存在或过期时，前端立即停止轮�
 重新创建会话；未完成登录、Turnstile/WAF 或验证码仍只保持 pending 并等待重试，桥接
 不绕过上游安全验证。浏览器采集态与后台账号密码同步会话继续分离，资源失败仍保留
 最近成功快照。
+
+## 21. 2026-10-05 旧版浏览器采集方式迁移校准
+
+**变更前**
+
+- 旧版 `service/upstreamaccount/capture.go` 的浏览器采集会从同源脚本发现真实 API
+  路由，并根据目标页面路径补全代理前缀；当前平台站点实现虽然已合并 DOM 等待、重试、
+  NewAPI `New-Api-User` 和 Sub2API IndexedDB Client ID，但 Dashboard Refresh 和
+  Refresh Token 分支仍存在固定路径假设；
+- 当前脚本解析 Sub2API `api_base_url` 时优先保留 Origin，部署在 `/base/api/v1` 等
+  子路径下的站点可能需要依赖额外路径猜测，和旧版“API 后缀剥离后保留部署前缀”的
+  自动配置方式不完全一致。
+
+**变更后**
+
+- 仅迁移旧版浏览器登录态采集策略，不恢复旧版账号池、预览和 ChannelAccount 资源链路。
+  采集输出继续落入当前 `PlatformSiteCredential`，由 Capture Session 绑定管理员、渠道、
+  Origin 和 Helper 版本，并通过短期加密缓存和一次性 claim 消费；
+- NewAPI Dashboard Refresh 候选改为同源脚本发现和路径前缀扩展后的
+  `/api/user/auth/refresh`，仍发送页面 Origin、Cookie 和可用数字 `New-Api-User`，并严格
+  校验 Bundle 的 `success`、Bearer 类型、当前 Session、用户身份、Access Token 和过期
+  时间；
+- Sub2API Refresh Token 候选改为 `/api/v1/auth/refresh`、`/api/auth/refresh`、
+  `/auth/refresh` 加同源脚本发现路径。只有存在 Refresh Token 且需要恢复 Access Token
+  时调用，刷新成功后继续通过 `auth/me` 验证；
+- API 前缀来源扩展为 handoff 管理地址、回传 API 地址、当前页面、`__APP_CONFIG__` 和
+  `api_base_url` 存储。路径以 `/api` 或 `/api/v1` 结尾时只保留部署前缀，用于生成
+  `/base/api/v1/auth/me`、`/base/api/v1/auth/session/restore`、`/base/api/v1/auth/refresh`
+  等候选，避免重复 API 后缀；
+- 同源脚本发现仍限制在当前 Origin，服务端地址关系继续使用同 Host 或严格 `api.` 父子
+  Host。浏览器 Capture 登录态仍不参与后台密码会话 Cleanup，资源失败、分页失败、安全
+  验证和权限不足继续保留最近成功快照。

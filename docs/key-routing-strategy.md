@@ -1,7 +1,7 @@
 # 密钥调度策略与日志可观测性
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-04
+> 事实基线日期：2026-10-05
 > 主要代码来源：`model/routing_key.go`、`model/upstream_routing.go`、`middleware/distributor.go`、`service/channel_select.go`、`controller/channel-test.go`、`model/channel_cache.go`
 > 关联架构文档：[`docs/architecture/relay-routing-and-conversion.md`](architecture/relay-routing-and-conversion.md)、[`docs/architecture/provider-capability-matrix.md`](architecture/provider-capability-matrix.md)、[`docs/architecture/implementation-deviations.md`](architecture/implementation-deviations.md)、[`平台站点资源获取比较`](platform-site-resource-acquisition-comparison.md)
 
@@ -696,3 +696,28 @@ Cloudflare/Turnstile 等人工验证未完成时不产生路由变化。
 请求脚本，随后请求或回传一次性 handoff/result。管理页校验活动窗口、Origin、Capture ID
 和 Helper 版本后再完成同源提交。未经过当前用户或 Admin 验证的结果仍不会创建
 `RoutingKey`、`UpstreamKeyAbility` 或渠道模型候选。
+
+### 14.11 2026-10-05 旧版浏览器采集路径与路由候选边界
+
+**变更前**：Capture Helper 已经具备 DOM 就绪、自动重试、NewAPI 用户头和 Sub2API
+Session Restore 等兼容逻辑，但 Dashboard Refresh、Refresh Token 和代理子路径分支
+仍有固定 API 路径假设。旧版 `service/upstreamaccount/capture.go` 的同源脚本路径
+发现行为没有覆盖到这些刷新分支。
+
+**变更后**：
+
+- NewAPI 自动采集候选顺序仍为 Dashboard Refresh、Access Token、Admin Key、Cookie。
+  Dashboard Refresh 现在将固定 `/api/user/auth/refresh`、同源 JavaScript 发现路径和
+  由管理地址/页面配置推导的部署前缀合并尝试；请求继续携带页面 Origin、当前 Cookie
+  和可用数字 `New-Api-User`，新版仅 Bearer 的站点不被旧用户头要求阻断；
+- Sub2API 自动采集候选顺序仍为 Auth Token、Auth User、Refresh Token、Browser
+  Restore、Access Token、Admin Key、Cookie。Refresh Token 只有在需要恢复 Access
+  Token 时调用，并按 `/api/v1/auth/refresh`、兼容路径和同源发现路径尝试；恢复后仍
+  必须通过 `auth/me` 验证；
+- API 路径前缀从 handoff 管理地址、回传 `api_base_url`、当前页面、
+  `__APP_CONFIG__` 和存储状态推导。`/api`、`/api/v1` 后缀会先剥离，仅保留反向代理
+  部署前缀，从而不生成重复的 `/base/api/v1/api/v1/...`；
+- 这些候选只影响已验证登录态进入现有加密凭据和路由候选的入口，不改变优先级、权重、
+  倍率、单 Key 模型能力和失败时保留最近成功快照的规则。浏览器 Capture 登录态不
+  参加后台密码同步 Cleanup，也不恢复旧版完整账号池、Preview 或 ChannelAccount
+  同步体系。

@@ -1,7 +1,7 @@
 # NexusTok 功能原理与实现偏差文档
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-04
+> 事实基线日期：2026-10-05
 > 主要代码来源：`main.go`、`router/`、`middleware/`、`controller/`、`service/`、`model/`、`relay/`、`pkg/`、`constant/`
 > 关联详细文档：[`docs/authentication.md`](../authentication.md)、[`docs/rate-limiting.md`](../rate-limiting.md)、[`docs/key-routing-strategy.md`](../key-routing-strategy.md)、[`docs/upstream-channel-platform-sites.md`](../upstream-channel-platform-sites.md)、[`docs/plugin-api/`](../plugin-api/)
 
@@ -115,6 +115,23 @@ Session 过期则停止前端轮询并要求重新创建。该路径不改变后
 用户在上游页面上下文运行片段后，管理页才通过 `postMessage` 返回桥接脚本。该限制不能绕过
 目标站 Turnstile、WAF 或验证码。
 
+### 2026-10-05 旧版浏览器采集路径迁移
+
+本次将旧版 `service/upstreamaccount/capture.go` 中与浏览器登录态有关的同源 JavaScript
+路径发现和反向代理子路径补全迁移到当前 `service/platform_site_capture.go`。当前
+Capture Session、`PlatformSiteCredential` 整体加密、用户/渠道绑定、Redis/内存一次性
+claim、Capture Helper `1.7.0` 和页面桥接继续作为唯一保存链路；旧版完整
+`upstreamaccount` 账号池、Preview 和 ChannelAccount 同步体系不在本次范围内。
+
+NewAPI Dashboard Refresh 现在与固定 `/api/user/auth/refresh` 一起尝试同源脚本发现和
+部署前缀候选，并继续携带页面 Origin、Cookie 和可用数字 `New-Api-User`。Sub2API
+Refresh Token 支持 `/api/v1/auth/refresh`、兼容路径和同源脚本发现；Session Restore、
+`auth/me` 验证也复用同一组代理子路径前缀。路径发现只扫描当前页面同源 JavaScript 和
+性能资源，服务端站点关联仍限制为同 Host 或严格 `api.` 对等 Host。
+
+采集失败时未登录、SPA 尚未写入状态、WAF/Turnstile 或部分资源权限问题仍不覆盖最近
+成功资源快照；浏览器采集登录态也不进入后台密码同步 Cleanup。
+
 ## 变更记录
 
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
@@ -135,3 +152,4 @@ Session 过期则停止前端轮询并要求重新创建。该路径不改变后
 | 2026-10-02 | 平台站点密码会话清理与自动配置优化 | NewAPI/Sub2API 密码同步可能复用历史登录态；同步结束没有统一注销本轮会话；自动配置、平台字段和历史一次性凭据的边界不完整 | 密码同步每次重新登录并只清理本轮会话；NewAPI 先登出再按 SID 精确删除，Sub2API 仅用本轮 Refresh Token 登出，资源或快照失败仍保留最近成功快照；表单由渠道类型派生平台，仅保留账号密码/自动配置；自动配置使用现有加密凭据结构、验证诊断和一次性跨节点 claim | 平台站点认证、资源同步、Capture Helper、渠道表单、缓存和路由快照 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_capture.go`、`controller/upstream_channel.go`、本机 New API/Sub2API/all-api-hub 参考源、定向 Go/React 测试 |
 | 2026-10-03 | Sub2API Relay 发现与登录兼容修复 | 页面重定向后的相对 Relay 地址解析和跨域来源边界未在架构索引中明确；严格 Sub2API 部署可能因无条件条款字段或混合登录主体返回 `400 INVALID_REQUEST`；Relay 探测可能携带管理态 | Relay 地址按最终 HTML 页面解析，允许最终页面/原始管理地址同协议、主机、有效端口的明确声明以及严格 `api.` 父子域；可信最终页面来源可作为本轮管理请求根地址但不覆盖持久化管理地址；Relay 探测隔离管理 Header/Cookie Jar；邮箱首请求严格使用 `email/password`，仅 404/405 回退路由、401 凭据错误回退主体；未确认单 Key 模型不进入路由，资源失败保留最近成功快照 | Sub2API 管理/Relay 地址、密码登录、Key 模型能力、资源同步和路由候选 | `service/upstream_site_adapters.go`、`service/upstream_site_test.go`、`docs/upstream-channel-platform-sites.md`、`docs/platform-site-resource-acquisition-comparison.md`、Sub2API/all-api-hub 本机参考源 |
 | 2026-10-04 | Sub2API 历史模型快照与余额/分组失败兼容 | 管理面和 Key 列表成功但所有单 Key `/v1/models` 因余额不足或分组停用时，父渠道仍可能整体失败，无法通过剩余额度刷新更新管理资源 | 已有 `last_sync_at` 的渠道允许更新身份、余额、用量、分组和 Key 状态；`keys` 标记 `partial`、`models` 标记 `stale`，保留最近成功 Key 能力和路由候选；无历史快照时仍要求真实单 Key 模型能力，禁止用模型广场或分组目录冒充 | Sub2API 资源同步、渠道刷新、快照回退、Key 能力和路由 | `service/upstream_site.go`、`service/upstream_site_test.go`、本地脱敏诊断；未把上游完整响应或凭据写入仓库 |
+| 2026-10-05 | 旧版浏览器采集路径迁移 | Capture Helper 的 Dashboard Refresh、Refresh Token 和代理子路径仍部分依赖固定 API 路径，架构索引未记录旧版同源脚本发现迁移边界 | NewAPI/Sub2API 刷新分支纳入同源 JS 路径发现和 `expandedAPIPaths`；API 根从 handoff、页面配置和存储状态推导并剥离 `/api`/`/api/v1` 后缀；保留 Capture Session、加密凭据、一次性 claim、严格 Host 关系、后台 Cleanup 和最近成功快照语义 | 平台站点 Capture、认证候选、反向代理子路径、资源快照和路由候选 | `service/platform_site_capture.go`、`service/upstream_site_test.go`、旧版 `service/upstreamaccount/capture.go`、本机 New API/Sub2API/all-api-hub 参考源、定向 Go/React 测试 |

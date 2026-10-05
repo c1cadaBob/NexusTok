@@ -1,7 +1,7 @@
 # 渠道能力矩阵
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-04
+> 事实基线日期：2026-10-05
 > 主要代码来源：`constant/channel.go`、`constant/api_type.go`、`common/api_type.go`、`relay/relay_adaptor.go`、`relay/common/relay_info.go`、`relay/channel/*/adaptor.go`、`router/relay-router.go`、`router/task-plugin-protocol-router.go`
 > 关联详细文档：[`README.md`](./README.md)、[`relay-routing-and-conversion.md`](./relay-routing-and-conversion.md)、[`implementation-deviations.md`](./implementation-deviations.md)、[`../key-routing-strategy.md`](../key-routing-strategy.md)
 
@@ -169,6 +169,26 @@ Session Restore 所需的 IndexedDB 客户端 ID 也可能无法读取。
 不含敏感值的短启动片段；片段在上游页面上下文请求桥接脚本后再执行。该降级不会绕过
 上游 Turnstile/WAF，也不会放宽 Origin、窗口、Capture ID 或版本校验。
 
+### 2.5 2026-10-05 旧版浏览器采集路径兼容能力
+
+**变更前**：能力矩阵已记录 Capture Helper 的候选顺序和 IndexedDB Client ID，但
+Dashboard Refresh、Refresh Token、Session Restore 与反向代理子路径的同源路由发现没有
+覆盖到全部分支。
+
+**变更后**：
+
+- NewAPI 的 Dashboard Refresh 同时尝试固定 `/api/user/auth/refresh`、同源 JavaScript
+  发现路径和部署前缀候选；请求保留页面 Origin、Cookie 和可用数字 `New-Api-User`，
+  Bundle 必须包含成功标志、Bearer、当前 Session、用户身份、Access Token 和有效期；
+- Sub2API 的 Refresh Token 支持 `/api/v1/auth/refresh`、`/api/auth/refresh`、
+  `/auth/refresh` 及同源发现路径；Session Restore 继续携带
+  `X-Sub2API-Auth-Client`，恢复后通过三条兼容 `auth/me` 路径验证；
+- handoff、`api_base_url`、页面配置、当前页面和存储状态中的 `/api`/`/api/v1` 后缀
+  会被剥离，只保留反向代理部署前缀，避免重复拼接 API 根；
+- 这只是浏览器登录态采集能力的兼容扩展，不恢复旧版账号池、Preview 或
+  ChannelAccount 同步体系，不改变 Relay Adaptor、单 Key 模型能力、最近成功快照或
+  后台密码同步 Cleanup。站点关联仍限制为同 Host 或严格 `api.` 对等 Host。
+
 ## 3. 维护解释
 
 - “流式选项”只对应 `streamSupportedChannels`，不表示所有流式 Endpoint 或所有上游事件都可用。
@@ -189,6 +209,7 @@ Session Restore 所需的 IndexedDB 客户端 ID 也可能无法读取。
 | 2026-10-01 | Sub2API 登录服务条款兼容能力 | 矩阵只登记 Sub2API 的一般密码/2FA 入口，未记录公开条款设置、可选 revision、错误分类和 New API 隔离 | 增加 `GET /api/v1/settings/public` 的条件读取、`agreed_revision` 发送和 2FA 最新 revision；设置故障回退旧协议，条款拒绝独立分类并保留快照；不发送 `not_in_cn_confirmed`，New API 不读取或发送同名字段 | Sub2API 认证、Auth Flow、同步状态、资源面板和平台能力边界 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_auth_flow.go`、`service/upstream_site_test.go`；Sub2API 参考源 DTO/路由；SQLite 3.50.4、MySQL 8.2.0、PostgreSQL 15.19 矩阵 |
 | 2026-10-02 | 平台站点密码会话清理与自动配置能力 | 密码同步复用历史登录态的边界、NewAPI/Sub2API 精确注销路径、浏览器采集所有权和表单隐藏旧凭据入口未在矩阵中统一登记 | 密码同步每次重新登录；NewAPI 登出后精确删除 SID，Sub2API 仅 Refresh Token 登出；资源失败保留快照；自动配置完成验证后加密保存并一次性消费，平台从渠道类型派生 | 平台站点认证、资源同步、Capture Helper、渠道表单和跨节点缓存 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_capture.go`、`web/src/features/channels/components/drawers/platform-site-fields.tsx`、本机参考源和定向测试 |
 | 2026-10-03 | 认证流程保存兼容与 NewAPI 加密登录 | 完成认证流程后残留用户名可能被当作手动凭据；NewAPI 加密登录密钥、RSA-OAEP/v2 信封和明文回退边界未在矩阵中登记 | 有流程 ID 时只提交流程材料，后端兼容用户名残留并使用流程真实身份；NewAPI 按新版协议读取密钥并仅在 404/405 回退明文；Sub2API 保持邮箱优先和本轮 Refresh Token 精确登出 | 平台站点创建/编辑、账号密码认证、错误回退和会话清理 | `web/src/features/channels/lib/channel-form.ts`、`controller/upstream_channel.go`、`service/newapi_password_encryption.go`、`service/upstream_site_adapters.go`、定向测试和本机 New API/Sub2API/all-api-hub 参考源 |
+| 2026-10-05 | 旧版浏览器自动采集路径迁移 | Capture 刷新/恢复分支仍部分固定 API 路径，反向代理子路径和同源脚本路由发现没有覆盖所有浏览器采集分支 | NewAPI Dashboard Refresh、Sub2API Refresh/Session Restore 与 `auth/me` 统一使用 `expandedAPIPaths`，合并固定候选、页面配置、当前页面和同源资源发现；不改变加密凭据、一次性 claim、严格 Host 关系、最近成功快照或后台 Cleanup | Capture Helper、Capture Bridge、NewAPI/Sub2API 浏览器登录态和反向代理部署 | `service/platform_site_capture.go`、`service/upstream_site_test.go`、旧版 `service/upstreamaccount/capture.go`、本机参考源 |
 | 2026-10-03 | Sub2API Relay 发现与严格登录请求 | 重定向页面的相对 Relay 地址和独立 Relay 域名无法稳定进入 Key 模型探测；无条件条款/混合主体字段可能导致 `400 INVALID_REQUEST`；管理态可能被带到 Relay | 使用最终 HTML URL 解析相对地址，接受最终页面或原始管理地址明确声明的同协议/主机/有效端口 Relay，以及严格 `api.` 父子域；可信最终页面来源作为本轮管理请求根地址但不覆盖持久化地址；Relay 请求隔离管理 Header/Cookie Jar；邮箱首请求严格 `email/password`，400 不回退，只有 404/405 回退路由、401 凭据错误回退主体；未确认单 Key 模型不进入路由，资源失败保留快照 | Sub2API 管理/Relay 地址、认证、Key 能力和路由可用性 | `service/upstream_site_adapters.go`、`service/upstream_site_test.go`、Sub2API `auth_handler.go`、all-api-hub 真实站点辅助实现和脱敏 fixture |
 
 ### 3.2 2026-09-26 实现校准
