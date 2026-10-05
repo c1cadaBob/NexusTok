@@ -775,3 +775,15 @@ Sub2API 仍先使用 `auth_token` 和 `auth_user` 验证 `/api/v1/auth/me`，只
 `sub2api_auth_client_id` 且发现同源 `session/restore` 路由时才加入 Browser Restore
 候选。缺少材料时只记录 `not_attempted`，不产生跨站或空请求。路由资格仍只来自
 已确认 `ModelsSynced=true` 的完整 Key，失败时继续使用最近成功能力快照。
+
+### 14.15 2026-10-05 Sub2API 配置包裹与 Cookie Client ID
+
+**变更前**：Relay 候选和 Browser Restore 的路由前置材料只覆盖直接配置对象、
+localStorage/sessionStorage 与 IndexedDB；Cookie 中的精确 Client ID 和
+`JSON.parse` 包裹配置可能被遗漏。
+
+**变更后**：Helper 以 localStorage、精确 `sub2api_auth_client_id` Cookie、IndexedDB
+为恢复顺序，只有同源发现的 `session/restore` 才发送恢复请求；页面配置仅在有限命名
+包裹字段内递归读取，并由服务端以结构化解码重新确认 Relay 声明。hash Token 只影响
+脱敏存在性诊断，不改变认证候选或路由资格；只有完整 Key 的已确认模型能力进入
+`RoutingKey`，资源失败仍沿用最近成功快照。

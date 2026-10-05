@@ -1243,3 +1243,17 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
   主路径，页面没有 Client ID 时不进入 Restore 分支，仍可正常完成 Capture、管理面
   资源同步和 Relay 单 Key 模型探测。Capture Session、整体加密凭据、一次性 claim、
   最近成功快照和浏览器 Cleanup 隔离保持不变。
+
+### 10.5 2026-10-05 Sub2API 配置包裹与 Cookie Client ID 兼容
+
+**变更前**：Browser Restore 只从 localStorage/sessionStorage 和 IndexedDB 读取
+`sub2api_auth_client_id`；页面配置若被 `data`/`config` 包裹或通过
+`JSON.parse("...")` 初始化，Helper 与服务端页面发现可能漏掉 `custom_endpoints`。
+
+**变更后**：Helper 按 localStorage、可见/扩展可读的精确 Cookie、
+IndexedDB `sub2api-auth-coordination/values` 的顺序读取 Client ID，只记录存在性，
+并仅在发现真实同源 `session/restore` 路由时发送 `X-Sub2API-Auth-Client`。配置读取
+只递归有限的命名包裹字段，服务端用 `common.Unmarshal` 解码受限的
+`JSON.parse` 字符串和转义 JSON；同时仅记录 hash Token 存在性，不保存其内容。
+该兼容不改变 `auth_token + auth_user + auth/me` 主路径、管理/Relay 地址拆分、
+Capture Session 加密凭据、一次性 claim、最近成功快照或浏览器 Cleanup 隔离。

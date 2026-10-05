@@ -387,3 +387,14 @@ Admin 权限，诊断脱敏，Capture 记录用 Redis/内存 claim 防止并发�
 `session/restore` 时才执行 Browser Restore。真实站点没有 Client ID 时直接沿
 `auth_token + auth_user + auth/me` 主路径完成，缺少恢复材料只标记
 `not_attempted`，不影响管理资源、Relay 模型探测或最近成功快照。
+
+### 3.11 2026-10-05 Sub2API Cookie Client ID 与配置包裹能力
+
+**变更前**：能力矩阵只登记 localStorage/sessionStorage 和 IndexedDB 的恢复材料；
+`custom_endpoints` 被 JSON.parse 或有限配置包裹时的发现边界未单独登记。
+
+**变更后**：Sub2API Helper 按 localStorage、精确 `sub2api_auth_client_id` Cookie、
+IndexedDB 顺序读取恢复 Client ID，仍要求同源 `session/restore` 路由；页面配置只递归
+明确命名的包裹字段，服务端用 `common.Unmarshal` 解析转义 JSON。该能力不扩展
+`@connect`、不传播管理会话、不改变管理/Relay 双地址、已验证 Key 模型能力和快照
+保留规则。

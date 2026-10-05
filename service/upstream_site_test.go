@@ -829,6 +829,7 @@ func TestPlatformSiteCaptureUserscriptsReadExplicitBrowserFieldsOnly(t *testing.
 	require.NotContains(t, script, "removeStoredHandoff")
 	require.NotContains(t, script, "error: safeMessage")
 	require.Contains(t, script, "GM_cookie.list({ url: cookieURL")
+	require.Contains(t, script, "readNamedCookie")
 	require.Contains(t, script, "credentials: 'include'")
 	require.NotContains(t, script, record.Secret)
 	require.NotContains(t, script, "result.auth_user = validatedUser")
@@ -862,6 +863,8 @@ func TestPlatformSiteCaptureHelperReadsDeclaredSub2APIRelay(t *testing.T) {
 	assert.Contains(t, script, "configuredRelayBaseURL")
 	assert.Contains(t, script, "relay_base_url")
 	assert.Contains(t, script, "relay_base_url_seen")
+	assert.Contains(t, script, "oauth_hash_token_present = true")
+	assert.Contains(t, script, "public_config")
 	assert.NotContains(t, script, record.Secret)
 }
 
@@ -4918,6 +4921,25 @@ func TestSub2APIPageConfigurationFallsBackWhenAppConfigIsInvalid(t *testing.T) {
 	require.Len(t, configurations, 1)
 	require.Len(t, configurations[0].CustomEndpointsCamel, 1)
 	assert.Equal(t, "https://api-image.shour.bond", configurations[0].CustomEndpointsCamel[0].Endpoint)
+}
+
+func TestSub2APIPageConfigurationParsesJSONParseAppConfig(t *testing.T) {
+	rawConfiguration := `{"api_base_url":"","custom_endpoints":[{"endpoint":"https://api-image.shour.bond"}]}`
+	encodedConfiguration, err := common.Marshal(rawConfiguration)
+	require.NoError(t, err)
+
+	configurations := parseSub2APIPageConfigurations([]byte(fmt.Sprintf(
+		`<script>window.__APP_CONFIG__ = JSON.parse(%s)</script>`,
+		encodedConfiguration,
+	)))
+	require.Len(t, configurations, 1)
+	assert.Empty(t, configurations[0].APIBaseURL)
+	require.Len(t, configurations[0].CustomEndpoints, 1)
+	assert.Equal(
+		t,
+		"https://api-image.shour.bond",
+		configurations[0].CustomEndpoints[0].Endpoint,
+	)
 }
 
 func TestPlatformSiteCaptureRevalidatesDeclaredExternalSub2APIRelay(t *testing.T) {

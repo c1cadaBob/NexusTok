@@ -421,3 +421,14 @@ Sub2API 有 Access Token 时先验证 `/api/v1/auth/me`，Browser Restore 只有
 `sub2api_auth_client_id` 和同源 `session/restore` 路由后才发送请求。否则仅保留
 `not_attempted` 诊断，不产生空请求。该边界不改变 Capture Secret、Origin、Helper
 Version、用户/渠道绑定、加密凭据和一次性 claim 校验。
+
+### 9.12 2026-10-05 Sub2API Cookie Client ID 与配置解析边界
+
+**变更前**：认证架构只明确了 localStorage/sessionStorage 和 IndexedDB 的
+`sub2api_auth_client_id` 来源，未说明 Cookie 回退和 `JSON.parse` 配置包裹的限制。
+
+**变更后**：Browser Restore 仅按精确 Cookie 名读取 `sub2api_auth_client_id`，不读取
+任意 Cookie，也不把值写入诊断；没有 Client ID 或同源 `session/restore` 路由时保持
+`not_attempted`。页面 Relay 配置只解析明确命名的 `data`/`config` 等有限包裹字段，
+服务端重新以结构化 JSON 解码核对声明；hash Token 仅记录存在性，所有认证材料仍经
+当前用户验证、来源校验和整体加密保存。

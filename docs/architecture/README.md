@@ -177,6 +177,18 @@ Refresh Token 才轮换令牌；只有 Refresh Token 时直接刷新，刷新后
 `auth_token + auth_user + /api/v1/auth/me` 完成管理认证，Relay 与管理地址、加密
 凭据、一次性 claim、最近成功快照和浏览器 Cleanup 隔离保持不变。
 
+### 2026-10-05 Sub2API 配置包裹与 Cookie Client ID 兼容
+
+**变更前**：架构索引未记录 Browser Restore 对精确 Cookie Client ID 的读取，也未
+记录页面配置通过有限命名包裹或 `JSON.parse("...")` 传递时的解析边界。
+
+**变更后**：当前事实入口的 Helper 先读取明确命名的 localStorage、可见/扩展可读的
+`sub2api_auth_client_id` Cookie，再读取 IndexedDB；仅在同源脚本发现
+`session/restore` 后携带 Client ID 请求。`custom_endpoints`/`customEndpoints` 的
+配置只在有限命名包裹内递归，服务端使用 `common.Unmarshal` 解析 JSON.parse/转义对象，
+并继续只保存脱敏存在性和规范化地址。该兼容不改变 Capture Session、加密凭据、严格
+来源校验、后台 Cleanup 隔离或最近成功快照。
+
 ## 变更记录
 
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |

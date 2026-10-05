@@ -491,3 +491,14 @@ Session、加密凭据、一次性 claim 和浏览器 Cleanup 隔离不变，也
 `session/restore` 路由时才执行恢复，否则记录脱敏 `not_attempted`。该逻辑保持
 Capture Session TTL、Redis/内存一次性 claim、失败 pending 语义和最近成功资源快照
 不变，浏览器登录态不进入后台密码 Cleanup。
+
+### 2026-10-05 Sub2API Capture 恢复材料与配置解析
+
+**变更前**：缓存与后台任务说明没有区分 Cookie Client ID、IndexedDB Client ID 和
+配置字符串解析失败，容易把缺少恢复材料误记为上游认证失败。
+
+**变更后**：Capture Helper 只读取精确命名的 `sub2api_auth_client_id` Cookie、
+localStorage/sessionStorage 和 IndexedDB，并在同源路由发现后才请求 Session Restore；
+配置解析仅接受有限命名包裹和结构化 JSON。缺少材料仍保持 pending/not_attempted，资源
+失败仍保留最近成功 Key、模型能力和渠道快照；浏览器登录态不参与后台密码 Cleanup，
+不新增缓存明文凭据结构或数据库字段。

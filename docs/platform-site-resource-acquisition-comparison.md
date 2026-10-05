@@ -1256,3 +1256,16 @@ Capture Session 状态查询遇到不存在或过期时，前端立即停止轮�
 pending。指定站点实际走 `auth_token + auth_user + /api/v1/auth/me`，仍能保存过期
 时间并完成管理地址/Relay 地址拆分。该修复不改变单 Key `/v1/models` 探测、最近成功
 快照、加密凭据或旧版账号池不恢复的边界。
+
+## 25. 2026-10-05 Sub2API 配置包裹与 Cookie Client ID
+
+**变更前**：资源获取比较只覆盖 localStorage/sessionStorage 和 IndexedDB Client ID；
+页面公开配置被 `data`、`config` 或 `JSON.parse("...")` 包裹时，Relay 声明可能无法被
+Helper 或服务端发现。
+
+**变更后**：Capture Helper 从明确命名的 localStorage/sessionStorage 配置、有限命名
+状态包裹和 `window.__APP_CONFIG__` 读取 `custom_endpoints`/`customEndpoints`；服务端
+使用 `common.Unmarshal` 解析受限的 JSON.parse/转义对象。Browser Restore 额外支持精确
+`sub2api_auth_client_id` Cookie，再回退 IndexedDB，并继续只有存在同源恢复路由才请求。
+Cookie、Token、完整页面配置和 `auth_user` 内容不进入诊断；管理面仍获取 Key，Relay
+仍只做单 Key `/v1/models`，失败继续使用最近成功快照。

@@ -327,6 +327,17 @@ Browser Session Restore 需要同时满足 Client ID 存在和同源路由发现
 浏览器验收覆盖；Access Token、Refresh Token、管理/Relay 拆分、加密凭据、一次性
 claim、最近成功快照和浏览器 Cleanup 隔离保持不变。
 
+### 3.17 2026-10-05 Sub2API Cookie Client ID 与页面配置包裹
+
+**变更前**：`DEV-026` 的恢复材料描述未包含 Cookie Client ID；页面配置通过
+`JSON.parse("...")` 或有限 `data`/`config` 包裹时，Helper 与服务端解析边界不一致。
+
+**变更后**：Helper 只按精确名称读取 `sub2api_auth_client_id` Cookie，并在同源
+`session/restore` 路由发现后携带它；服务端以 `common.Unmarshal` 解码受限的
+JSON.parse/转义配置，Helper 只递归有限命名包裹字段。hash Token 仅回传脱敏存在性，
+不保存 Cookie、Token、完整 `auth_user` 或页面响应。Capture Session、整体加密凭据、
+一次性 claim、管理/Relay 分离、浏览器 Cleanup 隔离和最近成功快照保持不变。
+
 ## 4. 维护规则
 
 新发现偏差必须先确认“预期来源”与“代码实际行为”都能引用，再新增编号。代码修复时在同一功能提交中：

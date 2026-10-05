@@ -1600,6 +1600,62 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
     return headers;
   }
 
+  function readVisibleCookie(name) {
+    const expectedName = text(name);
+    if (!expectedName) return '';
+    try {
+      for (const part of text(document.cookie).split(';')) {
+        const separator = part.indexOf('=');
+        if (separator <= 0 || text(part.slice(0, separator)) !== expectedName) {
+          continue;
+        }
+        const value = text(part.slice(separator + 1));
+        return value.length <= 256 ? value : '';
+      }
+    } catch (_) {}
+    return '';
+  }
+
+  function readNamedCookie(name, targetURL) {
+    const expectedName = text(name);
+    const visibleValue = readVisibleCookie(expectedName);
+    if (visibleValue) return Promise.resolve(visibleValue);
+    if (typeof GM_cookie !== 'object' || typeof GM_cookie.list !== 'function') {
+      return Promise.resolve('');
+    }
+    let cookieURL = window.location.origin;
+    try {
+      const parsed = new URL(text(targetURL || ''), window.location.href);
+      if (
+        parsed.protocol === window.location.protocol &&
+        (
+          parsed.host === window.location.host ||
+          parsed.host === 'api.' + window.location.host ||
+          window.location.host === 'api.' + parsed.host
+        )
+      ) {
+        cookieURL = parsed.origin;
+      }
+    } catch (_) {}
+    return new Promise((resolve) => {
+      try {
+        GM_cookie.list({ url: cookieURL }, (cookies, error) => {
+          if (error || !Array.isArray(cookies)) {
+            resolve('');
+            return;
+          }
+          const cookie = cookies.find(
+            (item) => item && text(item.name) === expectedName
+          );
+          const value = cookie ? text(cookie.value) : '';
+          resolve(value.length <= 256 ? value : '');
+        });
+      } catch (_) {
+        resolve('');
+      }
+    });
+  }
+
   function readCookieHeader(targetURL) {
     let cookieURL = window.location.origin;
     try {
@@ -1916,32 +1972,69 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
   }
 
   function configuredEndpointValues(value) {
-    if (!value) return [];
+    return configuredEndpointValuesAtDepth(value, 0);
+  }
+
+  function configuredEndpointValuesAtDepth(value, depth) {
+    if (!value || depth > 4) return [];
     if (typeof value === 'string') {
       const parsed = parseJSON(value);
       return parsed && parsed !== value
-        ? configuredEndpointValues(parsed)
+        ? configuredEndpointValuesAtDepth(parsed, depth + 1)
         : [value];
     }
     if (Array.isArray(value)) {
-      return value.flatMap((item) => configuredEndpointValues(item));
+      return value.flatMap((item) => configuredEndpointValuesAtDepth(item, depth + 1));
     }
     if (typeof value !== 'object') return [];
+    const values = [];
     const endpoint = value.endpoint || value.url || value.base_url || value.baseUrl;
-    return endpoint ? [endpoint] : [];
+    if (endpoint) values.push(endpoint);
+    for (const key of [
+      'data',
+      'config',
+      'public_config',
+      'publicConfig',
+      'settings',
+      'value',
+    ]) {
+      if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+      values.push(...configuredEndpointValuesAtDepth(value[key], depth + 1));
+    }
+    return values;
   }
 
   function configuredRelayBaseURL(payload) {
     const values = [];
-    const appendConfig = (configuration) => {
-      if (!configuration || typeof configuration !== 'object') return;
+    const appendConfig = (configuration, depth) => {
+      if (!configuration || depth > 4) return;
+      if (typeof configuration === 'string') {
+        const parsed = parseJSON(configuration);
+        if (parsed !== null && parsed !== configuration) {
+          appendConfig(parsed, depth + 1);
+        }
+        return;
+      }
+      if (Array.isArray(configuration) || typeof configuration !== 'object') return;
       values.push(
         ...configuredEndpointValues(configuration.custom_endpoints),
         ...configuredEndpointValues(configuration.customEndpoints)
       );
+      for (const key of [
+        'data',
+        'config',
+        'public_config',
+        'publicConfig',
+        'settings',
+        'value',
+      ]) {
+        if (Object.prototype.hasOwnProperty.call(configuration, key)) {
+          appendConfig(configuration[key], depth + 1);
+        }
+      }
     };
-    appendConfig(payload);
-    try { appendConfig(pageWindow.__APP_CONFIG__); } catch (_) {}
+    appendConfig(payload, 0);
+    try { appendConfig(pageWindow.__APP_CONFIG__, 0); } catch (_) {}
     for (const stateName of [
       '__INITIAL_STATE__',
       '__APP_STATE__',
@@ -1949,7 +2042,7 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
       '__NEXT_DATA__',
       '__PINIA__',
     ]) {
-      try { appendConfig(pageWindow[stateName]); } catch (_) {}
+      try { appendConfig(pageWindow[stateName], 0); } catch (_) {}
     }
     for (const storageName of [
       'custom_endpoints',
@@ -1964,8 +2057,7 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
         try {
           const raw = storage.getItem(storageName);
           if (!raw) continue;
-          const parsed = parseJSON(raw);
-          appendConfig(parsed || { custom_endpoints: raw });
+          appendConfig(raw, 0);
         } catch (_) {}
       }
     }
@@ -2361,6 +2453,9 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
       ['sub2api_auth_client_id']
     );
     if (!clientID) {
+      clientID = await readNamedCookie('sub2api_auth_client_id', apiBase);
+    }
+    if (!clientID) {
       clientID = await readIndexedDBValue(
         'sub2api-auth-coordination',
         'values',
@@ -2735,27 +2830,33 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
       expiresAt = restored.expiresAt || 0;
       storedAuthUser = restored.authUser;
     } else {
+      const hashAccessToken = readHashValue(
+        ['auth_token', 'access_token', 'token', 'jwt']
+      );
+      const hashRefreshToken = readHashValue(
+        ['refresh_token', 'refreshToken', 'rt']
+      );
+      const hashExpiresAt = readHashValue(
+        ['token_expires_at', 'tokenExpiresAt', 'expires_at', 'expiresAt']
+      );
+      if (hashAccessToken || hashRefreshToken || hashExpiresAt) {
+        result.diagnostics.oauth_hash_token_present = true;
+      }
       if (source !== 'refresh_token') {
-        accessToken = readHashValue(
-          ['auth_token', 'access_token', 'token', 'jwt']
-        ) || readNamed(
+        accessToken = hashAccessToken || readNamed(
           ['auth_token', 'access_token', 'accessToken', 'token', 'jwt'],
           ['auth_token', 'access_token', 'accesstoken', 'token', 'jwt']
         ) || readDeepStorageValue(
           ['access_token', 'auth_token', 'token', 'jwt']
         );
       }
-      refreshToken = readHashValue(
-        ['refresh_token', 'refreshToken', 'rt']
-      ) || readNamed(
+      refreshToken = hashRefreshToken || readNamed(
         ['refresh_token', 'refreshToken', 'sub2api_refresh_token'],
         ['refresh_token', 'refreshtoken', 'rt']
       ) || readDeepStorageValue(
         ['refresh_token', 'refreshtoken', 'rt']
       );
-      expiresAt = normalizeExpiresAt(readHashValue(
-        ['token_expires_at', 'tokenExpiresAt', 'expires_at', 'expiresAt']
-      ) || readNamed(
+      expiresAt = normalizeExpiresAt(hashExpiresAt || readNamed(
         ['token_expires_at', 'tokenExpiresAt', 'expires_at', 'expiresAt'],
         ['token_expires_at', 'tokenexpiresat', 'expires_at', 'expiresat']
       ) || readDeepStorageValue(

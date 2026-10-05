@@ -4313,6 +4313,9 @@ func parseSub2APIPageConfigurations(data []byte) []sub2APIPageConfiguration {
 		if raw == "" || len(raw) > 256<<10 {
 			return
 		}
+		if decoded, ok := decodeSub2APIJSONString(raw); ok {
+			raw = strings.TrimSpace(decoded)
+		}
 		var configuration sub2APIPageConfiguration
 		if err := common.Unmarshal([]byte(raw), &configuration); err != nil {
 			return
@@ -4330,6 +4333,25 @@ func parseSub2APIPageConfigurations(data []byte) []sub2APIPageConfiguration {
 		configurations = append(configurations, configuration)
 	}
 
+	appendAppConfig := func(source string, markerEnd int) {
+		remainder := strings.TrimSpace(source[markerEnd:])
+		remainder = strings.TrimSpace(strings.TrimPrefix(remainder, "="))
+		if strings.HasPrefix(remainder, "JSON.parse") {
+			if raw, ok := sub2APIJSONParseArgument(remainder); ok {
+				appendConfiguration(raw)
+				return
+			}
+		}
+		if objectStart := strings.IndexByte(
+			remainder[:min(len(remainder), 4096)],
+			'{',
+		); objectStart >= 0 {
+			if object := balancedJSONFragment(remainder, objectStart); object != "" {
+				appendConfiguration(object)
+			}
+		}
+	}
+
 	hasAppConfigMarker := false
 	for _, marker := range []string{"window.__APP_CONFIG__", "__APP_CONFIG__"} {
 		offset := 0
@@ -4340,12 +4362,7 @@ func parseSub2APIPageConfigurations(data []byte) []sub2APIPageConfiguration {
 			}
 			hasAppConfigMarker = true
 			index += offset + len(marker)
-			if objectStart := strings.IndexByte(source[index:min(len(source), index+4096)], '{'); objectStart >= 0 {
-				start := index + objectStart
-				if object := balancedJSONFragment(source, start); object != "" {
-					appendConfiguration(object)
-				}
-			}
+			appendAppConfig(source, index)
 			offset = index + 1
 		}
 	}
@@ -4365,6 +4382,56 @@ func parseSub2APIPageConfigurations(data []byte) []sub2APIPageConfiguration {
 		offset = start + 1
 	}
 	return configurations
+}
+
+func decodeSub2APIJSONString(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", false
+	}
+	var decoded string
+	if strings.HasPrefix(raw, `"`) && strings.HasSuffix(raw, `"`) &&
+		common.Unmarshal([]byte(raw), &decoded) == nil {
+		return decoded, true
+	}
+	if strings.HasPrefix(raw, `{\"`) {
+		quoted := `"` + raw + `"`
+		if common.Unmarshal([]byte(quoted), &decoded) == nil {
+			return decoded, true
+		}
+	}
+	return raw, false
+}
+
+func sub2APIJSONParseArgument(source string) (string, bool) {
+	open := strings.IndexByte(source, '(')
+	if open < 0 {
+		return "", false
+	}
+	start := open + 1
+	for start < len(source) && (source[start] == ' ' || source[start] == '\t' ||
+		source[start] == '\r' || source[start] == '\n') {
+		start++
+	}
+	if start >= len(source) || source[start] != '"' {
+		return "", false
+	}
+	escaped := false
+	for index := start + 1; index < len(source); index++ {
+		switch {
+		case escaped:
+			escaped = false
+		case source[index] == '\\':
+			escaped = true
+		case source[index] == '"':
+			var decoded string
+			if err := common.Unmarshal([]byte(source[start:index+1]), &decoded); err != nil {
+				return "", false
+			}
+			return decoded, true
+		}
+	}
+	return "", false
 }
 
 func balancedJSONFragment(source string, start int) string {
