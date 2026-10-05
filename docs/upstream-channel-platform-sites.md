@@ -1257,3 +1257,30 @@ IndexedDB `sub2api-auth-coordination/values` 的顺序读取 Client ID，只记�
 `JSON.parse` 字符串和转义 JSON；同时仅记录 hash Token 存在性，不保存其内容。
 该兼容不改变 `auth_token + auth_user + auth/me` 主路径、管理/Relay 地址拆分、
 Capture Session 加密凭据、一次性 claim、最近成功快照或浏览器 Cleanup 隔离。
+
+### 10.6 2026-10-05 Sub2API CSP nonce 页面桥接
+
+**变更前**
+
+- 无扩展页面桥接收到 `bridge.js` 后立即创建内联 `script` 节点；目标站点
+  `script-src 'self'` 同时要求动态 nonce 时，页面尚未暴露 nonce 会直接被 CSP
+  拦截，表现为 handoff 参数保留、Helper 面板不出现和 Capture Session 一直
+  pending；
+- 管理页只有桥接结果和脚本请求分支，没有受校验的“桥接暂不可用”回传，失败时
+  容易继续等待而缺少可重试反馈。
+
+**变更后**
+
+- `createCaptureBridgeBootstrap` 先按 `script[nonce]`、`HTMLScriptElement.nonce`
+  和 `nonce` 属性读取当前页面 nonce；暂时没有 nonce 时等待 `DOMContentLoaded`，
+  使用 `MutationObserver` 监听页面脚本节点和 nonce 属性，并在有限时间内重复查找。
+  找到后只创建一次带 nonce 的脚本，超时不执行无 nonce 内联脚本；
+- 等待超时只向当前 opener 回传
+  `nexustok-upstream-capture-bridge-failed`。管理页继续校验活动窗口、上游
+  Origin 和 Capture ID，校验通过后只显示已有“页面桥接暂不可用”提示，不调用
+  完成接口、不消费 Capture Session，允许用户重新运行桥接；
+- 不修改目标站 CSP，不使用 `unsafe-inline`、`eval`、Blob Script 或通配符
+  `@connect`。`https://tk.shour.bond` 的管理地址仍与页面声明的
+  `https://api-image.shour.bond` Relay 分离；管理请求、Relay 模型探测、加密
+  `PlatformSiteCredential`、浏览器 Cleanup 隔离和资源失败保留最近成功快照的
+  语义均不变。代码与前端回归已验证，真实浏览器复验仍需使用新的 Capture Session。

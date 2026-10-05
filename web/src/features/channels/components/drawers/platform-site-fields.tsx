@@ -135,7 +135,7 @@ function createCaptureBridgeBootstrap(
 ): string {
   const encodedCaptureID = JSON.stringify(captureID)
   const encodedOpenerOrigin = JSON.stringify(openerOrigin)
-  return `(()=>{const o=window.opener;if(!o||o.closed)return;const c=${encodedCaptureID};const t=${encodedOpenerOrigin};let timer=0;const cleanup=()=>{window.removeEventListener('message',onMessage);if(timer)window.clearTimeout(timer)};const onMessage=e=>{const d=e.data||{};if(e.source!==o||e.origin!==t||d.type!=='nexustok-upstream-capture-bridge-script'||String(d.capture_id||d.captureID||'')!==c||typeof d.script!=='string'||!d.script)return;cleanup();const s=document.createElement('script');const n=Array.from(document.scripts).find((item)=>item&&item.nonce);if(n&&n.nonce)s.nonce=n.nonce;s.textContent=d.script;(document.head||document.documentElement).appendChild(s)};window.addEventListener('message',onMessage);timer=window.setTimeout(cleanup,15000);o.postMessage({type:'nexustok-upstream-capture-bridge-script-request',capture_id:c,captureID:c},t)})()`
+  return `(()=>{const o=window.opener;if(!o||o.closed)return;const c=${encodedCaptureID};const t=${encodedOpenerOrigin};let done=false;let timer=0;let retryTimer=0;let nonceObserver=null;let readyHandler=null;const cleanup=()=>{window.removeEventListener('message',onMessage);if(readyHandler)document.removeEventListener('DOMContentLoaded',readyHandler);if(timer)window.clearTimeout(timer);if(retryTimer)window.clearTimeout(retryTimer);if(nonceObserver)nonceObserver.disconnect()};const fail=()=>{if(done)return;done=true;cleanup();o.postMessage({type:'nexustok-upstream-capture-bridge-failed',capture_id:c,captureID:c,reason:'csp_nonce_unavailable'},t)};const findNonce=()=>{const candidates=document.querySelectorAll('script[nonce]');for(const item of Array.from(candidates)){const n=item&&((item.nonce||item.getAttribute('nonce')||'').trim());if(n)return n}for(const item of Array.from(document.scripts||[])){const n=item&&((item.nonce||item.getAttribute('nonce')||'').trim());if(n)return n}return ''};const inject=script=>{if(done)return true;const n=findNonce();if(!n)return false;done=true;cleanup();const s=document.createElement('script');s.nonce=n;s.textContent=script;(document.head||document.documentElement).appendChild(s);return true};const waitForNonce=script=>{const attempt=()=>{if(done||inject(script))return;if(!retryTimer)retryTimer=window.setTimeout(()=>{retryTimer=0;attempt()},250)};readyHandler=attempt;document.addEventListener('DOMContentLoaded',readyHandler,{once:true});if(window.MutationObserver){nonceObserver=new MutationObserver(attempt);nonceObserver.observe(document.documentElement||document,{childList:true,subtree:true,attributes:true,attributeFilter:['nonce']})}attempt()};const onMessage=e=>{const d=e.data||{};if(e.source!==o||e.origin!==t||d.type!=='nexustok-upstream-capture-bridge-script'||String(d.capture_id||d.captureID||'')!==c||typeof d.script!=='string'||!d.script)return;if(timer)window.clearTimeout(timer);timer=window.setTimeout(fail,15000);waitForNonce(d.script)};window.addEventListener('message',onMessage);timer=window.setTimeout(fail,15000);o.postMessage({type:'nexustok-upstream-capture-bridge-script-request',capture_id:c,captureID:c},t)})()`
 }
 
 export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
@@ -514,6 +514,7 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
             handoff_url?: string
             handoffURL?: string
             script?: string
+            reason?: string
             payload?: unknown
           }
         | undefined
@@ -522,6 +523,7 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
         (data.type !== 'nexustok-upstream-capture-helper-ready' &&
           data.type !== 'nexustok-upstream-capture-bridge-request' &&
           data.type !== 'nexustok-upstream-capture-bridge-script-request' &&
+          data.type !== 'nexustok-upstream-capture-bridge-failed' &&
           data.type !== 'nexustok-upstream-capture-bridge-result')
       ) {
         return
@@ -582,6 +584,21 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
           },
           event.origin
         )
+        return
+      }
+
+      if (data.type === 'nexustok-upstream-capture-bridge-failed') {
+        if (
+          !expectedCaptureID ||
+          messageCaptureID !== expectedCaptureID ||
+          !expectedOrigin ||
+          event.origin !== expectedOrigin ||
+          !expectedWindow ||
+          event.source !== expectedWindow
+        ) {
+          return
+        }
+        toast.error(t('Page bridge is not available yet.'))
         return
       }
 

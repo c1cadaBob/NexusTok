@@ -787,3 +787,19 @@ localStorage/sessionStorage 与 IndexedDB；Cookie 中的精确 Client ID 和
 包裹字段内递归读取，并由服务端以结构化解码重新确认 Relay 声明。hash Token 只影响
 脱敏存在性诊断，不改变认证候选或路由资格；只有完整 Key 的已确认模型能力进入
 `RoutingKey`，资源失败仍沿用最近成功快照。
+
+### 14.16 2026-10-05 Sub2API CSP nonce 桥接与路由资格
+
+**变更前**：页面桥接在收到脚本后立即注入内联节点，动态 CSP nonce 尚未出现时会
+导致桥接失败；路由文档没有明确该传输失败不应改变已存在的 Key、模型能力和渠道
+候选。
+
+**变更后**：桥接启动片段只在目标页面提供有效 nonce 后执行脚本；等待期间监听
+`DOMContentLoaded`、脚本节点/nonce 变化并有限重试，超时向管理页发送经过窗口、
+Origin、Capture ID 校验的失败消息。失败不调用完成接口、不创建或删除
+`RoutingKey`，也不消费有效 Capture Session。成功采集后，Sub2API 仍先按管理地址
+验证 `auth_token`/`auth/me`，再以页面公开声明的
+`https://api-image.shour.bond` Relay 探测完整 Key 的 `/v1/models`；只有已确认的
+`ModelsSynced=true` 能力进入路由，管理会话材料不传播到 Relay，资源失败继续使用
+最近成功快照。该桥接修复不恢复旧版账号池同步体系，浏览器采集登录态不参与后台
+密码 Cleanup。

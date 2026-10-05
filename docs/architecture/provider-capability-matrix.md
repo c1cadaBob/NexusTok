@@ -398,3 +398,17 @@ IndexedDB 顺序读取恢复 Client ID，仍要求同源 `session/restore` 路�
 明确命名的包裹字段，服务端用 `common.Unmarshal` 解析转义 JSON。该能力不扩展
 `@connect`、不传播管理会话、不改变管理/Relay 双地址、已验证 Key 模型能力和快照
 保留规则。
+
+### 3.12 2026-10-05 Sub2API CSP nonce 页面桥接能力
+
+**变更前**：能力矩阵只记录桥接脚本的 `postMessage` 来源校验，没有记录动态 CSP
+nonce 导致内联桥接脚本不执行的失败路径。
+
+**变更后**：无扩展桥接片段从当前页面脚本读取 nonce；没有 nonce 时等待
+`DOMContentLoaded`、`MutationObserver` 和有限重试，取得 nonce 后只执行一次带 nonce
+的 `bridge.js`。超时以受校验的失败消息反馈，不能通过无 nonce、`unsafe-inline`、
+`eval`、Blob Script 或通配符 `@connect` 绕过 CSP。该能力只影响 Capture 传输，不改变
+Sub2API `auth_token`/`auth/me` 验证、管理地址
+`https://tk.shour.bond`、页面声明 Relay `https://api-image.shour.bond`、管理/Relay
+请求头隔离、完整 Key 模型确认、最近成功快照或浏览器 Cleanup；旧版账号池和完整
+同步链路仍未恢复。

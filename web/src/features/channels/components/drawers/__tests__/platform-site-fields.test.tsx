@@ -694,7 +694,15 @@ test('运行页面桥接前获取内联脚本并保留可复制降级代码', as
   expect(bootstrap).toContain(JSON.stringify(window.location.origin))
   expect(bootstrap).not.toContain(JSON.stringify('https://upstream.example'))
   expect(bootstrap).toContain('document.scripts')
+  expect(bootstrap).toContain('script[nonce]')
+  expect(bootstrap).toContain('getAttribute')
   expect(bootstrap).toContain('s.nonce')
+  expect(bootstrap).toContain('DOMContentLoaded')
+  expect(bootstrap).toContain('MutationObserver')
+  expect(bootstrap).toContain('nexustok-upstream-capture-bridge-failed')
+  expect(bootstrap.indexOf('if(!n)return false')).toBeLessThan(
+    bootstrap.indexOf('document.createElement')
+  )
 
   const request = {
     type: 'nexustok-upstream-capture-bridge-script-request',
@@ -725,6 +733,57 @@ test('运行页面桥接前获取内联脚本并保留可复制降级代码', as
   } else {
     Reflect.deleteProperty(navigator, 'clipboard')
   }
+})
+
+test('页面桥接失败消息只接受活动窗口、来源和 Capture ID 匹配的回传', async () => {
+  const user = userEvent.setup()
+  const upstreamWindow = {
+    closed: false,
+    focus: vi.fn(),
+    location: { href: '' },
+    opener: window,
+    postMessage: vi.fn(),
+  } as unknown as Window
+  const openSpy = vi.spyOn(window, 'open').mockReturnValue(upstreamWindow)
+  vi.mocked(channelsApi.completePlatformSiteCapture).mockClear()
+
+  render(<PlatformSiteForm authType='auto' />)
+  await user.click(
+    screen.getByRole('button', { name: 'Capture upstream login state' })
+  )
+  await screen.findByRole('button', { name: 'Run page bridge' })
+
+  const failure = {
+    type: 'nexustok-upstream-capture-bridge-failed',
+    capture_id: 'capture-123',
+    reason: 'csp_nonce_unavailable',
+  }
+  const dispatchMessage = (
+    source: Window,
+    origin: string,
+    data: typeof failure
+  ) => {
+    const event = Object.assign(new Event('message'), {
+      source,
+      origin,
+      data,
+    }) as MessageEvent
+    window.dispatchEvent(event)
+  }
+
+  dispatchMessage({} as Window, 'https://upstream.example', failure)
+  dispatchMessage(upstreamWindow, 'https://wrong.example', failure)
+  dispatchMessage(upstreamWindow, 'https://upstream.example', {
+    ...failure,
+    capture_id: 'other-capture',
+  })
+  expect(channelsApi.completePlatformSiteCapture).not.toHaveBeenCalled()
+
+  dispatchMessage(upstreamWindow, 'https://upstream.example', failure)
+  await waitFor(() => {
+    expect(channelsApi.completePlatformSiteCapture).not.toHaveBeenCalled()
+  })
+  openSpy.mockRestore()
 })
 
 test('采集会话过期后停止轮询并显示重新创建入口', async () => {

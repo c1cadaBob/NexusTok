@@ -1269,3 +1269,19 @@ Helper 或服务端发现。
 `sub2api_auth_client_id` Cookie，再回退 IndexedDB，并继续只有存在同源恢复路由才请求。
 Cookie、Token、完整页面配置和 `auth_user` 内容不进入诊断；管理面仍获取 Key，Relay
 仍只做单 Key `/v1/models`，失败继续使用最近成功快照。
+
+## 26. 2026-10-05 Sub2API CSP nonce 页面桥接
+
+**变更前**：无扩展桥接收到页面桥接脚本后立即插入内联 `script`。对于
+`https://tk.shour.bond` 这类 `script-src 'self'` 且 nonce 动态生成的页面，页面尚未
+提供 nonce 时脚本被 CSP 拦截，资源比较链路尚未进入管理面认证和 Relay 模型探测。
+
+**变更后**：页面桥接先查找 `script[nonce]`、脚本元素的 `nonce` 属性和
+`getAttribute('nonce')`，缺失时等待 DOM ready、脚本节点变化和有限重试；只有取得
+nonce 才执行一次 `bridge.js`，超时以校验过的桥接失败消息反馈，不执行无 nonce 脚本。
+失败消息不调用完成接口，不清理有效 Capture Session。该修复只改变浏览器脚本传输，
+不改变已确认的 `auth_token`/`auth/me` 管理认证、`custom_endpoints` Relay 声明复核、
+`https://tk.shour.bond` 管理地址与 `https://api-image.shour.bond` Relay 的双地址
+资源获取、管理/Relay 请求头隔离、最近成功 Key/模型快照或浏览器 Cleanup 边界；真实
+浏览器验收使用新的 Capture Session，未把账号、密码、Token、Cookie 或完整 Key 写入
+比较结果。

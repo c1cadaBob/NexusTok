@@ -338,6 +338,22 @@ JSON.parse/转义配置，Helper 只递归有限命名包裹字段。hash Token 
 不保存 Cookie、Token、完整 `auth_user` 或页面响应。Capture Session、整体加密凭据、
 一次性 claim、管理/Relay 分离、浏览器 Cleanup 隔离和最近成功快照保持不变。
 
+### 3.18 2026-10-05 Sub2API CSP nonce 页面桥接
+
+**变更前**：无扩展桥接收到 `bridge.js` 后立即插入内联脚本；在
+`tk.shour.bond` 的动态 CSP nonce 尚未出现在页面脚本节点时，浏览器拦截脚本执行，
+handoff 参数保留，Capture Session 无法完成。该问题与 Sub2API `auth_token`、
+`auth/me`、`custom_endpoints` 或 Relay 资源逻辑无关。
+
+**变更后**：桥接片段按脚本 nonce、`HTMLScriptElement.nonce` 和 nonce 属性查找页面
+提供的授权值；缺失时等待 DOM ready、脚本节点变化和有限重试，超时通过活动窗口、
+Origin、Capture ID 校验后的失败消息反馈，不执行无 nonce 内联脚本。管理页不调用
+完成接口、不设置完成占用，也不清理有效会话。该偏差的代码和前端回归测试已完成；
+真实浏览器需使用新 Capture Session 验证动态 nonce 暴露时序。管理地址仍为
+`https://tk.shour.bond`，Relay 仍由页面声明的 `https://api-image.shour.bond`
+提供；Capture Session、整体加密凭据、一次性 claim、资源失败最近成功快照、浏览器
+Cleanup 隔离和不恢复旧版账号池同步的边界不变。
+
 ## 4. 维护规则
 
 新发现偏差必须先确认“预期来源”与“代码实际行为”都能引用，再新增编号。代码修复时在同一功能提交中：

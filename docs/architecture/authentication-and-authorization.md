@@ -432,3 +432,19 @@ Version、用户/渠道绑定、加密凭据和一次性 claim 校验。
 `not_attempted`。页面 Relay 配置只解析明确命名的 `data`/`config` 等有限包裹字段，
 服务端重新以结构化 JSON 解码核对声明；hash Token 仅记录存在性，所有认证材料仍经
 当前用户验证、来源校验和整体加密保存。
+
+### 9.13 2026-10-05 Sub2API CSP nonce 页面桥接
+
+**变更前**：页面桥接收到 `bridge.js` 后立即尝试注入无 nonce 的内联脚本；目标站点
+动态 CSP 在脚本节点尚未提供 nonce 时拦截执行，导致登录态即使已经存在于
+localStorage，也无法回传到 Capture Session。
+
+**变更后**：桥接片段从同页面脚本读取 `script[nonce]`、`HTMLScriptElement.nonce`
+或 nonce 属性；缺失时等待 DOM ready、`MutationObserver` 和有限重试，只有取得 nonce
+才插入并执行一次带 nonce 的脚本。超时只发送
+`nexustok-upstream-capture-bridge-failed`，管理页必须同时验证活动窗口、上游 Origin
+和 Capture ID，失败只提示已有“页面桥接暂不可用”，不调用完成接口、不消费有效会话。
+Sub2API 认证仍优先 `auth_token` 并验证 `/api/v1/auth/me`，管理地址仍为
+`https://tk.shour.bond`，Relay 仍为页面声明的 `https://api-image.shour.bond`；
+完整凭据继续整体加密，浏览器采集不参与后台密码 Cleanup，资源失败继续保留最近成功
+快照。

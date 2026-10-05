@@ -502,3 +502,17 @@ localStorage/sessionStorage 和 IndexedDB，并在同源路由发现后才请求
 配置解析仅接受有限命名包裹和结构化 JSON。缺少材料仍保持 pending/not_attempted，资源
 失败仍保留最近成功 Key、模型能力和渠道快照；浏览器登录态不参与后台密码 Cleanup，
 不新增缓存明文凭据结构或数据库字段。
+
+### 2026-10-05 Sub2API CSP nonce 页面桥接与缓存生命周期
+
+**变更前**：页面桥接收到脚本后立即插入内联节点，动态 CSP nonce 尚未出现时脚本被
+拦截；Capture Session 会继续保持 pending，但缺少明确的桥接失败反馈，用户容易重复
+使用已无法完成的页面状态。
+
+**变更后**：启动片段等待目标页面的 CSP nonce，监听 DOM ready、脚本节点变化并进行
+有限重试；超时发送经过窗口、Origin、Capture ID 校验的失败消息，不执行无 nonce 脚本，
+不调用完成接口，也不清理仍有效的 Capture Session。重新运行桥接仍复用同一短期加密
+缓存和一次性 claim；成功后继续以 `https://tk.shour.bond` 管理地址读取登录态和 Key，
+以页面声明的 `https://api-image.shour.bond` Relay 探测模型。管理/Relay 会话材料隔离，
+浏览器采集不参加后台密码同步 Cleanup，资源或分页失败不删除最近成功 Key、模型和
+可路由快照。

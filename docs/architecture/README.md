@@ -189,6 +189,20 @@ Refresh Token 才轮换令牌；只有 Refresh Token 时直接刷新，刷新后
 并继续只保存脱敏存在性和规范化地址。该兼容不改变 Capture Session、加密凭据、严格
 来源校验、后台 Cleanup 隔离或最近成功快照。
 
+### 2026-10-05 Sub2API CSP nonce 页面桥接
+
+**变更前**：架构索引只记录桥接的 `postMessage` 来源校验，没有记录目标页面动态
+CSP nonce 尚未生成时直接注入内联脚本的失败表现；该失败会让 `tk.shour.bond` 保留
+handoff 参数而无法进入 Capture 完成。
+
+**变更后**：页面桥接先从目标页面已有脚本读取 nonce；没有 nonce 时等待
+`DOMContentLoaded`、`MutationObserver` 和有限轮询，找到后只执行一次，超时通过已
+校验窗口、Origin、Capture ID 的内部失败消息反馈。该改动只修复脚本传输，不改变
+Sub2API `auth_token`/`auth/me` 管理认证、`custom_endpoints` 页面声明复核、
+`https://tk.shour.bond` 管理地址与 `https://api-image.shour.bond` Relay 拆分、请求头
+隔离、最近成功快照或浏览器 Cleanup；仍只保存当前加密 Capture 凭据，不恢复旧版账号池、
+Preview 或 `ChannelAccount` 同步链路。
+
 ## 变更记录
 
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
