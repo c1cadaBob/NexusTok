@@ -131,11 +131,11 @@ function isPlatformSiteCapturePayload(
 
 function createCaptureBridgeBootstrap(
   captureID: string,
-  targetOrigin: string
+  openerOrigin: string
 ): string {
   const encodedCaptureID = JSON.stringify(captureID)
-  const encodedTargetOrigin = JSON.stringify(targetOrigin)
-  return `javascript:(()=>{const o=window.opener;if(!o||o.closed)return;const c=${encodedCaptureID};const t=${encodedTargetOrigin};let timer=0;const cleanup=()=>{window.removeEventListener('message',onMessage);if(timer)window.clearTimeout(timer)};const onMessage=e=>{const d=e.data||{};if(e.source!==o||e.origin!==t||d.type!=='nexustok-upstream-capture-bridge-script'||String(d.capture_id||d.captureID||'')!==c||typeof d.script!=='string'||!d.script)return;cleanup();const s=document.createElement('script');s.textContent=d.script;(document.head||document.documentElement).appendChild(s)};window.addEventListener('message',onMessage);timer=window.setTimeout(cleanup,15000);o.postMessage({type:'nexustok-upstream-capture-bridge-script-request',capture_id:c,captureID:c},t)})()`
+  const encodedOpenerOrigin = JSON.stringify(openerOrigin)
+  return `(()=>{const o=window.opener;if(!o||o.closed)return;const c=${encodedCaptureID};const t=${encodedOpenerOrigin};let timer=0;const cleanup=()=>{window.removeEventListener('message',onMessage);if(timer)window.clearTimeout(timer)};const onMessage=e=>{const d=e.data||{};if(e.source!==o||e.origin!==t||d.type!=='nexustok-upstream-capture-bridge-script'||String(d.capture_id||d.captureID||'')!==c||typeof d.script!=='string'||!d.script)return;cleanup();const s=document.createElement('script');const n=Array.from(document.scripts).find((item)=>item&&item.nonce);if(n&&n.nonce)s.nonce=n.nonce;s.textContent=d.script;(document.head||document.documentElement).appendChild(s)};window.addEventListener('message',onMessage);timer=window.setTimeout(cleanup,15000);o.postMessage({type:'nexustok-upstream-capture-bridge-script-request',capture_id:c,captureID:c},t)})()`
 }
 
 export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
@@ -751,18 +751,12 @@ export function PlatformSiteFields(props: PlatformSiteFieldsProps) {
     let script = ''
     try {
       script = await prepareCaptureBridge(targetURL)
-      const targetOrigin =
-        captureStatus?.origin?.trim() ||
-        captureOrigin.trim() ||
-        (() => {
-          try {
-            return new URL(
-              handoffURL || captureStatus?.handoff_url || ''
-            ).origin
-          } catch {
-            return ''
-          }
-        })()
+      let targetOrigin = ''
+      try {
+        targetOrigin = window.location.origin
+      } catch {
+        targetOrigin = ''
+      }
       if (!targetOrigin) {
         throw new Error(t('Page bridge is not available yet.'))
       }

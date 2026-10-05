@@ -111,6 +111,24 @@ JavaScript/性能资源发现兼容路径。候选调用只扩大路径兼容性
 永久失败，也不会删除最近成功资源快照。成功保存后仍消费 Capture 记录；后续校验、数据库
 保存或入队失败仍释放 claim。浏览器登录态不进入后台密码同步 Cleanup。
 
+### 7.10 2026-10-05 Sub2API 页面声明 Relay 与资源快照
+
+**变更前**：缓存和后台任务只描述了管理地址页面发现，没有明确
+`custom_endpoints` Relay 声明的匿名复核，也没有把管理面成功、Relay 模型探测失败和
+最近成功快照的关系写清楚。
+
+**变更后**：Capture 完成时服务端不把客户端 `relay_base_url` 当作事实，而是匿名重读
+`record.BaseURL` 页面并解析 `custom_endpoints`/`customEndpoints`；页面未声明、协议/端口
+不匹配或页面不可读时拒绝外部 Relay。持久化仍只使用已有加密凭据、短期 Capture 缓存和
+一次性 claim，不新增数据库字段或明文凭据缓存。
+
+后台同步将管理地址用于 `/api/v1/...` 身份、分组、用量和 Key 请求，将页面声明 Relay
+用于 `/v1/models`；Relay 请求不复用管理 Cookie、Bearer、Origin、Referer、
+`X-Requested-With` 或 `X-Auth-Session`。Key/模型部分失败只写入资源级
+`partial/stale`、`using_snapshot` 和脱敏原因，保留最近成功快照。指定站点验收读取到
+7 条 Key 且 7 条 `ModelsSynced=true`，渠道仍启用并保留可用模型；本轮未在日志、
+诊断或额外明文缓存中保存敏感值，认证凭据和完整 Key 仍遵循既有整体加密保存边界。
+
 ## 2. 数据库选择和迁移
 
 ### 主数据库

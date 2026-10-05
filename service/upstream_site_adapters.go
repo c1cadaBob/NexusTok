@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"maps"
 	"math"
@@ -11,7 +12,6 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -24,7 +24,24 @@ import (
 
 const defaultNewAPIQuotaPerUnit = 500000
 
-var sub2APIAppConfigAPIBaseURLPattern = regexp.MustCompile(`(?i)["']api_base_url["']\s*:\s*["']([^"']+)["']`)
+type sub2APIPageConfiguration struct {
+	APIBaseURL      string `json:"api_base_url"`
+	APIBaseURLCamel string `json:"apiBaseUrl"`
+	CustomEndpoints []struct {
+		Endpoint string `json:"endpoint"`
+	} `json:"custom_endpoints"`
+	CustomEndpointsCamel []struct {
+		Endpoint string `json:"endpoint"`
+	} `json:"customEndpoints"`
+}
+
+type sub2APIPageDiscovery struct {
+	ManagementBaseURL    string
+	ManagementAPIBaseURL string
+	RelayBaseURL         string
+	DeclaredRelayURLs    []string
+	FinalPageURL         string
+}
 
 func sub2APIQuotaToInternal(value float64) (int64, error) {
 	if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
@@ -4047,7 +4064,7 @@ func discoverSub2APIModelBaseURL(ctx context.Context, session *PlatformSiteSessi
 	if session == nil || session.Client == nil || strings.TrimSpace(session.BaseURL) == "" {
 		return "", false
 	}
-	normalized, finalPageURL, ok := discoverSub2APIPageModelBaseURL(
+	discovery, ok := discoverSub2APIPageConfiguration(
 		ctx,
 		session.Client,
 		session.BaseURL,
@@ -4055,13 +4072,12 @@ func discoverSub2APIModelBaseURL(ctx context.Context, session *PlatformSiteSessi
 	if !ok {
 		return "", false
 	}
-	if validatePlatformSiteURL(normalized) != nil {
-		return "", false
-	}
+	normalized := discovery.RelayBaseURL
 	if !sub2APIPageDeclaredRelayURLAllowed(
 		session.BaseURL,
-		finalPageURL,
+		discovery.FinalPageURL,
 		normalized,
+		discovery.DeclaredRelayURLs...,
 	) {
 		return "", false
 	}
@@ -4081,16 +4097,21 @@ func discoverSub2APIManagementBaseURL(
 	}
 	anonymousClient := *session.Client
 	anonymousClient.Jar = nil
-	modelBaseURL, finalPageURL, ok := discoverSub2APIPageModelBaseURL(
+	discovery, ok := discoverSub2APIPageConfiguration(
 		ctx,
 		&anonymousClient,
 		originalBaseURL,
 	)
+	modelBaseURL := discovery.RelayBaseURL
+	finalPageURL := discovery.FinalPageURL
 	if ok &&
 		validatePlatformSiteURL(finalPageURL) == nil &&
-		(samePlatformSiteOrigin(originalBaseURL, modelBaseURL) ||
-			validatePlatformSiteURL(modelBaseURL) == nil) &&
-		sub2APIPageDeclaredRelayURLAllowed(originalBaseURL, finalPageURL, modelBaseURL) {
+		sub2APIPageDeclaredRelayURLAllowed(
+			originalBaseURL,
+			finalPageURL,
+			modelBaseURL,
+			discovery.DeclaredRelayURLs...,
+		) {
 		requestBaseURL := originalBaseURL
 		if samePlatformSiteOrigin(finalPageURL, modelBaseURL) {
 			requestBaseURL = platformSiteOriginBaseURL(finalPageURL)
@@ -4102,19 +4123,20 @@ func discoverSub2APIManagementBaseURL(
 	if !ok {
 		return "", "", "", false
 	}
-	modelBaseURL, finalPageURL, ok = discoverSub2APIPageModelBaseURL(
+	discovery, ok = discoverSub2APIPageConfiguration(
 		ctx,
 		&anonymousClient,
 		managementBaseURL,
 	)
+	modelBaseURL = discovery.RelayBaseURL
+	finalPageURL = discovery.FinalPageURL
 	if !ok ||
 		validatePlatformSiteURL(finalPageURL) != nil ||
-		(samePlatformSiteOrigin(originalBaseURL, modelBaseURL) == false &&
-			validatePlatformSiteURL(modelBaseURL) != nil) ||
 		!sub2APIPageDeclaredRelayURLAllowed(
 			originalBaseURL,
 			finalPageURL,
 			modelBaseURL,
+			discovery.DeclaredRelayURLs...,
 		) {
 		return "", "", "", false
 	}
@@ -4130,34 +4152,60 @@ func discoverSub2APIPageModelBaseURL(
 	client *http.Client,
 	pageBaseURL string,
 ) (string, string, bool) {
-	if client == nil || strings.TrimSpace(pageBaseURL) == "" {
+	discovery, ok := discoverSub2APIPageConfiguration(ctx, client, pageBaseURL)
+	if !ok {
 		return "", "", false
+	}
+	return discovery.RelayBaseURL, discovery.FinalPageURL, true
+}
+
+func discoverSub2APIPageConfiguration(
+	ctx context.Context,
+	client *http.Client,
+	pageBaseURL string,
+) (sub2APIPageDiscovery, bool) {
+	if client == nil || strings.TrimSpace(pageBaseURL) == "" {
+		return sub2APIPageDiscovery{}, false
+	}
+	initialPageURL, err := normalizePlatformSiteURL(pageBaseURL)
+	if err != nil {
+		return sub2APIPageDiscovery{}, false
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, pageBaseURL, nil)
 	if err != nil {
-		return "", "", false
+		return sub2APIPageDiscovery{}, false
 	}
 	request.Header.Set("Accept", "text/html,application/xhtml+xml")
-	response, err := client.Do(request)
+	anonymousClient := *client
+	anonymousClient.Jar = nil
+	previousCheckRedirect := client.CheckRedirect
+	anonymousClient.CheckRedirect = func(request *http.Request, via []*http.Request) error {
+		if len(via) >= 5 ||
+			validatePlatformSiteURL(request.URL.String()) != nil ||
+			!samePlatformSiteOrigin(initialPageURL, request.URL.String()) {
+			return http.ErrUseLastResponse
+		}
+		if previousCheckRedirect != nil {
+			return previousCheckRedirect(request, via)
+		}
+		return nil
+	}
+	response, err := anonymousClient.Do(request)
 	if err != nil {
-		return "", "", false
+		return sub2APIPageDiscovery{}, false
 	}
 	defer response.Body.Close()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return "", "", false
+		return sub2APIPageDiscovery{}, false
 	}
 	contentType := strings.ToLower(response.Header.Get("Content-Type"))
 	if !strings.Contains(contentType, "text/html") &&
 		!strings.Contains(contentType, "application/xhtml+xml") {
-		return "", "", false
+		return sub2APIPageDiscovery{}, false
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, upstreamSiteResponseLimit+1))
 	if err != nil || len(data) > upstreamSiteResponseLimit {
-		return "", "", false
-	}
-	match := sub2APIAppConfigAPIBaseURLPattern.FindStringSubmatch(string(data))
-	if len(match) < 2 {
-		return "", "", false
+		return sub2APIPageDiscovery{}, false
 	}
 	finalPageURL := pageBaseURL
 	if response.Request != nil && response.Request.URL != nil {
@@ -4165,34 +4213,267 @@ func discoverSub2APIPageModelBaseURL(
 	}
 	finalPageURL, err = normalizePlatformSiteURL(finalPageURL)
 	if err != nil {
-		return "", "", false
+		return sub2APIPageDiscovery{}, false
 	}
-	candidate := strings.TrimSpace(strings.ReplaceAll(match[1], `\/`, `/`))
-	if decoded, err := url.QueryUnescape(candidate); err == nil {
-		candidate = decoded
+	configurations := parseSub2APIPageConfigurations(data)
+	for _, configuration := range configurations {
+		discovery := sub2APIPageDiscovery{
+			ManagementBaseURL: platformSiteOriginBaseURL(finalPageURL),
+			FinalPageURL:      finalPageURL,
+		}
+		discovery.DeclaredRelayURLs = resolveSub2APICustomEndpoints(
+			configuration,
+			finalPageURL,
+		)
+		apiRaw := firstNonEmptyString(
+			configuration.APIBaseURL,
+			configuration.APIBaseURLCamel,
+		)
+		if apiRaw != "" {
+			discovery.ManagementAPIBaseURL = resolveSub2APIPageURL(apiRaw, finalPageURL)
+		}
+		discovery.RelayBaseURL = firstNonEmptyString(
+			discovery.ManagementAPIBaseURL,
+			firstStringValue(discovery.DeclaredRelayURLs),
+		)
+		if discovery.RelayBaseURL != "" {
+			return discovery, true
+		}
 	}
-	if parsedCandidate, err := url.Parse(candidate); err == nil && !parsedCandidate.IsAbs() {
+
+	return sub2APIPageDiscovery{}, false
+}
+
+func parseSub2APIPageConfigurations(data []byte) []sub2APIPageConfiguration {
+	source := html.UnescapeString(string(data))
+	configurations := make([]sub2APIPageConfiguration, 0, 4)
+	seen := make(map[string]struct{})
+
+	appendConfiguration := func(raw string) {
+		raw = strings.TrimSpace(raw)
+		if raw == "" || len(raw) > 256<<10 {
+			return
+		}
+		var configuration sub2APIPageConfiguration
+		if err := common.Unmarshal([]byte(raw), &configuration); err != nil {
+			return
+		}
+		if strings.TrimSpace(configuration.APIBaseURL) == "" &&
+			strings.TrimSpace(configuration.APIBaseURLCamel) == "" &&
+			len(configuration.CustomEndpoints) == 0 &&
+			len(configuration.CustomEndpointsCamel) == 0 {
+			return
+		}
+		if _, exists := seen[raw]; exists {
+			return
+		}
+		seen[raw] = struct{}{}
+		configurations = append(configurations, configuration)
+	}
+
+	hasAppConfigMarker := false
+	for _, marker := range []string{"window.__APP_CONFIG__", "__APP_CONFIG__"} {
+		offset := 0
+		for offset < len(source) && len(configurations) < 16 {
+			index := strings.Index(source[offset:], marker)
+			if index < 0 {
+				break
+			}
+			hasAppConfigMarker = true
+			index += offset + len(marker)
+			if objectStart := strings.IndexByte(source[index:min(len(source), index+4096)], '{'); objectStart >= 0 {
+				start := index + objectStart
+				if object := balancedJSONFragment(source, start); object != "" {
+					appendConfiguration(object)
+				}
+			}
+			offset = index + 1
+		}
+	}
+	if hasAppConfigMarker && len(configurations) > 0 {
+		return configurations
+	}
+
+	for offset := 0; offset < len(source) && len(configurations) < 16; {
+		index := strings.IndexAny(source[offset:], "{[")
+		if index < 0 {
+			break
+		}
+		start := offset + index
+		if source[start] == '{' {
+			appendConfiguration(balancedJSONFragment(source, start))
+		}
+		offset = start + 1
+	}
+	return configurations
+}
+
+func balancedJSONFragment(source string, start int) string {
+	if start < 0 || start >= len(source) || source[start] != '{' {
+		return ""
+	}
+	depth := 0
+	inString := false
+	escaped := false
+	for index := start; index < len(source); index++ {
+		char := source[index]
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if char == '\\' {
+				escaped = true
+				continue
+			}
+			if char == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch char {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return source[start : index+1]
+			}
+		}
+	}
+	return ""
+}
+
+func resolveSub2APICustomEndpoints(
+	configuration sub2APIPageConfiguration,
+	finalPageURL string,
+) []string {
+	rawEndpoints := make([]string, 0,
+		len(configuration.CustomEndpoints)+len(configuration.CustomEndpointsCamel),
+	)
+	for _, endpoint := range configuration.CustomEndpoints {
+		rawEndpoints = append(rawEndpoints, endpoint.Endpoint)
+	}
+	for _, endpoint := range configuration.CustomEndpointsCamel {
+		rawEndpoints = append(rawEndpoints, endpoint.Endpoint)
+	}
+	result := make([]string, 0, len(rawEndpoints))
+	for _, raw := range rawEndpoints {
+		if !sub2APIRelayURLHasNoCredentialsOrDecorations(raw) {
+			continue
+		}
+		resolved := resolveSub2APIPageURL(raw, finalPageURL)
+		if validatePlatformSiteURL(resolved) != nil {
+			continue
+		}
+		result = append(result, resolved)
+	}
+	return uniqueStrings(result)
+}
+
+func resolveSub2APIPageURL(raw, finalPageURL string) string {
+	raw = strings.TrimSpace(strings.ReplaceAll(raw, `\/`, `/`))
+	if raw == "" {
+		return ""
+	}
+	if !sub2APIRelayURLHasNoCredentialsOrDecorations(raw) {
+		return ""
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	if !parsed.IsAbs() {
 		baseURL, baseErr := url.Parse(finalPageURL)
 		if baseErr != nil {
-			return "", "", false
+			return ""
 		}
-		candidate = baseURL.ResolveReference(parsedCandidate).String()
+		raw = baseURL.ResolveReference(parsed).String()
 	}
-	normalized, err := normalizePlatformSiteURL(candidate)
+	normalized, err := normalizePlatformSiteURL(raw)
 	if err != nil {
-		return "", "", false
+		return ""
 	}
-	return normalized, finalPageURL, true
+	return normalized
+}
+
+func sub2APIRelayURLHasNoCredentialsOrDecorations(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(strings.ReplaceAll(raw, `\/`, `/`)))
+	if err != nil || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return false
+	}
+	return parsed.Scheme == "" || parsed.Scheme == "http" || parsed.Scheme == "https"
+}
+
+func firstStringValue(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
 }
 
 func sub2APIPageDeclaredRelayURLAllowed(
 	managementBaseURL string,
 	finalPageURL string,
 	relayBaseURL string,
+	declaredRelayURLs ...string,
 ) bool {
-	return samePlatformSiteOrigin(finalPageURL, relayBaseURL) ||
-		samePlatformSiteOrigin(managementBaseURL, relayBaseURL) ||
-		sub2APIDirectAPIOriginRelation(managementBaseURL, relayBaseURL)
+	normalizedRelay, err := normalizePlatformSiteURL(relayBaseURL)
+	if err != nil {
+		return false
+	}
+	if samePlatformSiteOrigin(finalPageURL, normalizedRelay) ||
+		samePlatformSiteOrigin(managementBaseURL, normalizedRelay) ||
+		sub2APIDirectAPIOriginRelation(managementBaseURL, normalizedRelay) {
+		return true
+	}
+	strictRelay, strictErr := strictSub2APIRelayURL(normalizedRelay)
+	if strictErr != nil {
+		return false
+	}
+	for _, declared := range declaredRelayURLs {
+		normalizedDeclared, declaredErr := strictSub2APIRelayURL(declared)
+		if declaredErr == nil &&
+			sameStrictSub2APIRelayURL(
+				normalizedDeclared,
+				strictRelay,
+			) {
+			return true
+		}
+	}
+	return false
+}
+
+func strictSub2APIRelayURL(raw string) (*url.URL, error) {
+	if !sub2APIRelayURLHasNoCredentialsOrDecorations(raw) {
+		return nil, errors.New("Sub2API Relay URL 包含不支持的字段")
+	}
+	normalized, err := normalizePlatformSiteURL(raw)
+	if err != nil {
+		return nil, err
+	}
+	if err := validatePlatformSiteURL(normalized); err != nil {
+		return nil, err
+	}
+	parsed, err := url.Parse(normalized)
+	if err != nil {
+		return nil, err
+	}
+	return parsed, nil
+}
+
+func sameStrictSub2APIRelayURL(left, right *url.URL) bool {
+	if left == nil || right == nil ||
+		!strings.EqualFold(left.Scheme, right.Scheme) ||
+		!strings.EqualFold(left.Hostname(), right.Hostname()) ||
+		platformSiteEffectivePort(left) != platformSiteEffectivePort(right) {
+		return false
+	}
+	leftPath := strings.TrimRight(left.EscapedPath(), "/")
+	rightPath := strings.TrimRight(right.EscapedPath(), "/")
+	return leftPath == rightPath
 }
 
 func platformSiteOriginBaseURL(raw string) string {

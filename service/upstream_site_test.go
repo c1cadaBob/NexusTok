@@ -837,6 +837,31 @@ func TestPlatformSiteCaptureUserscriptsReadExplicitBrowserFieldsOnly(t *testing.
 	require.NotContains(t, helper, record.Secret)
 }
 
+func TestPlatformSiteCaptureHelperReadsDeclaredSub2APIRelay(t *testing.T) {
+	start, err := StartPlatformSiteCaptureSession(13, PlatformSiteCaptureStartRequest{
+		Platform: model.PlatformSub2API,
+		BaseURL:  "http://127.0.0.1:8087",
+		AuthType: PlatformSiteCaptureAuthAuto,
+	}, "https://nexus.example.com")
+	require.NoError(t, err)
+	record, found, err := platformSiteCaptureCache.Get(start.CaptureID)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	script, err := RenderPlatformSiteCaptureUserscript(
+		start.CaptureID,
+		record.InstallToken,
+		"https://nexus.example.com",
+	)
+	require.NoError(t, err)
+	assert.Contains(t, script, "custom_endpoints")
+	assert.Contains(t, script, "customEndpoints")
+	assert.Contains(t, script, "configuredRelayBaseURL")
+	assert.Contains(t, script, "relay_base_url")
+	assert.Contains(t, script, "relay_base_url_seen")
+	assert.NotContains(t, script, record.Secret)
+}
+
 func TestPlatformSiteCaptureHelperGeneratedScriptIsValidJavaScript(t *testing.T) {
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
@@ -880,6 +905,8 @@ func TestPlatformSiteCaptureBridgeUsesSignedInstallAndPostMessage(t *testing.T) 
 	require.Contains(t, script, "requestBridgeHandoff")
 	require.Contains(t, script, "handoffFromURL")
 	require.Contains(t, script, "window.opener.postMessage")
+	require.Contains(t, script, "if (returnURL) {")
+	require.Contains(t, script, "targetOrigin = text(config.nexus_base)")
 	require.Contains(t, script, "capture_source: 'capture_bridge'")
 	require.Contains(t, script, `"transport":"bridge"`)
 	require.NotContains(t, script, record.Secret)
@@ -4600,6 +4627,227 @@ func TestSub2APIAdapterResolvesRelativeRelayURLFromPageConfig(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.Equal(t, "https://example.com/v1", session.ModelBaseURL)
+}
+
+func TestSub2APIPageConfigurationFindsCustomRelayWhenAPIBaseIsEmpty(t *testing.T) {
+	relayServer := httptest.NewServer(http.NotFoundHandler())
+	defer relayServer.Close()
+
+	managementServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		assert.Empty(t, request.Header.Get("Authorization"))
+		assert.Empty(t, request.Header.Get("Cookie"))
+		assert.Empty(t, request.Header.Get("X-Auth-Session"))
+		writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = fmt.Fprintf(
+			writer,
+			`<script>window.__APP_CONFIG__={"api_base_url":"","custom_endpoints":[{"endpoint":%q}]}</script>`,
+			relayServer.URL+"/v1",
+		)
+	}))
+	defer managementServer.Close()
+
+	client, err := newPlatformSiteHTTPClient()
+	require.NoError(t, err)
+	discovery, ok := discoverSub2APIPageConfiguration(
+		context.Background(),
+		client,
+		managementServer.URL,
+	)
+	require.True(t, ok)
+	assert.Equal(t, managementServer.URL, discovery.ManagementBaseURL)
+	assert.Empty(t, discovery.ManagementAPIBaseURL)
+	assert.Equal(t, relayServer.URL+"/v1", discovery.RelayBaseURL)
+	assert.Equal(t, []string{relayServer.URL + "/v1"}, discovery.DeclaredRelayURLs)
+}
+
+func TestSub2APIPageConfigurationParsesShourCustomRelayAndEndpointFallbacks(t *testing.T) {
+	configurations := parseSub2APIPageConfigurations([]byte(
+		`<script>window.__APP_CONFIG__={"api_base_url":"","custom_endpoints":[{"name":"直连","endpoint":"https://api-image.shour.bond","description":""}]}</script>`,
+	))
+	require.Len(t, configurations, 1)
+	assert.Empty(t, configurations[0].APIBaseURL)
+	require.Len(t, configurations[0].CustomEndpoints, 1)
+	assert.Equal(t, "https://api-image.shour.bond", configurations[0].CustomEndpoints[0].Endpoint)
+
+	tests := []struct {
+		name     string
+		config   sub2APIPageConfiguration
+		pageURL  string
+		expected string
+	}{
+		{
+			name: "相对地址按最终页面解析",
+			config: sub2APIPageConfiguration{
+				CustomEndpoints: []struct {
+					Endpoint string `json:"endpoint"`
+				}{{Endpoint: "/relay/v1"}},
+			},
+			pageURL:  "http://127.0.0.1:8190/zh/home",
+			expected: "http://127.0.0.1:8190/relay/v1",
+		},
+		{
+			name: "跳过无效声明并选择第一个合法端点",
+			config: sub2APIPageConfiguration{
+				CustomEndpoints: []struct {
+					Endpoint string `json:"endpoint"`
+				}{
+					{Endpoint: "javascript:alert(1)"},
+					{Endpoint: "http://127.0.0.1:8191/first"},
+					{Endpoint: "http://127.0.0.1:8192/second"},
+				},
+			},
+			pageURL:  "http://127.0.0.1:8190/",
+			expected: "http://127.0.0.1:8191/first",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			endpoints := resolveSub2APICustomEndpoints(testCase.config, testCase.pageURL)
+			require.NotEmpty(t, endpoints)
+			assert.Equal(t, testCase.expected, endpoints[0])
+		})
+	}
+}
+
+func TestSub2APIPageConfigurationFallsBackWhenAppConfigIsInvalid(t *testing.T) {
+	configurations := parseSub2APIPageConfigurations([]byte(
+		`<script>window.__APP_CONFIG__ = JSON.parse("invalid")</script><script>const pageState={"customEndpoints":[{"endpoint":"https://api-image.shour.bond"}]}</script>`,
+	))
+	require.Len(t, configurations, 1)
+	require.Len(t, configurations[0].CustomEndpointsCamel, 1)
+	assert.Equal(t, "https://api-image.shour.bond", configurations[0].CustomEndpointsCamel[0].Endpoint)
+}
+
+func TestPlatformSiteCaptureRevalidatesDeclaredExternalSub2APIRelay(t *testing.T) {
+	relayServer := httptest.NewServer(http.NotFoundHandler())
+	defer relayServer.Close()
+
+	pageRequests := 0
+	managementServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		pageRequests++
+		assert.Empty(t, request.Header.Get("Authorization"))
+		assert.Empty(t, request.Header.Get("Cookie"))
+		assert.Empty(t, request.Header.Get("X-Auth-Session"))
+		writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = fmt.Fprintf(
+			writer,
+			`<script>window.__APP_CONFIG__={"api_base_url":"","custom_endpoints":[{"endpoint":%q}]}</script>`,
+			relayServer.URL,
+		)
+	}))
+	defer managementServer.Close()
+
+	start, err := StartPlatformSiteCaptureSession(31, PlatformSiteCaptureStartRequest{
+		Platform:  model.PlatformSub2API,
+		BaseURL:   managementServer.URL,
+		AuthType:  PlatformSiteCaptureAuthAuto,
+		ChannelID: 44,
+	}, "https://nexus.example.com")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = platformSiteCaptureCache.DeleteMany([]string{start.CaptureID})
+	})
+	record, found, err := platformSiteCaptureCache.Get(start.CaptureID)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	status, err := CompletePlatformSiteCaptureSessionContext(
+		context.Background(),
+		start.CaptureID,
+		PlatformSiteCaptureCompleteRequest{
+			CaptureSecret:     record.Secret,
+			CaptureSource:     "capture_helper",
+			HelperVersion:     platformSiteCaptureHelperVersion,
+			Platform:          model.PlatformSub2API,
+			AuthType:          PlatformSiteCaptureAuthAuto,
+			BaseURL:           managementServer.URL,
+			ManagementBaseURL: managementServer.URL,
+			APIBaseURL:        managementServer.URL,
+			RelayBaseURL:      relayServer.URL,
+			Origin:            record.Origin,
+			AccessToken:       "synthetic-access-token",
+			UserID:            "42",
+			Username:          "synthetic-user",
+			AuthUser: map[string]any{
+				"id":           42,
+				"username":     "synthetic-user",
+				"private_data": "must-not-be-returned",
+			},
+			Diagnostics: &PlatformSiteCaptureDiagnostics{
+				AuthUserVerified: true,
+				AuthMePath:       "/api/v1/auth/me",
+			},
+		},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, platformSiteCaptureStatusComplete, status.Status)
+	require.NotNil(t, status.Summary)
+	assert.Equal(t, managementServer.URL, status.Summary.ManagementBaseURL)
+	assert.Equal(t, relayServer.URL, status.Summary.RelayBaseURL)
+	assert.GreaterOrEqual(t, pageRequests, 1)
+	serialized, err := common.Marshal(status)
+	require.NoError(t, err)
+	assert.NotContains(t, string(serialized), "must-not-be-returned")
+
+	resolved, err := ResolvePlatformSiteCapture(
+		31,
+		start.CaptureID,
+		44,
+		model.PlatformSub2API,
+		PlatformSiteCaptureAuthAuto,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, managementServer.URL, resolved.ManagementBaseURL)
+	assert.Equal(t, relayServer.URL, resolved.RelayBaseURL)
+	require.NoError(t, ReleasePlatformSiteCaptureClaim(start.CaptureID, resolved.ClaimToken))
+}
+
+func TestPlatformSiteCaptureRejectsUndeclaredExternalSub2APIRelay(t *testing.T) {
+	declaredRelayServer := httptest.NewServer(http.NotFoundHandler())
+	defer declaredRelayServer.Close()
+	requestedRelayServer := httptest.NewServer(http.NotFoundHandler())
+	defer requestedRelayServer.Close()
+
+	managementServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = fmt.Fprintf(
+			writer,
+			`<script>window.__APP_CONFIG__={"custom_endpoints":[{"endpoint":%q}]}</script>`,
+			declaredRelayServer.URL,
+		)
+	}))
+	defer managementServer.Close()
+
+	start, err := StartPlatformSiteCaptureSession(32, PlatformSiteCaptureStartRequest{
+		Platform: model.PlatformSub2API,
+		BaseURL:  managementServer.URL,
+		AuthType: PlatformSiteCaptureAuthAuto,
+	}, "https://nexus.example.com")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = platformSiteCaptureCache.DeleteMany([]string{start.CaptureID})
+	})
+	record, found, err := platformSiteCaptureCache.Get(start.CaptureID)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	_, err = CompletePlatformSiteCaptureSessionContext(
+		context.Background(),
+		start.CaptureID,
+		PlatformSiteCaptureCompleteRequest{
+			CaptureSecret: record.Secret,
+			CaptureSource: "capture_helper",
+			HelperVersion: platformSiteCaptureHelperVersion,
+			Platform:      model.PlatformSub2API,
+			AuthType:      PlatformSiteCaptureAuthAuto,
+			RelayBaseURL:  requestedRelayServer.URL,
+			Origin:        record.Origin,
+			AccessToken:   "synthetic-access-token",
+			Diagnostics:   &PlatformSiteCaptureDiagnostics{AuthUserVerified: true},
+		},
+	)
+	require.ErrorContains(t, err, "不属于目标站点")
 }
 
 func TestSub2APIAdapterAcceptsRelayURLDeclaredByRedirectedPage(t *testing.T) {

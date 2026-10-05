@@ -1182,3 +1182,34 @@ Capture Session 状态查询遇到不存在或过期时，前端立即停止轮�
 - 同源脚本发现仍限制在当前 Origin，服务端地址关系继续使用同 Host 或严格 `api.` 父子
   Host。浏览器 Capture 登录态仍不参与后台密码会话 Cleanup，资源失败、分页失败、安全
   验证和权限不足继续保留最近成功快照。
+
+## 22. 2026-10-05 Sub2API 页面声明 Relay 与管理/模型双地址
+
+**变更前**
+
+- 资源比较只记录了 `api_base_url` 和管理面地址，未把页面
+  `custom_endpoints`/`customEndpoints` 作为独立的 Relay 声明来源；
+- `api_base_url` 为空的 Sub2API 定制站点无法稳定发现模型地址，管理请求和
+  `/v1/models` 探测容易错误复用同一 Host；
+- 外部 Relay 的信任边界没有明确要求服务端重新读取匿名页面，也没有把管理会话头与
+  Relay 探测请求隔离写入比较基线。
+
+**变更后**
+
+- 页面发现按 `api_base_url` 优先、首个合法 `custom_endpoints[].endpoint` 次之的
+  顺序选择地址；绝对和相对地址都按最终 HTML URL 解析，并经过协议、端口、重定向和
+  SSRF 校验。服务端只使用结构化配置/受限 JSON 对象扫描，不使用宽泛任意 URL 正则；
+- Capture 完成时，Sub2API 外部 Relay 必须通过 `record.BaseURL` 的匿名页面复核，
+  与页面明确声明的 Relay 地址规范化后完全匹配；未声明、协议/端口不匹配、页面读取
+  失败或仅有客户端自报地址时拒绝。管理地址仍保持同 Host 或严格 `api.` 关系；
+- 平台账号 `base_url` 保存管理地址，`relay_base_url` 保存页面声明 Relay，渠道
+  `base_url` 使用去除末尾 `/v1` 的 Relay 根地址。管理端按 `/api/v1/...` 获取
+  identity、groups、usage 和 keys，Relay 端按 `/v1/models` 确认每条完整 Key 的
+  模型能力；
+- Relay 请求使用独立客户端和请求头，只携带当前完整 Key 的 `Authorization`、
+  `x-api-key`，不携带管理 Cookie、Bearer、Origin、Referer、`X-Requested-With`、
+  `X-Auth-Session` 或其它管理会话材料。Key/模型资源部分失败时继续标记
+  `partial/stale` 并保留最近成功快照，不把空响应当作密钥删除；
+- 指定站点脱敏验收结果为：管理地址与 `api-image.shour.bond` Relay 地址已拆分，
+  渠道启用并成功读取 7 条 Key，7 条 Key 的 `ModelsSynced` 为真；本轮资源表保留
+  `keys=partial`、`models=stale` 的历史快照，未输出完整凭据。

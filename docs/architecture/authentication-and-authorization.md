@@ -370,3 +370,22 @@ RSA-OAEP-SHA256，长密码使用 `password-v2` OAEP 标签和
 - 认证来源、Origin、Helper 版本、Capture ID、Capture Secret 和用户/管理员验证仍由
   服务端校验。自动模式只接受 `AuthUserVerified` 或 `AdminKeyVerified` 对应的结果，
   不改变完整凭据加密保存、一次性 claim、桥接来源校验或诊断脱敏规则。
+
+### 9.9 2026-10-05 Sub2API Relay 声明复核与采集凭据边界
+
+**变更前**：自动采集验证了登录态和 `auth/me`，但 `api_base_url` 为空的定制
+Sub2API 站点可能无法把页面公开 Relay 配置带入完成结果；外部 Relay 的信任判断与
+管理会话鉴权边界没有集中说明。
+
+**变更后**：
+
+- Helper 可从 handoff、`__APP_CONFIG__`、页面初始化状态和明确命名的浏览器存储读取
+  `custom_endpoints`/`customEndpoints`，只回传规范化存在性和 `relay_base_url`，不回传
+  完整页面响应、密码、Cookie 或诊断中的完整 `auth_user`；
+- 服务端 Capture 完成校验使用请求 `context.Context` 匿名读取管理页面，要求外部
+  Relay 通过现有 URL/SSRF 校验、页面明确声明和规范化完全匹配；管理地址仍受严格
+  Host/`api.` 关系约束，不能凭客户端字段、同注册域名或用户 Origin 绕过；
+- 指定站点 `https://tk.shour.bond` 的脱敏验收已确认管理地址与
+  `https://api-image.shour.bond` Relay 地址分离，登录态通过当前用户验证后保存到加密
+  `PlatformSiteCredential`。浏览器 Capture 仍属于用户已有会话，不执行后台密码
+  Cleanup；资源失败仍不覆盖最近成功快照。

@@ -721,3 +721,25 @@ Session Restore 等兼容逻辑，但 Dashboard Refresh、Refresh Token 和代�
   倍率、单 Key 模型能力和失败时保留最近成功快照的规则。浏览器 Capture 登录态不
   参加后台密码同步 Cleanup，也不恢复旧版完整账号池、Preview 或 ChannelAccount
   同步体系。
+
+### 14.12 2026-10-05 Sub2API `custom_endpoints` Relay 与路由资格
+
+**变更前**：Sub2API `api_base_url` 为空或指向管理页面时，平台账号、渠道
+`base_url` 和单 Key 模型探测可能共用管理地址；外部 Relay 只要满足客户端字段格式就
+有被误纳入路由候选的风险。
+
+**变更后**
+
+- 页面配置解析以 `api_base_url` 为第一优先级，以页面公开声明的
+  `custom_endpoints`/`customEndpoints` 第一个合法端点为回退；服务端在 Capture 完成
+  时重新读取管理页面并精确匹配声明地址，不能仅凭 `relay_base_url`、同注册域名或
+  客户端 Origin 通过；
+- 平台账号的管理地址和 Relay 地址分别保存，渠道请求根地址使用 Relay 根地址；
+  `RoutingKey` 仍只允许使用已由完整 Key `/v1/models` 确认的模型能力，页面账号级模型、
+  分组目录和诊断字段不会扩大可路由模型集合；
+- Relay 模型请求与管理请求隔离，禁止把管理 Cookie、Bearer、Origin、Referer、
+  `X-Requested-With` 或 `X-Auth-Session` 传播到 Relay。资源同步部分失败时，既有
+  `UpstreamKey`、`UpstreamKeyAbility`、模型和路由候选继续按最近成功快照保留；
+- 真实站点脱敏验收显示渠道处于启用状态，7 条 Key 中 7 条
+  `ModelsSynced=true`，模型列表可用；资源状态为 `partial/stale` 且使用最近成功快照，
+  仍不改变“已确认能力才能路由”的规则。

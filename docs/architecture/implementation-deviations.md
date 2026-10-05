@@ -59,6 +59,7 @@
 | DEV-024 | 平台站点密码会话与自动配置 | 密码同步可能复用旧 Access/Refresh Token、Cookie、Session ID 或 Dashboard Refresh；同步结束没有统一的本轮会话清理；自动配置与浏览器既有会话的所有权、表单隐藏旧凭据入口和并发消费边界不完整 | NewAPI/Sub2API 密码模式每次直接登录；NewAPI `POST /api/user/auth/logout` 后按 SID `DELETE /api/user/sessions/{sid}`，Sub2API 仅提交本轮 Refresh Token 到 `POST /api/v1/auth/logout`；禁止撤销其他会话，清理失败只告警并保留快照；Capture Helper 通过验证、脱敏诊断、现有加密凭据和 Redis/内存 claim 一次性消费，浏览器登录态不由后台注销 | 已实现/待真实站点持续核验 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/platform_site_capture.go`、`pkg/cachex/hybrid_cache.go`、`controller/channel.go`、`controller/upstream_channel.go`；New API/Sub2API/all-api-hub 参考源 | 2026-10-02 |
 | DEV-025 | 认证流程保存与 NewAPI 加密登录 | 认证流程 ID 与表单残留用户名、密码的兼容边界不清，用户名会在流程解析前触发手动凭据冲突；NewAPI 新版加密登录、旧版路由回退和 Sub2API 邮箱主体顺序未完整记录 | 有 `auth_flow_id` 时前端只提交流程材料，后端兼容用户名残留但以流程解析的真实身份为准，拒绝其它真实凭据；NewAPI 读取加密密钥并使用 RSA-OAEP/v2 信封，仅 404/405 回退明文；Sub2API 仅在凭据错误/401 后从邮箱回退用户名并以本轮 Refresh Token 登出 | 已实现/待真实站点持续核验 | `web/src/features/channels/lib/channel-form.ts`、`controller/upstream_channel.go`、`service/newapi_password_encryption.go`、`service/upstream_site_adapters.go`、`controller/channel_upstream_update_test.go`、`service/upstream_site_test.go`；本机参考源 | 2026-10-03 |
 | DEV-026 | Sub2API Relay 地址与登录请求兼容 | 页面重定向到独立 Relay 域名或使用相对 `api_base_url` 时，旧规则可能错误拒绝或按原始地址解析；严格 DTO 部署可能因混合主体/无条件条款字段返回 `400 INVALID_REQUEST`；跨主机重定向可能丢失认证 Header，Relay 探测可能携带管理态 | 保留最终 HTML 响应 URL，按最终页面解析相对地址；页面明确声明且与最终页面或原始管理地址同协议/主机/有效端口，或与原始管理地址满足严格 `api.` 父子域关系的 Relay 才接受；同源可信最终页面来源作为本轮管理请求根地址但不覆盖持久化管理地址；Relay 探测隔离管理 Header、Cookie 和 Cookie Jar；邮箱首请求只发 `email/password`，400 不重试，只有 404/405 回退 `/auth/login`、401 凭据错误回退用户名；未确认单 Key 模型不进入路由，资源失败保留最近成功快照 | 已实现/待真实站点持续核验 | `service/upstream_site_adapters.go`、`service/upstream_site_test.go`、`service/upstream_site.go`；Sub2API `auth_handler.go`、all-api-hub `realSite/sub2api.ts` | 2026-10-03 |
+| DEV-027 | Sub2API 页面声明外部 Relay | `api_base_url` 为空或页面使用独立 `custom_endpoints` Relay 时，Helper 只回传管理地址；服务端若仅依赖客户端 `relay_base_url`，可能无法区分未声明地址和真实页面配置 | Helper/服务端解析 `custom_endpoints` 与 `customEndpoints`，Capture 完成使用请求上下文匿名重读 `record.BaseURL` 页面并要求 Relay 规范化完全匹配页面声明；管理地址仍遵守同 Host/严格 `api.` 关系，Relay 请求隔离管理会话 | 已实现/指定站点已验收 | `service/platform_site_capture.go`、`service/upstream_site_adapters.go`、`service/upstream_site.go`、`service/upstream_site_test.go`；Sub2API 参考源与真实站点脱敏验收 | 2026-10-05 |
 
 ### 3.2 2026-09-26 实现核对结果
 
@@ -252,10 +253,10 @@ handoff。管理页只在窗口、Origin 和 Capture ID 匹配时响应并完成
 上游页面上下文请求脚本后再注入执行。不绕过上游 Turnstile/WAF，也不伪造当前用户验证
 成功。
 
-该项代码状态为“已实现，真实站点验收待完成”：本地定向 Go/Node 语法测试和参考源静态
-核对已通过；用户指定站点的 Cloudflare Turnstile 当前在浏览器环境返回挑战失败，尚未
-形成真实登录态，因此不能把真实 Capture Session 完成结果作为已验证证据。系统不绕过
-人机验证，也不伪造完成结果。
+该项记录在 2026-10-04 的代码状态为“已实现，真实站点验收待完成”：当时本地定向
+Go/Node 语法测试和参考源静态核对已通过，但浏览器环境的 Cloudflare Turnstile 挑战
+失败，尚未形成真实登录态。2026-10-05 的后续 `custom_endpoints` 修复已完成独立
+隔离浏览器验收；系统仍不绕过人机验证，也不伪造完成结果。
 
 ### 3.13 2026-10-05 旧版浏览器采集路径迁移
 
@@ -281,6 +282,25 @@ API 前缀从 Capture handoff、页面配置、当前页面和同源资源共同
 关闭浏览器采集路径兼容缺口，不恢复旧版完整 `upstreamaccount` 账号池、Preview 或
 `ChannelAccount` 同步链路；浏览器采集登录态仍不参与后台密码同步 Cleanup，资源失败仍
 保留最近成功快照。
+
+### 3.14 2026-10-05 Sub2API 页面声明外部 Relay 与真实验收
+
+**变更前**：`DEV-026` 已覆盖最终页面和相对地址，但没有完整覆盖
+`api_base_url` 为空、`custom_endpoints` 指向独立 Relay 的 Sub2API 定制站点。Helper
+可能无法回传模型地址，完成接口也缺少“页面公开声明必须由服务端匿名复核”的独立边界。
+
+**变更后**：Helper 和服务端都以结构化配置优先读取
+`custom_endpoints`/`customEndpoints`，支持绝对/相对端点和最终页面解析；服务端完成
+校验时重新匿名获取 `record.BaseURL`，只有页面声明与回传 Relay 完全规范化匹配才通过。
+管理地址仍只接受同 Host 或严格 `api.` 父子 Host，不能以同注册域名、客户端自报来源、
+协议/端口变化或管理 Cookie 绕过。平台账号管理地址、Relay 地址和渠道 Relay 根地址
+分别保存；Relay 只用于单 Key 模型探测和转发，禁止传播管理会话头。
+
+指定站点的脱敏验收结果为：Capture Session 完成，管理地址和独立 Relay 正确拆分；
+渠道启用，读取到 7 条上游 Key，7 条 `ModelsSynced=true`。资源状态同时保留
+`keys=partial`、`models=stale` 和 `using_snapshot=true`，证明部分资源失败不会清空
+最近成功能力。浏览器采集凭据继续使用现有加密结构，不参与后台密码同步 Cleanup，
+且未在代码、日志、文档或提交中写入账号、密码、Token、Cookie 或完整 Key。
 
 ## 4. 维护规则
 

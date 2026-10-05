@@ -1155,3 +1155,39 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
 | 2026-10-03 | 认证流程保存兼容与 NewAPI 加密登录 | 认证流程请求中的残留用户名被误判为手动凭据；NewAPI 新版密码加密登录协议和 Sub2API 邮箱主体/精确登出边界未在专项文档集中登记 | 有 `auth_flow_id` 时前端不再提交用户名/密码，后端仅兼容用户名残留并以流程真实身份为准；NewAPI 实现加密密钥读取、RSA-OAEP/v2 信封和仅 404/405 明文回退；Sub2API 保持邮箱优先、凭据错误后回退用户名和本轮 Refresh Token 登出 | 渠道保存、NewAPI/Sub2API 密码认证、认证流程一次性消费、脱敏诊断和最近成功快照 | `web/src/features/channels/lib/channel-form.ts`、`controller/upstream_channel.go`、`service/newapi_password_encryption.go`、`service/upstream_site_adapters.go`、相关 Go/React 定向测试；New API/Sub2API/all-api-hub 本机参考源 |
 | 2026-10-04 | Capture Helper 等待重试与浏览器登录态兼容 | Helper 过早采集、下划线 handoff 字段被驼峰校验误判；NewAPI `uid + Cookie` 缺少 `New-Api-User`，Sub2API 缺少 IndexedDB 客户端 ID 兼容 | Helper DOM 就绪后等待登录并自动/手动重试，不把暂时未登录标记为失败；NewAPI 携带数字用户 ID 请求头并在 Cookie 验证后探测 Token；Sub2API 读取 IndexedDB Session Client ID；浏览器登录态不进入后台 Cleanup | 自动配置采集、NewAPI/Sub2API 登录态验证和渠道保存 | `service/platform_site_capture.go`、`service/upstream_site_test.go`、旧版 `service/upstreamaccount/capture.go`、New API/Sub2API/all-api-hub 参考源 |
 | 2026-10-05 | 旧版浏览器自动采集方式迁移校准 | Dashboard Refresh、Sub2API Refresh 和带路径 API 根仍有固定路径/Origin 化处理，旧版同源脚本路径发现和代理子路径补全没有覆盖所有采集分支 | Refresh 分支纳入 `expandedAPIPaths` 与同源 JS 路径发现；API 前缀从管理地址、回传 API 地址、页面配置和当前页面共同推导，并剥离 `/api`/`/api/v1` 后缀；保留当前加密、一次性 claim、桥接和严格 Host 关系 | 自动配置采集、NewAPI Dashboard Refresh、Sub2API Refresh/Session Restore、反向代理子路径和渠道保存 | `service/platform_site_capture.go`、`service/upstream_site_test.go`、旧版 `service/upstreamaccount/capture.go`、New API/Sub2API/all-api-hub 本机参考源、定向 Go/React 测试 |
+
+### 10.2 2026-10-05 Sub2API `custom_endpoints` Relay 与真实站点验收
+
+**变更前**
+
+- Sub2API 页面 `api_base_url` 为空时，Helper 和服务端没有稳定读取
+  `custom_endpoints`/`customEndpoints`，管理地址和 Relay 地址容易被当成同一个地址；
+- 页面声明的独立 Relay 可能被严格站点关系校验拒绝，或者仅凭客户端回传的
+  `relay_base_url` 进入资源同步，服务端没有重新匿名核对页面公开配置；
+- 资源同步没有明确“管理面读取 Key、Relay 面读取模型”的双地址边界，也没有把
+  管理会话头与 Relay 探测请求隔离写入平台站点规则。
+
+**变更后**
+
+- Capture Helper 从 handoff、`window.__APP_CONFIG__`、页面初始化状态以及明确命名的
+  localStorage/sessionStorage 配置读取 `custom_endpoints` 和 `customEndpoints`，
+  支持绝对地址与按最终页面地址解析的相对地址；只接受 HTTP/HTTPS、有效端口和通过
+  SSRF 校验的地址，并将第一个合法端点回传为 `relay_base_url`；
+- 服务端使用受限 JSON 对象解析发现页面配置，保留 `api_base_url` 优先级，并在
+  Capture 完成时以请求上下文匿名重新读取 `record.BaseURL` 页面。外部 Relay 必须是
+  页面明确声明、规范化后与回传值完全匹配的地址；管理地址仍只允许同 Host 或严格
+  `api.` 父子 Host 关系，不能通过同注册域名或客户端自报来源放宽；
+- 对 `https://tk.shour.bond`，管理地址保存为该站点，页面声明的 Relay 保存为
+  `https://api-image.shour.bond`。Sub2API 管理请求继续访问管理站点的
+  `/api/v1/...`，单 Key 模型能力使用 Relay 的 `/v1/models`；Relay 请求只发送当前
+  完整 Key 的 `Authorization` 和 `x-api-key`，不发送管理 Cookie、Bearer、Origin、
+  Referer、`X-Requested-With` 或 `X-Auth-Session`；
+- 采集结果继续通过 Capture Session、现有整体加密的 `PlatformSiteCredential`、
+  用户/渠道绑定和 Redis/内存一次性 claim 保存，不恢复旧版账号池、Preview 或
+  `ChannelAccount` 同步链路。浏览器采集态不参与后台密码同步 Cleanup，资源失败仍保留
+  最近成功 Key、模型能力和渠道模型快照；
+- 指定站点的脱敏验收已确认 Capture Session 完成、管理地址与 Relay 地址正确拆分；
+  渠道处于启用状态，读取到 7 条上游 Key，7 条 `ModelsSynced=true`，渠道模型列表
+  可用。资源表同时记录 `keys=partial`、`models=stale` 和 `using_snapshot=true`，
+  验证部分资源失败时保留最近成功快照，未在日志、诊断或额外明文结构中输出或持久化
+  账号、密码、Token、Cookie 或完整 Key；认证凭据和完整 Key 仍按现有整体加密结构保存。

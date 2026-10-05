@@ -638,6 +638,15 @@ test('运行页面桥接前获取内联脚本并保留可复制降级代码', as
   const user = userEvent.setup()
   const bridgeSource =
     'window.postMessage({type:"nexustok-upstream-capture-bridge-result"},"*")'
+  const clipboardWriteText = vi.fn().mockResolvedValue(undefined)
+  const originalClipboard = Object.getOwnPropertyDescriptor(
+    navigator,
+    'clipboard'
+  )
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: clipboardWriteText },
+  })
   const fetchMock = vi.fn().mockResolvedValue({
     ok: true,
     text: async () => bridgeSource,
@@ -676,6 +685,16 @@ test('运行页面桥接前获取内联脚本并保留可复制降级代码', as
   expect(
     await screen.findByRole('button', { name: 'Copy page bridge code' })
   ).toBeInTheDocument()
+  await waitFor(() => {
+    expect(clipboardWriteText).toHaveBeenCalled()
+  })
+  const bootstrap = String(clipboardWriteText.mock.calls.at(-1)?.[0] || '')
+  expect(bootstrap).not.toContain('javascript:')
+  expect(bootstrap).toContain('(()=>{')
+  expect(bootstrap).toContain(JSON.stringify(window.location.origin))
+  expect(bootstrap).not.toContain(JSON.stringify('https://upstream.example'))
+  expect(bootstrap).toContain('document.scripts')
+  expect(bootstrap).toContain('s.nonce')
 
   const request = {
     type: 'nexustok-upstream-capture-bridge-script-request',
@@ -701,6 +720,11 @@ test('运行页面桥接前获取内联脚本并保留可复制降级代码', as
 
   openSpy.mockRestore()
   vi.unstubAllGlobals()
+  if (originalClipboard) {
+    Object.defineProperty(navigator, 'clipboard', originalClipboard)
+  } else {
+    Reflect.deleteProperty(navigator, 'clipboard')
+  }
 })
 
 test('采集会话过期后停止轮询并显示重新创建入口', async () => {

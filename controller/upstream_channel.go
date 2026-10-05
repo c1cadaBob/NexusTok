@@ -1480,7 +1480,11 @@ func CompletePlatformSiteCapture(c *gin.Context) {
 		common.ApiErrorMsg(c, "无效的采集回调")
 		return
 	}
-	result, err := service.CompletePlatformSiteCaptureSession(c.Param("captureID"), request)
+	result, err := service.CompletePlatformSiteCaptureSessionContext(
+		c.Request.Context(),
+		c.Param("captureID"),
+		request,
+	)
 	if err != nil {
 		common.ApiError(c, err)
 		return

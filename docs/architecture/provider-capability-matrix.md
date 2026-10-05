@@ -189,6 +189,25 @@ Dashboard Refresh、Refresh Token、Session Restore 与反向代理子路径的�
   ChannelAccount 同步体系，不改变 Relay Adaptor、单 Key 模型能力、最近成功快照或
   后台密码同步 Cleanup。站点关联仍限制为同 Host 或严格 `api.` 对等 Host。
 
+### 2.6 2026-10-05 Sub2API `custom_endpoints` Relay 能力
+
+**变更前**：Sub2API 能力矩阵默认把 `api_base_url` 作为管理和模型地址；对
+`api_base_url` 为空、页面公开 `custom_endpoints` 指向独立 Relay 的定制部署，没有
+区分管理认证地址、Relay 模型地址和服务端信任复核。
+
+**变更后**：
+
+| 能力 | 当前实现 |
+| --- | --- |
+| 页面发现 | Helper 与服务端读取 `custom_endpoints`、`customEndpoints`，支持最终页面解析的相对地址；`api_base_url` 优先，首个合法自定义端点回退 |
+| 管理认证 | Sub2API 管理地址继续访问 `/api/v1/auth/me`、分组、用量、Key 和兼容路径；管理地址仍受同 Host 或严格 `api.` 关系限制 |
+| Relay 模型 | 页面声明的 Relay 用于每条完整 Key 的 `/v1/models` 或 `/models`；请求隔离管理 Cookie、Bearer、Origin、Referer、`X-Requested-With` 和 `X-Auth-Session` |
+| 安全复核 | 外部 Relay 必须通过 URL/SSRF 检查、匿名页面重读和规范化完全匹配；客户端单独回传、同注册域名或未声明地址均拒绝 |
+| 真实验收 | 指定站点管理地址与 `api-image.shour.bond` Relay 已拆分；渠道启用，7 条 Key 中 7 条 `ModelsSynced=true`，资源部分失败继续使用最近成功快照 |
+
+该能力不改变“单 Key 模型能力确认后才进入路由”的规则，也不恢复旧版账号池、Preview、
+`ChannelAccount` 同步链路；浏览器采集态不参与后台密码同步 Cleanup。
+
 ## 3. 维护解释
 
 - “流式选项”只对应 `streamSupportedChannels`，不表示所有流式 Endpoint 或所有上游事件都可用。

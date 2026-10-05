@@ -132,6 +132,25 @@ Refresh Token 支持 `/api/v1/auth/refresh`、兼容路径和同源脚本发现�
 采集失败时未登录、SPA 尚未写入状态、WAF/Turnstile 或部分资源权限问题仍不覆盖最近
 成功资源快照；浏览器采集登录态也不进入后台密码同步 Cleanup。
 
+### 2026-10-05 Sub2API 页面声明 Relay 与真实资源同步
+
+**变更前**：架构索引只记录了 Capture 的刷新路径发现和加密保存，没有明确
+Sub2API 页面 `custom_endpoints` 如何拆分管理地址与 Relay 地址；外部 Relay 的页面声明
+复核、管理请求与模型探测隔离也未形成索引入口。
+
+**变更后**：当前事实入口仍为 `service/platform_site_capture.go`、
+`service/upstream_site_adapters.go`、`service/upstream_site.go` 和
+`model/platform_site_resources.go`。Helper 与服务端读取 `custom_endpoints`/
+`customEndpoints`，按最终页面解析相对端点；Capture 完成时服务端匿名重读
+`record.BaseURL` 页面，只有明确声明且规范化完全匹配的外部 Relay 才能保存。管理面
+继续使用同 Host/严格 `api.` 关系，Relay 只用于单 Key 模型探测和渠道转发。
+
+该改动仍只迁移浏览器登录态采集，不恢复旧版账号池、Preview 或 `ChannelAccount` 同步
+体系。Capture Session、整体加密 `PlatformSiteCredential`、一次性 claim、桥接来源校验、
+后台密码 Cleanup 隔离和最近成功资源快照均保持不变。指定站点的脱敏验收已确认管理
+地址与 Relay 地址拆分、渠道启用、7 条 Key 以及 7 条 `ModelsSynced=true`，并验证
+`partial/stale + using_snapshot` 不会清空已有能力。
+
 ## 变更记录
 
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |

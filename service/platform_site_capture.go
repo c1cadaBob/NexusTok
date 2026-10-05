@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
@@ -106,6 +107,7 @@ type PlatformSiteCaptureDiagnostics struct {
 	HelperRequiredVersion        string   `json:"helper_required_version,omitempty"`
 	PageOrigin                   string   `json:"page_origin,omitempty"`
 	APIBaseURLSeen               string   `json:"api_base_url_seen,omitempty"`
+	RelayBaseURLSeen             string   `json:"relay_base_url_seen,omitempty"`
 	LocalStorageKeys             []string `json:"local_storage_keys,omitempty"`
 	SessionStorageKeys           []string `json:"session_storage_keys,omitempty"`
 	AuthTokenPresent             bool     `json:"auth_token_present,omitempty"`
@@ -306,36 +308,69 @@ func CompletePlatformSiteCaptureSession(
 	captureID string,
 	request PlatformSiteCaptureCompleteRequest,
 ) (*PlatformSiteCaptureStatusResult, error) {
-	platformSiteCaptureMu.Lock()
-	defer platformSiteCaptureMu.Unlock()
+	return CompletePlatformSiteCaptureSessionContext(context.Background(), captureID, request)
+}
 
+func CompletePlatformSiteCaptureSessionContext(
+	ctx context.Context,
+	captureID string,
+	request PlatformSiteCaptureCompleteRequest,
+) (*PlatformSiteCaptureStatusResult, error) {
 	record, err := getPlatformSiteCaptureRecord(captureID)
 	if err != nil {
 		return nil, err
 	}
-	if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(request.CaptureSecret)), []byte(record.Secret)) != 1 {
-		return nil, errorsForCapture("采集会话密钥无效")
+	if err := validatePlatformSiteCaptureCompletionIdentity(record, request); err != nil {
+		return nil, err
 	}
-	if record.Status == platformSiteCaptureStatusComplete {
-		return nil, errorsForCapture("采集会话已完成，请重新创建采集会话")
+	if strings.TrimSpace(request.Error) == "" {
+		for _, candidate := range []string{
+			request.ManagementBaseURL,
+			request.BaseURL,
+			request.RelayBaseURL,
+			request.APIBaseURL,
+		} {
+			if strings.TrimSpace(candidate) == "" {
+				continue
+			}
+			if !sub2APIRelayURLHasNoCredentialsOrDecorations(candidate) {
+				return nil, errorsForCapture("采集页面地址格式错误")
+			}
+		}
+		if strings.TrimSpace(request.RelayBaseURL) != "" {
+			if _, err := strictSub2APIRelayURL(request.RelayBaseURL); err != nil {
+				return nil, errorsForCapture("Relay 地址格式错误")
+			}
+		}
+	}
+	relayURL, err := firstCaptureURL(request.RelayBaseURL)
+	if err != nil {
+		return nil, err
+	}
+	verifiedExternalRelay := false
+	if strings.TrimSpace(request.Error) == "" &&
+		relayURL != "" &&
+		!captureRelatedPlatformURL(record.BaseURL, relayURL) {
+		if record.Platform == model.PlatformSub2API {
+			if !sub2APIRelayDeclaredByPage(ctx, record.BaseURL, relayURL) {
+				return nil, errorsForCapture("采集页面地址不属于目标站点")
+			}
+			verifiedExternalRelay = true
+		} else {
+			return nil, errorsForCapture("采集页面地址不属于目标站点")
+		}
+	}
+
+	platformSiteCaptureMu.Lock()
+	defer platformSiteCaptureMu.Unlock()
+
+	record, err = getPlatformSiteCaptureRecord(captureID)
+	if err != nil {
+		return nil, err
 	}
 	captureSource := strings.ToLower(strings.TrimSpace(request.CaptureSource))
-	if captureSource != "" && captureSource != "capture_helper" && captureSource != "capture_bridge" {
-		return nil, errorsForCapture("采集来源不受支持")
-	}
-	if record.AuthType == PlatformSiteCaptureAuthAuto &&
-		captureSource != "capture_helper" &&
-		captureSource != "capture_bridge" {
-		return nil, errorsForCapture("自动配置必须通过 Capture Helper 完成采集")
-	}
-	if captureSource == "capture_bridge" && record.AuthType != PlatformSiteCaptureAuthAuto {
-		return nil, errorsForCapture("页面桥接只能用于自动配置")
-	}
-	if (record.AuthType == PlatformSiteCaptureAuthAuto ||
-		captureSource == "capture_helper" ||
-		captureSource == "capture_bridge") &&
-		strings.TrimSpace(request.HelperVersion) != platformSiteCaptureHelperVersion {
-		return nil, errorsForCapture("采集助手版本不匹配")
+	if err := validatePlatformSiteCaptureCompletionIdentity(record, request); err != nil {
+		return nil, err
 	}
 	diagnostics := sanitizePlatformSiteCaptureDiagnostics(request.Diagnostics)
 	if diagnostics == nil {
@@ -344,22 +379,6 @@ func CompletePlatformSiteCaptureSession(
 	diagnostics.Source = captureSource
 	diagnostics.HelperVersion = strings.TrimSpace(request.HelperVersion)
 	diagnostics.HelperRequiredVersion = platformSiteCaptureHelperVersion
-	if platform := strings.ToLower(strings.TrimSpace(request.Platform)); platform != "" && platform != record.Platform {
-		return nil, errorsForCapture("采集平台与会话不匹配")
-	}
-	if authType := strings.ToLower(strings.TrimSpace(request.AuthType)); authType != "" && authType != record.AuthType {
-		if record.AuthType != PlatformSiteCaptureAuthAuto ||
-			(authType != PlatformSiteCaptureAuthAuto && !isPlatformSiteScriptAuthType(authType)) {
-			return nil, errorsForCapture("采集认证方式与会话不匹配")
-		}
-	}
-	origin := strings.TrimRight(strings.TrimSpace(request.Origin), "/")
-	if origin == "" {
-		origin = record.Origin
-	}
-	if !strings.EqualFold(origin, record.Origin) {
-		return nil, errorsForCapture("目标站来源不匹配")
-	}
 	if strings.TrimSpace(request.Error) != "" {
 		record.Status = platformSiteCaptureStatusFailed
 		record.Error = safePlatformSiteCaptureFailure(request.Error)
@@ -376,7 +395,11 @@ func CompletePlatformSiteCaptureSession(
 		return sanitizePlatformSiteCaptureRecord(record, ""), errorsForCapture(record.Error)
 	}
 
-	resolution, summary, err := buildPlatformSiteCaptureResolution(record, request)
+	resolution, summary, err := buildPlatformSiteCaptureResolution(
+		record,
+		request,
+		verifiedExternalRelay,
+	)
 	if err != nil {
 		record.Status = platformSiteCaptureStatusFailed
 		record.Error = safePlatformSiteCaptureFailure(err.Error())
@@ -418,6 +441,59 @@ func CompletePlatformSiteCaptureSession(
 		return nil, fmt.Errorf("保存采集结果失败")
 	}
 	return sanitizePlatformSiteCaptureRecord(record, ""), nil
+}
+
+func validatePlatformSiteCaptureCompletionIdentity(
+	record platformSiteCaptureRecord,
+	request PlatformSiteCaptureCompleteRequest,
+) error {
+	if subtle.ConstantTimeCompare(
+		[]byte(strings.TrimSpace(request.CaptureSecret)),
+		[]byte(record.Secret),
+	) != 1 {
+		return errorsForCapture("采集会话密钥无效")
+	}
+	if record.Status == platformSiteCaptureStatusComplete {
+		return errorsForCapture("采集会话已完成，请重新创建采集会话")
+	}
+	captureSource := strings.ToLower(strings.TrimSpace(request.CaptureSource))
+	if captureSource != "" &&
+		captureSource != "capture_helper" &&
+		captureSource != "capture_bridge" {
+		return errorsForCapture("采集来源不受支持")
+	}
+	if record.AuthType == PlatformSiteCaptureAuthAuto &&
+		captureSource != "capture_helper" &&
+		captureSource != "capture_bridge" {
+		return errorsForCapture("自动配置必须通过 Capture Helper 完成采集")
+	}
+	if captureSource == "capture_bridge" && record.AuthType != PlatformSiteCaptureAuthAuto {
+		return errorsForCapture("页面桥接只能用于自动配置")
+	}
+	if (record.AuthType == PlatformSiteCaptureAuthAuto ||
+		captureSource == "capture_helper" ||
+		captureSource == "capture_bridge") &&
+		strings.TrimSpace(request.HelperVersion) != platformSiteCaptureHelperVersion {
+		return errorsForCapture("采集助手版本不匹配")
+	}
+	if platform := strings.ToLower(strings.TrimSpace(request.Platform)); platform != "" &&
+		platform != record.Platform {
+		return errorsForCapture("采集平台与会话不匹配")
+	}
+	if authType := strings.ToLower(strings.TrimSpace(request.AuthType)); authType != "" &&
+		authType != record.AuthType &&
+		(record.AuthType != PlatformSiteCaptureAuthAuto ||
+			(authType != PlatformSiteCaptureAuthAuto && !isPlatformSiteScriptAuthType(authType))) {
+		return errorsForCapture("采集认证方式与会话不匹配")
+	}
+	origin := strings.TrimRight(strings.TrimSpace(request.Origin), "/")
+	if origin == "" {
+		origin = record.Origin
+	}
+	if !strings.EqualFold(origin, record.Origin) {
+		return errorsForCapture("目标站来源不匹配")
+	}
+	return nil
 }
 
 func ResolvePlatformSiteCapture(
@@ -664,6 +740,7 @@ func sanitizePlatformSiteCaptureDiagnostics(
 		HelperRequiredVersion:        sanitizePlatformSiteDiagnosticToken(diagnostics.HelperRequiredVersion),
 		PageOrigin:                   sanitizePlatformSiteDiagnosticURL(diagnostics.PageOrigin),
 		APIBaseURLSeen:               sanitizePlatformSiteDiagnosticURL(diagnostics.APIBaseURLSeen),
+		RelayBaseURLSeen:             sanitizePlatformSiteDiagnosticURL(diagnostics.RelayBaseURLSeen),
 		AuthTokenPresent:             diagnostics.AuthTokenPresent,
 		AccessTokenPresent:           diagnostics.AccessTokenPresent,
 		RefreshTokenPresent:          diagnostics.RefreshTokenPresent,
@@ -758,6 +835,7 @@ func firstNonEmptyCaptureString(values ...string) string {
 func buildPlatformSiteCaptureResolution(
 	record platformSiteCaptureRecord,
 	request PlatformSiteCaptureCompleteRequest,
+	verifiedExternalRelay bool,
 ) (PlatformSiteCaptureResolution, *PlatformSiteCaptureSummary, error) {
 	managementBaseURL, err := firstCaptureURL(
 		request.ManagementBaseURL,
@@ -775,13 +853,18 @@ func buildPlatformSiteCaptureResolution(
 	if err != nil {
 		return PlatformSiteCaptureResolution{}, nil, err
 	}
-	for _, candidate := range []string{managementBaseURL, relayBaseURL, apiBaseURL} {
+	for _, candidate := range []string{managementBaseURL, apiBaseURL} {
 		if candidate == "" {
 			continue
 		}
 		if !captureRelatedPlatformURL(record.BaseURL, candidate) {
 			return PlatformSiteCaptureResolution{}, nil, errorsForCapture("采集页面地址不属于目标站点")
 		}
+	}
+	if relayBaseURL != "" &&
+		!captureRelatedPlatformURL(record.BaseURL, relayBaseURL) &&
+		(record.Platform != model.PlatformSub2API || !verifiedExternalRelay) {
+		return PlatformSiteCaptureResolution{}, nil, errorsForCapture("Relay 地址未由目标站公开配置声明")
 	}
 	if relayBaseURL == "" && apiBaseURL != "" {
 		relayBaseURL = apiBaseURL
@@ -889,6 +972,32 @@ func buildPlatformSiteCaptureResolution(
 		RelayBaseURL:      relayBaseURL,
 		APIBaseURL:        apiBaseURL,
 	}, summary, nil
+}
+
+func sub2APIRelayDeclaredByPage(
+	ctx context.Context,
+	managementBaseURL string,
+	relayBaseURL string,
+) bool {
+	normalizedRelay, err := normalizePlatformSiteURL(relayBaseURL)
+	if err != nil {
+		return false
+	}
+	client, err := newPlatformSiteHTTPClient()
+	if err != nil {
+		return false
+	}
+	discovery, ok := discoverSub2APIPageConfiguration(ctx, client, managementBaseURL)
+	if !ok {
+		return false
+	}
+	for _, declared := range discovery.DeclaredRelayURLs {
+		if normalized, normalizeErr := normalizePlatformSiteURL(declared); normalizeErr == nil &&
+			strings.EqualFold(normalized, normalizedRelay) {
+			return true
+		}
+	}
+	return false
 }
 
 func isPlatformSiteScriptAuthType(authType string) bool {
@@ -1186,6 +1295,7 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
       helper_required_version: '__NEXUSTOK_HELPER_VERSION__',
       page_origin: text(pageWindow.location && pageWindow.location.origin),
       api_base_url_seen: '',
+      relay_base_url_seen: '',
       local_storage_keys: storageKeys(pageWindow.localStorage),
       session_storage_keys: storageKeys(pageWindow.sessionStorage),
       auth_token_present: false,
@@ -1232,6 +1342,7 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
     }
     for (const key of [
       'api_base_url_seen',
+      'relay_base_url_seen',
       'auth_me_path',
       'admin_verification_path',
       'browser_session_restore_path',
@@ -1763,6 +1874,106 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
     return window.location.origin;
   }
 
+  function safeConfiguredEndpoint(raw) {
+    try {
+      const parsed = new URL(text(raw), window.location.href);
+      if (
+        (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') ||
+        parsed.username ||
+        parsed.password ||
+        parsed.port &&
+          (!/^\d+$/.test(parsed.port) ||
+            Number(parsed.port) < 1 ||
+            Number(parsed.port) > 65535)
+      ) {
+        return '';
+      }
+      const hostname = text(parsed.hostname).toLowerCase();
+      if (
+        !hostname ||
+        hostname === 'localhost' ||
+        hostname === 'localhost.localdomain' ||
+        hostname === 'metadata.google.internal' ||
+        hostname === 'instance-data.ec2.internal' ||
+        /^(127\.|10\.|192\.168\.|169\.254\.)/.test(hostname) ||
+        /^172\.(1[6-9]|2\d|3[01])\./.test(hostname) ||
+        hostname === '::1' ||
+        hostname.startsWith('fc') ||
+        hostname.startsWith('fd') ||
+        hostname.startsWith('fe80:')
+      ) {
+        return '';
+      }
+      parsed.search = '';
+      parsed.hash = '';
+      parsed.pathname = parsed.pathname.replace(/\/+$/, '');
+      return parsed.origin + (parsed.pathname === '/' ? '' : parsed.pathname);
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function configuredEndpointValues(value) {
+    if (!value) return [];
+    if (typeof value === 'string') {
+      const parsed = parseJSON(value);
+      return parsed && parsed !== value
+        ? configuredEndpointValues(parsed)
+        : [value];
+    }
+    if (Array.isArray(value)) {
+      return value.flatMap((item) => configuredEndpointValues(item));
+    }
+    if (typeof value !== 'object') return [];
+    const endpoint = value.endpoint || value.url || value.base_url || value.baseUrl;
+    return endpoint ? [endpoint] : [];
+  }
+
+  function configuredRelayBaseURL(payload) {
+    const values = [];
+    const appendConfig = (configuration) => {
+      if (!configuration || typeof configuration !== 'object') return;
+      values.push(
+        ...configuredEndpointValues(configuration.custom_endpoints),
+        ...configuredEndpointValues(configuration.customEndpoints)
+      );
+    };
+    appendConfig(payload);
+    try { appendConfig(pageWindow.__APP_CONFIG__); } catch (_) {}
+    for (const stateName of [
+      '__INITIAL_STATE__',
+      '__APP_STATE__',
+      '__NUXT__',
+      '__NEXT_DATA__',
+      '__PINIA__',
+    ]) {
+      try { appendConfig(pageWindow[stateName]); } catch (_) {}
+    }
+    for (const storageName of [
+      'custom_endpoints',
+      'customEndpoints',
+      'app_config',
+      'appConfig',
+      'public_settings',
+      'publicSettings',
+      'settings',
+    ]) {
+      for (const storage of [pageWindow.localStorage, pageWindow.sessionStorage]) {
+        try {
+          const raw = storage.getItem(storageName);
+          if (!raw) continue;
+          const parsed = parseJSON(raw);
+          appendConfig(parsed || { custom_endpoints: raw });
+        } catch (_) {}
+      }
+    }
+    for (const value of values) {
+      const normalized = safeConfiguredEndpoint(value);
+      if (normalized) return normalized;
+    }
+    return '';
+  }
+
   function apiBasePathPrefix(pathname) {
     const normalized = cleanAPIPathPrefix(pathname);
     for (const suffix of ['/api/v1', '/api']) {
@@ -1898,10 +2109,18 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
         const pattern = discoveredAPIPathPattern(kind);
         if (!pattern) return [];
         for (const scriptURL of sameOriginScripts) {
+          const controller = typeof AbortController === 'function'
+            ? new AbortController()
+            : null;
+          const timeoutID = window.setTimeout(
+            () => controller && controller.abort(),
+            2000
+          );
           try {
             const response = await fetch(scriptURL.href, {
               credentials: 'omit',
               cache: 'force-cache',
+              ...(controller ? { signal: controller.signal } : {}),
             });
             if (!response.ok) continue;
             const body = await response.text();
@@ -1914,6 +2133,9 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
               if (path.startsWith('/')) found.add(path);
             }
           } catch (_) {}
+          finally {
+            window.clearTimeout(timeoutID);
+          }
         }
         return Array.from(found).slice(0, 16);
       })();
@@ -1922,10 +2144,24 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
   }
 
   async function expandedAPIPaths(paths, kind, payload) {
-    const discovered = await discoverAPIPaths(kind);
     const prefixes = candidateAPIPrefixes(payload || {});
     const result = new Set();
-    for (const path of [...paths, ...discovered]) {
+    for (const path of paths) {
+      result.add(path);
+      for (const prefix of prefixes) {
+        if (prefix) result.add(joinAPIPath(prefix, path));
+      }
+    }
+    let discovered = [];
+    try {
+      discovered = await Promise.race([
+        discoverAPIPaths(kind),
+        new Promise((resolve) => {
+          window.setTimeout(() => resolve([]), 2500);
+        }),
+      ]);
+    } catch (_) {}
+    for (const path of discovered || []) {
       result.add(path);
       for (const prefix of prefixes) {
         if (prefix) result.add(joinAPIPath(prefix, path));
@@ -2006,7 +2242,8 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
       isRelatedUpstreamURL(url)
     ) {
       try {
-        return await gmJSONRequest(url, requestOptions);
+        const payload = await gmJSONRequest(url, requestOptions);
+        return payload;
       } catch (error) {
         if (error && error.requestCompleted) throw error;
       }
@@ -2238,9 +2475,11 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
       }
       const returnURL = text(payload.return_url || '');
       let targetOrigin = '';
-      try {
-        targetOrigin = new URL(returnURL, window.location.href).origin;
-      } catch (_) {}
+      if (returnURL) {
+        try {
+          targetOrigin = new URL(returnURL, window.location.href).origin;
+        } catch (_) {}
+      }
       if (!targetOrigin) {
         targetOrigin = text(config.nexus_base);
         try {
@@ -2767,11 +3006,14 @@ const platformSiteCaptureScriptTemplate = `// ==UserScript==
       management_base_url: text(payload.management_base_url || payload.base_url) || window.location.origin,
       origin: window.location.origin,
       api_base_url: apiBaseURL(payload),
+      relay_base_url: '',
       diagnostics: diagnosticsBase(
         config.transport === 'bridge' ? 'capture_bridge' : 'capture_helper'
       ),
     };
     result.diagnostics.api_base_url_seen = result.api_base_url;
+    result.relay_base_url = configuredRelayBaseURL(payload);
+    result.diagnostics.relay_base_url_seen = result.relay_base_url;
     if (authType === 'auto') {
       let selected = null;
       const strategy = platformStrategies[platform] || platformStrategies.newapi;
