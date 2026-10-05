@@ -151,6 +151,19 @@ Sub2API 页面 `custom_endpoints` 如何拆分管理地址与 Relay 地址；外
 地址与 Relay 地址拆分、渠道启用、7 条 Key 以及 7 条 `ModelsSynced=true`，并验证
 `partial/stale + using_snapshot` 不会清空已有能力。
 
+### 2026-10-05 Sub2API Access Token 优先与资源同步
+
+**变更前**：平台站点架构只记录了 Sub2API Refresh Token 和页面 Relay 发现，未明确
+Access Token 与 Refresh Token 同时存在时的验证顺序；失效的旧 Refresh Token 可能在
+有效 Access Token 之前被调用。
+
+**变更后**：Sub2API 先用 Access Token 调用当前用户接口，只有 HTTP 401 且存在
+Refresh Token 才轮换令牌；只有 Refresh Token 时直接刷新，刷新后再次调用
+`auth/me`。管理地址继续承载身份、分组、用量和 Key 读取，页面声明 Relay 继续承载
+单 Key `/v1/models` 探测，管理会话头不传播到 Relay。该修复只调整现有平台站点认证
+候选，不改变 Capture Session、整体加密凭据、一次性 claim、后台 Cleanup 隔离或
+最近成功快照语义，也不恢复旧版账号池和完整同步链路。
+
 ## 变更记录
 
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |

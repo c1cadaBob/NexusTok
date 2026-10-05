@@ -356,3 +356,22 @@ Admin 权限，诊断脱敏，Capture 记录用 Redis/内存 claim 防止并发�
   网络错误和无效加密配置不降级；
 - 上述协议不改变历史 Access Token、Admin Key、Cookie 和浏览器采集渠道的读取兼容性，
   这些登录态不属于密码同步创建的临时会话，也不执行后台注销。
+
+### 3.9 2026-10-05 Sub2API Access Token 优先与资源同步能力
+
+**变更前**：能力矩阵未明确浏览器采集同时包含 Access Token、Refresh Token 时的优先级；
+旧 Refresh Token 失效可能导致有效 Access Token 被提前判定为无效，资源能力无法刷新。
+
+**变更后**：
+
+- Sub2API 自动配置优先验证 Access Token；只有 `auth/me` 明确 HTTP 401 且存在
+  Refresh Token 才调用刷新，只有 Refresh Token 时直接刷新，轮换后重新验证当前用户；
+- 管理接口继续使用管理地址和已验证登录态，页面公开声明的 Relay 仅用于完整 Key 的
+  `/v1/models` 能力确认。Relay 请求不带管理 Cookie、Bearer、Origin、Referer、
+  `X-Requested-With` 或 `X-Auth-Session`；
+- 真实站点复核已确认 Capture Session、身份、管理地址、Relay 地址和至少一条本轮
+  `ModelsSynced=true` 的 Key 能力均可用；其余部分失败保持 `partial/stale` 最近成功
+  快照，不把未确认模型加入路由；
+- 当前实现仍保留 Capture Session、加密 `PlatformSiteCredential`、一次性 claim、
+  Helper/Bridge 来源校验，不恢复旧版账号池、Preview 或 `ChannelAccount` 同步，浏览器
+  采集登录态不参与后台密码 Cleanup。

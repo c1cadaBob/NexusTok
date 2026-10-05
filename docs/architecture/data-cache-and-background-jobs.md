@@ -467,3 +467,15 @@ helper 和租约接管未登记。
 恢复并重启旧容器，稳定 backup 不被覆盖。`host` 和 `container:<id>` 网络不执行并行
 preflight，走停旧后启动正式容器的降级路径。错误原因继续脱敏，不写入数据库 DSN、Redis
 密码、Cookie、Token、API Key 或完整环境变量值。
+
+### 2026-10-05 Sub2API Access Token 优先与快照边界
+
+**变更前**：平台站点缓存和后台同步没有区分“Access Token 尚可验证、Refresh Token
+已失效”和“Access Token 也已失效”的场景；同步可能在刷新阶段提前失败。
+
+**变更后**：Sub2API 先验证 Access Token，只有当前用户接口明确 HTTP 401 且存在
+Refresh Token 才进入轮换；只有 Refresh Token 时直接轮换，轮换成功后再次调用
+`auth/me`。因此旧 Refresh Token 不会覆盖有效的管理会话。管理面身份、分组、用量和
+Key 成功时，Relay 单 Key 模型探测按独立资源状态记录；部分 Key/模型失败仍写入
+`partial/stale`、`using_snapshot` 并保留最近成功 Key、能力和渠道模型。Capture
+Session、加密凭据、一次性 claim 和浏览器 Cleanup 隔离不变，也不恢复旧版账号池同步。

@@ -3768,8 +3768,15 @@ func TestSub2APIAdapterRefreshesRotatingSession(t *testing.T) {
 			assert.Contains(t, string(body), `"refresh_token":"old-refresh"`)
 			_, _ = writer.Write([]byte(`{"code":0,"data":{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600}}`))
 		case "/api/v1/auth/me":
-			assert.Equal(t, "Bearer new-access", request.Header.Get("Authorization"))
-			_, _ = writer.Write([]byte(`{"code":0,"data":{"balance":1}}`))
+			switch request.Header.Get("Authorization") {
+			case "Bearer old-access":
+				writer.WriteHeader(http.StatusUnauthorized)
+				_, _ = writer.Write([]byte(`{"code":401,"message":"token expired"}`))
+			case "Bearer new-access":
+				_, _ = writer.Write([]byte(`{"code":0,"data":{"balance":1}}`))
+			default:
+				t.Fatalf("unexpected authorization header: %s", request.Header.Get("Authorization"))
+			}
 		default:
 			http.NotFound(writer, request)
 		}
@@ -3786,6 +3793,197 @@ func TestSub2APIAdapterRefreshesRotatingSession(t *testing.T) {
 	require.NotNil(t, session.CredentialUpdate)
 	assert.Equal(t, "new-access", session.CredentialUpdate.AccessToken)
 	assert.Equal(t, "new-refresh", session.CredentialUpdate.RefreshToken)
+}
+
+func TestSub2APIAdapterUsesValidAccessTokenBeforeStaleRefreshToken(t *testing.T) {
+	refreshRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v1/auth/refresh":
+			refreshRequests++
+			t.Fatalf("有效 Access Token 不应先调用 Refresh Token")
+		case "/api/v1/auth/me":
+			assert.Equal(t, "Bearer valid-access", request.Header.Get("Authorization"))
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"id":7,"balance":1}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	session, err := NewSub2APIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType:     model.UpstreamAuthAccessToken,
+			AccessToken:  "valid-access",
+			RefreshToken: "stale-refresh",
+		},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, 0, refreshRequests)
+	assert.Nil(t, session.CredentialUpdate)
+}
+
+func TestSub2APIAdapterRefreshesThroughCompatibleRouteFallback(t *testing.T) {
+	var refreshPaths []string
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v1/auth/refresh", "/api/auth/refresh":
+			refreshPaths = append(refreshPaths, request.URL.Path)
+			http.NotFound(writer, request)
+		case "/auth/refresh":
+			refreshPaths = append(refreshPaths, request.URL.Path)
+			_, _ = writer.Write([]byte(
+				`{"code":0,"data":{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600}}`,
+			))
+		case "/api/v1/auth/me":
+			if request.Header.Get("Authorization") == "Bearer old-access" {
+				writer.WriteHeader(http.StatusUnauthorized)
+				_, _ = writer.Write([]byte(`{"code":401,"message":"token expired"}`))
+			} else {
+				assert.Equal(t, "Bearer new-access", request.Header.Get("Authorization"))
+				_, _ = writer.Write([]byte(`{"code":0,"data":{"id":7,"balance":1}}`))
+			}
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	session, err := NewSub2APIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType:     model.UpstreamAuthAccessToken,
+			AccessToken:  "old-access",
+			RefreshToken: "old-refresh",
+		},
+	)
+	require.NoError(t, err)
+	assert.Equal(
+		t,
+		[]string{"/api/v1/auth/refresh", "/api/auth/refresh", "/auth/refresh"},
+		refreshPaths,
+	)
+	require.NotNil(t, session.CredentialUpdate)
+	assert.Equal(t, "new-access", session.CredentialUpdate.AccessToken)
+	assert.Equal(t, "new-refresh", session.CredentialUpdate.RefreshToken)
+	assert.Equal(t, common.GetTimestamp()+3600, session.CredentialUpdate.TokenExpiresAt)
+}
+
+func TestSub2APIAdapterUsesDeclaredRelayOnlyForKeyModelProbe(t *testing.T) {
+	managementModelRequests := 0
+	relayModelRequests := 0
+	var keyQuery url.Values
+
+	relayServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/models" {
+			http.NotFound(writer, request)
+			return
+		}
+		relayModelRequests++
+		assert.Equal(t, "Bearer sk-upstream", request.Header.Get("Authorization"))
+		assert.Equal(t, "sk-upstream", request.Header.Get("x-api-key"))
+		writer.WriteHeader(http.StatusForbidden)
+		_, _ = writer.Write([]byte(`{"error":{"code":"ACCESS_DENIED"}}`))
+	}))
+	defer relayServer.Close()
+
+	managementServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/":
+			writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = fmt.Fprintf(
+				writer,
+				`<script>window.__APP_CONFIG__={"api_base_url":"","custom_endpoints":[{"endpoint":%q}]}</script>`,
+				relayServer.URL,
+			)
+		case "/api/v1/auth/login":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"access_token":"management-access"}}`))
+		case "/api/v1/auth/me":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"id":7,"balance":1}}`))
+		case "/api/v1/user/profile", "/api/v1/usage/dashboard/stats", "/api/v1/usage/stats",
+			"/api/v1/groups/rates":
+			http.NotFound(writer, request)
+		case "/api/v1/groups/available":
+			_, _ = writer.Write([]byte(`{"code":0,"data":[]}`))
+		case "/api/v1/keys":
+			keyQuery = request.URL.Query()
+			_, _ = writer.Write([]byte(
+				`{"code":0,"data":{"items":[{"id":"key-1","key":"sk-upstream"}],"total":1,"page_size":100}}`,
+			))
+		case "/v1/models":
+			managementModelRequests++
+			t.Fatalf("外部 Relay 存在时不应回退管理地址探测模型")
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer managementServer.Close()
+
+	session, err := NewSub2APIAdapter(managementServer.Client()).Authenticate(
+		context.Background(),
+		managementServer.URL,
+		model.PlatformSiteCredential{
+			AuthType: model.UpstreamAuthPassword,
+			Username: "operator@example.com",
+			Password: "synthetic-password",
+		},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, relayServer.URL, session.ModelBaseURL)
+
+	snapshot, err := NewSub2APIAdapter(managementServer.Client()).FetchSnapshot(
+		context.Background(),
+		session,
+	)
+	require.NoError(t, err)
+	require.Len(t, snapshot.Keys, 1)
+	assert.False(t, snapshot.Keys[0].ModelsSynced)
+	assert.Equal(t, upstreamKeySyncErrorModelsUnavailable, snapshot.Keys[0].SyncError)
+	assert.Equal(t, 0, managementModelRequests)
+	assert.Equal(t, 1, relayModelRequests)
+	assert.Equal(t, "1", keyQuery.Get("page"))
+	assert.Equal(t, "100", keyQuery.Get("page_size"))
+	assert.Equal(t, "active", keyQuery.Get("status"))
+	assert.Equal(t, "created_at", keyQuery.Get("sort_by"))
+	assert.Equal(t, "desc", keyQuery.Get("sort_order"))
+	assert.Equal(t, "UTC", keyQuery.Get("timezone"))
+}
+
+func TestSub2APICurrentUserRejectsHTMLCompatibilityRoute(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/v1/auth/login":
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"access_token":"access"}}`))
+		case "/api/v1/auth/me", "/api/auth/me", "/api/v1/user/profile":
+			http.NotFound(writer, request)
+		case "/auth/me":
+			writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = writer.Write([]byte("<!doctype html><html><body>login</body></html>"))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	_, err := NewSub2APIAdapter(server.Client()).Authenticate(
+		context.Background(),
+		server.URL,
+		model.PlatformSiteCredential{
+			AuthType: model.UpstreamAuthPassword,
+			Username: "operator@example.com",
+			Password: "synthetic-password",
+		},
+	)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrSub2APICurrentUser)
+	assert.ErrorIs(t, err, ErrPlatformSiteResponse)
 }
 
 func TestSub2APIAdapterAdminKeyReadsNestedCredentialAndPagination(t *testing.T) {

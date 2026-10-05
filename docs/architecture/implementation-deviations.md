@@ -302,6 +302,19 @@ API 前缀从 Capture handoff、页面配置、当前页面和同源资源共同
 最近成功能力。浏览器采集凭据继续使用现有加密结构，不参与后台密码同步 Cleanup，
 且未在代码、日志、文档或提交中写入账号、密码、Token、Cookie 或完整 Key。
 
+### 3.15 2026-10-05 Sub2API Access Token 优先与旧 Refresh Token
+
+**变更前**：浏览器 Capture 同时保存 Access Token 和 Refresh Token 时，适配器可能
+无条件调用 Refresh。旧 Refresh Token 失效会遮蔽仍有效的 Access Token，造成真实
+Sub2API 站点认证和资源同步失败。
+
+**变更后**：Sub2API 有 Access Token 时先调用当前用户接口，只有明确 HTTP 401 且同时
+存在 Refresh Token 才刷新；只有 Refresh Token 时直接刷新，刷新后重新调用兼容的
+`auth/me` 接口，并保存轮换后的令牌和过期时间。非 401、网络、WAF 和权限错误不触发
+Refresh。该偏差已通过适配器回归测试和指定站点脱敏验收关闭；管理/Relay 地址拆分、
+`custom_endpoints` 匿名复核、`partial/stale` 快照保护、Capture Session 加密保存、
+浏览器 Cleanup 隔离和旧版账号池不恢复的边界保持不变。
+
 ## 4. 维护规则
 
 新发现偏差必须先确认“预期来源”与“代码实际行为”都能引用，再新增编号。代码修复时在同一功能提交中：

@@ -904,17 +904,12 @@ func (adapter *Sub2APIAdapter) Authenticate(ctx context.Context, baseURL string,
 		if credential.Cookie != "" {
 			headers.Set("Cookie", credential.Cookie)
 		}
-		if credential.RefreshToken != "" {
-			if err := refreshPlatformSiteSession(
-				ctx,
-				session,
-				"/api/v1/auth/refresh",
-				&credential,
-			); err != nil {
+		if credential.AccessToken != "" {
+			headers.Set("Authorization", bearerToken(credential.AccessToken))
+		} else if credential.RefreshToken != "" {
+			if err := refreshSub2APISession(ctx, session, &credential); err != nil {
 				return session, wrapPlatformSiteStage("Sub2API 刷新令牌", err)
 			}
-		} else if credential.AccessToken != "" {
-			headers.Set("Authorization", bearerToken(credential.AccessToken))
 		} else {
 			return nil, wrapPlatformSiteStage("Sub2API 认证", fmt.Errorf("%w: 缺少访问令牌", ErrPlatformSiteAuth))
 		}
@@ -933,8 +928,21 @@ func (adapter *Sub2APIAdapter) Authenticate(ctx context.Context, baseURL string,
 		return nil, wrapPlatformSiteStage("Sub2API 认证", fmt.Errorf("%w: 认证方式不受支持", ErrPlatformSiteAuth))
 	}
 	currentUser, err := fetchSub2APICurrentUser(ctx, session)
+	if err != nil &&
+		platformSiteCredentialAuthType(credential) == model.UpstreamAuthAccessToken &&
+		strings.TrimSpace(credential.AccessToken) != "" &&
+		strings.TrimSpace(credential.RefreshToken) != "" &&
+		platformSiteHTTPStatusIsUnauthorized(err) {
+		if refreshErr := refreshSub2APISession(ctx, session, &credential); refreshErr != nil {
+			return session, wrapPlatformSiteStage("Sub2API 刷新令牌", refreshErr)
+		}
+		currentUser, err = fetchSub2APICurrentUser(ctx, session)
+	}
 	if err != nil {
-		return session, wrapPlatformSiteStage("Sub2API 当前用户", err)
+		return session, wrapPlatformSiteStage(
+			"Sub2API 当前用户",
+			errors.Join(ErrPlatformSiteAuth, err),
+		)
 	}
 	if expectedUserID := strings.TrimSpace(credential.UserID); expectedUserID != "" {
 		actualUserID := strings.TrimSpace(findUserID(currentUser))
@@ -1914,7 +1922,12 @@ func fetchNewAPIAdminChannelModels(
 
 func fetchSub2APICurrentUser(ctx context.Context, session *PlatformSiteSession) (any, error) {
 	var lastErr error
-	for _, path := range []string{"/api/v1/auth/me", "/api/v1/user/profile"} {
+	for _, path := range []string{
+		"/api/v1/auth/me",
+		"/api/auth/me",
+		"/api/v1/user/profile",
+		"/auth/me",
+	} {
 		payload, err := platformSiteRequest(ctx, session, http.MethodGet, path, nil, nil)
 		if err == nil {
 			return payload, nil
@@ -1928,6 +1941,19 @@ func fetchSub2APICurrentUser(ctx context.Context, session *PlatformSiteSession) 
 		lastErr = fmt.Errorf("%w: Sub2API 当前用户接口不可用", ErrPlatformSiteAuth)
 	}
 	return nil, errors.Join(ErrSub2APICurrentUser, lastErr)
+}
+
+func refreshSub2APISession(
+	ctx context.Context,
+	session *PlatformSiteSession,
+	credential *model.PlatformSiteCredential,
+) error {
+	return refreshPlatformSiteSession(
+		ctx,
+		session,
+		"/api/v1/auth/refresh",
+		credential,
+	)
 }
 
 func bearerToken(token string) string {
@@ -1980,7 +2006,32 @@ func refreshPlatformSiteSession(
 	if !isDashboardRefresh {
 		body = map[string]string{"refresh_token": credential.RefreshToken}
 	}
-	payload, err := platformSiteRequest(ctx, session, http.MethodPost, path, nil, body)
+	refreshPaths := []string{path}
+	if isSub2API && path == "/api/v1/auth/refresh" {
+		refreshPaths = []string{
+			"/api/v1/auth/refresh",
+			"/api/auth/refresh",
+			"/auth/refresh",
+		}
+	}
+	var payload any
+	var err error
+	for index, candidatePath := range refreshPaths {
+		payload, err = platformSiteRequest(
+			ctx,
+			session,
+			http.MethodPost,
+			candidatePath,
+			nil,
+			body,
+		)
+		if err == nil ||
+			!isSub2API ||
+			!platformSiteRouteMissing(err) ||
+			index == len(refreshPaths)-1 {
+			break
+		}
+	}
 	if err != nil {
 		capturePlatformSiteSessionCookie(session, credential)
 		captureNewAPIRefreshCookie(session, credential)
@@ -3261,7 +3312,11 @@ func fetchModelsForSecret(ctx context.Context, session *PlatformSiteSession, sec
 	if session == nil || strings.TrimSpace(secret) == "" {
 		return nil, errors.New("上游密钥为空")
 	}
-	bases := uniqueStrings([]string{session.ModelBaseURL, session.BaseURL})
+	bases := []string{strings.TrimSpace(session.ModelBaseURL)}
+	if bases[0] == "" {
+		bases = []string{strings.TrimSpace(session.BaseURL)}
+	}
+	bases = uniqueStrings(bases)
 	var lastErr error
 	for _, baseURL := range bases {
 		paths := modelEndpointPaths(baseURL)
@@ -3730,8 +3785,12 @@ func fetchSub2APIKeys(ctx context.Context, session *PlatformSiteSession, rates m
 	result := make([]UpstreamKeySnapshot, 0)
 	for page := 1; page <= upstreamSiteResourceMaxPages; page++ {
 		payload, err := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/keys", url.Values{
-			"page":      {fmt.Sprint(page)},
-			"page_size": {fmt.Sprint(upstreamSitePageSize)},
+			"page":       {fmt.Sprint(page)},
+			"page_size":  {fmt.Sprint(upstreamSitePageSize)},
+			"status":     {"active"},
+			"sort_by":    {"created_at"},
+			"sort_order": {"desc"},
+			"timezone":   {"UTC"},
 		}, nil)
 		if err != nil {
 			return result, err

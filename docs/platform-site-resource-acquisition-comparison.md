@@ -1213,3 +1213,32 @@ Capture Session 状态查询遇到不存在或过期时，前端立即停止轮�
 - 指定站点脱敏验收结果为：管理地址与 `api-image.shour.bond` Relay 地址已拆分，
   渠道启用并成功读取 7 条 Key，7 条 Key 的 `ModelsSynced` 为真；本轮资源表保留
   `keys=partial`、`models=stale` 的历史快照，未输出完整凭据。
+
+## 23. 2026-10-05 Sub2API Access Token 优先与资源同步复核
+
+**变更前**
+
+- 页面同时存在 `auth_token` 和 `refresh_token` 时，资源获取前可能先刷新令牌。旧
+  Refresh Token 失效会阻断仍可调用管理接口的 Access Token，导致 Key 和模型资源
+  无法进入本轮同步；
+- 资源比较未明确“先验证 Access Token、仅 HTTP 401 才刷新”的边界，也没有把刷新后
+  的 `auth/me` 重新验证作为当前用户确认步骤。
+
+**变更后**
+
+- Sub2API 管理面按 Access Token 优先：先调用当前用户接口，只有明确 HTTP 401 且
+  存在 Refresh Token 才调用刷新；仅有 Refresh Token 时直接刷新。刷新响应必须包含
+  可用的 Access Token、Refresh Token 和有效过期信息，随后再次调用 `auth/me`；
+- 当前用户接口保留 `/api/v1/auth/me`、`/api/auth/me`、`/api/v1/user/profile`、
+  `/auth/me` 兼容路径，只有路由缺失才继续候选，不把 HTML、WAF、权限和非 401 业务
+  错误当成可刷新凭据；
+- 管理地址继续读取 `/api/v1/...` 的身份、分组、用量和 Key；页面公开声明的
+  `custom_endpoints`/`customEndpoints` Relay 继续由服务端匿名复核，单 Key 模型继续
+  只请求 Relay `/v1/models`，不携带管理 Cookie、Bearer、Origin、Referer、
+  `X-Requested-With` 或 `X-Auth-Session`；
+- 真实站点复核中，本轮管理面读取到 12 条 Key，7 条 Key 的 `ModelsSynced=true`，
+  渠道模型和可路由 Key 保持可用。其余资源失败仍记录 `partial/stale` 并使用最近
+  成功快照，不把部分分页或单 Key 探测失败当作凭据不存在；
+- 该链路仍使用 Capture Session、用户/渠道绑定、一次性 claim 和加密
+  `PlatformSiteCredential`，不恢复旧版账号池、Preview 或 `ChannelAccount` 同步，
+  浏览器采集登录态不进入后台密码 Cleanup。

@@ -1191,3 +1191,30 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
   可用。资源表同时记录 `keys=partial`、`models=stale` 和 `using_snapshot=true`，
   验证部分资源失败时保留最近成功快照，未在日志、诊断或额外明文结构中输出或持久化
   账号、密码、Token、Cookie 或完整 Key；认证凭据和完整 Key 仍按现有整体加密结构保存。
+
+### 10.3 2026-10-05 Sub2API Access Token 优先与资源同步复核
+
+**变更前**
+
+- 浏览器采集同时回传 Access Token 和 Refresh Token 时，后台认证可能无条件先调用
+  Refresh。真实站点的旧 Refresh Token 失效会让仍然有效的 Access Token 在认证前被
+  错误判定为不可用；
+- Refresh 成功后的令牌轮换与当前用户验证顺序没有在平台站点规则中明确，兼容路径
+  失败也可能掩盖真实的 `auth/me` 验证结果。
+
+**变更后**
+
+- Sub2API 有 Access Token 时先按 `/api/v1/auth/me`、`/api/auth/me`、
+  `/api/v1/user/profile`、`/auth/me` 兼容顺序验证；只有当前用户接口明确返回 HTTP
+  401 且同时存在 Refresh Token 时才刷新。只有 Refresh Token 时才直接刷新，刷新后
+  必须重新执行 `auth/me` 验证并保存轮换后的 Access Token、Refresh Token 和过期时间；
+- 有效 Access Token 与失效 Refresh Token 并存时不误刷新；网络错误、WAF、权限不足、
+  非 401 业务失败不会触发 Refresh。认证成功后仍按管理地址读取身份、分组、用量和
+  Key，按页面声明的 Relay 探测单 Key 模型，管理地址与 Relay 地址不混用；
+- 对真实站点的脱敏复核确认 Capture Session 已完成，读取到 12 条管理面 Key，其中
+  至少 7 条本轮 `ModelsSynced=true` 且可路由；部分 Key 探测失败时继续显示
+  `keys=partial`、`models=stale` 和 `using_snapshot=true`，不清空最近成功能力；
+- 本轮仍只迁移浏览器登录态采集到 Capture Session/整体加密
+  `PlatformSiteCredential`，不恢复旧版 `upstreamaccount` 账号池、Preview、
+  `ChannelAccount` 同步链路；浏览器采集不参与后台密码同步 Cleanup，也不新增数据库
+  字段、迁移或明文凭据结构。

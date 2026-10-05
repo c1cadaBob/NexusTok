@@ -743,3 +743,23 @@ Session Restore 等兼容逻辑，但 Dashboard Refresh、Refresh Token 和代�
 - 真实站点脱敏验收显示渠道处于启用状态，7 条 Key 中 7 条
   `ModelsSynced=true`，模型列表可用；资源状态为 `partial/stale` 且使用最近成功快照，
   仍不改变“已确认能力才能路由”的规则。
+
+### 14.13 2026-10-05 Sub2API Access Token 优先与路由资格
+
+**变更前**：Capture 同时保存 Access Token 和 Refresh Token 时，后台可能先刷新；
+失效 Refresh Token 会阻断仍有效的管理 Access Token，进而让本轮 Key/模型候选无法
+更新。路由文档也没有明确刷新后必须重新验证当前用户。
+
+**变更后**：
+
+- Sub2API 认证先验证 Access Token，只有 `auth/me` 明确 HTTP 401 且有 Refresh Token
+  才刷新；只有 Refresh Token 时直接刷新，刷新后的令牌轮换和过期时间解析完成后
+  必须重新执行 `auth/me`。非 401、网络、WAF 和权限错误不触发令牌刷新；
+- 管理地址和页面声明 Relay 继续分离，Relay 仅通过完整 Key 的 `/v1/models` 确认
+  模型能力。只有 `ModelsSynced=true` 且存在 Secret、状态和额度条件允许的
+  `UpstreamKey` 才进入 `RoutingKey` 候选，账号级模型目录和诊断字段不能扩大能力；
+- 真实站点复核中至少 7 条 Key 在本轮同步成功确认模型并保持可路由；部分 Key 探测
+  失败时沿用最近成功的能力快照并记录 `partial/stale + using_snapshot`，不删除已有
+  `UpstreamKeyAbility` 或模型候选；
+- Capture 登录态仍通过当前加密凭据、用户/渠道绑定和一次性 claim 消费，不参与后台
+  密码同步 Cleanup，也不恢复旧版账号池、Preview 或 `ChannelAccount` 同步链路。

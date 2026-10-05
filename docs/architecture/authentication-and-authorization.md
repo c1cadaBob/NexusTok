@@ -389,3 +389,23 @@ Sub2API 站点可能无法把页面公开 Relay 配置带入完成结果；外�
   `https://api-image.shour.bond` Relay 地址分离，登录态通过当前用户验证后保存到加密
   `PlatformSiteCredential`。浏览器 Capture 仍属于用户已有会话，不执行后台密码
   Cleanup；资源失败仍不覆盖最近成功快照。
+
+### 9.10 2026-10-05 Sub2API Access Token 优先与刷新边界
+
+**变更前**：Capture Helper 可能同时提交 Access Token、Refresh Token 和 Auth User；
+适配器无条件优先 Refresh 时，失效的旧 Refresh Token 会让有效 Access Token 无法完成
+当前用户验证。
+
+**变更后**：
+
+- Sub2API Access Token 存在时先调用当前用户接口，只有明确 HTTP 401 且 Refresh
+  Token 存在才刷新；仅有 Refresh Token 时直接刷新。刷新响应成功后保存轮换令牌和
+  过期时间，并重新调用 `auth/me` 验证身份；
+- 当前用户和刷新保留 `/api/v1`、`/api`、无前缀兼容路径，但只有 404/405 路由缺失
+  才继续候选；网络、WAF、权限和非 401 业务失败不触发刷新或主体重试；
+- 管理地址与页面声明 Relay 分离，管理请求使用已验证的会话，Relay 模型探测只携带
+  完整 Key 的 `Authorization` 和 `x-api-key`。密码、Cookie、Access Token、Refresh
+  Token、Session ID、Admin Key 和完整上游响应不进入日志、审计字段或普通响应；
+- 真实站点脱敏验收确认 Capture Session 完成并成功验证当前用户；部分资源失败仍
+  保留最近成功快照。浏览器采集会话不由后台密码同步 Cleanup，未新增数据库字段、
+  迁移或明文凭据结构。
