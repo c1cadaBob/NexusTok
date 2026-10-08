@@ -1,7 +1,7 @@
 # 系统总览与请求生命周期
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-01
+> 事实基线日期：2026-10-08
 > 主要代码来源：`main.go`、`router/main.go`、`router/`、`middleware/`、`controller/`、`service/`、`model/main.go`、`common/`
 > 关联详细文档：[`README.md`](./README.md)、[`authentication-and-authorization.md`](./authentication-and-authorization.md)、[`data-cache-and-background-jobs.md`](./data-cache-and-background-jobs.md)
 
@@ -115,9 +115,11 @@ HTTP
 Redis 兼容模式。SQLite 文件不会自动迁移到 PostgreSQL；已有生产数据切换前必须备份，
 并单独执行经过验证的数据迁移。
 
-本次发布镜像为 `c1cadabob/nexustok:v0.2.6` 和 `c1cadabob/nexustok:latest`，Dockerfile
+本次发布镜像为 `c1cadabob/nexustok:v0.2.7` 和 `c1cadabob/nexustok:latest`，Dockerfile
 通过当前 `web/` 的 Bun/Rsbuild `bun run build` 生成并嵌入新版前端，不新增路由、DTO、
-数据库模型或字段。
+数据库模型或字段。`v0.2.7` 同时包含 Sub2API 浏览器登录态采集、页面公开 Relay 发现、
+CSP nonce 页面桥接和资源快照保护修复；GitHub Release、Docker 多架构镜像、Cosign 签名
+及 Electron 产物以标签触发后的远端工作流结果为准，本次发布不执行生产部署。
 
 ### v0.2.3 部署文档与发布边界（2026-10-01）
 
@@ -190,6 +192,28 @@ preflight 容器完成健康检查；通过后删除 preflight，再创建保留
 和 Compose 标签的正式容器。正式容器只在旧容器停止并改名后启动，失败时恢复旧容器并保留
 稳定 backup。`host` 和 `container:<id>` 网络走停旧后启动正式容器的降级路径。发布镜像为
 `c1cadabob/nexustok:v0.2.6` 和 `c1cadabob/nexustok:latest`；本版本不新增数据库结构。
+
+### v0.2.7 Sub2API 浏览器采集与页面桥接（2026-10-08）
+
+**变更前**：Sub2API 浏览器采集主要依赖页面中的认证字段和管理 API 地址，页面公开
+`custom_endpoints` Relay 配置未被统一发现和复核，管理地址与 Relay 地址可能无法明确
+分离；目标站点使用动态 CSP nonce 时，页面桥接脚本在 nonce 尚未暴露时立即注入，可能
+被浏览器拦截，导致 Capture Session 无法完成。
+
+**变更后**：自动采集按 `auth_token`、`auth_user`、Refresh Token 和浏览器恢复信息的
+顺序读取，并通过 `/api/v1/auth/me` 及兼容路径验证当前登录态；服务端只接受重新读取页面
+后明确声明的 `custom_endpoints` Relay 地址。`tk.shour.bond` 的管理地址为
+`https://tk.shour.bond`，Relay 地址为页面公开声明的
+`https://api-image.shour.bond`。页面桥接等待目标页面提供 CSP nonce 后再执行，失败时
+通过校验窗口来源、Origin 和 Capture ID 的消息反馈。Capture Session、加密
+`PlatformSiteCredential`、一次性 claim、用户/渠道绑定和最近成功资源快照保护保持不变；
+资源同步失败不会清空最近成功的 Key、模型和可路由能力，浏览器采集登录态不参与后台密码
+同步 Cleanup。
+
+本版本不恢复旧版完整 `upstreamaccount`、Preview 或 `ChannelAccount` 同步体系，不新增
+数据库字段、迁移或明文凭据结构。发布验证只记录实际执行的本地命令和远端工作流结果，
+不以标签推送前的静态检查代替 GitHub Release、Docker 多架构镜像、Cosign 或 Electron
+产物的实际验收。
 
 ### Master/Slave
 
