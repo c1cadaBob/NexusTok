@@ -3651,7 +3651,7 @@ func TestPlatformSiteSnapshotCoreResourcesDefineBlockingFailure(t *testing.T) {
 			},
 		},
 	}
-	assert.False(t, platformSiteSnapshotHasBlockingResourceFailure(nil, snapshot))
+	assert.True(t, platformSiteSnapshotHasBlockingResourceFailure(nil, snapshot))
 
 	snapshot.Keys[0].SyncError = upstreamKeySyncErrorModelsUnavailable
 	assert.True(t, platformSiteSnapshotHasBlockingResourceFailure(nil, snapshot))
@@ -3673,7 +3673,7 @@ func TestPlatformSiteSnapshotModelProbeFailureUsesExistingSnapshot(t *testing.T)
 		SyncStatus: model.UpstreamSiteSyncSuccess,
 	}
 
-	assert.False(t, platformSiteSnapshotHasBlockingResourceFailure(account, snapshot))
+	assert.True(t, platformSiteSnapshotHasBlockingResourceFailure(account, snapshot))
 
 	account.LastSyncAt = 0
 	assert.True(t, platformSiteSnapshotHasBlockingResourceFailure(account, snapshot))
@@ -3722,6 +3722,94 @@ func TestNewAPIResourceFailuresKeepIdentityAndClassifyOptionalResources(t *testi
 	assert.Equal(t, model.PlatformSiteResourceStatusFailed, resources[model.PlatformSiteResourceModels].Status)
 	assert.Contains(t, resources[model.PlatformSiteResourceModels].FailureReason, "资源")
 	assert.NotContains(t, resources[model.PlatformSiteResourceModels].FailureReason, "账号或密码")
+}
+
+func TestNewAPIOptionalRatioConfigDoesNotOverridePricingEndpoints(t *testing.T) {
+	tests := []struct {
+		name              string
+		ratioConfigStatus int
+		pricingResponse   string
+		wantStatus        string
+	}{
+		{
+			name:              "ratio config forbidden pricing succeeds",
+			ratioConfigStatus: http.StatusForbidden,
+			pricingResponse:   `{"success":true,"data":[],"group_ratio":{"default":1},"supported_endpoint":{"openai":{"path":"/v1/chat/completions","method":"POST"}}}`,
+			wantStatus:        model.PlatformSiteResourceStatusSuccess,
+		},
+		{
+			name:              "ratio config succeeds pricing succeeds",
+			ratioConfigStatus: http.StatusOK,
+			pricingResponse:   `{"success":true,"data":[],"group_ratio":{"default":1},"supported_endpoint":{"openai":{"path":"/v1/chat/completions","method":"POST"}}}`,
+			wantStatus:        model.PlatformSiteResourceStatusSuccess,
+		},
+		{
+			name:              "pricing fails",
+			ratioConfigStatus: http.StatusForbidden,
+			pricingResponse:   `{"success":false,"message":"pricing unavailable"}`,
+			wantStatus:        model.PlatformSiteResourceStatusFailed,
+		},
+		{
+			name:              "pricing has no usable resources",
+			ratioConfigStatus: http.StatusOK,
+			pricingResponse:   `{"success":true,"data":[]}`,
+			wantStatus:        model.PlatformSiteResourceStatusFailed,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				writer.Header().Set("Content-Type", "application/json")
+				switch request.URL.Path {
+				case "/api/status":
+					_, _ = writer.Write([]byte(`{"success":true,"data":{"quota_per_unit":500000}}`))
+				case "/api/user/self":
+					_, _ = writer.Write([]byte(`{"success":true,"data":{"id":17,"quota":500000}}`))
+				case "/api/user/self/groups":
+					_, _ = writer.Write([]byte(`{"success":true,"data":{"default":{"ratio":1}}}`))
+				case "/api/ratio_config":
+					writer.WriteHeader(testCase.ratioConfigStatus)
+					_, _ = writer.Write([]byte(`{"success":false,"message":"not available"}`))
+				case "/api/pricing":
+					if testCase.wantStatus == model.PlatformSiteResourceStatusFailed &&
+						strings.Contains(testCase.pricingResponse, `"success":false`) {
+						writer.WriteHeader(http.StatusBadGateway)
+					}
+					_, _ = writer.Write([]byte(testCase.pricingResponse))
+				case "/api/token/":
+					_, _ = writer.Write([]byte(`{"success":true,"data":{"items":[]}}`))
+				case "/api/user/models":
+					_, _ = writer.Write([]byte(`{"success":true,"data":["gpt-4o"]}`))
+				default:
+					http.NotFound(writer, request)
+				}
+			}))
+			t.Cleanup(server.Close)
+
+			session, err := NewNewAPIAdapter(server.Client()).Authenticate(
+				context.Background(),
+				server.URL,
+				model.PlatformSiteCredential{
+					AuthType:    model.UpstreamAuthAccessToken,
+					AccessToken: "session-token",
+				},
+			)
+			require.NoError(t, err)
+
+			snapshot, err := NewNewAPIAdapter(server.Client()).FetchSnapshot(
+				context.Background(),
+				session,
+			)
+			require.NoError(t, err)
+			resources := make(map[string]PlatformSiteResourceSyncSnapshot)
+			for _, resource := range snapshot.ResourceSyncs {
+				resources[resource.ResourceType] = resource
+			}
+			require.Contains(t, resources, model.PlatformSiteResourceEndpoints)
+			assert.Equal(t, testCase.wantStatus, resources[model.PlatformSiteResourceEndpoints].Status)
+		})
+	}
 }
 
 func TestNormalizePlatformSiteModelResourceStatusPrefersFreshSources(t *testing.T) {
@@ -3892,7 +3980,7 @@ func TestSub2APIAdapterUsesDeclaredRelayOnlyForKeyModelProbe(t *testing.T) {
 		}
 		relayModelRequests++
 		assert.Equal(t, "Bearer sk-upstream", request.Header.Get("Authorization"))
-		assert.Equal(t, "sk-upstream", request.Header.Get("x-api-key"))
+		assert.Empty(t, request.Header.Get("x-api-key"))
 		writer.WriteHeader(http.StatusForbidden)
 		_, _ = writer.Write([]byte(`{"error":{"code":"ACCESS_DENIED"}}`))
 	}))
@@ -4315,7 +4403,7 @@ func TestSub2APIAdapterDiscoversRelayModelsAndTreatsZeroQuotaAsUnlimited(t *test
 			case request.Method == http.MethodGet && request.URL.Path == "/v1/models":
 				modelRequests++
 				assert.Equal(t, "Bearer sk-sub2api", request.Header.Get("Authorization"))
-				assert.Equal(t, "sk-sub2api", request.Header.Get("x-api-key"))
+				assert.Empty(t, request.Header.Get("x-api-key"))
 				return platformSiteJSONResponse(http.StatusOK, `{"data":[{"id":"gpt-5.5"}]}`), nil
 			default:
 				return platformSiteJSONResponse(http.StatusNotFound, `{"code":404}`), nil
@@ -4615,8 +4703,9 @@ func TestSub2APIGroupsFailureStopsKeySynchronizationAndKeepsSnapshotData(t *test
 	assert.Equal(t, 0, keyRequests)
 	assert.NotNil(t, snapshot.Identity)
 	assert.False(t, snapshot.KeysComplete)
-	require.Len(t, snapshot.ResourceSyncs, 2)
-	assert.Equal(t, model.PlatformSiteResourceStatusFailed, snapshot.ResourceSyncs[1].Status)
+	require.Len(t, snapshot.ResourceSyncs, 3)
+	assert.Equal(t, model.PlatformSiteResourceStatusSuccess, snapshot.ResourceSyncs[1].Status)
+	assert.Equal(t, model.PlatformSiteResourceStatusFailed, snapshot.ResourceSyncs[2].Status)
 }
 
 func TestSub2APIKeyPaginationUsesThousandPageLimitAndListModels(t *testing.T) {
@@ -5141,7 +5230,7 @@ func TestSub2APIAdapterAcceptsRelayURLDeclaredByRedirectedPage(t *testing.T) {
 				request.URL.Path == "/v1/models":
 				modelRequests++
 				assert.Equal(t, "Bearer sk-upstream", request.Header.Get("Authorization"))
-				assert.Equal(t, "sk-upstream", request.Header.Get("x-api-key"))
+				assert.Empty(t, request.Header.Get("x-api-key"))
 				assert.Empty(t, request.Header.Get("Cookie"))
 				assert.Empty(t, request.Header.Get("Origin"))
 				assert.Empty(t, request.Header.Get("Referer"))
@@ -6950,12 +7039,12 @@ func TestSyncPlatformSiteSucceedsWithUsableKeyAndPartialResourceFailure(t *testi
 	}
 	require.NoError(t, db.Create(account).Error)
 
-	require.NoError(t, SyncUpstreamSite(context.Background(), channel.Id))
+	require.Error(t, SyncUpstreamSite(context.Background(), channel.Id))
 
 	var saved model.PlatformSiteAccount
 	require.NoError(t, db.First(&saved, account.ID).Error)
-	assert.Equal(t, model.UpstreamSiteSyncSuccess, saved.SyncStatus)
-	assert.NotZero(t, saved.LastSyncAt)
+	assert.Equal(t, model.UpstreamSiteSyncFailed, saved.SyncStatus)
+	assert.Zero(t, saved.LastSyncAt)
 	assert.Equal(t, model.PlatformSiteAuthStatusSecureVerificationRequired, saved.AuthStatus)
 
 	var savedKey model.UpstreamKey
@@ -7018,6 +7107,12 @@ func TestSyncPlatformSiteFailurePreservesLastSuccessfulSnapshot(t *testing.T) {
 		switch request.URL.Path {
 		case "/api/user/self":
 			_, _ = writer.Write([]byte(`{"success":true,"data":{"quota":5000000,"used_quota":1000000}}`))
+		case "/api/user/self/groups":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"default":{"ratio":1}}}`))
+		case "/api/user/models":
+			_, _ = writer.Write([]byte(`{"success":true,"data":["gpt-5.5"]}`))
+		case "/api/pricing":
+			_, _ = writer.Write([]byte(`{"success":true,"data":[],"group_ratio":{"default":1},"supported_endpoint":{"openai":{"path":"/v1/chat/completions","method":"POST"}}}`))
 		case "/api/status":
 			_, _ = writer.Write([]byte(`{"success":true,"data":{"quota_per_unit":500000}}`))
 		case "/api/token/":

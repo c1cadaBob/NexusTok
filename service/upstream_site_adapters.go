@@ -615,7 +615,9 @@ func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *Platfo
 			groupsLoaded,
 		))
 	}
-	ratioConfigPayload, ratioConfigErr := platformSiteRequest(
+	// /api/ratio_config 只在站点主动公开倍率配置时可用，403 不代表
+	// 端点资源不可用。端点资源的最终状态由 /api/pricing 确认。
+	_, _ = platformSiteRequest(
 		ctx,
 		session,
 		http.MethodGet,
@@ -623,21 +625,6 @@ func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *Platfo
 		nil,
 		nil,
 	)
-	if ratioConfigErr != nil {
-		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, newAPIResourceSyncFailure(
-			model.PlatformSiteResourceEndpoints,
-			"/api/ratio_config",
-			ratioConfigErr,
-			false,
-		))
-	} else {
-		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, PlatformSiteResourceSyncSnapshot{
-			ResourceType:   model.PlatformSiteResourceEndpoints,
-			Status:         model.PlatformSiteResourceStatusSuccess,
-			SourceEndpoint: "/api/ratio_config",
-			RecordCount:    len(recordsFromPayload(ratioConfigPayload)),
-		})
-	}
 	pricingPayload, pricingErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/pricing", nil, nil)
 	if pricingErr == nil {
 		if !applyNewAPIPricingResources(&snapshot, session, pricingPayload) {
@@ -768,23 +755,15 @@ func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *Platfo
 		snapshot.Keys = append(snapshot.Keys, item)
 	}
 	accountModels, accountModelsErr := fetchNewAPIModels(ctx, session)
+	accountModelsStatus := model.PlatformSiteResourceStatusFailed
+	accountModelsFailureReason := ""
+	accountModelsPartial := false
 	if accountModelsErr == nil {
+		accountModelsStatus = model.PlatformSiteResourceStatusSuccess
 		snapshot.Models = uniqueStrings(append(snapshot.Models, accountModels...))
-		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, PlatformSiteResourceSyncSnapshot{
-			ResourceType:   model.PlatformSiteResourceModels,
-			Status:         model.PlatformSiteResourceStatusSuccess,
-			SourceEndpoint: "/api/user/models,/api/user/available_models,/api/user/available_model/",
-			RecordCount:    len(accountModels),
-		})
 	} else {
-		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs,
-			newAPIResourceSyncFailure(
-				model.PlatformSiteResourceModels,
-				"/api/user/models,/api/user/available_models,/api/user/available_model/",
-				accountModelsErr,
-				false,
-			),
-		)
+		accountModelsFailureReason = platformSiteResourceFailureReason(accountModelsErr)
+		accountModelsPartial = true
 	}
 	keysResourceStatus := model.PlatformSiteResourceStatusSuccess
 	keysFailureReason := ""
@@ -811,36 +790,52 @@ func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *Platfo
 	})
 	if models := uniqueStrings(modelsFromKeys(snapshot.Keys)); len(models) > 0 {
 		snapshot.Models = uniqueStrings(append(snapshot.Models, models...))
-		modelsStatus := model.PlatformSiteResourceStatusSuccess
-		modelsFailureReason := ""
+		modelsStatus := accountModelsStatus
+		modelsFailureReason := accountModelsFailureReason
+		modelsPartial := accountModelsPartial
 		if !snapshot.KeysComplete {
 			modelsStatus = model.PlatformSiteResourceStatusStale
 			modelsFailureReason = "密钥资源未完整同步，保留最近成功模型快照"
+			modelsPartial = true
+		} else if modelsStatus != model.PlatformSiteResourceStatusSuccess {
+			modelsStatus = model.PlatformSiteResourceStatusSuccess
+			modelsFailureReason = ""
+			modelsPartial = false
 		}
 		if keysRequireSecurityVerification {
 			modelsStatus = model.PlatformSiteResourceStatusSecureVerificationRequired
 			modelsFailureReason = "密钥资源需要完成上游安全验证，保留最近成功模型快照"
+			modelsPartial = true
 		}
 		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, PlatformSiteResourceSyncSnapshot{
 			ResourceType:                 model.PlatformSiteResourceModels,
 			Status:                       modelsStatus,
-			SourceEndpoint:               "/v1/models",
+			SourceEndpoint:               "/api/user/models,/v1/models",
 			RecordCount:                  len(models),
 			FailureReason:                modelsFailureReason,
+			Partial:                      modelsPartial,
 			RequiresSecurityVerification: keysRequireSecurityVerification,
 		})
 	} else {
-		modelsStatus := model.PlatformSiteResourceStatusStale
-		modelsFailureReason := "账号级或密钥级模型目录接口不可用"
+		modelsStatus := accountModelsStatus
+		modelsFailureReason := accountModelsFailureReason
+		modelsPartial := accountModelsPartial
+		if modelsStatus == model.PlatformSiteResourceStatusSuccess {
+			modelsStatus = model.PlatformSiteResourceStatusStale
+			modelsFailureReason = "未完成单 Key 模型能力确认，保留最近成功模型快照"
+			modelsPartial = true
+		}
 		if keysRequireSecurityVerification {
 			modelsStatus = model.PlatformSiteResourceStatusSecureVerificationRequired
 			modelsFailureReason = "密钥资源需要完成上游安全验证，保留最近成功模型快照"
+			modelsPartial = true
 		}
 		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, PlatformSiteResourceSyncSnapshot{
 			ResourceType:                 model.PlatformSiteResourceModels,
 			Status:                       modelsStatus,
 			SourceEndpoint:               "/api/user/models,/v1/models",
 			FailureReason:                modelsFailureReason,
+			Partial:                      modelsPartial,
 			RequiresSecurityVerification: keysRequireSecurityVerification,
 		})
 	}
@@ -1039,6 +1034,28 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 			RecordCount:    1,
 		},
 	)
+	if snapshot.Endpoint != nil &&
+		snapshot.Endpoint.Enabled &&
+		strings.TrimSpace(snapshot.Endpoint.ManagementURL) != "" &&
+		strings.TrimSpace(snapshot.Endpoint.RelayURL) != "" {
+		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs,
+			PlatformSiteResourceSyncSnapshot{
+				ResourceType:   model.PlatformSiteResourceEndpoints,
+				Status:         model.PlatformSiteResourceStatusSuccess,
+				SourceEndpoint: "/api/v1/auth/me,/api/v1/keys,/v1/models",
+				RecordCount:    len(snapshot.Endpoint.Capabilities),
+			},
+		)
+	} else {
+		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs,
+			sub2APIResourceSyncFailure(
+				model.PlatformSiteResourceEndpoints,
+				"/api/v1/auth/me,/api/v1/keys,/v1/models",
+				fmt.Errorf("%w: Sub2API 管理或 Relay 地址未确认", ErrPlatformSiteResponse),
+				false,
+			),
+		)
+	}
 
 	var profileErr error
 	if payload, requestErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/user/profile", nil, nil); requestErr == nil {
@@ -3021,14 +3038,8 @@ func applyNewAPIPricingResources(
 	if snapshot == nil {
 		return false
 	}
-	record := make(map[string]any)
-	if envelope, ok := payload.(map[string]any); ok {
-		maps.Copy(record, envelope)
-		if dataRecord, ok := envelope["data"].(map[string]any); ok {
-			maps.Copy(record, dataRecord)
-		}
-	}
-	if len(record) == 0 {
+	record := newAPIPricingRecord(payload)
+	if !newAPIPricingRecordHasResources(record) {
 		return false
 	}
 	rates := parseGroupRates(record["group_ratio"])
@@ -3084,6 +3095,44 @@ func applyNewAPIPricingResources(
 		RecordCount:    len(snapshot.Endpoint.Capabilities),
 	})
 	return true
+}
+
+func newAPIPricingRecord(payload any) map[string]any {
+	record := make(map[string]any)
+	envelope, ok := payload.(map[string]any)
+	if !ok {
+		return record
+	}
+	maps.Copy(record, envelope)
+	if dataRecord, ok := envelope["data"].(map[string]any); ok {
+		maps.Copy(record, dataRecord)
+	}
+	return record
+}
+
+func newAPIPricingRecordHasResources(record map[string]any) bool {
+	if len(record) == 0 {
+		return false
+	}
+	if supported, ok := record["supported_endpoint"]; ok &&
+		len(newAPIPricingEndpointCapabilities(supported)) > 0 {
+		return true
+	}
+	if len(parseGroupRates(record["group_ratio"])) > 0 {
+		return true
+	}
+	if usableGroups, ok := record["usable_group"].(map[string]any); ok &&
+		len(usableGroups) > 0 {
+		return true
+	}
+	switch data := record["data"].(type) {
+	case []any:
+		return len(data) > 0
+	case map[string]any:
+		return len(data) > 0
+	default:
+		return false
+	}
 }
 
 func newAPIPricingEndpointCapabilities(payload any) []PlatformSiteEndpointCapabilitySnapshot {
@@ -3327,7 +3376,9 @@ func fetchModelsForSecret(ctx context.Context, session *PlatformSiteSession, sec
 			keySession.CredentialUpdate = nil
 			keySession.Headers = make(http.Header)
 			keySession.Headers.Set("Authorization", bearerToken(secret))
-			keySession.Headers.Set("x-api-key", secret)
+			if session.Platform != model.PlatformSub2API {
+				keySession.Headers.Set("x-api-key", secret)
+			}
 			if session.Client != nil {
 				client := *session.Client
 				client.Jar = nil

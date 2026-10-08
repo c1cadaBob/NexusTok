@@ -1488,11 +1488,13 @@ func syncPlatformSite(ctx context.Context, channelID int) error {
 					if fetchErr != nil {
 						err = fetchErr
 						if platformSiteSnapshotHasData(snapshot) {
+							ensurePlatformSiteResourceSyncCoverage(&snapshot)
 							if snapshotErr := persistPlatformSiteSnapshot(ctx, &account, snapshot); snapshotErr != nil {
 								err = errors.Join(err, wrapPlatformSiteStage("部分快照写库", snapshotErr))
 							}
 						}
 					} else {
+						ensurePlatformSiteResourceSyncCoverage(&snapshot)
 						err = persistPlatformSiteSnapshot(ctx, &account, snapshot)
 						if err != nil {
 							err = wrapPlatformSiteStage("同步写库", err)
@@ -1640,6 +1642,37 @@ func normalizePlatformSiteResourceSyncs(snapshot *PlatformSiteSnapshot) {
 	snapshot.ResourceSyncs = merged
 }
 
+func ensurePlatformSiteResourceSyncCoverage(snapshot *PlatformSiteSnapshot) {
+	if snapshot == nil {
+		return
+	}
+	requiredResources := [...]string{
+		model.PlatformSiteResourceIdentity,
+		model.PlatformSiteResourceGroups,
+		model.PlatformSiteResourceEndpoints,
+		model.PlatformSiteResourceUsage,
+		model.PlatformSiteResourceKeys,
+		model.PlatformSiteResourceModels,
+	}
+	seen := make(map[string]struct{}, len(snapshot.ResourceSyncs))
+	for _, resource := range snapshot.ResourceSyncs {
+		if strings.TrimSpace(resource.ResourceType) != "" {
+			seen[resource.ResourceType] = struct{}{}
+		}
+	}
+	for _, resourceType := range requiredResources {
+		if _, exists := seen[resourceType]; exists {
+			continue
+		}
+		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, PlatformSiteResourceSyncSnapshot{
+			ResourceType:  resourceType,
+			Status:        model.PlatformSiteResourceStatusFailed,
+			FailureReason: "本轮资源同步未完成",
+			Partial:       true,
+		})
+	}
+}
+
 func mergePlatformSiteResourceStatus(resourceType, current, incoming string) string {
 	if resourceType == model.PlatformSiteResourceModels {
 		if current == model.PlatformSiteResourceStatusSuccess {
@@ -1700,27 +1733,54 @@ func mergePlatformSiteResourceReasons(left, right string) string {
 }
 
 func platformSiteSnapshotHasBlockingResourceFailure(
-	account *model.PlatformSiteAccount,
+	_ *model.PlatformSiteAccount,
 	snapshot PlatformSiteSnapshot,
 ) bool {
-	modelProbeFailureWithSecret := false
-	for _, key := range snapshot.Keys {
-		if key.SyncError == upstreamKeySyncErrorModelsUnavailable &&
-			strings.TrimSpace(key.Secret) != "" {
-			modelProbeFailureWithSecret = true
+	requiredResources := [...]string{
+		model.PlatformSiteResourceIdentity,
+		model.PlatformSiteResourceGroups,
+		model.PlatformSiteResourceEndpoints,
+		model.PlatformSiteResourceUsage,
+		model.PlatformSiteResourceKeys,
+		model.PlatformSiteResourceModels,
+	}
+	resourceStatuses := make(map[string]string, len(requiredResources))
+	for _, resource := range snapshot.ResourceSyncs {
+		if strings.TrimSpace(resource.ResourceType) == "" {
 			continue
 		}
-		if key.SyncError == "" &&
-			strings.TrimSpace(key.Secret) != "" &&
-			key.ModelsSynced &&
-			len(uniqueStrings(key.Models)) > 0 {
-			return false
+		current, exists := resourceStatuses[resource.ResourceType]
+		if !exists {
+			resourceStatuses[resource.ResourceType] = resource.Status
+			continue
+		}
+		resourceStatuses[resource.ResourceType] = mergePlatformSiteResourceStatus(
+			resource.ResourceType,
+			current,
+			resource.Status,
+		)
+	}
+	for _, resourceType := range requiredResources {
+		if resourceStatuses[resourceType] != model.PlatformSiteResourceStatusSuccess {
+			return true
 		}
 	}
-	// 部分 Sub2API 部署会在管理资源仍可读取时拒绝所有密钥的 /v1/models，
-	// 例如账号没有剩余额度。此时保留最近一次完整的密钥和模型快照，
-	// 不把本次部分刷新误判为凭据失效。
-	if modelProbeFailureWithSecret && account != nil && account.LastSyncAt > 0 {
+
+	now := time.Now()
+	for _, key := range snapshot.Keys {
+		if key.SyncError != "" ||
+			key.Disabled ||
+			strings.TrimSpace(key.Secret) == "" ||
+			!key.ModelsSynced ||
+			len(uniqueStrings(key.Models)) == 0 {
+			continue
+		}
+		if key.ExpiresAt != nil && !key.ExpiresAt.After(now) {
+			continue
+		}
+		if key.RemainQuota != nil && *key.RemainQuota <= 0 {
+			continue
+		}
 		return false
 	}
 	return true
