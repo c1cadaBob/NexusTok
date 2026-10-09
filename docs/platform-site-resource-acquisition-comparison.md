@@ -1,7 +1,7 @@
 # Sub2API 与 New API 平台站点资源获取链路分析及版本差异
 
 > 文档状态：源码事实分析
-> 分析日期：2026-10-05
+> 分析日期：2026-10-09
 > 适用范围：旧版备份、Sub2API/New API/all-api-hub 本机参考源、当前 NexusTok
 > 安全边界：本文只记录接口契约、字段语义、代码入口和失败处理，不记录任何真实密码、Cookie、Access Token、Refresh Token、Admin Key、测试账号、环境变量或完整密钥。
 
@@ -625,9 +625,9 @@ New API Admin Key 可以附带：
   `https://hengwenapi.com`，该地址可作为 Relay；本轮登录、当前用户、分组、额度和
   Key 请求直接使用最终可信页面来源，持久化的管理地址仍为 `hhw1231.com`。
 - `aiapipay.com` 页面明确声明 `api.aiapipay.com` 时，直接 `api.` 父子域关系允许
-  Relay；管理请求仍使用管理地址。Relay 模型探测只发送当前完整 Key 的 Bearer 和
-  `x-api-key`，清空 Cookie Jar，不复制管理 Cookie、Origin、Referer、
-  `X-Requested-With` 或 `X-Auth-Session`。
+  Relay；管理请求仍使用管理地址。Sub2API Relay 模型探测只发送当前完整 Key 的
+  `Authorization: Bearer`，不发送 `x-api-key`，清空 Cookie Jar，不复制管理 Cookie、
+  管理 Bearer、Origin、Referer、`X-Requested-With` 或 `X-Auth-Session`。
 
 ### 9.2 当前认证和 Refresh
 
@@ -1206,8 +1206,8 @@ Capture Session 状态查询遇到不存在或过期时，前端立即停止轮�
   `base_url` 使用去除末尾 `/v1` 的 Relay 根地址。管理端按 `/api/v1/...` 获取
   identity、groups、usage 和 keys，Relay 端按 `/v1/models` 确认每条完整 Key 的
   模型能力；
-- Relay 请求使用独立客户端和请求头，只携带当前完整 Key 的 `Authorization`、
-  `x-api-key`，不携带管理 Cookie、Bearer、Origin、Referer、`X-Requested-With`、
+- Relay 请求使用独立客户端和请求头，只携带当前完整 Key 的
+  `Authorization: Bearer`，不发送 `x-api-key`，不携带管理 Cookie、Bearer、Origin、Referer、`X-Requested-With`、
   `X-Auth-Session` 或其它管理会话材料。Key/模型资源部分失败时继续标记
   `partial/stale` 并保留最近成功快照，不把空响应当作密钥删除；
 - 指定站点脱敏验收结果为：管理地址与 `api-image.shour.bond` Relay 地址已拆分，
@@ -1281,7 +1281,32 @@ Cookie、Token、完整页面配置和 `auth_user` 内容不进入诊断；管�
 nonce 才执行一次 `bridge.js`，超时以校验过的桥接失败消息反馈，不执行无 nonce 脚本。
 失败消息不调用完成接口，不清理有效 Capture Session。该修复只改变浏览器脚本传输，
 不改变已确认的 `auth_token`/`auth/me` 管理认证、`custom_endpoints` Relay 声明复核、
-`https://tk.shour.bond` 管理地址与 `https://api-image.shour.bond` Relay 的双地址
-资源获取、管理/Relay 请求头隔离、最近成功 Key/模型快照或浏览器 Cleanup 边界；真实
-浏览器验收使用新的 Capture Session，未把账号、密码、Token、Cookie 或完整 Key 写入
-比较结果。
+  `https://tk.shour.bond` 管理地址与 `https://api-image.shour.bond` Relay 的双地址
+  资源获取、管理/Relay 请求头隔离、最近成功 Key/模型快照或浏览器 Cleanup 边界；真实
+  浏览器验收使用新的 Capture Session，未把账号、密码、Token、Cookie 或完整 Key 写入
+  比较结果。
+
+## 27. 2026-10-09 17 个站点资源同步修复与验收边界
+
+**变更前**：NewAPI `/api/ratio_config` 的可选权限失败可能把有效
+`/api/pricing` 误记为端点失败；Sub2API 快照没有始终补齐 `endpoints`，管理地址、
+Relay 地址和单 Key 模型探测的认证边界不够严格；资源失败时首次同步可能被错误标记
+为使用快照。
+
+**变更后**：
+
+- NewAPI 只把有效 `/api/pricing` 端点信息作为 `endpoints=success` 的依据，
+  `/api/ratio_config` 失败仅保留内部诊断，不覆盖价格端点结果；
+- Sub2API 的 `endpoints` 资源明确记录管理接口和页面确认的 Relay 接口。单 Key
+  `/v1/models` 失败时只回退 `/models`，禁止将请求重定向到管理路径；请求仅带当前
+  完整 Key 的 Bearer，不带 `x-api-key`、管理 Cookie、管理 Bearer、Origin、
+  Referer、`X-Requested-With` 或 `X-Auth-Session`；
+- `platform_site_resource_syncs` 每轮都覆盖 `identity`、`groups`、`endpoints`、
+  `usage`、`keys`、`models`。真实失败不改写为成功，只有已有资源表/能力表/
+  账号成功时间等证据时才记录 `using_snapshot=true`；
+- 代码入口为 `service/upstream_site.go`、`service/upstream_site_adapters.go` 和
+  `service/upstream_site_test.go`；本次无模型或迁移结构变化。
+
+截至 2026-10-09，17 个站点的真实登录、Capture、安全验证、六类资源全成功、完整
+Key 的模型能力确认和低成本渠道测试仍未全部完成；脱敏 fixture、SQLite/容器验证
+以及热环境健康检查不能替代真实站点验收，因此不得据此发布 `v0.2.8`。

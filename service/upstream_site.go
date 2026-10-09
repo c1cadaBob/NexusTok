@@ -61,21 +61,23 @@ var (
 )
 
 const (
-	upstreamKeySyncErrorSecretUnavailable   = "credential_unavailable"
-	upstreamKeySyncErrorModelsUnavailable   = "models_unavailable"
-	upstreamKeySyncErrorInvalidData         = "invalid_data"
-	platformSiteErrorCategoryAuthentication = "authentication"
-	platformSiteErrorCategoryInteractive    = "interactive_verification"
-	platformSiteErrorCategoryRouteMissing   = "route_missing"
-	platformSiteErrorCategoryWAF            = "waf_blocked"
-	platformSiteErrorCategoryPermission     = "permission_denied"
-	platformSiteErrorCategorySessionLimit   = "session_limit"
-	platformSiteErrorCategoryLoginAgreement = "login_agreement_required"
+	upstreamKeySyncErrorSecretUnavailable    = "credential_unavailable"
+	upstreamKeySyncErrorModelsUnavailable    = "models_unavailable"
+	upstreamKeySyncErrorSecurityVerification = "secure_verification_required"
+	upstreamKeySyncErrorInvalidData          = "invalid_data"
+	platformSiteErrorCategoryAuthentication  = "authentication"
+	platformSiteErrorCategoryInteractive     = "interactive_verification"
+	platformSiteErrorCategoryRouteMissing    = "route_missing"
+	platformSiteErrorCategoryWAF             = "waf_blocked"
+	platformSiteErrorCategoryPermission      = "permission_denied"
+	platformSiteErrorCategorySessionLimit    = "session_limit"
+	platformSiteErrorCategoryLoginAgreement  = "login_agreement_required"
 )
 
 type PlatformSiteSession struct {
 	BaseURL           string
 	ModelBaseURL      string
+	ModelEndpointPath string
 	ManagementBaseURL string
 	Platform          string
 	LastRequestURL    string
@@ -1677,8 +1679,10 @@ func mergePlatformSiteResourceStatus(resourceType, current, incoming string) str
 	if resourceType == model.PlatformSiteResourceModels {
 		if current == model.PlatformSiteResourceStatusSuccess {
 			switch incoming {
-			case model.PlatformSiteResourceStatusStale, model.PlatformSiteResourceStatusSuccess:
+			case model.PlatformSiteResourceStatusSuccess:
 				return current
+			case model.PlatformSiteResourceStatusStale:
+				return model.PlatformSiteResourceStatusPartial
 			case model.PlatformSiteResourceStatusPartial:
 				return model.PlatformSiteResourceStatusPartial
 			case model.PlatformSiteResourceStatusFailed:
@@ -1984,9 +1988,17 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 	}
 	usedQuota := account.UsedQuota
 	usedQuotaSet := snapshot.UsedQuotaSet
+	keysResourceStatus := platformSiteResourceStatus(snapshot, model.PlatformSiteResourceKeys)
+	usageResourceStatus := platformSiteResourceStatus(snapshot, model.PlatformSiteResourceUsage)
+	legacySnapshotWithoutResourceStatus := len(snapshot.ResourceSyncs) == 0
 	if snapshot.UsedQuotaSet {
 		usedQuota = snapshot.UsedQuota
-	} else if snapshot.UsedQuota == 0 && len(snapshot.Keys) > 0 {
+	} else if snapshot.UsedQuota == 0 &&
+		len(snapshot.Keys) > 0 &&
+		(legacySnapshotWithoutResourceStatus ||
+			(snapshot.KeysComplete &&
+				keysResourceStatus == model.PlatformSiteResourceStatusSuccess &&
+				(usageResourceStatus == "" || usageResourceStatus == model.PlatformSiteResourceStatusSuccess))) {
 		var err error
 		usedQuota, err = sumUpstreamKeyUsedQuota(snapshot.Keys)
 		if err != nil {
@@ -2006,6 +2018,7 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 		if err := tx.First(&channel, "id = ?", account.ChannelID).Error; err != nil {
 			return err
 		}
+		storedSnapshots := platformSiteStoredSnapshotAvailability(tx, account.ChannelID)
 		seen := make(map[string]struct{}, len(snapshot.Keys))
 		keysPartial := false
 		for _, item := range snapshot.Keys {
@@ -2211,11 +2224,17 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 		if managementBaseURL != "" {
 			accountUpdates["base_url"] = managementBaseURL
 		}
+		endpointResourceStatus := platformSiteResourceStatus(snapshot, model.PlatformSiteResourceEndpoints)
+		relayURLConfirmed := endpointResourceStatus == model.PlatformSiteResourceStatusSuccess ||
+			(endpointResourceStatus == "" && legacySnapshotWithoutResourceStatus)
 		relayBaseURL := strings.TrimRight(strings.TrimSpace(snapshot.RelayBaseURL), "/")
+		if !relayURLConfirmed {
+			relayBaseURL = ""
+		}
 		if relayBaseURL == "" {
 			relayBaseURL = strings.TrimRight(strings.TrimSpace(account.RelayBaseURL), "/")
 		}
-		if relayBaseURL == "" {
+		if relayBaseURL == "" && account.Platform != model.PlatformSub2API {
 			relayBaseURL = managementBaseURL
 		}
 		if relayBaseURL != "" {
@@ -2233,7 +2252,7 @@ func persistPlatformSiteSnapshot(_ context.Context, account *model.PlatformSiteA
 		}
 		snapshot.Balance = balance
 		snapshot.UsedQuota = usedQuota
-		if err := persistPlatformSiteResources(tx, account, snapshot, now); err != nil {
+		if err := persistPlatformSiteResources(tx, account, snapshot, now, storedSnapshots); err != nil {
 			return err
 		}
 		if err := tx.Where("channel_id = ?", channel.Id).Delete(&model.Ability{}).Error; err != nil {
@@ -2248,6 +2267,7 @@ func persistPlatformSiteResources(
 	account *model.PlatformSiteAccount,
 	snapshot PlatformSiteSnapshot,
 	now int64,
+	storedSnapshots map[string]bool,
 ) error {
 	if tx == nil || account == nil {
 		return errors.New("平台站点资源写入参数无效")
@@ -2309,7 +2329,8 @@ func persistPlatformSiteResources(
 			}
 		}
 	}
-	if snapshot.Endpoint != nil {
+	if snapshot.Endpoint != nil &&
+		platformSiteResourceStatus(snapshot, model.PlatformSiteResourceEndpoints) == model.PlatformSiteResourceStatusSuccess {
 		endpoint := snapshot.Endpoint
 		var existing model.PlatformSiteEndpoint
 		err := tx.Where("channel_id = ?", account.ChannelID).First(&existing).Error
@@ -2375,7 +2396,9 @@ func persistPlatformSiteResources(
 		existing.FailureReason = resource.FailureReason
 		existing.Partial = resource.Partial
 		existing.RequiresSecurityVerification = resource.RequiresSecurityVerification
-		existing.UsingSnapshot = resource.Status != model.PlatformSiteResourceStatusSuccess
+		existing.UsingSnapshot =
+			resource.Status != model.PlatformSiteResourceStatusSuccess &&
+				storedSnapshots[resource.ResourceType]
 		if resource.Status == model.PlatformSiteResourceStatusSuccess {
 			existing.SucceededAt = now
 			existing.UsingSnapshot = false
@@ -2385,6 +2408,116 @@ func persistPlatformSiteResources(
 		}
 	}
 	return nil
+}
+
+func platformSiteStoredSnapshotAvailability(tx *gorm.DB, channelID int) map[string]bool {
+	availability := make(map[string]bool, 6)
+	if tx == nil || channelID == 0 {
+		return availability
+	}
+	var resources []model.PlatformSiteResourceSync
+	if tx.Migrator().HasTable(&model.PlatformSiteResourceSync{}) {
+		if err := tx.Where("channel_id = ?", channelID).Find(&resources).Error; err == nil {
+			for _, resource := range resources {
+				availability[resource.ResourceType] =
+					platformSiteResourceHasStoredSnapshot(tx, channelID, resource.ResourceType, resource)
+			}
+		}
+	}
+	for _, resourceType := range []string{
+		model.PlatformSiteResourceIdentity,
+		model.PlatformSiteResourceGroups,
+		model.PlatformSiteResourceEndpoints,
+		model.PlatformSiteResourceUsage,
+		model.PlatformSiteResourceKeys,
+		model.PlatformSiteResourceModels,
+	} {
+		if _, exists := availability[resourceType]; exists {
+			continue
+		}
+		availability[resourceType] =
+			platformSiteResourceHasStoredSnapshot(
+				tx,
+				channelID,
+				resourceType,
+				model.PlatformSiteResourceSync{},
+			)
+	}
+	return availability
+}
+
+func platformSiteResourceStatus(snapshot PlatformSiteSnapshot, resourceType string) string {
+	status := ""
+	for _, resource := range snapshot.ResourceSyncs {
+		if resource.ResourceType != resourceType {
+			continue
+		}
+		if status == "" {
+			status = resource.Status
+			continue
+		}
+		status = mergePlatformSiteResourceStatus(resourceType, status, resource.Status)
+	}
+	return status
+}
+
+func platformSiteResourceHasStoredSnapshot(
+	tx *gorm.DB,
+	channelID int,
+	resourceType string,
+	resource model.PlatformSiteResourceSync,
+) bool {
+	if resource.SucceededAt > 0 {
+		return true
+	}
+	if tx == nil || channelID == 0 {
+		return false
+	}
+	var count int64
+	switch resourceType {
+	case model.PlatformSiteResourceIdentity:
+		if !tx.Migrator().HasTable(&model.PlatformSiteIdentity{}) {
+			return false
+		}
+		return tx.Model(&model.PlatformSiteIdentity{}).
+			Where("channel_id = ?", channelID).
+			Count(&count).Error == nil && count > 0
+	case model.PlatformSiteResourceGroups:
+		if !tx.Migrator().HasTable(&model.PlatformSiteGroup{}) {
+			return false
+		}
+		return tx.Model(&model.PlatformSiteGroup{}).
+			Where("channel_id = ?", channelID).
+			Count(&count).Error == nil && count > 0
+	case model.PlatformSiteResourceEndpoints:
+		if !tx.Migrator().HasTable(&model.PlatformSiteEndpoint{}) {
+			return false
+		}
+		return tx.Model(&model.PlatformSiteEndpoint{}).
+			Where("channel_id = ?", channelID).
+			Count(&count).Error == nil && count > 0
+	case model.PlatformSiteResourceKeys:
+		if !tx.Migrator().HasTable(&model.UpstreamKey{}) {
+			return false
+		}
+		return tx.Model(&model.UpstreamKey{}).
+			Where("channel_id = ?", channelID).
+			Count(&count).Error == nil && count > 0
+	case model.PlatformSiteResourceModels:
+		if !tx.Migrator().HasTable(&model.Ability{}) {
+			return false
+		}
+		return tx.Model(&model.Ability{}).
+			Where("channel_id = ?", channelID).
+			Count(&count).Error == nil && count > 0
+	case model.PlatformSiteResourceUsage:
+		var account model.PlatformSiteAccount
+		return tx.Select("last_sync_at").
+			Where("channel_id = ?", channelID).
+			First(&account).Error == nil && account.LastSyncAt > 0
+	default:
+		return false
+	}
 }
 
 func sumUpstreamKeyUsedQuota(keys []UpstreamKeySnapshot) (int64, error) {

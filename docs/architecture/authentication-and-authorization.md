@@ -1,7 +1,7 @@
 # 鉴权、会话与授权原理
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-05
+> 事实基线日期：2026-10-09
 > 主要代码来源：`middleware/auth.go`、`middleware/token_auth.go`、`service/auth_session.go`、`model/user_session.go`、`service/authz/`、`controller/`、`oauth/`
 > 关联详细文档：[`../authentication.md`](../authentication.md)、[`../rate-limiting.md`](../rate-limiting.md)、[`system-overview.md`](./system-overview.md)
 
@@ -142,6 +142,30 @@ Cookie、Token、Refresh Token 和 Session ID 不写入日志、审计字段、U
   `/api/v1/settings/public`、不携带 `agreed_revision`，不推断同名字段。Controller 和
   `SafePlatformSiteError` 仅返回脱敏中文提示，说明已尝试提交当前条款版本但上游仍拒绝，
   并建议检查上游配置或使用浏览器采集登录态。
+
+### 8.3 2026-10-09 平台站点资源同步与 Relay 认证边界
+
+**变更前**：平台站点资源同步的管理认证、单 Key Relay 探测和六类资源状态在鉴权架构
+中没有集中说明；NewAPI 管理端 Token 的 `models` 字段可能被误读为已完成单 Key
+认证，Sub2API Relay 还存在重复认证头扩散风险。
+
+**变更后**：
+
+- 管理地址只承载平台身份、分组、用量、Token/Key 和详情请求。Sub2API 页面确认的
+  Relay 地址只承载当前完整 Key 的 `/v1/models` 或兼容 `/models` 探测；Relay 请求
+  仅带该 Key 的 `Authorization: Bearer`，不带 `x-api-key`、管理 Cookie、管理
+  Bearer、Origin、Referer、`X-Requested-With` 或 `X-Auth-Session`；
+- NewAPI 管理端返回的 Key 模型字段不再替代真实 Relay 探测；未禁用 Key 必须返回非空
+  Relay 模型列表才可标记 `ModelsSynced=true`。NewAPI 仍保留当前兼容协议需要的
+  `x-api-key`，但不复用管理 Cookie 或其它管理会话材料；
+- 资源同步每轮明确记录 `identity`、`groups`、`endpoints`、`usage`、`keys`、
+  `models` 六类状态。权限不足、安全验证、分页失败和单 Key 探测失败只进入对应资源
+  状态或最近成功快照，不修改为凭据失效，也不因本轮刚写入的数据设置
+  `using_snapshot=true`；
+- 浏览器 Capture 登录态仍使用临时隔离上下文、一次性 Capture Session 和整体加密
+  `PlatformSiteCredential`，不进入日志、普通响应或后台密码会话 Cleanup。OWASP
+  ASVS 5.0.0、Authentication、Session Management、Logging 和 SSRF Cheat Sheet
+  相关控制只约束 NexusTok 的凭据边界，不绕过上游站点自身 WAF、Turnstile 或弱会话设计。
 
 ## 9. 维护时需要同步的关联模块
 
@@ -403,8 +427,8 @@ Sub2API 站点可能无法把页面公开 Relay 配置带入完成结果；外�
   过期时间，并重新调用 `auth/me` 验证身份；
 - 当前用户和刷新保留 `/api/v1`、`/api`、无前缀兼容路径，但只有 404/405 路由缺失
   才继续候选；网络、WAF、权限和非 401 业务失败不触发刷新或主体重试；
-- 管理地址与页面声明 Relay 分离，管理请求使用已验证的会话，Relay 模型探测只携带
-  完整 Key 的 `Authorization` 和 `x-api-key`。密码、Cookie、Access Token、Refresh
+- 管理地址与页面声明 Relay 分离，管理请求使用已验证的会话，Sub2API Relay 模型探测只
+  携带完整 Key 的 `Authorization: Bearer`，不发送 `x-api-key`。密码、Cookie、Access Token、Refresh
   Token、Session ID、Admin Key 和完整上游响应不进入日志、审计字段或普通响应；
 - 真实站点脱敏验收确认 Capture Session 完成并成功验证当前用户；部分资源失败仍
   保留最近成功快照。浏览器采集会话不由后台密码同步 Cleanup，未新增数据库字段、

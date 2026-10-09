@@ -1,7 +1,7 @@
 # NexusTok 功能原理与实现偏差文档
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-05
+> 事实基线日期：2026-10-09
 > 主要代码来源：`main.go`、`router/`、`middleware/`、`controller/`、`service/`、`model/`、`relay/`、`pkg/`、`constant/`
 > 关联详细文档：[`docs/authentication.md`](../authentication.md)、[`docs/rate-limiting.md`](../rate-limiting.md)、[`docs/key-routing-strategy.md`](../key-routing-strategy.md)、[`docs/upstream-channel-platform-sites.md`](../upstream-channel-platform-sites.md)、[`docs/plugin-api/`](../plugin-api/)
 
@@ -199,9 +199,38 @@ handoff 参数而无法进入 Capture 完成。
 `DOMContentLoaded`、`MutationObserver` 和有限轮询，找到后只执行一次，超时通过已
 校验窗口、Origin、Capture ID 的内部失败消息反馈。该改动只修复脚本传输，不改变
 Sub2API `auth_token`/`auth/me` 管理认证、`custom_endpoints` 页面声明复核、
-`https://tk.shour.bond` 管理地址与 `https://api-image.shour.bond` Relay 拆分、请求头
+ `https://tk.shour.bond` 管理地址与 `https://api-image.shour.bond` Relay 拆分、请求头
 隔离、最近成功快照或浏览器 Cleanup；仍只保存当前加密 Capture 凭据，不恢复旧版账号池、
 Preview 或 `ChannelAccount` 同步链路。
+
+### 2026-10-09 17 个平台站点资源同步修复
+
+**变更前**：NewAPI Token 列表中的 `models` 字段可能被直接当作单 Key 已验证能力，
+可选 `/api/ratio_config`、重复 pricing 能力和首次部分失败的持久化时序也可能使
+`endpoints` 或 `using_snapshot` 失真。Sub2API 管理地址、Relay 地址和六类资源状态
+没有在总索引中形成统一的当前事实。
+
+**变更后**：
+
+- `service/upstream_site_adapters.go` 中 NewAPI 对每个未禁用完整 Key 执行 Relay 模型
+  探测，以非空 Relay 模型覆盖管理端模型；探测失败不采用管理端模型，不把账号级模型
+  目录冒充子 Key 能力；
+- NewAPI `/api/ratio_config` 作为可选诊断，`/api/pricing` 只有在包含有效价格、分组
+  倍率、可用分组或 `supported_endpoint` 信息时才确认 `endpoints=success`；有效价格
+  记录必须同时具备模型/定价对象身份，pricing Endpoint 能力按协议、方法、路径去重；
+- Sub2API 先确认管理地址、页面声明 Relay 和模型路径，再记录 `endpoints=success`。
+  单 Key Relay 探测只发送 `Authorization: Bearer <完整 Key>`，不发送 `x-api-key`，
+  不传播管理 Cookie、管理 Bearer、Origin、Referer、`X-Requested-With` 或
+  `X-Auth-Session`，并保留 `/v1/models` 到 `/models` 的兼容回退；
+- `identity`、`groups`、`endpoints`、`usage`、`keys`、`models` 每轮都补齐状态。
+  `using_snapshot` 只依据事务开始前的历史资源表、Key、能力或账号成功时间判断；
+  首次部分失败不会因为本轮刚插入的数据而伪装成历史快照。
+
+本次没有新增数据库字段、迁移或明文凭据结构。代码入口为
+`service/upstream_site.go`、`service/upstream_site_adapters.go` 和
+`service/upstream_site_test.go`。17 个目标站点的真实重新登录、Capture、六类资源
+全成功、每条可路由 Key 模型确认和低成本渠道测试截至 2026-10-09 尚未全部完成，
+因此不能以本地 fixture、容器健康状态或旧数据库记录替代发布验收。
 
 ## 变更记录
 

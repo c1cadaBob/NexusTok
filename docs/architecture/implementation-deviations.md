@@ -1,7 +1,7 @@
 # 实现偏差登记
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-05
+> 事实基线日期：2026-10-09
 > 主要代码来源：`router/relay-router.go`、`common/api_type.go`、`relay/relay_adaptor.go`、`relay/channel/*/adaptor.go`、`router/task-plugin-protocol-router.go`、`docs/architecture/*.md`
 > 关联详细文档：[`README.md`](./README.md)、[`relay-routing-and-conversion.md`](./relay-routing-and-conversion.md)、[`provider-capability-matrix.md`](./provider-capability-matrix.md)、[`../plugin-api/README.md`](../plugin-api/README.md)
 
@@ -354,6 +354,19 @@ Origin、Capture ID 校验后的失败消息反馈，不执行无 nonce 内联�
 提供；Capture Session、整体加密凭据、一次性 claim、资源失败最近成功快照、浏览器
 Cleanup 隔离和不恢复旧版账号池同步的边界不变。
 
+### 3.19 2026-10-09 17 个平台站点资源同步边界
+
+**变更前**：NewAPI Token 的 `models` 字段可能绕过真实 Relay 模型探测；Sub2API
+Relay 请求可能带重复认证头；首次部分失败可能把本轮写入的数据误认为历史快照；
+pricing 重复能力也可能触发端点唯一约束。
+
+**变更后**：NewAPI 未禁用完整 Key 必须执行 Relay `/v1/models` 探测，失败不采用
+管理端模型；Sub2API 单 Key Relay 只发送完整 Key Bearer，不发送 `x-api-key` 或
+管理会话头，并按 `/v1/models` 到 `/models` 回退。六类资源每轮独立记录，`using_snapshot`
+只依据同步开始前的历史资源证据；pricing 记录必须带模型/定价对象身份，端点能力按
+协议、方法和路径去重。代码和脱敏回归测试已完成，17 个目标站点的真实登录、Capture、
+六类资源全成功和低成本渠道测试仍待完成。
+
 ## 4. 维护规则
 
 新发现偏差必须先确认“预期来源”与“代码实际行为”都能引用，再新增编号。代码修复时在同一功能提交中：
@@ -380,4 +393,5 @@ Cleanup 隔离和不恢复旧版账号池同步的边界不变。
 | 2026-10-02 | 平台站点密码会话与自动配置 | 密码同步历史登录态复用、精确注销、Capture 并发消费和浏览器会话所有权未集中记录 | 密码同步直接登录并清理本轮会话；NewAPI/Sup2API 仅执行各自精确注销；资源失败保留快照；自动配置完成验证、加密保存和一次性 claim 消费，旧手动凭据仍可读但不再有新版录入入口 | 平台站点认证、同步、Capture Helper、缓存和前端表单 | `service/upstream_site*.go`、`service/platform_site_capture.go`、`pkg/cachex/hybrid_cache.go`、`controller/channel.go`、前端平台站点组件、定向测试 |
 | 2026-10-03 | Sub2API Relay 地址与登录请求兼容 | 重定向页面的相对 Relay 地址、独立 Relay 域名和严格登录 DTO 的失败边界未集中登记 | 使用最终 HTML URL 解析相对地址；页面明确声明且与最终页面或原始管理地址同协议/主机/有效端口的 Relay 才接受；邮箱首请求严格 `email/password`，400 不回退，只有 404/405 回退路由、401 凭据错误回退主体；资源失败保留最近成功快照 | Sub2API 管理/Relay 地址、认证、Key 能力、资源同步和路由候选 | `service/upstream_site_adapters.go`、`service/upstream_site_test.go`、Sub2API 参考源 `auth_handler.go`、all-api-hub 真实站点辅助实现和脱敏 fixture |
 | 2026-10-04 | Sub2API 单 Key 模型探测受上游资源条件影响 | 管理面认证、Key 列表和额度读取成功，但所有单 Key `/v1/models` 因 `INSUFFICIENT_BALANCE`、`GROUP_DISABLED` 等条件失败时，父渠道会被整体判定为资源失败；历史模型快照无法通过刷新继续使用 | 已有历史成功快照时，允许管理资源更新并把 Key/模型资源分别记录为 `partial`/`stale`，保留旧 Key 能力和路由候选；没有历史快照时仍不允许未确认模型进入路由；不把模型广场或分组目录冒充单 Key 能力，也不标记凭据失效 | Sub2API 渠道刷新、资源快照、Key 能力和路由回退 | `service/upstream_site.go`、`service/upstream_site_test.go`、本地脱敏上游诊断；真实上游响应正文和凭据未写入仓库 |
+| 2026-10-09 | 17 个平台站点资源同步边界修复 | NewAPI 管理端模型字段可能绕过单 Key Relay 确认；Sub2API Relay 重复认证头、首次快照误判和 pricing 重复能力的风险未集中登记 | NewAPI 强制单 Key Relay 探测；Sub2API Relay 只发送完整 Key Bearer；六类资源 `using_snapshot` 依据同步前历史证据；pricing 端点能力去重且价格记录要求身份字段；真实 17 站点验收仍待完成 | 平台站点资源同步、Key 路由、Relay 出站和管理员诊断 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`、本地参考源静态核对 |
 | 2026-10-05 | 旧版浏览器自动采集路径迁移 | Capture Helper 的 NewAPI Dashboard Refresh、Sub2API Refresh/Session Restore 仍有固定 API 路径，反向代理子路径和同源脚本路由发现未覆盖全部采集分支；旧版账号池同步边界与当前 Capture 架构容易混淆 | 使用 `expandedAPIPaths` 统一合并固定候选、页面/配置 API 前缀、同源 JavaScript 和性能资源发现；NewAPI 保留 Origin、Cookie、数字 `New-Api-User` 与仅 Bearer 兼容，Sub2API 保留 `auth/me` 验证、IndexedDB Client ID、Session Restore 和 Refresh Token 轮换；只更新浏览器登录态采集，不恢复旧版账号池、Preview、`ChannelAccount` 或密码同步 Cleanup，继续保留加密凭据、一次性 claim、严格 Host 关系和最近成功快照 | Capture Helper、Capture Bridge、NewAPI/Sub2API 浏览器登录态、反向代理部署 | `service/platform_site_capture.go`、`service/upstream_site_test.go`、旧版 `service/upstreamaccount/capture.go`、本机 New API/Sub2API/all-api-hub 参考源 |

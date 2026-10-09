@@ -1,7 +1,7 @@
 # 上游渠道与平台站点设计
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-05
+> 事实基线日期：2026-10-09
 > 主要代码来源：`model/upstream_channel.go`、`model/routing_key.go`、`service/upstream_site.go`、`controller/upstream_channel.go`、`controller/channel-test.go`
 > 关联架构文档：[`docs/architecture/relay-routing-and-conversion.md`](architecture/relay-routing-and-conversion.md)、[`docs/architecture/provider-capability-matrix.md`](architecture/provider-capability-matrix.md)、[`docs/architecture/data-cache-and-background-jobs.md`](architecture/data-cache-and-background-jobs.md)、[`平台站点资源获取比较`](platform-site-resource-acquisition-comparison.md)
 
@@ -340,7 +340,7 @@ Sub2API 管理地址和转发地址分离处理：账号、分组和密钥接口
 单独保存。`aiapipay.com` 与页面明确声明的 `api.aiapipay.com` 属于允许的直接
 `api.` 父子域关系，管理接口仍使用 `aiapipay.com`，单 Key 模型探测才使用 Relay。
 
-Relay 模型探测只发送该 Key 的 `Authorization` 和 `x-api-key`，不复制管理会话的
+Relay 模型探测只发送该 Key 的 `Authorization`，不发送 `x-api-key`，也不复制管理会话的
 Cookie、Origin、Referer、X-Requested-With、X-Auth-Session 或 Cookie Jar。分组/账号
 模型目录不能替代单 Key `/v1/models` 或 `/models` 的成功确认；未确认模型的 Key
 保留资源记录但不可路由。
@@ -1138,6 +1138,34 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
   父子 Host 的管理/API 地址关系，不恢复旧版任意同注册域名放宽。浏览器采集态仍不进入
   后台密码同步 Cleanup，资源失败继续保留最近成功快照。
 
+### 10.7 2026-10-09 17 个站点资源同步修复
+
+**变更前**：NewAPI 的可选 `/api/ratio_config` 失败可能覆盖有效的
+`/api/pricing` 端点结果；Sub2API 的资源快照没有稳定记录 `endpoints`，管理地址和
+Relay 地址可能被混用，单 Key 模型探测还可能携带管理 Cookie、Bearer、Origin、
+Referer、`X-Requested-With` 或 `X-Auth-Session`。失败轮次对首次同步和已有快照的
+`using_snapshot` 语义也不够严格。
+
+**变更后**：
+
+- NewAPI 将 `/api/ratio_config` 视为可选诊断来源，端点资源由包含有效价格、倍率、
+  分组或 `supported_endpoint` 的 `/api/pricing` 响应确认；空响应、无效结构和请求
+  失败仍记录真实失败；
+- Sub2API 成功确认管理地址与页面声明 Relay 后记录 `endpoints=success`，管理地址
+  只用于身份、分组、用量和 Key，Relay 只用于当前完整 Key 的 `/v1/models`，
+  失败时回退 `/models`。模型探测禁止重定向、清空 Cookie Jar，且只发送当前 Key
+  的 `Authorization: Bearer`；
+- 每轮补齐 `identity`、`groups`、`endpoints`、`usage`、`keys`、`models` 六类资源。
+  失败、部分成功、安全验证和旧快照分别保留原状态；只有确实存在历史成功数据时
+  才设置 `using_snapshot=true`。首次失败不会伪装为使用快照；
+- 代码入口为 `service/upstream_site.go` 的资源合并/持久化逻辑，以及
+  `service/upstream_site_adapters.go` 的 NewAPI/Sub2API 适配器和模型探测逻辑。
+  回归测试集中在 `service/upstream_site_test.go`。本次没有新增数据库字段或迁移。
+
+截至 2026-10-09，17 个目标站点的真实浏览器登录、Capture、安全验证、六类资源
+成功、完整 Key 模型确认和低成本渠道测试尚未全部完成；本地 fixture、代码测试和
+热环境健康状态不构成 17 站点验收，也不触发 `v0.2.8` 发布。
+
 ## 与架构文档的关系
 
 本文保留平台站点、账号同步、子密钥字段、倍率/权重公式、权限、SSRF 和测试验收等详细规则；架构文档描述平台站点如何进入渠道过滤、Routing Key 和 Relay 转发。新增平台类型或调整同步/路由语义时，必须同时更新本文、能力矩阵和偏差表。
@@ -1180,8 +1208,8 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
 - 对 `https://tk.shour.bond`，管理地址保存为该站点，页面声明的 Relay 保存为
   `https://api-image.shour.bond`。Sub2API 管理请求继续访问管理站点的
   `/api/v1/...`，单 Key 模型能力使用 Relay 的 `/v1/models`；Relay 请求只发送当前
-  完整 Key 的 `Authorization` 和 `x-api-key`，不发送管理 Cookie、Bearer、Origin、
-  Referer、`X-Requested-With` 或 `X-Auth-Session`；
+  完整 Key 的 `Authorization: Bearer`，不发送 `x-api-key`、管理 Cookie、管理 Bearer、
+  Origin、Referer、`X-Requested-With` 或 `X-Auth-Session`；
 - 采集结果继续通过 Capture Session、现有整体加密的 `PlatformSiteCredential`、
   用户/渠道绑定和 Redis/内存一次性 claim 保存，不恢复旧版账号池、Preview 或
   `ChannelAccount` 同步链路。浏览器采集态不参与后台密码同步 Cleanup，资源失败仍保留

@@ -1,7 +1,7 @@
 # 密钥调度策略与日志可观测性
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-05
+> 事实基线日期：2026-10-09
 > 主要代码来源：`model/routing_key.go`、`model/upstream_routing.go`、`middleware/distributor.go`、`service/channel_select.go`、`controller/channel-test.go`、`model/channel_cache.go`
 > 关联架构文档：[`docs/architecture/relay-routing-and-conversion.md`](architecture/relay-routing-and-conversion.md)、[`docs/architecture/provider-capability-matrix.md`](architecture/provider-capability-matrix.md)、[`docs/architecture/implementation-deviations.md`](architecture/implementation-deviations.md)、[`平台站点资源获取比较`](platform-site-resource-acquisition-comparison.md)
 
@@ -455,6 +455,7 @@ Admin Key step-up 拒绝只标记资源为 `secure_verification_required`，不�
 | 2026-09-30 | 旧版资源同步迁移与脱敏 fixture 验收 | New API/Sub2API 资源分页上限、登录主体兼容、Sub2API 读取顺序和完整 Key 优先级未与旧版完全对齐 | 三类 Key 资源恢复独立 1000 页；恢复受限主体兼容、New API 批量 Key 补偿、Sub2API 列表优先/详情补齐、单 Key 模型探测和失败快照边界；使用脱敏 fixture 验证路由与资源边界 | 路由候选、Key 模型能力、额度和资源状态 | `service/upstream_site_adapters.go`、`service/upstream_site_test.go`、脱敏 HTTP fixture 和 SQLite；未使用真实账号或站点 |
 | 2026-10-03 | 平台认证协议修复与路由快照边界 | 认证流程保存失败可能阻断渠道创建；NewAPI 加密登录失败可能被误解为凭据或路由不可用；认证清理与快照保护的边界未记录 | 认证流程只以服务端流程身份保存，Sub2API 仅在凭据错误/401 后回退主体，NewAPI 仅在 404/405 回退明文；登录协议错误、清理告警和资源失败不删除最近成功路由快照 | 平台站点认证、路由候选、资源同步失败和管理员诊断 | `controller/upstream_channel.go`、`service/newapi_password_encryption.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`、脱敏 fixture 和本机参考源 |
 | 2026-10-04 | Sub2API 管理资源成功与单 Key 模型失败分层 | 所有单 Key `/v1/models` 因余额不足或分组停用失败时，渠道刷新会覆盖管理资源成功结果并阻断历史路由快照 | 已有 `last_sync_at` 的渠道保留最近成功 Key 能力和路由候选，管理资源照常更新，`keys=partial`、`models=stale`；没有历史快照时仍禁止未确认模型路由，模型广场和分组目录不作为单 Key 能力 | Sub2API 资源同步、Key 候选过滤、模型能力和剩余额度刷新 | `service/upstream_site.go`、`service/upstream_site_test.go`、`docs/platform-site-resource-acquisition-comparison.md` |
+| 2026-10-09 | 17 个平台站点资源同步边界修复 | NewAPI 管理端 `models` 字段可能被当作单 Key 已验证能力；Sub2API Relay 探测请求可能带有重复认证头；首次部分失败可能把本轮新写入数据误认为历史快照；pricing 重复能力可能触发唯一约束 | NewAPI 对每个未禁用 Key 强制执行 Relay 模型探测，失败不采用管理端模型；Sub2API 单 Key Relay 只发送完整 Key Bearer；六类资源按同步前历史证据记录 `using_snapshot`；NewAPI pricing 端点能力按 `Protocol + HTTPMethod + Path` 去重，价格记录必须带模型或定价对象身份 | NewAPI/Sub2API 平台站点资源同步、Key 路由资格、管理员资源状态和数据库唯一约束 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`；真实 17 站点验收仍待完成 |
 
 ### 14.1 2026-09-26 实现校准
 
@@ -544,11 +545,12 @@ CookieJar、Cookie 轮换、30 秒超时和重定向校验保持不变。代理�
   由资源类型独立控制；其它管理资源分页不因本次迁移改变；
 - `POST /api/token/batch/keys` 的部分响应只补偿缺失 ID，`POST /api/token/{id}/key`
   只有 404/405 才用 GET 回退，空值和掩码值不可路由；
-- Sub2API Key 列表已经返回完整值时跳过详情，缺失或掩码时才读取详情；缺少模型时
-  才使用该 Key 的完整 Secret 探测 `/v1/models`，失败只影响该 Key 当前轮次；
-- `model_limits`/`models` 等 Token 字段是单个 Key 的首选模型来源；没有字段时才
-  用该 Key 自己访问 `/v1/models`。账号级模型、价格和 Admin channel 模型不能复制
-  为所有 Key；
+- Sub2API Key 列表已经返回完整值时跳过详情，缺失或掩码时才读取详情；每个有效、未禁用
+  的完整 Key 都使用自己的 Secret 探测 `/v1/models`，必要时只回退 `/models`，失败只
+  影响该 Key 当前轮次；
+- NewAPI Token 返回的 `models`/`model_limits` 只作为管理端记录，未禁用 Key 仍必须
+  使用自己的完整 Secret 探测 Relay `/v1/models`；只有 Relay 返回非空模型列表才将
+  `ModelsSynced=true`。账号级模型、价格和 Admin channel 模型不能复制为所有 Key；
 - 没有历史成功快照时，认证成功、分页完整、至少一个完整 Key 和真实模型能力确认
   后，父渠道更新 `sync_status=success` 与 `last_sync_at`。已有 `last_sync_at` 的
   Sub2API 渠道如果管理面、身份、余额/用量和 Key 列表成功，但所有单 Key
@@ -581,8 +583,10 @@ CookieJar、Cookie 轮换、30 秒超时和重定向校验保持不变。代理�
   本轮请求根地址切换为最终可信来源，持久化管理地址不变。发现的 Relay 地址只用于
   单 Key 的 `/v1/models` 或 `/models` 探测以及后续转发。管理地址和 Relay 地址分别
   写入平台站点快照，父渠道基础地址使用实际 Relay 根地址；
-- Relay 模型探测只发送当前完整 Key 的 `Authorization` 和 `x-api-key`，清空 Cookie
-  Jar，不复制管理 Cookie、Origin、Referer、`X-Requested-With` 或 `X-Auth-Session`；
+- Sub2API Relay 模型探测只发送当前完整 Key 的
+  `Authorization: Bearer`，不发送 `x-api-key`，清空 Cookie Jar，不复制管理 Cookie、
+  管理 Bearer、Origin、Referer、`X-Requested-With` 或 `X-Auth-Session`。NewAPI 保留
+  其现有兼容协议所需的 `x-api-key`，但同样不复用管理 Cookie 或管理会话材料；
   分组/账号模型目录不能替代单 Key 确认，未确认模型的 Key 不进入路由；
 - 只有单个 Key 成功读取到真实模型能力后才会进入可路由模型候选。单 Key 的模型
   读取失败、部分分页失败或本轮资源同步失败时，保留最近一次成功快照，不把密钥

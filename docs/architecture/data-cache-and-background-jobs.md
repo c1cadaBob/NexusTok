@@ -1,7 +1,7 @@
 # 数据库、缓存与后台任务
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-05
+> 事实基线日期：2026-10-09
 > 主要代码来源：`model/main.go`、`common/database.go`、`common/redis.go`、`model/channel_cache.go`、`model/sync.go`、`service/system_task.go`、`service/task_polling.go`、`main.go`
 > 关联详细文档：[`system-overview.md`](./system-overview.md)、[`authentication-and-authorization.md`](./authentication-and-authorization.md)、[`tasks-and-plugins.md`](./tasks-and-plugins.md)、[`../rate-limiting.md`](../rate-limiting.md)
 
@@ -128,6 +128,27 @@ JavaScript/性能资源发现兼容路径。候选调用只扩大路径兼容性
 `partial/stale`、`using_snapshot` 和脱敏原因，保留最近成功快照。指定站点验收读取到
 7 条 Key 且 7 条 `ModelsSynced=true`，渠道仍启用并保留可用模型；本轮未在日志、
 诊断或额外明文缓存中保存敏感值，认证凭据和完整 Key 仍遵循既有整体加密保存边界。
+
+### 7.11 2026-10-09 六类资源同步状态与历史快照边界
+
+**变更前**：后台同步文档没有说明六类资源的每轮覆盖范围，也没有明确
+`using_snapshot` 必须依据同步开始前的历史证据；本轮已写入的 Key 或能力可能被误作
+旧快照，NewAPI 管理端模型字段也可能绕过单 Key Relay 探测。
+
+**变更后**：
+
+- 每轮平台站点同步都记录 `identity`、`groups`、`endpoints`、`usage`、`keys`、
+  `models` 六类 `PlatformSiteResourceSync` 状态；真实失败保留最近成功资源，不删除
+  `UpstreamKey`、`UpstreamKeyAbility`、Relay 配置或父渠道模型；
+- `using_snapshot=true` 只在事务开始前已存在对应资源表、能力表或账号历史成功时间
+  时写入。首次同步的部分失败保持 `false`，不会因本轮事务内已经插入记录而伪装为历史
+  快照；
+- NewAPI 的 Token `models` 仅作为管理端原始数据，未禁用完整 Key 仍需独立 Relay
+  `/v1/models` 探测。Sub2API Relay 仅发送当前完整 Key 的 Bearer，隔离管理 Cookie
+  和会话头，并按 `/v1/models`、`/models` 兼容顺序探测；
+- 本轮无数据库字段、索引或迁移变化；资源状态依靠现有模型和事务写入。17 个站点的
+  真实登录、Capture、六类 success 和低成本渠道测试截至 2026-10-09 尚未全部完成，
+  不能把本地数据库或热环境健康状态当作发布验收。
 
 ## 2. 数据库选择和迁移
 

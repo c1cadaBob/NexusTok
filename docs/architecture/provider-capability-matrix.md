@@ -1,7 +1,7 @@
 # 渠道能力矩阵
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-05
+> 事实基线日期：2026-10-09
 > 主要代码来源：`constant/channel.go`、`constant/api_type.go`、`common/api_type.go`、`relay/relay_adaptor.go`、`relay/common/relay_info.go`、`relay/channel/*/adaptor.go`、`router/relay-router.go`、`router/task-plugin-protocol-router.go`
 > 关联详细文档：[`README.md`](./README.md)、[`relay-routing-and-conversion.md`](./relay-routing-and-conversion.md)、[`implementation-deviations.md`](./implementation-deviations.md)、[`../key-routing-strategy.md`](../key-routing-strategy.md)
 
@@ -133,8 +133,9 @@ NexusTok 适配器请求清单中，因此平台窗口额度仍属于未完整�
   `/v1/models`/`/models` 探测和最终转发。`hhw1231.com -> hengwenapi.com` 属于允许的
   “最终页面明确声明”场景，未经页面声明的第三方地址仍拒绝；
 - 对 `hhw1231.com -> hengwenapi.com`，本轮管理请求使用最终可信页面来源，持久化管理
-  地址仍保持原始地址；Relay 探测清空 Cookie Jar，只发送当前 Key 的 Bearer 和
-  `x-api-key`，不复制管理 Cookie、Origin、Referer、`X-Requested-With` 或
+  地址仍保持原始地址；Sub2API Relay 探测清空 Cookie Jar，只发送当前 Key 的
+  `Authorization: Bearer`，不发送 `x-api-key`，也不复制管理 Cookie、管理 Bearer、
+  Origin、Referer、`X-Requested-With` 或
   `X-Auth-Session`。分组/账号模型目录不能替代单 Key 能力确认，未确认模型的 Key
   不进入路由；
 - 邮箱首请求只包含 `email/password`；`/api/v1/auth/login` 只在 404/405 时回退
@@ -207,6 +208,27 @@ Dashboard Refresh、Refresh Token、Session Restore 与反向代理子路径的�
 
 该能力不改变“单 Key 模型能力确认后才进入路由”的规则，也不恢复旧版账号池、Preview、
 `ChannelAccount` 同步链路；浏览器采集态不参与后台密码同步 Cleanup。
+
+### 2.7 2026-10-09 17 个平台站点资源同步边界
+
+**变更前**：NewAPI Token 的 `models` 字段可能绕过真实 Relay 模型探测；Sub2API
+Relay 请求头、管理地址与 Relay 地址边界和六类资源最终成功条件没有集中记录。
+
+**变更后**：
+
+- NewAPI 未禁用 Key 必须以完整 Secret 请求 Relay `/v1/models`，返回非空模型后才
+  标记 `ModelsSynced=true`；管理端 Token、账号级模型、价格和 Admin channel 模型
+  不能代替单 Key 能力；
+- Sub2API 先确认管理地址、页面声明 Relay 和 `/v1/models`/`/models` 路径，再记录
+  `endpoints=success`。单 Key Relay 仅携带 `Authorization: Bearer <完整 Key>`，不带
+  `x-api-key`、管理 Cookie、管理 Bearer、Origin、Referer、`X-Requested-With` 或
+  `X-Auth-Session`；
+- `identity`、`groups`、`endpoints`、`usage`、`keys`、`models` 六类资源按真实结果
+  记录成功、部分、失败或安全验证状态；失败时保留历史快照，首次失败不伪造
+  `using_snapshot=true`；
+- `/api/ratio_config` 是 NewAPI 可选诊断，`/api/pricing` 有效信息才能确认端点；
+  pricing 能力按协议、方法、路径去重。17 个目标站点的真实登录、Capture、资源全
+  成功和低成本渠道测试截至 2026-10-09 尚未全部完成。
 
 ## 3. 维护解释
 
@@ -309,7 +331,8 @@ CookieJar、显式 Cookie 合并、30 秒超时和允许内网管理地址的重
   `p=0&size=100` 作为主路径；`/api/token`、`/api/tokens`、分组和单条 Key 的兼容
   路径只在 404/405 回退；
 - 批量 Key 缺少部分 ID 时仅补偿缺失项，掩码 Key 不能进入路由；Token 自带的
-  `model_limits`/`models` 优先作为单个 Key 能力，账号级模型目录只作为诊断和展示；
+  `model_limits`/`models` 只作为管理端记录，未禁用完整 Key 仍必须使用自身 Secret
+  探测 Relay `/v1/models`，账号级模型目录只作为诊断和展示；
 - 认证成功但可选资源失败时，资源矩阵分别记录 identity、usage、groups、endpoints、
   keys、models 和 admin 状态，保留最近成功快照。没有历史成功快照时，父渠道成功
   要求至少一个完整 Key 和已确认模型能力；已有 `last_sync_at` 的 Sub2API 渠道如果

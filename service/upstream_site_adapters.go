@@ -739,12 +739,14 @@ func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *Platfo
 			continue
 		}
 		item.Secret = secret
-		if !item.ModelsSynced {
+		if !item.Disabled {
 			models, modelsErr := fetchModelsForSecret(ctx, session, secret)
 			if modelsErr == nil && len(models) > 0 {
 				item.Models = models
 				item.ModelsSynced = true
 			} else {
+				item.Models = nil
+				item.ModelsSynced = false
 				if errors.Is(modelsErr, ErrPlatformSiteSecurity) {
 					keysRequireSecurityVerification = true
 				}
@@ -839,6 +841,7 @@ func (adapter *NewAPIAdapter) FetchSnapshot(ctx context.Context, session *Platfo
 			RequiresSecurityVerification: keysRequireSecurityVerification,
 		})
 	}
+	updatePlatformSiteEndpointModelsURL(snapshot.Endpoint, session)
 	normalizePlatformSiteResourceSyncs(&snapshot)
 	return snapshot, nil
 }
@@ -974,6 +977,8 @@ func prepareSub2APIManagementSession(ctx context.Context, session *PlatformSiteS
 	session.Platform = model.PlatformSub2API
 	session.BaseURL = normalizeSub2APIBaseURL(session.BaseURL)
 	session.ManagementBaseURL = session.BaseURL
+	session.ModelBaseURL = ""
+	session.ModelEndpointPath = ""
 	setSub2APIBrowserHeaders(session)
 	if managementBaseURL, requestBaseURL, modelBaseURL, ok := discoverSub2APIManagementBaseURL(
 		ctx,
@@ -1023,9 +1028,15 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 		ManagementBaseURL: strings.TrimRight(strings.TrimSpace(session.ManagementBaseURL), "/"),
 		RelayBaseURL:      strings.TrimRight(strings.TrimSpace(session.ModelBaseURL), "/"),
 		KeysComplete:      true,
-		Identity:          platformSiteIdentityFromRecord(me, "quota", "/api/v1/auth/me"),
 		Endpoint:          sub2APIEndpointSnapshot(session),
 	}
+	if !platformSiteIdentityRecordHasFields(me) {
+		return PlatformSiteSnapshot{}, wrapPlatformSiteStage(
+			"Sub2API 当前用户身份",
+			fmt.Errorf("%w: 当前用户响应缺少可识别身份字段", ErrPlatformSiteResponse),
+		)
+	}
+	snapshot.Identity = platformSiteIdentityFromRecord(me, "quota", "/api/v1/auth/me")
 	snapshot.ResourceSyncs = append(snapshot.ResourceSyncs,
 		PlatformSiteResourceSyncSnapshot{
 			ResourceType:   model.PlatformSiteResourceIdentity,
@@ -1042,7 +1053,7 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 			PlatformSiteResourceSyncSnapshot{
 				ResourceType:   model.PlatformSiteResourceEndpoints,
 				Status:         model.PlatformSiteResourceStatusSuccess,
-				SourceEndpoint: "/api/v1/auth/me,/api/v1/keys,/v1/models",
+				SourceEndpoint: "/api/v1/auth/me,/api/v1/keys,/v1/models,/models",
 				RecordCount:    len(snapshot.Endpoint.Capabilities),
 			},
 		)
@@ -1050,7 +1061,7 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs,
 			sub2APIResourceSyncFailure(
 				model.PlatformSiteResourceEndpoints,
-				"/api/v1/auth/me,/api/v1/keys,/v1/models",
+				"/api/v1/auth/me,/api/v1/keys,/v1/models,/models",
 				fmt.Errorf("%w: Sub2API 管理或 Relay 地址未确认", ErrPlatformSiteResponse),
 				false,
 			),
@@ -1088,6 +1099,8 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 	groupErr := error(nil)
 	if payload, requestErr := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/groups/available", nil, nil); requestErr != nil {
 		groupErr = requestErr
+	} else if !platformSiteGroupPayloadIsValid(payload) {
+		groupErr = fmt.Errorf("%w: Sub2API 分组响应结构无效", ErrPlatformSiteResponse)
 	} else {
 		groupPayload = payload
 		groupLoaded = true
@@ -1266,7 +1279,7 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 			snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, PlatformSiteResourceSyncSnapshot{
 				ResourceType:                 model.PlatformSiteResourceModels,
 				Status:                       model.PlatformSiteResourceStatusSecureVerificationRequired,
-				SourceEndpoint:               "/v1/models",
+				SourceEndpoint:               "/v1/models,/models",
 				FailureReason:                "密钥资源未完成安全验证，保留最近成功模型快照",
 				Partial:                      true,
 				RequiresSecurityVerification: true,
@@ -1278,25 +1291,49 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 		)
 	}
 	snapshot.KeysComplete = true
+	if snapshot.Endpoint != nil && strings.TrimSpace(session.ModelBaseURL) != "" {
+		for _, path := range []string{"/v1/models", "/models"} {
+			snapshot.Endpoint.Capabilities = append(
+				snapshot.Endpoint.Capabilities,
+				PlatformSiteEndpointCapabilitySnapshot{
+					Protocol:   "openai",
+					HTTPMethod: http.MethodGet,
+					Path:       path,
+					Supported:  true,
+					SourceData: "page_declared_relay",
+				},
+			)
+		}
+	}
 	keysResourceStatus := model.PlatformSiteResourceStatusSuccess
 	keysFailureReason := ""
 	keysPartial := false
+	keysRequireSecurityVerification := false
 	for _, key := range snapshot.Keys {
 		if key.SyncError != "" {
 			snapshot.KeysComplete = false
 			keysResourceStatus = model.PlatformSiteResourceStatusPartial
 			keysFailureReason = "部分密钥详情或模型能力读取失败，已保留最近成功快照"
 			keysPartial = true
-			break
+			if key.SyncError == upstreamKeySyncErrorSecurityVerification {
+				keysRequireSecurityVerification = true
+			}
 		}
 	}
+	if keysRequireSecurityVerification {
+		keysResourceStatus = model.PlatformSiteResourceStatusSecureVerificationRequired
+		keysFailureReason = "读取密钥模型能力需要完成上游安全验证，已保留最近成功快照"
+		snapshot.AuthStatus = model.PlatformSiteAuthStatusSecureVerificationRequired
+		snapshot.AuthStatusReason = keysFailureReason
+	}
 	snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, PlatformSiteResourceSyncSnapshot{
-		ResourceType:   model.PlatformSiteResourceKeys,
-		Status:         keysResourceStatus,
-		SourceEndpoint: "/api/v1/keys,/api/v1/admin/accounts",
-		RecordCount:    len(snapshot.Keys),
-		FailureReason:  keysFailureReason,
-		Partial:        keysPartial,
+		ResourceType:                 model.PlatformSiteResourceKeys,
+		Status:                       keysResourceStatus,
+		SourceEndpoint:               "/api/v1/keys,/api/v1/keys/{id},/api/v1/admin/accounts",
+		RecordCount:                  len(snapshot.Keys),
+		FailureReason:                keysFailureReason,
+		Partial:                      keysPartial,
+		RequiresSecurityVerification: keysRequireSecurityVerification,
 	})
 	if models := uniqueStrings(modelsFromKeys(snapshot.Keys)); len(models) > 0 {
 		snapshot.Models = uniqueStrings(append(snapshot.Models, models...))
@@ -1306,21 +1343,36 @@ func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *Platf
 			modelsStatus = model.PlatformSiteResourceStatusStale
 			modelsFailureReason = "密钥资源未完整同步，保留最近成功模型快照"
 		}
+		if keysRequireSecurityVerification {
+			modelsStatus = model.PlatformSiteResourceStatusSecureVerificationRequired
+			modelsFailureReason = "读取密钥模型能力需要完成上游安全验证，保留最近成功模型快照"
+		}
 		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, PlatformSiteResourceSyncSnapshot{
-			ResourceType:   model.PlatformSiteResourceModels,
-			Status:         modelsStatus,
-			SourceEndpoint: "/v1/models",
-			RecordCount:    len(models),
-			FailureReason:  modelsFailureReason,
+			ResourceType:                 model.PlatformSiteResourceModels,
+			Status:                       modelsStatus,
+			SourceEndpoint:               "/v1/models,/models",
+			RecordCount:                  len(models),
+			FailureReason:                modelsFailureReason,
+			Partial:                      keysRequireSecurityVerification,
+			RequiresSecurityVerification: keysRequireSecurityVerification,
 		})
 	} else {
+		modelsStatus := model.PlatformSiteResourceStatusStale
+		modelsFailureReason := "密钥级模型目录接口不可用"
+		if keysRequireSecurityVerification {
+			modelsStatus = model.PlatformSiteResourceStatusSecureVerificationRequired
+			modelsFailureReason = "读取密钥模型能力需要完成上游安全验证，保留最近成功模型快照"
+		}
 		snapshot.ResourceSyncs = append(snapshot.ResourceSyncs, PlatformSiteResourceSyncSnapshot{
-			ResourceType:   model.PlatformSiteResourceModels,
-			Status:         model.PlatformSiteResourceStatusStale,
-			SourceEndpoint: "/v1/models",
-			FailureReason:  "密钥级模型目录接口不可用",
+			ResourceType:                 model.PlatformSiteResourceModels,
+			Status:                       modelsStatus,
+			SourceEndpoint:               "/v1/models,/models",
+			FailureReason:                modelsFailureReason,
+			Partial:                      keysRequireSecurityVerification,
+			RequiresSecurityVerification: keysRequireSecurityVerification,
 		})
 	}
+	updatePlatformSiteEndpointModelsURL(snapshot.Endpoint, session)
 	return snapshot, nil
 }
 
@@ -2654,6 +2706,80 @@ func firstNestedRecord(payload any, nestedKeys ...string) map[string]any {
 	return record
 }
 
+func platformSiteIdentityRecordHasFields(record map[string]any) bool {
+	if len(record) == 0 {
+		return false
+	}
+	return hasAnyField(
+		record,
+		"id",
+		"user_id",
+		"userId",
+		"uid",
+		"username",
+		"user_name",
+		"login",
+		"email",
+		"mail",
+		"display_name",
+		"displayName",
+		"nickname",
+		"name",
+		"role",
+		"role_name",
+		"roleName",
+		"status",
+		"state",
+		"balance",
+		"quota",
+		"credit",
+		"used_quota",
+		"quota_used",
+	)
+}
+
+func platformSiteGroupPayloadIsValid(payload any) bool {
+	value := unwrapPlatformData(payload)
+	switch typed := value.(type) {
+	case []any:
+		for _, item := range typed {
+			if _, ok := item.(map[string]any); !ok {
+				return false
+			}
+		}
+		return true
+	case map[string]any:
+		if len(typed) == 0 {
+			return true
+		}
+		for _, key := range []string{
+			"items",
+			"list",
+			"records",
+			"rows",
+			"groups",
+		} {
+			if nested, ok := typed[key]; ok {
+				return platformSiteGroupPayloadIsValid(nested)
+			}
+		}
+		for key, item := range typed {
+			if strings.TrimSpace(key) == "" {
+				return false
+			}
+			if _, ok := item.(map[string]any); ok {
+				continue
+			}
+			if _, ok := upstreamFloatValue(item); !ok {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
 func stringFromPayload(payload any) string {
 	payload = unwrapPlatformData(payload)
 	if value, ok := payload.(string); ok {
@@ -2798,6 +2924,20 @@ func platformSiteModelsURL(baseURL string) string {
 	return platformSiteEndpointURL(normalized, "/v1/models")
 }
 
+func updatePlatformSiteEndpointModelsURL(
+	endpoint *PlatformSiteEndpointSnapshot,
+	session *PlatformSiteSession,
+) {
+	if endpoint == nil || session == nil {
+		return
+	}
+	path := strings.TrimSpace(session.ModelEndpointPath)
+	if path == "" {
+		return
+	}
+	endpoint.ModelsURL = platformSiteEndpointURL(endpoint.RelayURL, path)
+}
+
 func newAPIEndpointSnapshot(session *PlatformSiteSession) *PlatformSiteEndpointSnapshot {
 	if session == nil {
 		return nil
@@ -2828,7 +2968,7 @@ func sub2APIEndpointSnapshot(session *PlatformSiteSession) *PlatformSiteEndpoint
 		return nil
 	}
 	managementURL := firstNonEmptyString(session.ManagementBaseURL, session.BaseURL)
-	relayURL := firstNonEmptyString(session.ModelBaseURL, session.BaseURL)
+	relayURL := strings.TrimRight(strings.TrimSpace(session.ModelBaseURL), "/")
 	return &PlatformSiteEndpointSnapshot{
 		ManagementURL:   managementURL,
 		RelayURL:        relayURL,
@@ -2842,7 +2982,7 @@ func sub2APIEndpointSnapshot(session *PlatformSiteSession) *PlatformSiteEndpoint
 		ResponsesURL:    relayURL,
 		Source:          "Sub2API",
 		DiscoveryMethod: "page_api_base_url",
-		Enabled:         managementURL != "",
+		Enabled:         managementURL != "" && relayURL != "",
 		Capabilities:    sub2APIEndpointCapabilities(),
 	}
 }
@@ -2897,7 +3037,6 @@ func sub2APIEndpointCapabilities() []PlatformSiteEndpointCapabilitySnapshot {
 		{"management", http.MethodGet, "/api/v1/groups/rates"},
 		{"management", http.MethodGet, "/api/v1/keys"},
 		{"management", http.MethodGet, "/api/v1/keys/{id}"},
-		{"openai", http.MethodGet, "/v1/models"},
 	}
 	result := make([]PlatformSiteEndpointCapabilitySnapshot, 0, len(entries))
 	for _, entry := range entries {
@@ -3083,7 +3222,7 @@ func applyNewAPIPricingResources(
 		snapshot.Endpoint = &PlatformSiteEndpointSnapshot{Enabled: true, Source: "NewAPI"}
 	}
 	if supported, ok := record["supported_endpoint"]; ok {
-		snapshot.Endpoint.Capabilities = append(
+		snapshot.Endpoint.Capabilities = appendUniquePlatformSiteEndpointCapabilities(
 			snapshot.Endpoint.Capabilities,
 			newAPIPricingEndpointCapabilities(supported)...,
 		)
@@ -3125,14 +3264,87 @@ func newAPIPricingRecordHasResources(record map[string]any) bool {
 		len(usableGroups) > 0 {
 		return true
 	}
-	switch data := record["data"].(type) {
-	case []any:
-		return len(data) > 0
-	case map[string]any:
-		return len(data) > 0
-	default:
+	return newAPIPricingDataHasResources(record["data"])
+}
+
+func newAPIPricingDataHasResources(data any) bool {
+	priceFields := []string{
+		"model_price",
+		"modelPrice",
+		"price",
+		"input_price",
+		"inputPrice",
+		"output_price",
+		"outputPrice",
+		"prompt_price",
+		"promptPrice",
+		"completion_price",
+		"completionPrice",
+		"input_cost",
+		"inputCost",
+		"output_cost",
+		"outputCost",
+		"model_ratio",
+		"modelRatio",
+		"completion_ratio",
+		"completionRatio",
+	}
+
+	var hasValidPrice func(any) bool
+	hasValidPrice = func(value any) bool {
+		switch typed := value.(type) {
+		case map[string]any:
+			if firstString(
+				typed,
+				"model",
+				"model_name",
+				"modelName",
+				"model_id",
+				"modelId",
+				"name",
+				"id",
+			) != "" {
+				price, ok := firstOptionalFloat(typed, priceFields...)
+				if ok &&
+					!math.IsNaN(price) &&
+					!math.IsInf(price, 0) &&
+					price >= 0 {
+					return true
+				}
+			}
+			for _, nested := range typed {
+				if hasValidPrice(nested) {
+					return true
+				}
+			}
+		case []any:
+			for _, nested := range typed {
+				if hasValidPrice(nested) {
+					return true
+				}
+			}
+		}
 		return false
 	}
+
+	return hasValidPrice(data)
+}
+
+func appendUniquePlatformSiteEndpointCapabilities(
+	existing []PlatformSiteEndpointCapabilitySnapshot,
+	incoming ...PlatformSiteEndpointCapabilitySnapshot,
+) []PlatformSiteEndpointCapabilitySnapshot {
+	for _, capability := range incoming {
+		if slices.ContainsFunc(existing, func(current PlatformSiteEndpointCapabilitySnapshot) bool {
+			return current.Protocol == capability.Protocol &&
+				current.HTTPMethod == capability.HTTPMethod &&
+				current.Path == capability.Path
+		}) {
+			continue
+		}
+		existing = append(existing, capability)
+	}
+	return existing
 }
 
 func newAPIPricingEndpointCapabilities(payload any) []PlatformSiteEndpointCapabilitySnapshot {
@@ -3362,8 +3574,11 @@ func fetchModelsForSecret(ctx context.Context, session *PlatformSiteSession, sec
 		return nil, errors.New("上游密钥为空")
 	}
 	bases := []string{strings.TrimSpace(session.ModelBaseURL)}
-	if bases[0] == "" {
+	if bases[0] == "" && session.Platform != model.PlatformSub2API {
 		bases = []string{strings.TrimSpace(session.BaseURL)}
+	}
+	if strings.TrimSpace(bases[0]) == "" {
+		return nil, fmt.Errorf("%w: Relay 地址未确认，禁止向管理地址探测模型", ErrPlatformSiteResponse)
 	}
 	bases = uniqueStrings(bases)
 	var lastErr error
@@ -3382,6 +3597,9 @@ func fetchModelsForSecret(ctx context.Context, session *PlatformSiteSession, sec
 			if session.Client != nil {
 				client := *session.Client
 				client.Jar = nil
+				client.CheckRedirect = func(*http.Request, []*http.Request) error {
+					return fmt.Errorf("%w: Relay 模型探测禁止重定向", ErrPlatformSiteTransport)
+				}
 				keySession.Client = &client
 			}
 			payload, err := platformSiteRequest(ctx, &keySession, http.MethodGet, path, nil, nil)
@@ -3394,6 +3612,7 @@ func fetchModelsForSecret(ctx context.Context, session *PlatformSiteSession, sec
 			}
 			models := stringsFromPayload(payload)
 			if len(models) > 0 {
+				session.ModelEndpointPath = path
 				return models, nil
 			}
 			lastErr = fmt.Errorf("%w: 子密钥模型列表为空", ErrPlatformSiteResponse)
@@ -3920,13 +4139,20 @@ func fetchSub2APIKeys(ctx context.Context, session *PlatformSiteSession, rates m
 				continue
 			}
 			keySnapshot.Secret = secret
-			if !keySnapshot.ModelsSynced {
+			if !keySnapshot.Disabled &&
+				(!keySnapshot.ModelsSynced || strings.TrimSpace(session.ModelBaseURL) != "") {
 				models, modelsErr := fetchModelsForSecret(ctx, session, secret)
 				if modelsErr == nil && len(models) > 0 {
 					keySnapshot.Models = models
 					keySnapshot.ModelsSynced = true
 				} else {
-					keySnapshot.SyncError = upstreamKeySyncErrorModelsUnavailable
+					keySnapshot.Models = nil
+					keySnapshot.ModelsSynced = false
+					if errors.Is(modelsErr, ErrPlatformSiteSecurity) {
+						keySnapshot.SyncError = upstreamKeySyncErrorSecurityVerification
+					} else {
+						keySnapshot.SyncError = upstreamKeySyncErrorModelsUnavailable
+					}
 				}
 			}
 			result = append(result, keySnapshot)
@@ -4058,13 +4284,20 @@ func fetchSub2APIAdminKeys(ctx context.Context, session *PlatformSiteSession, ra
 				continue
 			}
 			keySnapshot.Secret = secret
-			if !keySnapshot.ModelsSynced {
+			if !keySnapshot.Disabled &&
+				(!keySnapshot.ModelsSynced || strings.TrimSpace(session.ModelBaseURL) != "") {
 				models, modelsErr := fetchModelsForSecret(ctx, session, secret)
 				if modelsErr == nil && len(models) > 0 {
 					keySnapshot.Models = models
 					keySnapshot.ModelsSynced = true
 				} else {
-					keySnapshot.SyncError = upstreamKeySyncErrorModelsUnavailable
+					keySnapshot.Models = nil
+					keySnapshot.ModelsSynced = false
+					if errors.Is(modelsErr, ErrPlatformSiteSecurity) {
+						keySnapshot.SyncError = upstreamKeySyncErrorSecurityVerification
+					} else {
+						keySnapshot.SyncError = upstreamKeySyncErrorModelsUnavailable
+					}
 				}
 			}
 			result = append(result, keySnapshot)
