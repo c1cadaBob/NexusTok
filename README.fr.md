@@ -163,7 +163,7 @@ docker run --name NexusTok -d --restart always \
 > [!TIP]
 > **Dernière image Docker:** `c1cadabob/nexustok:latest`
 >
-> **Image v0.2.7:** `c1cadabob/nexustok:v0.2.7`
+> **Image v0.2.8:** `c1cadabob/nexustok:v0.2.8`
 
 ### 📋 Exigences de déploiement
 
@@ -257,7 +257,7 @@ docker run --name nexustok -d --restart always \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  c1cadabob/nexustok:v0.2.7
+  c1cadabob/nexustok:v0.2.8
 ```
 
 Elle ne démarre ni PostgreSQL ni Redis. Avant une mise à niveau, sauvegardez `.env`,
@@ -312,7 +312,7 @@ docker run --name nexustok-node-1 -d --restart always \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  c1cadabob/nexustok:v0.2.7
+  c1cadabob/nexustok:v0.2.8
 ```
 
 `node.env` doit au minimum contenir `SQL_DSN`, `REDIS_CONN_STRING`, `SESSION_SECRET` et

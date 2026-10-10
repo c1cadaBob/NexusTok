@@ -1,7 +1,7 @@
 # 上游渠道与平台站点设计
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-09
+> 事实基线日期：2026-10-10
 > 主要代码来源：`model/upstream_channel.go`、`model/routing_key.go`、`service/upstream_site.go`、`controller/upstream_channel.go`、`controller/channel-test.go`
 > 关联架构文档：[`docs/architecture/relay-routing-and-conversion.md`](architecture/relay-routing-and-conversion.md)、[`docs/architecture/provider-capability-matrix.md`](architecture/provider-capability-matrix.md)、[`docs/architecture/data-cache-and-background-jobs.md`](architecture/data-cache-and-background-jobs.md)、[`平台站点资源获取比较`](platform-site-resource-acquisition-comparison.md)
 
@@ -1169,6 +1169,22 @@ Referer、`X-Requested-With` 或 `X-Auth-Session`。失败轮次对首次同步�
 ## 与架构文档的关系
 
 本文保留平台站点、账号同步、子密钥字段、倍率/权重公式、权限、SSRF 和测试验收等详细规则；架构文档描述平台站点如何进入渠道过滤、Routing Key 和 Relay 转发。新增平台类型或调整同步/路由语义时，必须同时更新本文、能力矩阵和偏差表。
+
+### 10.7 2026-10-10 v0.2.8 发布与真实站点验收边界
+
+**变更前**：2026-10-09 的代码核对已记录六类资源状态、New API pricing 判定、
+Sub2API 管理/Relay 隔离和最近成功快照语义，但 17 个目标站点尚未完成本轮重新登录和
+远端真实同步；README、部署文档和系统概览仍指向 v0.2.7。
+
+**变更后**：发布目标为 v0.2.8。只有远端本轮重新登录后的 `identity`、`groups`、
+`endpoints`、`usage`、`keys`、`models` 六项全部显示 `success` 才记为通过。`partial`、
+`stale`、`failed`、`secure_verification_required`、仅使用历史快照或未执行均不算成功；
+验证码、Turnstile、TOTP、Passkey 和人工安全验证由管理员完成，不尝试绕过。
+
+本节只定义验收口径，不代表远端发布或站点同步已经成功。逐站重新登录方式、脱敏问题、
+发布工作流、远端更新和最终状态记录在
+[`docs/platform-site-resource-sync-v0.2.8-review.md`](platform-site-resource-sync-v0.2.8-review.md)。
+认证凭据、会话令牌、完整 Key 和上游完整响应不得写入该报告。
 
 ## 变更记录
 

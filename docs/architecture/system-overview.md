@@ -115,11 +115,26 @@ HTTP
 Redis 兼容模式。SQLite 文件不会自动迁移到 PostgreSQL；已有生产数据切换前必须备份，
 并单独执行经过验证的数据迁移。
 
-本次发布镜像为 `c1cadabob/nexustok:v0.2.7` 和 `c1cadabob/nexustok:latest`，Dockerfile
+本次发布目标镜像为 `c1cadabob/nexustok:v0.2.8` 和 `c1cadabob/nexustok:latest`，Dockerfile
 通过当前 `web/` 的 Bun/Rsbuild `bun run build` 生成并嵌入新版前端，不新增路由、DTO、
-数据库模型或字段。`v0.2.7` 同时包含 Sub2API 浏览器登录态采集、页面公开 Relay 发现、
-CSP nonce 页面桥接和资源快照保护修复；GitHub Release、Docker 多架构镜像、Cosign 签名
-及 Electron 产物以标签触发后的远端工作流结果为准，本次发布不执行生产部署。
+数据库模型或字段。`v0.2.8` 包含平台站点资源同步边界修复；GitHub Release、Docker 多架构
+镜像、Cosign 签名及 Electron 产物以标签触发后的远端工作流结果为准。17 个目标站点的
+重新登录和六类资源全成功仍须在远端更新后逐站验证，不由本地测试或旧快照代替。
+
+### v0.2.8 平台站点资源同步边界（2026-10-10）
+
+**变更前**：New API 可选 `/api/ratio_config` 权限失败可能被误报为端点失败；账号级模型
+目录、重复 pricing Endpoint 或本轮刚写入的资源可能使单 Key 能力、端点状态和
+`using_snapshot` 标记失真。Sub2API 管理请求与 Relay 探测也需要严格隔离。
+
+**变更后**：New API 单 Key 模型必须由对应完整 Key 的 Relay 探测确认，`/api/pricing`
+按有效定价/分组/端点信息判断且能力去重；Sub2API 管理地址与页面声明 Relay 地址分离，
+单 Key 探测不继承管理会话请求头。六类资源状态逐轮补齐，历史快照只按事务开始前数据
+识别；权限、安全验证、分页或部分探测失败保留最近成功快照，不转换为密钥不存在。
+
+本版本不新增数据库字段、迁移或明文凭据结构。远端更新和 17 个真实站点的重新登录及
+六类资源验收结果由 `docs/platform-site-resource-sync-v0.2.8-review.md` 记录；未逐项确认
+前不声称验收完成。
 
 ### v0.2.3 部署文档与发布边界（2026-10-01）
 

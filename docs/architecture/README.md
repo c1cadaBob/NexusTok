@@ -1,7 +1,7 @@
 # NexusTok 功能原理与实现偏差文档
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-09
+> 事实基线日期：2026-10-10
 > 主要代码来源：`main.go`、`router/`、`middleware/`、`controller/`、`service/`、`model/`、`relay/`、`pkg/`、`constant/`
 > 关联详细文档：[`docs/authentication.md`](../authentication.md)、[`docs/rate-limiting.md`](../rate-limiting.md)、[`docs/key-routing-strategy.md`](../key-routing-strategy.md)、[`docs/upstream-channel-platform-sites.md`](../upstream-channel-platform-sites.md)、[`docs/plugin-api/`](../plugin-api/)
 
@@ -232,10 +232,24 @@ Preview 或 `ChannelAccount` 同步链路。
 全成功、每条可路由 Key 模型确认和低成本渠道测试截至 2026-10-09 尚未全部完成，
 因此不能以本地 fixture、容器健康状态或旧数据库记录替代发布验收。
 
+### 2026-10-10 v0.2.8 发布与真实站点验收边界
+
+**变更前**：上述代码核对已记录资源同步行为，但目标站点尚未完成本轮重新登录和远端
+真实同步；部署文档和系统概览仍引用 v0.2.7。
+
+**变更后**：发布目标为 v0.2.8。只有远端本轮重新登录后的六类资源均为 `success` 才
+记为通过；`partial`、`stale`、`failed`、`secure_verification_required`、仅使用历史
+快照或未执行均不算成功。发布工作流、远端更新和逐站同步结果由评审报告逐项记录，
+未核验前不作成功声明。
+
+版本提升不新增数据库字段、迁移或明文凭据结构。验证码、Turnstile、TOTP、Passkey
+和人工安全验证由管理员完成，不尝试绕过。
+
 ## 变更记录
 
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
 | --- | --- | --- | --- | --- | --- |
+| 2026-10-10 | v0.2.8 发布准备 | 部署文档和架构摘要仍将 v0.2.7 作为当前版本，真实站点验收尚未完成 | 更新版本和部署镜像引用，记录六类资源全部为 success 的严格验收口径，并明确分阶段发布用于远端真实测试，未完成的发布/站点结果仍为待验证 | `VERSION`、`.github/release-notes/v0.2.8.md`、`README*.md`、`docs/installation/BT.md`、平台站点及资源获取比较文档 | 定向 Go 测试和根模块编译已通过；远端 Release、镜像、更新及 17 站点结果须在发布后核验 |
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 建立架构文档总索引、维护入口、状态定义和偏差判断方法 | `docs/architecture/`、后续功能文档维护流程 | `main.go`、`router/`、`middleware/`、`service/`、`model/`、`relay/`、`pkg/` 静态核对 |
 | 2026-09-26 | 平台站点同步回归修复 | 渠道 2、4、5 的登录响应分类、兼容回退边界和失败快照语义未在总索引中记录 | 记录真实登录 DTO、交互验证/WAF/网络诊断、404/405 回退和旧快照保留规则，并链接专项文档与测试入口 | 平台站点认证、同步、资源快照、路由可用性和管理员诊断 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`、`docs/upstream-channel-platform-sites.md` |
 | 2026-09-27 | 面板 Session 复用与品牌默认值 | 登录 Session 和默认产品名的当前事实入口未在总索引中明确 | 登记浏览器 SID 定位、原行复用/凭据轮换、默认活跃上限 `50`、AuthFlow 回滚以及 `NexusTok` 默认名称和旧配置迁移 | 登录、会话限制、前端展示和配置初始化 | 认证专项文档、限流专项文档、`model/frontend_option_migration.go`、回归测试 |

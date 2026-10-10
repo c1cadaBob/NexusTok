@@ -163,7 +163,7 @@ docker run --name NexusTok -d --restart always \
 > [!TIP]
 > **最新版 Docker 鏡像：** `c1cadabob/nexustok:latest`
 >
-> **v0.2.7 鏡像：** `c1cadabob/nexustok:v0.2.7`
+> **v0.2.8 鏡像：** `c1cadabob/nexustok:v0.2.8`
 
 ### 📋 部署要求
 
@@ -254,7 +254,7 @@ docker run --name nexustok -d --restart always \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  c1cadabob/nexustok:v0.2.7
+  c1cadabob/nexustok:v0.2.8
 ```
 
 升級前備份 `.env`、`/opt/nexustok/data`、`/opt/nexustok/logs` 和 PostgreSQL named
@@ -306,7 +306,7 @@ docker run --name nexustok-node-1 -d --restart always \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  c1cadabob/nexustok:v0.2.7
+  c1cadabob/nexustok:v0.2.8
 ```
 
 `node.env` 至少包含 `SQL_DSN`、`REDIS_CONN_STRING`、`SESSION_SECRET` 和
