@@ -354,6 +354,23 @@ Origin、Capture ID 校验后的失败消息反馈，不执行无 nonce 内联�
 提供；Capture Session、整体加密凭据、一次性 claim、资源失败最近成功快照、浏览器
 Cleanup 隔离和不恢复旧版账号池同步的边界不变。
 
+### 3.19 2026-10-12 Docker helper 异常清理与正式容器名边界
+
+**变更前**：Docker helper 在 `model.InitDB()` 失败时尚未进入
+`RunSystemUpdateDockerHelper`，异常退出可能留下 helper 容器；此时数据库句柄可能为
+nil，退出 defer 调用 `CloseDB()` 会再次触发空指针。更新器从
+`nexustok.backup` 等非正式容器继续派生生命周期名称时，还可能产生
+`nexustok.backup.backup`。
+
+**变更后**：helper 启动入口在数据库初始化前注册基于 Docker socket 的自清理；
+`closeDB(nil)` 和 `CloseDB()` 对空主库/日志库安全返回。更新与回滚将当前名称归一为
+正式服务基名，并拒绝从 backup、staging、preflight、failed 或 helper 容器继续执行；
+稳定回滚槽位固定为单一 `<正式服务名>.backup`。不修改数据库 Schema、业务数据、Docker
+数据卷或日志卷。
+
+验证：`model/main_test.go` 覆盖 nil、共享数据库和独立数据库关闭；`service/system_update_test.go`
+覆盖正式容器名归一与 helper 自清理；现有 Docker 更新/回滚/helper 定向测试继续通过。
+
 ## 4. 维护规则
 
 新发现偏差必须先确认“预期来源”与“代码实际行为”都能引用，再新增编号。代码修复时在同一功能提交中：

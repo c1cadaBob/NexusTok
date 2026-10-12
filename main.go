@@ -302,6 +302,7 @@ func runSystemUpdateHelper() {
 	logger.SetupLogger()
 	ratio_setting.InitRatioSettings()
 	service.InitHttpClient()
+	defer service.CleanupSystemUpdateDockerHelper(context.Background())
 	if err := model.InitDB(); err != nil {
 		common.FatalLog("failed to initialize helper database: " + service.SystemUpdateErrorMessage(err))
 		return

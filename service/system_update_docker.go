@@ -40,6 +40,7 @@ const (
 	systemUpdateHelperEnvCurrentContainerID = "SYSTEM_UPDATE_HELPER_CURRENT_CONTAINER_ID"
 	systemUpdateHelperEnvTargetImage        = "SYSTEM_UPDATE_HELPER_TARGET_IMAGE"
 	systemUpdateHelperEnvBackupName         = "SYSTEM_UPDATE_HELPER_BACKUP_NAME"
+	systemUpdateHelperEnvContainerName      = "SYSTEM_UPDATE_HELPER_CONTAINER_NAME"
 )
 
 var systemUpdateDockerHealthPollInterval = time.Second
@@ -178,6 +179,7 @@ type dockerHelperOptions struct {
 	CurrentContainerID string
 	TargetImage        string
 	BackupName         string
+	ContainerName      string
 }
 
 type dockerCreateRequestMode int
@@ -610,20 +612,41 @@ func cleanDockerContainerName(name string) string {
 	return name
 }
 
+func canonicalDockerContainerName(name string) string {
+	name = cleanDockerContainerName(name)
+	for {
+		switch {
+		case strings.Contains(name, ".backup"):
+			name = name[:strings.Index(name, ".backup")]
+		case strings.Contains(name, ".failed-"):
+			name = name[:strings.Index(name, ".failed-")]
+		case strings.Contains(name, ".preflight-"):
+			name = name[:strings.Index(name, ".preflight-")]
+		case strings.Contains(name, ".staging-"):
+			name = name[:strings.Index(name, ".staging-")]
+		case strings.Contains(name, "-update-helper-"):
+			name = name[:strings.Index(name, "-update-helper-")]
+		default:
+			return cleanDockerContainerName(name)
+		}
+		name = cleanDockerContainerName(name)
+	}
+}
+
 func dockerBackupContainerName(name string) string {
-	return cleanDockerContainerName(name) + ".backup"
+	return canonicalDockerContainerName(name) + ".backup"
 }
 
 func dockerFailedContainerName(name string) string {
-	return cleanDockerContainerName(name) + ".failed-" + dockerUniqueSuffix()
+	return canonicalDockerContainerName(name) + ".failed-" + dockerUniqueSuffix()
 }
 
 func dockerPreflightContainerName(name string) string {
-	return cleanDockerContainerName(name) + ".preflight-" + dockerUniqueSuffix()
+	return canonicalDockerContainerName(name) + ".preflight-" + dockerUniqueSuffix()
 }
 
 func dockerStagingContainerName(name string) string {
-	return cleanDockerContainerName(name) + ".staging-" + dockerUniqueSuffix()
+	return canonicalDockerContainerName(name) + ".staging-" + dockerUniqueSuffix()
 }
 
 func dockerUniqueSuffix() string {
@@ -893,22 +916,25 @@ func (s *SystemUpdateService) startDockerHelper(ctx context.Context, task *model
 		return fmt.Errorf("inspect current Docker container failed: %w", err)
 	}
 	containerName := cleanDockerContainerName(inspect.Name)
+	containerName = canonicalDockerContainerName(containerName)
+	if cleanDockerContainerName(inspect.Name) != containerName {
+		return fmt.Errorf("当前 Docker 容器 %q 不是正式服务容器，拒绝创建更新 helper", cleanDockerContainerName(inspect.Name))
+	}
 	if options.TargetImage == "" {
 		options.TargetImage = systemUpdateTargetDockerImage(inspect.Config.Image)
 	}
 	if options.Mode == "" {
 		options.Mode = systemUpdateDeploymentDockerRun
 	}
-	if options.BackupName == "" {
-		options.BackupName = dockerBackupContainerName(containerName)
-	}
+	options.BackupName = dockerBackupContainerName(containerName)
 	helperRunnerID := fmt.Sprintf("%s-helper-%s", runnerID, common.GetRandomString(6))
 	helperName := fmt.Sprintf("%s-update-helper-%s", containerName, common.GetRandomString(6))
 	helperImage := firstNonEmptySystemUpdateString(inspect.Config.Image, options.TargetImage, systemUpdateDefaultDockerImage)
 
 	helperRequest := dockerCreateContainerRequest{
 		Image:      helperImage,
-		Env:        dockerMergeEnv(inspect.Config.Env, dockerHelperEnv(task.TaskID, helperRunnerID, options, inspect.ID)),
+		Hostname:   helperName,
+		Env:        dockerMergeEnv(inspect.Config.Env, dockerHelperEnv(task.TaskID, helperRunnerID, options, inspect.ID, helperName)),
 		Cmd:        []string{"system-update-helper"},
 		Entrypoint: dockerHelperEntrypoint(inspect.Config.Entrypoint),
 		WorkingDir: firstNonEmptySystemUpdateString(inspect.Config.WorkingDir, "/data"),
@@ -929,9 +955,14 @@ func (s *SystemUpdateService) startDockerHelper(ctx context.Context, task *model
 	if strings.TrimSpace(helperID) == "" {
 		return errors.New("create Docker update helper returned an empty container ID")
 	}
+	cleanupHelper := func() error {
+		recoveryCtx, cancel := systemUpdateDockerRecoveryContext()
+		defer cancel()
+		return client.removeContainer(recoveryCtx, helperID, true)
+	}
 	transferred := false
 	if err := model.TransferSystemTaskLock(task.TaskID, task.Type, runnerID, helperRunnerID, common.GetTimestamp()+600); err != nil {
-		_ = client.removeContainer(ctx, helperID, true)
+		_ = cleanupHelper()
 		return fmt.Errorf("transfer system update task to helper failed: %w", err)
 	}
 	transferred = true
@@ -945,21 +976,29 @@ func (s *SystemUpdateService) startDockerHelper(ctx context.Context, task *model
 		return operationErr
 	}
 	if err := client.startContainer(ctx, helperID); err != nil {
-		_ = client.removeContainer(ctx, helperID, true)
-		return fmt.Errorf("start Docker update helper failed: %w", restoreLease(err))
+		cleanupErr := cleanupHelper()
+		restoredErr := restoreLease(err)
+		if cleanupErr != nil && !isDockerNotFoundError(cleanupErr) {
+			restoredErr = fmt.Errorf("%w; remove Docker update helper failed: %s", restoredErr, cleanupErr)
+		}
+		return fmt.Errorf("start Docker update helper failed: %w", restoredErr)
 	}
 	if err := waitDockerHelperStarted(ctx, client, helperID, task.TaskID); err != nil {
 		if errors.Is(err, ErrSystemUpdateHandedOff) {
-			_ = client.removeContainer(ctx, helperID, true)
+			_ = cleanupHelper()
 			return ErrSystemUpdateHandedOff
 		}
-		_ = client.removeContainer(ctx, helperID, true)
-		return fmt.Errorf("Docker update helper did not stay running: %w", restoreLease(err))
+		cleanupErr := cleanupHelper()
+		restoredErr := restoreLease(err)
+		if cleanupErr != nil && !isDockerNotFoundError(cleanupErr) {
+			restoredErr = fmt.Errorf("%w; remove Docker update helper failed: %s", restoredErr, cleanupErr)
+		}
+		return fmt.Errorf("Docker update helper did not stay running: %w", restoredErr)
 	}
 	return ErrSystemUpdateHandedOff
 }
 
-func dockerHelperEnv(taskID string, runnerID string, options dockerHelperOptions, currentContainerID string) []string {
+func dockerHelperEnv(taskID string, runnerID string, options dockerHelperOptions, currentContainerID string, containerName string) []string {
 	return []string{
 		systemUpdateHelperEnvTaskID + "=" + taskID,
 		systemUpdateHelperEnvRunnerID + "=" + runnerID,
@@ -968,6 +1007,7 @@ func dockerHelperEnv(taskID string, runnerID string, options dockerHelperOptions
 		systemUpdateHelperEnvCurrentContainerID + "=" + currentContainerID,
 		systemUpdateHelperEnvTargetImage + "=" + options.TargetImage,
 		systemUpdateHelperEnvBackupName + "=" + options.BackupName,
+		systemUpdateHelperEnvContainerName + "=" + containerName,
 	}
 }
 
@@ -1048,6 +1088,22 @@ func dockerBindDestination(bind string) string {
 	return parts[1]
 }
 
+// CleanupSystemUpdateDockerHelper 清理当前 Docker 更新 helper 容器。
+//
+// 该函数必须能够在数据库初始化失败时运行，因此不依赖 model.DB 或 SystemTask。
+func CleanupSystemUpdateDockerHelper(ctx context.Context) {
+	containerName := strings.TrimSpace(os.Getenv(systemUpdateHelperEnvContainerName))
+	if containerName == "" {
+		return
+	}
+	cleanupCtx, cancel := systemUpdateDockerRecoveryContext()
+	defer cancel()
+	client := systemUpdateDockerClient(systemUpdateDockerSocketPath())
+	if err := client.removeContainer(cleanupCtx, containerName, true); err != nil && !isDockerNotFoundError(err) {
+		logger.LogWarn(ctx, fmt.Sprintf("清理 Docker 更新 helper %s 失败：%s", containerName, SystemUpdateErrorMessage(err)))
+	}
+}
+
 // RunSystemUpdateDockerHelper 在独立 helper 容器中执行 Docker 更新或回滚。
 //
 // helper 只初始化数据库并持有 SystemTask 租约，不启动 HTTP 服务。主容器被停止后，
@@ -1061,7 +1117,9 @@ func RunSystemUpdateDockerHelper(ctx context.Context) error {
 		CurrentContainerID: strings.TrimSpace(os.Getenv(systemUpdateHelperEnvCurrentContainerID)),
 		TargetImage:        strings.TrimSpace(os.Getenv(systemUpdateHelperEnvTargetImage)),
 		BackupName:         strings.TrimSpace(os.Getenv(systemUpdateHelperEnvBackupName)),
+		ContainerName:      strings.TrimSpace(os.Getenv(systemUpdateHelperEnvContainerName)),
 	}
+	defer CleanupSystemUpdateDockerHelper(ctx)
 	if options.TaskID == "" || options.RunnerID == "" {
 		return errors.New("Docker update helper missing task id or runner id")
 	}
@@ -1157,9 +1215,12 @@ func (s *SystemUpdateService) performDockerUpdateInProcess(ctx context.Context, 
 	if err != nil {
 		return nil, fmt.Errorf("inspect current Docker container failed: %w", err)
 	}
-	containerName := cleanDockerContainerName(current.Name)
+	containerName := canonicalDockerContainerName(current.Name)
+	if cleanDockerContainerName(current.Name) != containerName {
+		return nil, fmt.Errorf("当前 Docker 容器 %q 不是正式服务容器，拒绝从辅助容器继续更新", cleanDockerContainerName(current.Name))
+	}
 	targetImage := firstNonEmptySystemUpdateString(options.TargetImage, systemUpdateTargetDockerImage(current.Config.Image))
-	backupName := firstNonEmptySystemUpdateString(options.BackupName, dockerBackupContainerName(containerName))
+	backupName := dockerBackupContainerName(containerName)
 
 	state := SystemUpdateTaskState{Phase: SystemUpdatePhasePullingImage, Progress: 20, Mode: firstNonEmptySystemUpdateString(options.Mode, systemUpdateDeploymentDockerRun), TargetImage: targetImage}
 	if err := updateSystemUpdateTaskState(task, runnerID, state); err != nil {
@@ -1261,8 +1322,11 @@ func (s *SystemUpdateService) recreateDockerContainer(ctx context.Context, clien
 			}
 			return "", dockerContainerReadiness{}, err
 		}
-		if err := cleanupPreflight(ctx); err != nil {
-			return "", dockerContainerReadiness{}, fmt.Errorf("remove preflight updated container failed: %w", err)
+		recoveryCtx, cancel := systemUpdateDockerRecoveryContext()
+		cleanupErr := cleanupPreflight(recoveryCtx)
+		cancel()
+		if cleanupErr != nil {
+			return "", dockerContainerReadiness{}, fmt.Errorf("remove preflight updated container failed: %w", cleanupErr)
 		}
 		preflightReadiness = readiness
 	}
@@ -1579,14 +1643,20 @@ func (s *SystemUpdateService) performDockerRollbackInProcess(ctx context.Context
 	if err != nil {
 		return nil, fmt.Errorf("inspect current Docker container failed: %w", err)
 	}
-	containerName := cleanDockerContainerName(current.Name)
-	backupName := firstNonEmptySystemUpdateString(options.BackupName, dockerBackupContainerName(containerName))
+	containerName := canonicalDockerContainerName(current.Name)
+	if cleanDockerContainerName(current.Name) != containerName {
+		return nil, fmt.Errorf("当前 Docker 容器 %q 不是正式服务容器，拒绝从辅助容器执行回滚", cleanDockerContainerName(current.Name))
+	}
+	backupName := dockerBackupContainerName(containerName)
 	backup, err := client.inspectContainer(ctx, backupName)
 	if err != nil {
 		if isDockerNotFoundError(err) {
 			return nil, ErrSystemRollbackDisabled
 		}
 		return nil, fmt.Errorf("inspect Docker backup container failed: %w", err)
+	}
+	if backup.ID == current.ID {
+		return nil, ErrSystemRollbackDisabled
 	}
 	state := SystemUpdateTaskState{Phase: SystemUpdatePhaseRollingBack, Progress: 40, Mode: systemUpdateDeploymentDockerRun}
 	if err := updateSystemUpdateTaskState(task, runnerID, state); err != nil {

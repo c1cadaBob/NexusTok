@@ -908,16 +908,18 @@ func migrateSubscriptionPlanPriceAmount() {
 }
 
 func closeDB(db *gorm.DB) error {
+	if db == nil {
+		return nil
+	}
 	sqlDB, err := db.DB()
 	if err != nil {
 		return err
 	}
-	err = sqlDB.Close()
-	return err
+	return sqlDB.Close()
 }
 
 func CloseDB() error {
-	if LOG_DB != DB {
+	if LOG_DB != nil && LOG_DB != DB {
 		err := closeDB(LOG_DB)
 		if err != nil {
 			return err

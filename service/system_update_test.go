@@ -1919,6 +1919,17 @@ func TestDockerStagingAndFailedContainerNamesAreUnique(t *testing.T) {
 	assert.Len(t, failedNames, 3)
 }
 
+func TestDockerLifecycleNamesUseTheFormalContainerBase(t *testing.T) {
+	assert.Equal(t, "nexustok", canonicalDockerContainerName("nexustok"))
+	assert.Equal(t, "nexustok", canonicalDockerContainerName("/nexustok.backup"))
+	assert.Equal(t, "nexustok", canonicalDockerContainerName("nexustok.staging-abc"))
+	assert.Equal(t, "nexustok", canonicalDockerContainerName("nexustok-update-helper-abc"))
+	assert.Equal(t, "nexustok.backup", dockerBackupContainerName("nexustok.backup"))
+	assert.Contains(t, dockerFailedContainerName("nexustok.failed-abc"), "nexustok.failed-")
+	assert.Contains(t, dockerPreflightContainerName("nexustok.preflight-abc"), "nexustok.preflight-")
+	assert.Contains(t, dockerStagingContainerName("nexustok.staging-abc"), "nexustok.staging-")
+}
+
 func TestDockerHelperBindsConfiguredSocketWithoutExposingSensitiveEnv(t *testing.T) {
 	inspect := &dockerInspectContainer{
 		HostConfig: dockerHostConfig{
@@ -1935,6 +1946,28 @@ func TestDockerHelperBindsConfiguredSocketWithoutExposingSensitiveEnv(t *testing
 	assert.Contains(t, binds, "/logs:/app/logs:rw")
 	assert.Contains(t, binds, "/run/custom-docker.sock:/run/custom-docker.sock")
 	assert.NotContains(t, strings.Join(binds, "\n"), "SESSION_SECRET")
+}
+
+func TestDockerHelperCleanupRemovesContainerWithoutDatabase(t *testing.T) {
+	fake := newFakeDockerEngine()
+	helper := &dockerInspectContainer{
+		ID:     "helper-id",
+		Name:   "/nexustok-update-helper-test",
+		Config: dockerContainerConfig{Image: "c1cadabob/nexustok:v0.2.7"},
+		State:  dockerContainerState{Running: true, Status: "running"},
+	}
+	fake.addContainer(helper)
+
+	originalFactory := systemUpdateDockerClientFactory
+	t.Cleanup(func() { systemUpdateDockerClientFactory = originalFactory })
+	client, closeServer := fake.client(t)
+	t.Cleanup(closeServer)
+	systemUpdateDockerClientFactory = func(string) *dockerEngineClient { return client }
+	t.Setenv(systemUpdateHelperEnvContainerName, "nexustok-update-helper-test")
+
+	CleanupSystemUpdateDockerHelper(context.Background())
+
+	assert.Nil(t, fake.findContainer("nexustok-update-helper-test"))
 }
 
 func TestDockerHelperWritesSuccessTerminalState(t *testing.T) {

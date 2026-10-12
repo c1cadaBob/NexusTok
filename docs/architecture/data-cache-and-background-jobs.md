@@ -336,6 +336,23 @@ SQLite、MySQL 8.2.0 和 PostgreSQL 15.19 均通过 AutoMigrate 二次执行、A
 租约转移、状态更新、终态写入和清理验证。MySQL 5.7.8、PostgreSQL 9.6 及独立日志库本次
 未单独启动，不能将本次结果解释为这些最低版本或日志数据库的实测。
 
+### 8.3 2026-10-12 Docker helper 异常清理与正式容器名边界
+
+**变更前**：Docker 更新 helper 在数据库初始化失败后可能来不及进入业务清理函数；
+数据库句柄未初始化时调用 `CloseDB()` 还可能触发空指针崩溃。更新器从异常命名的当前
+容器继续派生备份名时，可能生成 `nexustok.backup.backup` 等嵌套生命周期容器。
+
+**变更后**：`closeDB(nil)` 和 `CloseDB()` 对未初始化的主库/日志库安全返回；helper
+在数据库初始化前注册基于 Docker socket 的自清理，正常终态、启动失败和初始化失败都
+回收自身。更新与回滚将当前容器名规范化为正式服务基名，拒绝从 backup、staging、
+preflight、failed 或 helper 容器继续切换，稳定备份槽位始终为
+`<正式服务名>.backup`。不删除业务数据库卷、应用数据目录、日志目录或 Redis/PostgreSQL
+数据。
+
+本次只修改容器生命周期和数据库关闭防护，不新增数据库字段、缓存键或迁移。已通过
+`go test ./model -run 'TestCloseDB' -count=1`、`go test ./service -run 'TestDocker(Update|Updated|Readiness|Helper|Rollback|Staging|Pull)' -count=1`
+和 Docker 生命周期名称/自清理回归测试。
+
 ## 9. 维护时需要同步的关联模块
 
 修改数据库 DSN、GORM 模型、迁移、锁、缓存键/TTL、Redis 回退、日志字段、后台任务 Type/interval/lease、任务调度或多节点职责时，必须同步本文档、系统总览、任务/插件文档、鉴权/限流专项文档和偏差登记。数据库变更还要按根目录规则完成三数据库验证并记录版本与结果。
@@ -354,6 +371,7 @@ SQLite、MySQL 8.2.0 和 PostgreSQL 15.19 均通过 AutoMigrate 二次执行、A
 | 2026-10-02 | Docker 自动更新端口预检 | Docker 更新在旧容器仍占用宿主端口时直接启动同端口 staging 容器，可能在任务 55% 处失败并保持旧版本 | bridge/Compose 网络增加无宿主端口 preflight 探活，正式容器只在旧容器停止并改名后启动；端口冲突错误脱敏并提示检查其它宿主进程或容器 | Docker Engine helper、系统任务终态、维护页失败原因 | `go test ./service -run 'Docker(Update\|Updated\|Readiness\|Helper\|Pull\|Staging)' -count=1`；不新增数据库表、字段或迁移 |
 | 2026-10-03 | 平台认证流程与临时会话材料 | Auth Flow 表单残留字段、密码同步临时令牌和最近成功资源快照的生命周期边界未集中记录 | 流程保存只消费服务端流程身份；密码同步临时材料只在本轮会话内使用并清理；认证/清理失败不覆盖最近成功快照；Capture 登录态继续由独立 claim 管理 | 平台站点 Auth Flow、后台同步、Redis/内存缓存和资源快照 | `controller/upstream_channel.go`、`service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/newapi_password_encryption.go`、相关定向测试；无数据库结构变更 |
 | 2026-10-05 | 旧版浏览器采集路径迁移 | Capture 缓存文档未记录 Dashboard Refresh、Sub2API Refresh/Session Restore 对同源脚本发现和反向代理前缀的共享边界 | 刷新与恢复分支复用 `expandedAPIPaths`、同源 JS/性能资源发现和 API 后缀剥离；保持短期加密缓存、一次性 claim、pending 重试、最近成功快照和后台 Cleanup 隔离 | Capture Session、Redis/内存 claim、浏览器桥接和平台站点资源同步 | `service/platform_site_capture.go`、`service/upstream_site_test.go`、架构/专项文档和定向测试 |
+| 2026-10-12 | Docker helper 异常清理与正式容器名边界 | helper 数据库初始化失败可能留下更新辅助容器；未初始化数据库关闭路径可能空指针；异常当前容器名可能派生嵌套 `.backup` | helper 在数据库初始化前注册自清理；`CloseDB()` 对 nil 安全；更新/回滚只接受正式容器基名并固定使用单一 `<正式服务名>.backup` 槽位 | Docker 更新/回滚、helper 生命周期、数据库资源关闭 | `main.go`、`model/main.go`、`service/system_update_docker.go`、`model/main_test.go`、`service/system_update_test.go`；不新增数据库迁移 |
 | 2026-09-30 | v0.2.2 生产数据库与缓存默认值 | Compose 使用浮动 Redis/PostgreSQL 标签、默认密码和未固定的应用数据路径；单容器与完整生产拓扑边界不清晰 | Compose 固定 PostgreSQL 15 + Redis 7，密码由 `.env`/部署脚本生成，服务健康后启动应用，端口为 `3030`，SQLite/无 Redis 回退和既有数据库兼容行为保持不变 | `docker-compose.yml`、`scripts/deploy.sh`、`model/main.go`、`common/redis.go`、中文部署文档 | `docker compose config`、脚本语法检查、隔离三服务栈和真实 SQLite 3.50.4/MySQL 8.2.0/PostgreSQL 15.19 矩阵已通过；生产 Dockerfile 完整构建因 `proxy.golang.org` 超时未完成，最低版本和独立日志库矩阵未覆盖 |
 | 2026-10-01 | v0.2.3 部署文档与依赖边界 | 文档没有完整记录单机/多机的共享服务、健康检查、备份和故障边界；Secret 名称与项目执行环境不一致 | 文档明确 Compose 生产默认、外部多机 DSN/Redis、主从任务职责、Redis 拓扑差异和数据迁移限制；Docker 工作流改用 `DOCKER_USERNAME`/`DOCKER_PASSWORD`；web/Electron 依赖最小安全升级不改变缓存、任务和数据库代码 | `README*.md`、`docs/installation/BT.md`、`.github/workflows/docker-*.yml`、web/Electron lockfile | Bun/npm 审计、govulncheck 和隔离 Compose 三服务健康检查已通过；未修改 GORM、数据库驱动、迁移或缓存代码；推送反馈仍有 1 条中等级 Dependabot 警报，认证 API、发布镜像和多架构 manifest 待验证 |
 | 2026-10-01 | v0.2.3 发布收尾 | 一次性 Dependabot 处理工作流仍在仓库，缓存与后台任务文档仍记录 #107 开放及正式发布待验证 | 删除一次性工作流；GitHub 远端安全页面确认 #107 已完成处理且没有开放警报；本次只保留发布后镜像、Release 和 Electron 工作流核验，不改变 Redis、Session、任务租约或数据库兼容行为 | `.github/release-notes/v0.2.3.md`、`.github/workflows/dependabot-v023-release.yml`、发布工作流 | 远端安全页面无开放 Dependabot 警报；正式标签推送后核验多架构 manifest、Cosign、Release 产物和镜像运行状态；未修改缓存代码、后台任务代码或数据库 Schema |
