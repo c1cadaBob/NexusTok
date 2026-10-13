@@ -115,11 +115,12 @@ HTTP
 Redis 兼容模式。SQLite 文件不会自动迁移到 PostgreSQL；已有生产数据切换前必须备份，
 并单独执行经过验证的数据迁移。
 
-本次发布镜像为 `c1cadabob/nexustok:v0.2.7` 和 `c1cadabob/nexustok:latest`，Dockerfile
+当前发布镜像为 `c1cadabob/nexustok:v0.2.8` 和 `c1cadabob/nexustok:latest`，Dockerfile
 通过当前 `web/` 的 Bun/Rsbuild `bun run build` 生成并嵌入新版前端，不新增路由、DTO、
-数据库模型或字段。`v0.2.7` 同时包含 Sub2API 浏览器登录态采集、页面公开 Relay 发现、
-CSP nonce 页面桥接和资源快照保护修复；GitHub Release、Docker 多架构镜像、Cosign 签名
-及 Electron 产物以标签触发后的远端工作流结果为准，本次发布不执行生产部署。
+数据库模型或字段。本次发布包含按 GitHub Release 选择系统维护版本、更新前数据备份、
+Docker 临时容器切换和失败恢复；同时保留 v0.2.7 的 Sub2API 浏览器登录态采集、页面公开
+Relay 发现、CSP nonce 页面桥接和资源快照保护修复。GitHub Release、Docker 多架构镜像、
+Cosign 签名及 Electron 产物以标签触发后的远端工作流结果为准，本次发布不执行生产部署。
 
 ### v0.2.3 部署文档与发布边界（2026-10-01）
 
