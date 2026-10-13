@@ -146,9 +146,10 @@ export async function applySystemUpdate() {
   return res.data
 }
 
-export async function rollbackSystemUpdate() {
+export async function rollbackSystemUpdate(request: { target_version: string }) {
   const res = await api.post<SystemTaskResponse<SystemUpdateTask>>(
-    '/api/system-update/rollback'
+    '/api/system-update/rollback',
+    request
   )
   return res.data
 }

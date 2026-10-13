@@ -94,6 +94,49 @@ const binaryInfo = {
   can_apply: true,
   rollback_available: true,
   release_status: 'published',
+  available_releases: [
+    {
+      tag_name: 'v1.1.0',
+      name: 'NexusTok v1.1.0',
+      published_at: '2026-09-30T00:00:00Z',
+      current: false,
+      prerelease: false,
+      available: true,
+      binary_available: true,
+      checksum_available: true,
+    },
+    {
+      tag_name: 'v1.0.0',
+      name: 'NexusTok v1.0.0',
+      published_at: '2026-09-20T00:00:00Z',
+      current: true,
+      prerelease: false,
+      available: true,
+      binary_available: true,
+      checksum_available: true,
+    },
+    {
+      tag_name: 'v0.9.0',
+      name: 'NexusTok v0.9.0',
+      published_at: '2026-09-10T00:00:00Z',
+      current: false,
+      prerelease: false,
+      available: false,
+      binary_available: false,
+      checksum_available: false,
+      unavailable_reason: 'No checksum file is available for this platform.',
+    },
+    {
+      tag_name: 'v0.8.0',
+      name: 'NexusTok v0.8.0',
+      published_at: '2026-09-01T00:00:00Z',
+      current: false,
+      prerelease: false,
+      available: true,
+      binary_available: true,
+      checksum_available: true,
+    },
+  ],
 }
 
 const taskState = {
@@ -269,6 +312,102 @@ describe('UpdateCheckerSection', () => {
       await screen.findByText('checksum mismatch; SESSION_SECRET=***')
     ).toBeVisible()
     expect(screen.queryByText('hidden-value')).not.toBeInTheDocument()
+  })
+
+  it('shows the current release but only enables a compatible non-current release', async () => {
+    const user = userEvent.setup()
+
+    renderSection()
+    await screen.findByText('v1.1.0')
+    await user.click(screen.getByRole('button', { name: 'Rollback' }))
+
+    const dialog = await screen.findByRole('dialog')
+    await user.click(
+      within(dialog).getByRole('combobox', {
+        name: 'Select a release',
+      })
+    )
+    expect(screen.getByText('Current')).toBeVisible()
+    expect(
+      screen.getByRole('option', { name: /v1\.0\.0/ })
+    ).toHaveAttribute('aria-disabled', 'true')
+    expect(
+      screen.getByRole('option', { name: /v0\.9\.0/ })
+    ).toHaveAttribute('aria-disabled', 'true')
+    expect(
+      screen.getByRole('option', { name: /v1\.1\.0/ })
+    ).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('sends the selected target version after release selection and confirmation', async () => {
+    const user = userEvent.setup()
+    mocks.rollbackSystemUpdate.mockResolvedValue({
+      success: true,
+      message: '',
+      data: {
+        task_id: 'task-rollback-1',
+        type: 'system_rollback',
+        status: 'pending',
+        state: { phase: 'rolling_back', progress: 0 },
+        result: {},
+      },
+    })
+
+    renderSection()
+    await screen.findByText('v1.1.0')
+    await user.click(screen.getByRole('button', { name: 'Rollback' }))
+    const releaseDialog = await screen.findByRole('dialog')
+    await user.click(
+      within(releaseDialog).getByRole('combobox', {
+        name: 'Select a release',
+      })
+    )
+    await user.click(await screen.findByRole('option', { name: /v0\.8\.0/ }))
+    await user.click(
+      within(releaseDialog).getByRole('button', { name: 'Continue' })
+    )
+
+    const confirmDialog = await screen.findByRole('alertdialog')
+    await user.click(
+      within(confirmDialog).getByRole('button', { name: 'Switch release' })
+    )
+    await waitFor(() =>
+      expect(mocks.rollbackSystemUpdate).toHaveBeenCalledWith({
+        target_version: 'v0.8.0',
+      })
+    )
+  })
+
+  it('shows a clear warning when automatic data restoration failed', async () => {
+    mocks.getCurrentSystemTask.mockResolvedValue({
+      success: true,
+      message: '',
+      data: {
+        id: 3,
+        task_id: 'task-restore-failed',
+        type: 'system_rollback',
+        status: 'failed',
+        state: {
+          phase: 'restoring_data',
+          progress: 95,
+          data_restore_failed: true,
+          restore_status: 'data_restore_failed',
+        },
+        result: {},
+        error: 'data_restore_failed: restore failed',
+        created_at: 1,
+        updated_at: 1,
+      },
+    })
+
+    renderSection()
+
+    expect(await screen.findByText('Data restore failed')).toBeVisible()
+    expect(
+      screen.getByText(
+        'The data backup was kept because automatic data restoration failed. Review the task error before retrying.'
+      )
+    ).toBeVisible()
   })
 
   it('degrades to manual Docker instructions when the socket is unavailable', async () => {

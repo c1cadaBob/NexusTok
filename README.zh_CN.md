@@ -267,8 +267,12 @@ docker run --name nexustok -d --restart always \
   c1cadabob/nexustok:v0.2.7
 ```
 
-升级前备份 `.env`、`/opt/nexustok/data`、`/opt/nexustok/logs` 和 PostgreSQL named
-volume；优先使用一致性导出：
+系统维护页面会从 GitHub 已发布 Release 列表中选择更新或回滚目标版本。更新和回滚会在
+停止正式容器、替换二进制或切换 Docker 实例前自动备份 `/opt/nexustok/data`、
+`/opt/nexustok/logs` 和主数据库；Redis 只保存缓存、Session 和限流状态，不作为业务
+恢复源。Docker 部署只保留正式目标容器，preflight/staging/failed 容器仅用于切换和
+失败恢复。自动备份默认保留最近 5 份，可通过 `SYSTEM_UPDATE_BACKUP_DIR` 覆盖备份目录。
+生产环境仍建议额外备份 `.env` 和 PostgreSQL named volume，并优先使用一致性导出：
 
 ```bash
 docker compose exec -T postgres pg_dump -U root nexustok > nexustok-$(date +%F).sql
@@ -277,10 +281,11 @@ docker compose pull
 docker compose up -d
 ```
 
-回滚时将 Compose 的 NexusTok 镜像固定为上一已验证的版本标签，执行
-`docker compose up -d`，并保留数据库备份。不要
-删除 PostgreSQL named volume。SQLite 文件不会自动迁移到 PostgreSQL；已有生产数据
-切换前必须备份，并单独完成经过验证的数据迁移。
+不要手动通过 `.backup` 文件或备份容器执行回滚；在系统维护页面选择目标 Release。
+版本切换失败且运行实例已经改变时，系统会先恢复旧容器，再尝试恢复本次数据备份；
+数据恢复失败会将任务标记为 `data_restore_failed` 并保留备份。版本尚未切换时不会
+恢复业务数据。不要删除 PostgreSQL named volume。SQLite 文件不会自动迁移到 PostgreSQL；
+已有生产数据切换前必须单独完成经过验证的数据迁移。
 
 修改 `.env` 中的 `POSTGRES_PASSWORD` 不会修改已有 PostgreSQL named volume 中的
 数据库角色密码。若脚本提示网络密码认证失败，请先恢复原 `.env` 密码，或在完成逻辑

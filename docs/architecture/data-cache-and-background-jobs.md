@@ -308,26 +308,33 @@ WAF、分页中途失败或单 Key 模型探测失败不能清空旧 Key、额�
 能力并保留最近成功值。该改动不新增数据库模型、字段或迁移，因此本次未新增三数据库
 实例迁移矩阵；既有数据库兼容记录不能当作本次新运行结果。
 
-### 8.2 系统维护更新缓存与租约（2026-09-30）
+### 8.2 系统维护更新缓存与租约（2026-10-13）
 
 变更前维护页直接读取 GitHub Release，浏览器承担网络、CORS 和限流风险；系统任务没有
-更新/回滚专用类型，旧版回滚会消耗唯一的 `.backup` 文件。
+更新/回滚专用类型，裸机使用 `.backup` 文件，Docker 使用稳定备份容器作为回滚对象。
 
 变更后版本检查由后端访问 `api.github.com`，默认仓库为 `c1cadaBob/NexusTok`，
-支持 `SYSTEM_UPDATE_GITHUB_REPO` 覆盖，缓存约 20 分钟并返回语义版本比较、平台资产、
-checksum 和脱敏警告。更新文件先写入当前可执行文件同目录的临时目录，校验大小、权限和
-SHA256 后再进行事务式交换；`.backup` 保持为稳定回滚槽位，回滚通过交换当前文件和
-`.backup`，成功后仍可继续回滚。
+支持 `SYSTEM_UPDATE_GITHUB_REPO` 覆盖，最多读取 3 页发布记录，过滤 draft 和非法 semver，
+保留预发布版本。后端返回可用版本列表，更新默认选择最新的其它可用版本，回滚必须选择
+列表中的其它版本；前端不能提交任意 URL、文件名或镜像地址。更新文件先写入临时目录，
+校验大小、权限和 SHA256 后原子替换；裸机不创建或读取 `.backup`。
 
-Docker 模式使用 Engine socket 和独立 helper，不启动第二个 HTTP/Redis runner。候选容器
-使用唯一 preflight/staging/failed 名称，旧 backup 在候选容器通过健康检查前不覆盖。
-2026-10-02 起，bridge/Compose 网络先启动不发布宿主端口、无 Compose 服务标签和网络别名的
-preflight 容器；通过后删除 preflight，再在旧容器停止并改名后启动保留原端口和 Compose
-元数据的正式 staging 容器，避免自更新时与旧容器争用 `3030`。存在 Healthcheck 时必须为
-`healthy`，没有 Healthcheck 时只确认容器持续运行并标记降级；`host` 和 `container:<id>`
-网络无法安全并行预检，走停旧后启动正式容器的降级路径。Docker 更新和回滚失败会删除候选
-容器、恢复原容器并再次确认其运行状态。helper、runner 和任务终态都只保存脱敏错误，不保存
-敏感环境变量值。source/development build、Windows 正在运行的二进制和未挂载 Docker socket
+Docker 模式使用 Engine socket 和独立 helper，不启动第二个 HTTP/Redis runner。更新和回滚
+先拉取目标镜像并完成可并行的无端口 preflight，再备份 `/data`、日志和 SQLite/逻辑数据库；
+Redis 只作为缓存、Session 和限流控制面，
+不覆盖恢复。PostgreSQL/MySQL 在裸机调用宿主工具，Docker 使用一次性数据库工具容器，
+凭据只通过受控环境变量传递。备份目录默认 Docker 为 `/data/system-backups`、裸机为数据
+目录下的 `system-backups`，默认保留最近 5 份，当前操作和恢复失败备份强制保留。
+
+候选容器使用唯一 preflight/staging/failed 名称；备份失败时只清理 preflight，不停止正式
+容器、不创建正式 staging、不修改 Compose 文件。Compose 模式使用 YAML AST 原子更新目标
+服务镜像标签。bridge/Compose 网络先启动不发布宿主端口、无 Compose 服务标签和网络别名的
+preflight 容器；通过后删除 preflight，再在旧容器停止并改名后启动正式 staging 容器，避免
+自更新时与旧容器争用 `3030`。成功后删除 failed 和历史稳定 backup 容器，只保留正式目标容器。
+存在 Healthcheck 时必须为 `healthy`，没有 Healthcheck 时只确认容器持续运行并标记降级；
+切换前失败不恢复数据，已改变运行实例后失败才恢复旧容器和本次数据备份；恢复失败写入
+`data_restore_failed` 并保留备份。helper、runner 和任务终态都只保存脱敏错误，不保存敏感
+环境变量值。source/development build、Windows 正在运行的二进制和未挂载 Docker socket
 的部署继续显示手动更新提示。
 
 本次系统任务兼容性验证（2026-09-30）执行：
@@ -336,7 +343,7 @@ SQLite、MySQL 8.2.0 和 PostgreSQL 15.19 均通过 AutoMigrate 二次执行、A
 租约转移、状态更新、终态写入和清理验证。MySQL 5.7.8、PostgreSQL 9.6 及独立日志库本次
 未单独启动，不能将本次结果解释为这些最低版本或日志数据库的实测。
 
-### 8.3 2026-10-12 Docker helper 异常清理与正式容器名边界
+### 8.3 2026-10-13 Docker helper 异常清理与正式容器名边界
 
 **变更前**：Docker 更新 helper 在数据库初始化失败后可能来不及进入业务清理函数；
 数据库句柄未初始化时调用 `CloseDB()` 还可能触发空指针崩溃。更新器从异常命名的当前
@@ -345,9 +352,9 @@ SQLite、MySQL 8.2.0 和 PostgreSQL 15.19 均通过 AutoMigrate 二次执行、A
 **变更后**：`closeDB(nil)` 和 `CloseDB()` 对未初始化的主库/日志库安全返回；helper
 在数据库初始化前注册基于 Docker socket 的自清理，正常终态、启动失败和初始化失败都
 回收自身。更新与回滚将当前容器名规范化为正式服务基名，拒绝从 backup、staging、
-preflight、failed 或 helper 容器继续切换，稳定备份槽位始终为
-`<正式服务名>.backup`。不删除业务数据库卷、应用数据目录、日志目录或 Redis/PostgreSQL
-数据。
+preflight、failed 或 helper 容器继续切换。稳定 backup 容器不再是回滚对象；更新开始时
+只清理历史遗留的 `<正式服务名>.backup`，成功后不创建、不保留新的 backup 容器。不删除
+业务数据库卷、应用数据目录、日志目录或 Redis/PostgreSQL 数据。
 
 本次只修改容器生命周期和数据库关闭防护，不新增数据库字段、缓存键或迁移。已通过
 `go test ./model -run 'TestCloseDB' -count=1`、`go test ./service -run 'TestDocker(Update|Updated|Readiness|Helper|Rollback|Staging|Pull)' -count=1`

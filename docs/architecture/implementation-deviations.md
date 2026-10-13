@@ -136,11 +136,11 @@ Key 资源、必要的 Key 详情、无计费的 `/v1/models` 构造、路由关
 
 上述结果仅作为本地自动化验证证据，不作为真实站点或 CI 外部网络验收结论。
 
-### 3.7 2026-09-30 系统维护更新与可重复回滚
+### 3.7 2026-10-13 系统维护更新与数据备份恢复
 
 **变更前**：维护页面由浏览器直接请求 GitHub Release，只能展示版本说明和客户端可见的
-发布信息；后端没有统一的版本检查、更新、回滚、重启或 Docker 容器管理任务。旧版裸机
-回滚会直接消耗 `.backup`，一次回滚后无法可靠地继续切换到上一个版本。
+发布信息；后端没有统一的版本选择和更新任务。裸机使用 `.backup` 文件交换，Docker
+使用稳定备份容器作为隐式回滚对象。
 
 **变更后**：维护页面通过 Root 专属后端接口读取 GitHub Release，并由 `SystemTask`
 执行更新、回滚和重启。后端使用约 20 分钟缓存，支持 `v` 前缀、预发布和构建元数据的
@@ -148,16 +148,19 @@ Key 资源、必要的 Key 详情、无计费的 `/v1/models` 构造、路由关
 SHA256 checksum；GitHub 404 转换为无已发布版本，不把原始响应体交给管理页面。源码或
 开发构建、Windows 正在运行的二进制、缺少匹配资产或 checksum 的场景保持手动更新提示。
 
-裸机更新在当前可执行文件同目录的临时目录内下载和校验，提交时使用临时交换文件保留
-稳定的 `<executable>.backup`。回滚同样交换当前文件和 `.backup`，成功后备份仍存在，
-因此可以连续执行回滚或版本切换；任一重命名失败都尝试恢复交换前状态。旧版“把
-`.backup` 直接改名为当前文件并消耗备份”的行为不再保留。
+更新和回滚统一创建数据备份，覆盖 `/data`、日志、SQLite WAL/SHM 或 PostgreSQL/MySQL
+逻辑导出；Docker 会在目标镜像拉取和 preflight 通过后创建备份，裸机在二进制替换前创建；
+Redis 不作为恢复源。裸机从已发布 Release 下载目标版本二进制并校验 checksum，
+使用临时文件完成原子替换，失败时恢复原可执行文件，不再创建或读取 `<executable>.backup`。
 
-Docker 更新和回滚通过 Docker Engine socket 及独立 `system-update-helper` 执行，保留
-当前容器的环境、挂载、网络、端口、入口参数、重启策略和 Compose 标签。候选容器使用
-唯一 staging/failed 名称，更新前不覆盖稳定备份；有 Healthcheck 时必须达到 `healthy`，
-没有 Healthcheck 时只确认容器保持运行并标记降级。主容器停止前转移系统任务租约，helper
-启动失败时尝试转回原 runner；候选创建、启动、探活或回滚失败时恢复原容器并写入失败终态。
+Docker 更新和回滚通过 Docker Engine socket 及独立 `system-update-helper` 执行，先拉取目标
+镜像并完成无端口 preflight，再创建本次数据备份；备份失败不会停止正式容器、创建正式
+staging 或修改 Compose。目标镜像由当前仓库和目标 Release 标签推导。Compose 模式原子
+更新实际配置文件的目标服务 image。
+候选容器使用唯一 preflight/staging/failed 名称；备份失败只清理 preflight，不停止正式
+容器、不创建正式 staging、不修改 Compose。成功后删除 failed 和历史稳定 backup 容器，
+只保留正式目标容器。只有运行实例已经改变且任务失败时才恢复本次数据备份；版本切换
+前失败不恢复数据，恢复失败写入 `data_restore_failed` 并保留备份。
 未挂载 Docker socket 时仅展示脱敏的手动命令提示。
 
 本次不新增数据库字段或迁移；更新、回滚共用 `system_binary_update` ActiveKey，RootAuth、
@@ -365,11 +368,13 @@ nil，退出 defer 调用 `CloseDB()` 会再次触发空指针。更新器从
 **变更后**：helper 启动入口在数据库初始化前注册基于 Docker socket 的自清理；
 `closeDB(nil)` 和 `CloseDB()` 对空主库/日志库安全返回。更新与回滚将当前名称归一为
 正式服务基名，并拒绝从 backup、staging、preflight、failed 或 helper 容器继续执行；
-稳定回滚槽位固定为单一 `<正式服务名>.backup`。不修改数据库 Schema、业务数据、Docker
-数据卷或日志卷。
+临时容器只参与切换和失败恢复，成功后不保留稳定 backup 容器。数据备份放在宿主机映射的
+数据目录或 `SYSTEM_UPDATE_BACKUP_DIR`，不修改数据库 Schema、业务数据、Docker 数据卷
+或日志卷。
 
 验证：`model/main_test.go` 覆盖 nil、共享数据库和独立数据库关闭；`service/system_update_test.go`
-覆盖正式容器名归一与 helper 自清理；现有 Docker 更新/回滚/helper 定向测试继续通过。
+覆盖正式容器名归一、helper 自清理、数据备份和目标版本切换；现有 Docker 更新/回滚/helper
+定向测试继续通过。
 
 ## 4. 维护规则
 

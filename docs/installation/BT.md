@@ -171,12 +171,17 @@ Docker socket、节点本地日志和 `/data` 不会自动成为跨节点共享�
 
 ## 六、升级、回滚和备份
 
-升级前至少备份：
+系统维护页面支持直接选择已发布 Release 进行更新或回滚。执行版本切换前，系统会自动
+备份：
 
-- `.env`，并以受控方式保存；
 - `/opt/nexustok/data`；
 - `/opt/nexustok/logs`；
-- PostgreSQL named volume，或更推荐的逻辑备份。
+- 主数据库（SQLite 文件或 PostgreSQL/MySQL 逻辑导出）。
+
+Redis 只作为缓存、Session 和限流控制面，不参与业务数据恢复。Docker 更新成功后只保留
+正式目标容器，preflight/staging/failed 容器只在切换和失败恢复期间存在。默认保留最近
+5 份备份，可通过 `SYSTEM_UPDATE_BACKUP_DIR` 覆盖备份目录。生产环境仍应额外以受控方式
+保存 `.env` 和 PostgreSQL named volume：
 
 ```bash
 docker compose exec -T postgres pg_dump -U root nexustok > /secure-backup/nexustok-$(date +%F).sql
@@ -186,8 +191,10 @@ docker compose up -d
 docker compose ps
 ```
 
-连续执行 `docker compose up -d` 应保持迁移幂等。回滚时把 NexusTok 镜像固定到上一已
-验证版本，保留 PostgreSQL volume 和备份，不要用空数据库覆盖现有数据。多机升级时先
+连续执行 `docker compose up -d` 应保持迁移幂等。不要手动交换 `.backup` 文件或启动备份
+容器回滚；在系统维护页面选择目标 Release。版本切换已经改变运行实例后失败时，系统先
+恢复旧容器，再恢复本次数据备份；恢复失败记录为 `data_restore_failed` 并保留备份。
+版本尚未切换时不会恢复业务数据。多机升级时先
 摘除从节点，再逐台更新并健康检查，最后在迁移窗口处理主节点；回滚前确认应用版本和
 数据库迁移兼容。
 

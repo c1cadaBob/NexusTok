@@ -323,8 +323,15 @@ docker run --name nexustok -d --restart always \
   c1cadabob/nexustok:v0.2.7
 ```
 
-升级前先备份 `.env`、`/opt/nexustok/data`、`/opt/nexustok/logs` 和 PostgreSQL
-named volume；优先使用一致性导出：
+The system maintenance page lets an administrator choose an update or rollback target from
+published GitHub Releases. Before replacing a binary or switching Docker instances, the task
+automatically backs up `/opt/nexustok/data`, `/opt/nexustok/logs`, and the primary database.
+Redis remains a cache, session, and rate-limit control plane and is not restored as business
+data. Docker deployments keep only the formal target container; preflight/staging/failed
+containers exist only during switching and failure recovery. The default retention is five
+backups and `SYSTEM_UPDATE_BACKUP_DIR` can override the backup directory. Production
+deployments should still keep an additional controlled backup of `.env` and the PostgreSQL
+named volume, preferably using a consistent logical export:
 
 ```bash
 docker compose exec -T postgres pg_dump -U root nexustok > nexustok-$(date +%F).sql
@@ -333,10 +340,13 @@ docker compose pull
 docker compose up -d
 ```
 
-回滚时将 Compose 的 `nexustok` 镜像固定为上一已验证的版本标签，执行
-`docker compose up -d`，并保留数据库备份。
-不要删除 PostgreSQL named volume。SQLite 文件不会自动迁移到 PostgreSQL；已有生产
-数据切换前必须备份，并单独完成经过验证的数据迁移。
+Do not roll back by exchanging `.backup` files or using a backup container. Select the target
+Release in the system maintenance page. If a failed switch has already changed the running
+instance, NexusTok restores the old container first and then attempts to restore the operation's
+data backup. A restore failure is recorded as `data_restore_failed` and the backup is retained;
+no business data is restored when the version has not actually switched. Do not delete the
+PostgreSQL named volume. SQLite files are not migrated to PostgreSQL automatically; existing
+production data still requires a separately validated migration.
 
 修改 `.env` 中的 `POSTGRES_PASSWORD` 不会修改已有 PostgreSQL named volume 中的
 数据库角色密码。若脚本提示网络密码认证失败，请先恢复原 `.env` 密码，或在完成逻辑

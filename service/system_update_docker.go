@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"github.com/c1cadaBob/NexusTok/common"
 	"github.com/c1cadaBob/NexusTok/logger"
 	"github.com/c1cadaBob/NexusTok/model"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -39,7 +41,8 @@ const (
 	systemUpdateHelperEnvMode               = "SYSTEM_UPDATE_HELPER_MODE"
 	systemUpdateHelperEnvCurrentContainerID = "SYSTEM_UPDATE_HELPER_CURRENT_CONTAINER_ID"
 	systemUpdateHelperEnvTargetImage        = "SYSTEM_UPDATE_HELPER_TARGET_IMAGE"
-	systemUpdateHelperEnvBackupName         = "SYSTEM_UPDATE_HELPER_BACKUP_NAME"
+	systemUpdateHelperEnvTargetVersion      = "SYSTEM_UPDATE_HELPER_TARGET_VERSION"
+	systemUpdateHelperEnvBackupID           = "SYSTEM_UPDATE_HELPER_BACKUP_ID"
 	systemUpdateHelperEnvContainerName      = "SYSTEM_UPDATE_HELPER_CONTAINER_NAME"
 )
 
@@ -141,6 +144,7 @@ type dockerContainerHealth struct {
 type dockerCreateContainerRequest struct {
 	Hostname         string                       `json:"Hostname,omitempty"`
 	User             string                       `json:"User,omitempty"`
+	Tty              bool                         `json:"Tty,omitempty"`
 	Env              []string                     `json:"Env,omitempty"`
 	Cmd              []string                     `json:"Cmd,omitempty"`
 	Entrypoint       []string                     `json:"Entrypoint,omitempty"`
@@ -177,8 +181,9 @@ type dockerHelperOptions struct {
 	Action             string
 	Mode               string
 	CurrentContainerID string
+	TargetVersion      string
 	TargetImage        string
-	BackupName         string
+	BackupID           string
 	ContainerName      string
 }
 
@@ -189,18 +194,35 @@ const (
 	dockerCreateRequestModePreflight
 )
 
+type systemUpdateComposeFileBackup struct {
+	Path string
+	Mode os.FileMode
+	Data []byte
+}
+
 func systemUpdateDockerSocketPath() string {
 	return strings.TrimSpace(common.GetEnvOrDefaultString("SYSTEM_UPDATE_DOCKER_SOCK", systemUpdateDockerSockDefault))
 }
 
 func systemUpdateTargetDockerImage(currentImage string) string {
+	repo := systemUpdateDockerImageRepository(currentImage)
+	if repo == "" {
+		repo = strings.TrimSuffix(systemUpdateDefaultDockerImage, ":latest")
+	}
+	return repo + ":latest"
+}
+
+func systemUpdateDockerImageRepository(currentImage string) string {
 	override := strings.TrimSpace(common.GetEnvOrDefaultString("SYSTEM_UPDATE_DOCKER_IMAGE", ""))
 	if override != "" {
-		return override
+		if !isSystemUpdateDockerRepositoryOverride(override) {
+			return ""
+		}
+		currentImage = override
 	}
 	currentImage = strings.TrimSpace(currentImage)
 	if currentImage == "" {
-		return systemUpdateDefaultDockerImage
+		return strings.TrimSuffix(systemUpdateDefaultDockerImage, ":latest")
 	}
 	if digestIndex := strings.Index(currentImage, "@"); digestIndex >= 0 {
 		currentImage = currentImage[:digestIndex]
@@ -214,9 +236,57 @@ func systemUpdateTargetDockerImage(currentImage string) string {
 		repo = repo[:colon]
 	}
 	if repo == "" {
-		return systemUpdateDefaultDockerImage
+		return strings.TrimSuffix(systemUpdateDefaultDockerImage, ":latest")
 	}
-	return repo + ":latest"
+	if !isSystemUpdateDockerRepository(repo) {
+		return ""
+	}
+	return repo
+}
+
+func isSystemUpdateDockerRepositoryOverride(repository string) bool {
+	repository = strings.TrimSpace(repository)
+	if strings.Contains(repository, "@") {
+		return false
+	}
+	slash := strings.LastIndex(repository, "/")
+	if strings.LastIndex(repository, ":") > slash {
+		return false
+	}
+	return isSystemUpdateDockerRepository(repository)
+}
+
+func isSystemUpdateDockerRepository(repository string) bool {
+	repository = strings.TrimSpace(repository)
+	if repository == "" ||
+		strings.ContainsAny(repository, "@ \t\r\n") ||
+		strings.Contains(repository, "://") ||
+		strings.Contains(repository, "//") ||
+		strings.HasPrefix(repository, "/") ||
+		strings.HasSuffix(repository, "/") {
+		return false
+	}
+	for _, char := range repository {
+		if (char >= 'a' && char <= 'z') ||
+			(char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') ||
+			strings.ContainsRune("._-/:", char) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func systemUpdateDockerImageForVersion(currentImage string, version string) string {
+	if _, ok := parseSystemUpdateVersion(version); !ok {
+		return ""
+	}
+	repo := systemUpdateDockerImageRepository(currentImage)
+	if repo == "" {
+		return ""
+	}
+	return repo + ":" + strings.TrimSpace(version)
 }
 
 func systemUpdateCurrentContainerID() string {
@@ -578,6 +648,52 @@ func (c *dockerEngineClient) removeContainer(ctx context.Context, idOrName strin
 	return err
 }
 
+func (c *dockerEngineClient) waitContainer(ctx context.Context, idOrName string) (int, error) {
+	var response struct {
+		StatusCode int `json:"StatusCode"`
+		Error      *struct {
+			Message string `json:"Message,omitempty"`
+		} `json:"Error,omitempty"`
+	}
+	if err := c.doJSON(ctx, http.MethodPost, "/containers/"+url.PathEscape(idOrName)+"/wait", nil, &response); err != nil {
+		return 0, err
+	}
+	if response.Error != nil && strings.TrimSpace(response.Error.Message) != "" {
+		return response.StatusCode, errors.New(maskSystemUpdateSensitiveInfo(response.Error.Message))
+	}
+	return response.StatusCode, nil
+}
+
+func (c *dockerEngineClient) readContainerLogs(ctx context.Context, idOrName string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		"http://docker/containers/"+url.PathEscape(idOrName)+"/logs?stdout=1&stderr=1",
+		nil,
+	)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+		return nil, fmt.Errorf(
+			"Docker Engine logs returned %d: %s",
+			resp.StatusCode,
+			maskSystemUpdateSensitiveInfo(string(data)),
+		)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 512<<20))
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
 func isDockerNotFoundError(err error) bool {
 	if err == nil {
 		return false
@@ -631,10 +747,6 @@ func canonicalDockerContainerName(name string) string {
 		}
 		name = cleanDockerContainerName(name)
 	}
-}
-
-func dockerBackupContainerName(name string) string {
-	return canonicalDockerContainerName(name) + ".backup"
 }
 
 func dockerFailedContainerName(name string) string {
@@ -846,44 +958,40 @@ func systemUpdateDockerManualCommandFromInspect(inspect *dockerInspectContainer,
 }
 
 func (s *SystemUpdateService) DockerRollbackAvailable(ctx context.Context) bool {
-	socketPath := s.dockerSocketPathFn()
-	client := systemUpdateDockerClient(socketPath)
-	if err := client.ping(ctx); err != nil {
-		return false
-	}
-	inspect, err := client.inspectContainer(ctx, s.currentContainerIDFn())
-	if err != nil {
-		return false
-	}
-	_, err = client.inspectContainer(ctx, dockerBackupContainerName(inspect.Name))
-	return err == nil
+	return false
 }
 
-func (s *SystemUpdateService) HandOffDockerUpdate(ctx context.Context, task *model.SystemTask, runnerID string, info *SystemUpdateInfo) (*SystemUpdateTaskResult, error) {
+func (s *SystemUpdateService) HandOffDockerUpdate(ctx context.Context, task *model.SystemTask, runnerID string, info *SystemUpdateInfo, targetVersion string) (*SystemUpdateTaskResult, error) {
 	if task == nil {
 		return s.performDockerUpdateInProcess(ctx, nil, runnerID, dockerHelperOptions{
-			Action:      systemUpdateDockerHelperActionUpdate,
-			TargetImage: systemUpdateTargetDockerImage(""),
+			Action:        systemUpdateDockerHelperActionUpdate,
+			TargetImage:   infoTargetImage(info),
+			TargetVersion: targetVersion,
 		})
 	}
-	targetImage := systemUpdateTargetDockerImage("")
-	if info != nil && info.TargetImage != "" {
-		targetImage = info.TargetImage
-	}
+	targetImage := infoTargetImage(info)
 	return nil, s.startDockerHelper(ctx, task, runnerID, dockerHelperOptions{
-		Action:      systemUpdateDockerHelperActionUpdate,
-		Mode:        firstNonEmptySystemUpdateString(infoDeploymentMode(info), systemUpdateDeploymentDockerRun),
-		TargetImage: targetImage,
+		Action:        systemUpdateDockerHelperActionUpdate,
+		Mode:          firstNonEmptySystemUpdateString(infoDeploymentMode(info), systemUpdateDeploymentDockerRun),
+		TargetImage:   targetImage,
+		TargetVersion: targetVersion,
 	})
 }
 
-func (s *SystemUpdateService) HandOffDockerRollback(ctx context.Context, task *model.SystemTask, runnerID string) (*SystemUpdateTaskResult, error) {
+func (s *SystemUpdateService) HandOffDockerRollback(ctx context.Context, task *model.SystemTask, runnerID string, info *SystemUpdateInfo, targetVersion string) (*SystemUpdateTaskResult, error) {
 	if task == nil {
-		return s.performDockerRollbackInProcess(ctx, nil, runnerID, dockerHelperOptions{Action: systemUpdateDockerHelperActionRollback})
+		return s.performDockerUpdateInProcess(ctx, nil, runnerID, dockerHelperOptions{
+			Action:        systemUpdateDockerHelperActionRollback,
+			Mode:          firstNonEmptySystemUpdateString(infoDeploymentMode(info), systemUpdateDeploymentDockerRun),
+			TargetImage:   infoTargetImage(info),
+			TargetVersion: targetVersion,
+		})
 	}
 	return nil, s.startDockerHelper(ctx, task, runnerID, dockerHelperOptions{
-		Action: systemUpdateDockerHelperActionRollback,
-		Mode:   systemUpdateDeploymentDockerRun,
+		Action:        systemUpdateDockerHelperActionRollback,
+		Mode:          firstNonEmptySystemUpdateString(infoDeploymentMode(info), systemUpdateDeploymentDockerRun),
+		TargetImage:   infoTargetImage(info),
+		TargetVersion: targetVersion,
 	})
 }
 
@@ -894,12 +1002,20 @@ func infoDeploymentMode(info *SystemUpdateInfo) string {
 	return info.DeploymentMode
 }
 
+func infoTargetImage(info *SystemUpdateInfo) string {
+	if info == nil {
+		return ""
+	}
+	return info.TargetImage
+}
+
 func (s *SystemUpdateService) startDockerHelper(ctx context.Context, task *model.SystemTask, runnerID string, options dockerHelperOptions) error {
 	state := SystemUpdateTaskState{
-		Phase:       SystemUpdatePhaseStartingHelper,
-		Progress:    12,
-		Mode:        options.Mode,
-		TargetImage: options.TargetImage,
+		Phase:         SystemUpdatePhaseStartingHelper,
+		Progress:      12,
+		TargetVersion: options.TargetVersion,
+		Mode:          options.Mode,
+		TargetImage:   options.TargetImage,
 	}
 	if err := updateSystemUpdateTaskState(task, runnerID, state); err != nil {
 		return err
@@ -926,7 +1042,6 @@ func (s *SystemUpdateService) startDockerHelper(ctx context.Context, task *model
 	if options.Mode == "" {
 		options.Mode = systemUpdateDeploymentDockerRun
 	}
-	options.BackupName = dockerBackupContainerName(containerName)
 	helperRunnerID := fmt.Sprintf("%s-helper-%s", runnerID, common.GetRandomString(6))
 	helperName := fmt.Sprintf("%s-update-helper-%s", containerName, common.GetRandomString(6))
 	helperImage := firstNonEmptySystemUpdateString(inspect.Config.Image, options.TargetImage, systemUpdateDefaultDockerImage)
@@ -1006,7 +1121,8 @@ func dockerHelperEnv(taskID string, runnerID string, options dockerHelperOptions
 		systemUpdateHelperEnvMode + "=" + options.Mode,
 		systemUpdateHelperEnvCurrentContainerID + "=" + currentContainerID,
 		systemUpdateHelperEnvTargetImage + "=" + options.TargetImage,
-		systemUpdateHelperEnvBackupName + "=" + options.BackupName,
+		systemUpdateHelperEnvTargetVersion + "=" + options.TargetVersion,
+		systemUpdateHelperEnvBackupID + "=" + options.BackupID,
 		systemUpdateHelperEnvContainerName + "=" + containerName,
 	}
 }
@@ -1116,7 +1232,8 @@ func RunSystemUpdateDockerHelper(ctx context.Context) error {
 		Mode:               strings.TrimSpace(os.Getenv(systemUpdateHelperEnvMode)),
 		CurrentContainerID: strings.TrimSpace(os.Getenv(systemUpdateHelperEnvCurrentContainerID)),
 		TargetImage:        strings.TrimSpace(os.Getenv(systemUpdateHelperEnvTargetImage)),
-		BackupName:         strings.TrimSpace(os.Getenv(systemUpdateHelperEnvBackupName)),
+		TargetVersion:      strings.TrimSpace(os.Getenv(systemUpdateHelperEnvTargetVersion)),
+		BackupID:           strings.TrimSpace(os.Getenv(systemUpdateHelperEnvBackupID)),
 		ContainerName:      strings.TrimSpace(os.Getenv(systemUpdateHelperEnvContainerName)),
 	}
 	defer CleanupSystemUpdateDockerHelper(ctx)
@@ -1187,12 +1304,7 @@ func RunSystemUpdateDockerHelper(ctx context.Context) error {
 	}()
 
 	var result *SystemUpdateTaskResult
-	switch options.Action {
-	case systemUpdateDockerHelperActionRollback:
-		result, err = defaultSystemUpdateService.performDockerRollbackInProcess(operationCtx, task, options.RunnerID, options)
-	default:
-		result, err = defaultSystemUpdateService.performDockerUpdateInProcess(operationCtx, task, options.RunnerID, options)
-	}
+	result, err = defaultSystemUpdateService.performDockerUpdateInProcess(operationCtx, task, options.RunnerID, options)
 	close(heartbeatDone)
 	<-heartbeatStopped
 	select {
@@ -1203,6 +1315,12 @@ func RunSystemUpdateDockerHelper(ctx context.Context) error {
 	default:
 	}
 	return finishTask(result, err)
+}
+
+// performDockerRollbackInProcess 保留内部兼容入口；回滚与更新现在都按目标镜像执行同一套切换流程。
+func (s *SystemUpdateService) performDockerRollbackInProcess(ctx context.Context, task *model.SystemTask, runnerID string, options dockerHelperOptions) (*SystemUpdateTaskResult, error) {
+	options.Action = systemUpdateDockerHelperActionRollback
+	return s.performDockerUpdateInProcess(ctx, task, runnerID, options)
 }
 
 func (s *SystemUpdateService) performDockerUpdateInProcess(ctx context.Context, task *model.SystemTask, runnerID string, options dockerHelperOptions) (*SystemUpdateTaskResult, error) {
@@ -1219,13 +1337,40 @@ func (s *SystemUpdateService) performDockerUpdateInProcess(ctx context.Context, 
 	if cleanDockerContainerName(current.Name) != containerName {
 		return nil, fmt.Errorf("当前 Docker 容器 %q 不是正式服务容器，拒绝从辅助容器继续更新", cleanDockerContainerName(current.Name))
 	}
+	legacyBackupName := containerName + ".backup"
+	if err := client.removeContainer(ctx, legacyBackupName, true); err != nil && !isDockerNotFoundError(err) {
+		logger.LogWarn(ctx, fmt.Sprintf("remove legacy Docker backup container %s failed: %s", legacyBackupName, maskSystemUpdateSensitiveInfo(err.Error())))
+	}
 	targetImage := firstNonEmptySystemUpdateString(options.TargetImage, systemUpdateTargetDockerImage(current.Config.Image))
-	backupName := dockerBackupContainerName(containerName)
-
-	state := SystemUpdateTaskState{Phase: SystemUpdatePhasePullingImage, Progress: 20, Mode: firstNonEmptySystemUpdateString(options.Mode, systemUpdateDeploymentDockerRun), TargetImage: targetImage}
+	if options.TargetVersion == "" {
+		_, tag := splitDockerImage(targetImage)
+		if tag != "latest" {
+			options.TargetVersion = tag
+		}
+	}
+	state := SystemUpdateTaskState{
+		Phase:         SystemUpdatePhasePullingImage,
+		Progress:      10,
+		Mode:          firstNonEmptySystemUpdateString(options.Mode, systemUpdateDeploymentDockerRun),
+		TargetVersion: options.TargetVersion,
+		TargetImage:   targetImage,
+	}
+	if task != nil {
+		payload := SystemUpdateTaskPayload{}
+		if err := task.DecodePayload(&payload); err == nil {
+			if options.TargetVersion == "" {
+				options.TargetVersion = payload.TargetVersion
+				state.TargetVersion = payload.TargetVersion
+			}
+			if options.BackupID == "" {
+				options.BackupID = payload.BackupID
+			}
+		}
+	}
 	if err := updateSystemUpdateTaskState(task, runnerID, state); err != nil {
 		return nil, err
 	}
+
 	lastPullUpdate := time.Time{}
 	if err := client.pullImage(ctx, targetImage, func(_ string) {
 		if time.Since(lastPullUpdate) < 2*time.Second {
@@ -1235,6 +1380,53 @@ func (s *SystemUpdateService) performDockerUpdateInProcess(ctx context.Context, 
 		_ = updateSystemUpdateTaskState(task, runnerID, state)
 	}); err != nil {
 		return nil, formatDockerImagePullError(targetImage, err)
+
+	}
+	state.Phase = SystemUpdatePhaseProbing
+	state.Progress = 35
+	if err := updateSystemUpdateTaskState(task, runnerID, state); err != nil {
+		return nil, err
+	}
+	preflightReadiness, err := s.preflightDockerContainer(ctx, client, current, containerName, targetImage)
+	if err != nil {
+		return nil, err
+	}
+	if preflightReadiness.Status != "" {
+		state.HealthStatus = preflightReadiness.Status
+		state.HealthcheckAvailable = preflightReadiness.HealthcheckAvailable
+		state.HealthcheckDegraded = preflightReadiness.HealthcheckDegraded
+	}
+	state.Phase = SystemUpdatePhaseBackingUpData
+	state.Progress = 45
+	if err := updateSystemUpdateTaskState(task, runnerID, state); err != nil {
+		return nil, err
+	}
+	backup, err := s.createUpdateBackup(ctx, task, runnerID, options.TargetVersion, state)
+	if err != nil {
+		return nil, err
+	}
+	options.BackupID = backup.ID
+	state.BackupID = backup.ID
+	state.BackupStatus = backup.Status
+	if err := updateSystemUpdateTaskState(task, runnerID, state); err != nil {
+		return nil, err
+	}
+	var composeBackup []systemUpdateComposeFileBackup
+	if state.Mode == systemUpdateDeploymentDockerCompose {
+		composeBackup, err = prepareSystemUpdateComposeImage(current, targetImage)
+		if err != nil {
+			return nil, err
+		}
+	}
+	composeChanged := len(composeBackup) > 0
+	restoreCompose := func(operationErr error) error {
+		if !composeChanged {
+			return operationErr
+		}
+		if restoreErr := restoreSystemUpdateComposeFiles(composeBackup); restoreErr != nil {
+			return fmt.Errorf("%w; restore Docker Compose configuration failed: %s", operationErr, restoreErr)
+		}
+		return operationErr
 	}
 
 	state.Phase = SystemUpdatePhaseRecreatingContainer
@@ -1243,9 +1435,12 @@ func (s *SystemUpdateService) performDockerUpdateInProcess(ctx context.Context, 
 		return nil, err
 	}
 
-	newContainerID, readiness, err := s.recreateDockerContainer(ctx, client, current, containerName, backupName, targetImage)
+	newContainerID, readiness, switched, err := s.recreateDockerContainer(ctx, client, current, containerName, targetImage, preflightReadiness)
 	if err != nil {
-		return nil, err
+		if switched {
+			err = s.restoreSystemUpdateDataAfterDockerFailure(ctx, task, runnerID, state, options.BackupID, err)
+		}
+		return nil, restoreCompose(err)
 	}
 
 	state.Phase = SystemUpdatePhaseProbing
@@ -1264,18 +1459,187 @@ func (s *SystemUpdateService) performDockerUpdateInProcess(ctx context.Context, 
 	}
 	return &SystemUpdateTaskResult{
 		CurrentVersion:       s.currentVersionFn(),
-		TargetVersion:        targetImage,
+		TargetVersion:        options.TargetVersion,
 		Mode:                 state.Mode,
 		TargetImage:          targetImage,
 		OldContainerID:       current.ID,
 		NewContainerID:       newContainerID,
-		BackupContainerName:  backupName,
 		RestartRequired:      false,
-		RollbackAvailable:    true,
+		RollbackAvailable:    false,
+		BackupID:             backup.ID,
+		BackupStatus:         backup.Status,
 		HealthStatus:         readiness.Status,
 		HealthcheckAvailable: readiness.HealthcheckAvailable,
 		HealthcheckDegraded:  readiness.HealthcheckDegraded,
 	}, nil
+}
+
+func (s *SystemUpdateService) restoreSystemUpdateDataAfterDockerFailure(
+	ctx context.Context,
+	task *model.SystemTask,
+	runnerID string,
+	state SystemUpdateTaskState,
+	backupID string,
+	operationErr error,
+) error {
+	if backupID == "" || s.restoreFn == nil {
+		return operationErr
+	}
+	state.Phase = SystemUpdatePhaseRestoringData
+	state.Progress = 95
+	state.RestoreStatus = systemUpdateRestoreStatusNone
+	_ = updateSystemUpdateTaskState(task, runnerID, state)
+	if err := s.restoreFn(ctx, backupID); err != nil {
+		state.RestoreStatus = systemUpdateRestoreStatusFailed
+		state.DataRestoreFailed = true
+		_ = updateSystemUpdateTaskState(task, runnerID, state)
+		return fmt.Errorf("%w; data_restore_failed: %s", operationErr, SystemUpdateErrorMessage(err))
+	}
+	state.RestoreStatus = systemUpdateRestoreStatusReady
+	_ = updateSystemUpdateTaskState(task, runnerID, state)
+	return operationErr
+}
+
+func prepareSystemUpdateComposeImage(current *dockerInspectContainer, targetImage string) ([]systemUpdateComposeFileBackup, error) {
+	if current == nil || current.Config.Labels == nil {
+		return nil, errors.New("Docker Compose metadata is unavailable")
+	}
+	configFiles := strings.TrimSpace(current.Config.Labels["com.docker.compose.project.config_files"])
+	if configFiles == "" {
+		return nil, errors.New("Docker Compose configuration file is unavailable")
+	}
+	serviceName := strings.TrimSpace(current.Config.Labels["com.docker.compose.service"])
+	if serviceName == "" {
+		return nil, errors.New("Docker Compose service name is unavailable")
+	}
+	workingDir := strings.TrimSpace(current.Config.Labels["com.docker.compose.project.working_dir"])
+	paths := strings.FieldsFunc(configFiles, func(char rune) bool {
+		return char == ',' || (os.PathListSeparator == ';' && char == os.PathListSeparator)
+	})
+	backups := make([]systemUpdateComposeFileBackup, 0, len(paths))
+	for _, rawPath := range paths {
+		path := strings.TrimSpace(rawPath)
+		if path == "" {
+			continue
+		}
+		if !filepath.IsAbs(path) && workingDir != "" {
+			path = filepath.Join(workingDir, path)
+		}
+		path, err := filepath.Abs(path)
+		if err != nil {
+			return nil, err
+		}
+		fileInfo, err := os.Lstat(path)
+		if err != nil {
+			return nil, fmt.Errorf("stat Docker Compose configuration failed: %w", err)
+		}
+		if fileInfo.Mode()&os.ModeSymlink != 0 || !fileInfo.Mode().IsRegular() {
+			return nil, errors.New("Docker Compose configuration must be a regular file and must not be a symbolic link")
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("read Docker Compose configuration failed: %w", err)
+		}
+		var document yaml.Node
+		if err := yaml.Unmarshal(data, &document); err != nil {
+			return nil, fmt.Errorf("parse Docker Compose configuration failed: %w", err)
+		}
+		if !replaceComposeServiceImage(&document, serviceName, targetImage) {
+			continue
+		}
+		updated, err := yaml.Marshal(&document)
+		if err != nil {
+			return nil, fmt.Errorf("encode Docker Compose configuration failed: %w", err)
+		}
+		if err := atomicWriteSystemUpdateFile(path, updated, fileInfo.Mode().Perm()); err != nil {
+			_ = restoreSystemUpdateComposeFiles(backups)
+			return nil, err
+		}
+		backups = append(backups, systemUpdateComposeFileBackup{Path: path, Mode: fileInfo.Mode().Perm(), Data: data})
+	}
+	if len(backups) == 0 {
+		return nil, fmt.Errorf("Docker Compose service %q image field was not found", serviceName)
+	}
+	return backups, nil
+}
+
+func replaceComposeServiceImage(document *yaml.Node, serviceName string, targetImage string) bool {
+	if document == nil || len(document.Content) == 0 {
+		return false
+	}
+	root := document.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return false
+	}
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value != "services" {
+			continue
+		}
+		services := root.Content[i+1]
+		if services.Kind != yaml.MappingNode {
+			return false
+		}
+		for j := 0; j+1 < len(services.Content); j += 2 {
+			if services.Content[j].Value != serviceName {
+				continue
+			}
+			service := services.Content[j+1]
+			if service.Kind != yaml.MappingNode {
+				return false
+			}
+			for k := 0; k+1 < len(service.Content); k += 2 {
+				if service.Content[k].Value == "image" {
+					service.Content[k+1].Value = targetImage
+					service.Content[k+1].Tag = "!!str"
+					return true
+				}
+			}
+			service.Content = append(service.Content,
+				&yaml.Node{Kind: yaml.ScalarNode, Value: "image", Tag: "!!str"},
+				&yaml.Node{Kind: yaml.ScalarNode, Value: targetImage, Tag: "!!str"},
+			)
+			return true
+		}
+	}
+	return false
+}
+
+func atomicWriteSystemUpdateFile(path string, data []byte, mode os.FileMode) error {
+	temp, err := os.CreateTemp(filepath.Dir(path), ".nexustok-compose-*")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	defer func() {
+		_ = temp.Close()
+		_ = os.Remove(tempPath)
+	}()
+	if err := temp.Chmod(mode); err != nil {
+		return err
+	}
+	if _, err := temp.Write(data); err != nil {
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tempPath, path)
+}
+
+func restoreSystemUpdateComposeFiles(backups []systemUpdateComposeFileBackup) error {
+	var restoreErrs []string
+	for _, backup := range backups {
+		if err := atomicWriteSystemUpdateFile(backup.Path, backup.Data, backup.Mode); err != nil {
+			restoreErrs = append(restoreErrs, err.Error())
+		}
+	}
+	if len(restoreErrs) > 0 {
+		return errors.New(strings.Join(restoreErrs, "; "))
+	}
+	return nil
 }
 
 type dockerContainerReadiness struct {
@@ -1284,64 +1648,77 @@ type dockerContainerReadiness struct {
 	HealthcheckDegraded  bool
 }
 
-func (s *SystemUpdateService) recreateDockerContainer(ctx context.Context, client *dockerEngineClient, current *dockerInspectContainer, containerName string, backupName string, targetImage string) (string, dockerContainerReadiness, error) {
-	var preflightReadiness dockerContainerReadiness
-	if dockerCanRunParallelPreflight(current) {
-		preflightRequest := dockerCreateRequestFromInspectForMode(current, targetImage, dockerCreateRequestModePreflight)
-		preflightName := dockerPreflightContainerName(containerName)
-		preflightID, err := client.createContainer(ctx, preflightName, preflightRequest)
-		if err != nil {
-			return "", dockerContainerReadiness{}, fmt.Errorf("create preflight updated container failed: %w", err)
+func (s *SystemUpdateService) preflightDockerContainer(
+	ctx context.Context,
+	client *dockerEngineClient,
+	current *dockerInspectContainer,
+	containerName string,
+	targetImage string,
+) (dockerContainerReadiness, error) {
+	if !dockerCanRunParallelPreflight(current) {
+		return dockerContainerReadiness{}, nil
+	}
+	preflightRequest := dockerCreateRequestFromInspectForMode(current, targetImage, dockerCreateRequestModePreflight)
+	preflightName := dockerPreflightContainerName(containerName)
+	preflightID, err := client.createContainer(ctx, preflightName, preflightRequest)
+	if err != nil {
+		return dockerContainerReadiness{}, fmt.Errorf("create preflight updated container failed: %w", err)
+	}
+	if strings.TrimSpace(preflightID) == "" {
+		return dockerContainerReadiness{}, errors.New("create preflight updated container returned an empty container ID")
+	}
+	cleanupPreflight := func(cleanupCtx context.Context) error {
+		if err := client.removeContainer(cleanupCtx, preflightID, true); err != nil && !isDockerNotFoundError(err) {
+			return err
 		}
-		if strings.TrimSpace(preflightID) == "" {
-			return "", dockerContainerReadiness{}, errors.New("create preflight updated container returned an empty container ID")
+		return nil
+	}
+	if err := client.startContainer(ctx, preflightID); err != nil {
+		recoveryCtx, cancel := systemUpdateDockerRecoveryContext()
+		cleanupErr := cleanupPreflight(recoveryCtx)
+		cancel()
+		startErr := dockerUpdatedContainerStartError("start preflight updated container failed", err)
+		if cleanupErr != nil {
+			return dockerContainerReadiness{}, fmt.Errorf("%w; remove failed preflight container failed: %s", startErr, cleanupErr)
 		}
-		cleanupPreflight := func(cleanupCtx context.Context) error {
-			if err := client.removeContainer(cleanupCtx, preflightID, true); err != nil && !isDockerNotFoundError(err) {
-				return err
-			}
-			return nil
-		}
-		if err := client.startContainer(ctx, preflightID); err != nil {
-			recoveryCtx, cancel := systemUpdateDockerRecoveryContext()
-			cleanupErr := cleanupPreflight(recoveryCtx)
-			cancel()
-			startErr := dockerUpdatedContainerStartError("start preflight updated container failed", err)
-			if cleanupErr != nil {
-				return "", dockerContainerReadiness{}, fmt.Errorf("%w; remove failed preflight container failed: %s", startErr, cleanupErr)
-			}
-			return "", dockerContainerReadiness{}, startErr
-		}
-		readiness, err := waitDockerContainerReady(ctx, client, preflightID, 30*time.Second)
-		if err != nil {
-			recoveryCtx, cancel := systemUpdateDockerRecoveryContext()
-			cleanupErr := cleanupPreflight(recoveryCtx)
-			cancel()
-			if cleanupErr != nil {
-				return "", dockerContainerReadiness{}, fmt.Errorf("%w; remove failed preflight container failed: %s", err, cleanupErr)
-			}
-			return "", dockerContainerReadiness{}, err
-		}
+		return dockerContainerReadiness{}, startErr
+	}
+	readiness, err := waitDockerContainerReady(ctx, client, preflightID, 30*time.Second)
+	if err != nil {
 		recoveryCtx, cancel := systemUpdateDockerRecoveryContext()
 		cleanupErr := cleanupPreflight(recoveryCtx)
 		cancel()
 		if cleanupErr != nil {
-			return "", dockerContainerReadiness{}, fmt.Errorf("remove preflight updated container failed: %w", cleanupErr)
+			return dockerContainerReadiness{}, fmt.Errorf("%w; remove failed preflight container failed: %s", err, cleanupErr)
 		}
-		preflightReadiness = readiness
+		return dockerContainerReadiness{}, err
 	}
+	recoveryCtx, cancel := systemUpdateDockerRecoveryContext()
+	cleanupErr := cleanupPreflight(recoveryCtx)
+	cancel()
+	if cleanupErr != nil {
+		return dockerContainerReadiness{}, fmt.Errorf("remove preflight updated container failed: %w", cleanupErr)
+	}
+	return readiness, nil
+}
 
+func (s *SystemUpdateService) recreateDockerContainer(
+	ctx context.Context,
+	client *dockerEngineClient,
+	current *dockerInspectContainer,
+	containerName string,
+	targetImage string,
+	preflightReadiness dockerContainerReadiness,
+) (string, dockerContainerReadiness, bool, error) {
 	createRequest := dockerCreateRequestFromInspect(current, targetImage)
 	stagingName := dockerStagingContainerName(containerName)
 	failedName := dockerFailedContainerName(containerName)
-	oldBackupName := cleanDockerContainerName(backupName) + ".old-" + dockerUniqueSuffix()
-
 	stagingID, err := client.createContainer(ctx, stagingName, createRequest)
 	if err != nil {
-		return "", dockerContainerReadiness{}, fmt.Errorf("create updated container failed: %w", err)
+		return "", dockerContainerReadiness{}, false, fmt.Errorf("create updated container failed: %w", err)
 	}
 	if strings.TrimSpace(stagingID) == "" {
-		return "", dockerContainerReadiness{}, errors.New("create updated container returned an empty container ID")
+		return "", dockerContainerReadiness{}, false, errors.New("create updated container returned an empty container ID")
 	}
 	cleanupStaging := func() {
 		recoveryCtx, cancel := systemUpdateDockerRecoveryContext()
@@ -1352,7 +1729,6 @@ func (s *SystemUpdateService) recreateDockerContainer(ctx context.Context, clien
 	currentStopped := false
 	currentStaged := false
 	stagingActive := false
-	stableBackupStaged := false
 	restore := func(operationErr error) error {
 		recoveryCtx, cancel := systemUpdateDockerRecoveryContext()
 		defer cancel()
@@ -1365,11 +1741,6 @@ func (s *SystemUpdateService) recreateDockerContainer(ctx context.Context, clien
 		}
 		if err := client.removeContainer(recoveryCtx, stagingID, true); err != nil && !isDockerNotFoundError(err) {
 			restoreErrs = append(restoreErrs, "remove failed staging container: "+err.Error())
-		}
-		if stableBackupStaged {
-			if err := client.renameContainer(recoveryCtx, oldBackupName, backupName); err != nil {
-				restoreErrs = append(restoreErrs, "restore stable backup container: "+err.Error())
-			}
 		}
 		if currentStaged {
 			if err := client.renameContainer(recoveryCtx, failedName, containerName); err != nil {
@@ -1393,63 +1764,44 @@ func (s *SystemUpdateService) recreateDockerContainer(ctx context.Context, clien
 		cancel()
 		cleanupStaging()
 		if recoveryErr != nil {
-			return "", dockerContainerReadiness{}, fmt.Errorf(
+			return "", dockerContainerReadiness{}, false, fmt.Errorf(
 				"stop current container failed: %w; Docker update recovery failed: %s",
 				err,
 				recoveryErr,
 			)
 		}
-		return "", dockerContainerReadiness{}, fmt.Errorf("stop current container failed: %w", err)
+		return "", dockerContainerReadiness{}, false, fmt.Errorf("stop current container failed: %w", err)
 	}
 	currentStopped = true
 
 	if err := client.renameContainer(ctx, current.ID, failedName); err != nil {
-		return "", dockerContainerReadiness{}, restore(fmt.Errorf("stage current container failed: %w", err))
+		return "", dockerContainerReadiness{}, false, restore(fmt.Errorf("stage current container failed: %w", err))
 	}
 	currentStaged = true
 
 	if err := client.renameContainer(ctx, stagingID, containerName); err != nil {
-		return "", dockerContainerReadiness{}, restore(fmt.Errorf("activate updated container failed: %w", err))
+		return "", dockerContainerReadiness{}, false, restore(fmt.Errorf("activate updated container failed: %w", err))
 	}
 	stagingActive = true
 
 	if err := client.startContainer(ctx, stagingID); err != nil {
-		return "", dockerContainerReadiness{}, restore(dockerUpdatedContainerStartError("start updated container failed", err))
+		return "", dockerContainerReadiness{}, true, restore(dockerUpdatedContainerStartError("start updated container failed", err))
 	}
 	readiness, err := waitDockerContainerReady(ctx, client, stagingID, 30*time.Second)
 	if err != nil {
 		if preflightReadiness.Status != "" {
 			err = fmt.Errorf("updated container passed preflight with health status %q but failed after replacing the current container: %w", preflightReadiness.Status, err)
 		}
-		return "", dockerContainerReadiness{}, restore(err)
+		return "", dockerContainerReadiness{}, true, restore(err)
 	}
 
-	_, backupErr := client.inspectContainer(ctx, backupName)
-	hasStableBackup := backupErr == nil
-	if backupErr != nil && !isDockerNotFoundError(backupErr) {
-		return "", dockerContainerReadiness{}, restore(fmt.Errorf("inspect stable backup container failed: %w", backupErr))
-	}
-	if hasStableBackup {
-		if err := client.renameContainer(ctx, backupName, oldBackupName); err != nil {
-			return "", dockerContainerReadiness{}, restore(fmt.Errorf("stage stable backup container failed: %w", err))
-		}
-		stableBackupStaged = true
-	}
-	if err := client.renameContainer(ctx, failedName, backupName); err != nil {
-		return "", dockerContainerReadiness{}, restore(fmt.Errorf("commit current container backup failed: %w", err))
-	}
 	currentStaged = false
 	stagingActive = false
 	currentStopped = false
-	if hasStableBackup {
-		if err := client.removeContainer(ctx, oldBackupName, true); err != nil {
-			// The new current container and rollback slot are already valid. A
-			// stale uniquely named old slot is harmless and can be removed by
-			// an operator without affecting the active deployment.
-			logger.LogWarn(ctx, fmt.Sprintf("remove stale Docker backup container %s failed: %s", oldBackupName, maskSystemUpdateSensitiveInfo(err.Error())))
-		}
+	if err := client.removeContainer(ctx, failedName, true); err != nil && !isDockerNotFoundError(err) {
+		logger.LogWarn(ctx, fmt.Sprintf("remove failed Docker container %s failed: %s", failedName, maskSystemUpdateSensitiveInfo(err.Error())))
 	}
-	return stagingID, readiness, nil
+	return stagingID, readiness, true, nil
 }
 
 func restartDockerContainerAfterUpdateFailure(ctx context.Context, client *dockerEngineClient, containerID string, containerName string) error {
@@ -1632,130 +1984,6 @@ func waitDockerContainerReady(ctx context.Context, client *dockerEngineClient, c
 func waitDockerContainerRunning(ctx context.Context, client *dockerEngineClient, containerID string, timeout time.Duration) error {
 	_, err := waitDockerContainerReady(ctx, client, containerID, timeout)
 	return err
-}
-
-func (s *SystemUpdateService) performDockerRollbackInProcess(ctx context.Context, task *model.SystemTask, runnerID string, options dockerHelperOptions) (*SystemUpdateTaskResult, error) {
-	client := systemUpdateDockerClient(s.dockerSocketPathFn())
-	if err := client.ping(ctx); err != nil {
-		return nil, fmt.Errorf("Docker socket is not available: %w", err)
-	}
-	current, err := client.inspectContainer(ctx, firstNonEmptySystemUpdateString(options.CurrentContainerID, s.currentContainerIDFn()))
-	if err != nil {
-		return nil, fmt.Errorf("inspect current Docker container failed: %w", err)
-	}
-	containerName := canonicalDockerContainerName(current.Name)
-	if cleanDockerContainerName(current.Name) != containerName {
-		return nil, fmt.Errorf("当前 Docker 容器 %q 不是正式服务容器，拒绝从辅助容器执行回滚", cleanDockerContainerName(current.Name))
-	}
-	backupName := dockerBackupContainerName(containerName)
-	backup, err := client.inspectContainer(ctx, backupName)
-	if err != nil {
-		if isDockerNotFoundError(err) {
-			return nil, ErrSystemRollbackDisabled
-		}
-		return nil, fmt.Errorf("inspect Docker backup container failed: %w", err)
-	}
-	if backup.ID == current.ID {
-		return nil, ErrSystemRollbackDisabled
-	}
-	state := SystemUpdateTaskState{Phase: SystemUpdatePhaseRollingBack, Progress: 40, Mode: systemUpdateDeploymentDockerRun}
-	if err := updateSystemUpdateTaskState(task, runnerID, state); err != nil {
-		return nil, err
-	}
-	failedName := dockerFailedContainerName(containerName)
-	if err := client.stopContainer(ctx, current.ID, 20); err != nil {
-		recoveryCtx, cancel := systemUpdateDockerRecoveryContext()
-		recoveryErr := restartDockerContainerAfterUpdateFailure(recoveryCtx, client, current.ID, containerName)
-		cancel()
-		if recoveryErr != nil {
-			return nil, fmt.Errorf(
-				"stop current Docker container failed: %w; Docker rollback recovery failed: %s",
-				err,
-				recoveryErr,
-			)
-		}
-		return nil, fmt.Errorf("stop current Docker container failed: %w", err)
-	}
-	if err := client.renameContainer(ctx, current.ID, failedName); err != nil {
-		recoveryCtx, cancel := systemUpdateDockerRecoveryContext()
-		recoveryErr := restartDockerContainerAfterUpdateFailure(recoveryCtx, client, current.ID, containerName)
-		cancel()
-		if recoveryErr != nil {
-			return nil, fmt.Errorf(
-				"rename current Docker container failed: %w; Docker rollback recovery failed: %s",
-				err,
-				recoveryErr,
-			)
-		}
-		return nil, fmt.Errorf("rename current Docker container failed: %w", err)
-	}
-
-	restore := func(operationErr error) error {
-		recoveryCtx, cancel := systemUpdateDockerRecoveryContext()
-		defer cancel()
-		var restoreErrs []string
-
-		active, inspectErr := client.inspectContainer(recoveryCtx, containerName)
-		if inspectErr == nil && active.ID == backup.ID {
-			if active.State.Running {
-				if err := client.stopContainer(recoveryCtx, active.ID, 20); err != nil {
-					restoreErrs = append(restoreErrs, "stop failed rollback container: "+err.Error())
-				}
-			}
-			if err := client.renameContainer(recoveryCtx, containerName, backupName); err != nil {
-				restoreErrs = append(restoreErrs, "restore backup container name: "+err.Error())
-			}
-		} else if inspectErr != nil && !isDockerNotFoundError(inspectErr) {
-			restoreErrs = append(restoreErrs, "inspect active rollback container: "+inspectErr.Error())
-		}
-		if err := client.renameContainer(recoveryCtx, failedName, containerName); err != nil {
-			restoreErrs = append(restoreErrs, "restore current container: "+err.Error())
-		}
-		if err := client.startContainer(recoveryCtx, containerName); err != nil {
-			restoreErrs = append(restoreErrs, "restart current container: "+err.Error())
-		} else if err := confirmDockerContainerRunning(recoveryCtx, client, containerName); err != nil {
-			restoreErrs = append(restoreErrs, "confirm current container running: "+err.Error())
-		}
-		if len(restoreErrs) > 0 {
-			return fmt.Errorf("%w; Docker rollback recovery failed: %s", operationErr, strings.Join(restoreErrs, "; "))
-		}
-		return operationErr
-	}
-
-	if err := client.renameContainer(ctx, backup.ID, containerName); err != nil {
-		return nil, restore(fmt.Errorf("restore backup Docker container failed: %w", err))
-	}
-	if err := client.startContainer(ctx, containerName); err != nil {
-		return nil, restore(fmt.Errorf("start backup Docker container failed: %w", err))
-	}
-	readiness, err := waitDockerContainerReady(ctx, client, containerName, 30*time.Second)
-	if err != nil {
-		return nil, restore(fmt.Errorf("backup Docker container health check failed: %w", err))
-	}
-	if err := client.renameContainer(ctx, failedName, backupName); err != nil {
-		return nil, restore(fmt.Errorf("commit rolled-back Docker backup failed: %w", err))
-	}
-
-	state.Progress = 100
-	state.Phase = SystemUpdatePhaseReady
-	state.HealthStatus = readiness.Status
-	state.HealthcheckAvailable = readiness.HealthcheckAvailable
-	state.HealthcheckDegraded = readiness.HealthcheckDegraded
-	if err := updateSystemUpdateTaskState(task, runnerID, state); err != nil {
-		return nil, err
-	}
-	return &SystemUpdateTaskResult{
-		CurrentVersion:       s.currentVersionFn(),
-		Mode:                 systemUpdateDeploymentDockerRun,
-		OldContainerID:       current.ID,
-		NewContainerID:       backup.ID,
-		BackupContainerName:  backupName,
-		RestartRequired:      false,
-		RollbackAvailable:    true,
-		HealthStatus:         readiness.Status,
-		HealthcheckAvailable: readiness.HealthcheckAvailable,
-		HealthcheckDegraded:  readiness.HealthcheckDegraded,
-	}, nil
 }
 
 func minimalSystemUpdateDockerRunCommand(targetImage string, name string, binds []string, ports map[string][]dockerPortBinding, env []string) string {

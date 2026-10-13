@@ -207,7 +207,7 @@ Preview 或 `ChannelAccount` 同步链路。
 
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
 | --- | --- | --- | --- | --- | --- |
-| 2026-10-12 | Docker helper 异常清理与正式容器名边界 | helper 数据库初始化失败可能留下辅助容器；空数据库关闭可能触发 panic；异常当前容器名可能派生嵌套 `.backup` | helper 在数据库初始化前自清理；`CloseDB()` 对 nil 安全；更新/回滚只接受正式服务容器并使用单一稳定 backup 槽位 | Docker 更新/回滚、helper 生命周期和数据库资源关闭 | `main.go`、`model/main.go`、`service/system_update_docker.go`、`model/main_test.go`、`service/system_update_test.go`；不新增数据库迁移 |
+| 2026-10-13 | 按发布版本选择回滚与数据备份恢复 | 更新/回滚依赖裸机 `.backup` 文件或 Docker 稳定备份容器，维护页不能从已发布版本中选择目标 | `/api/system-update/latest` 返回已发布 Release 列表，更新/回滚按目标版本校验资产或镜像标签；Docker 先拉取镜像并 preflight，再备份 `/data`、日志和主数据库，Redis 不作为恢复源；成功后只保留正式目标容器，preflight/staging/failed 仅用于切换与失败恢复；不新增数据库 Schema 或迁移 | Root 维护接口、SystemTask JSON、裸机二进制、Docker helper/Compose、维护页面和数据备份 | `controller/system_update.go`、`service/system_update.go`、`service/system_update_backup.go`、`service/system_update_docker.go`、维护页测试；SQLite/本地定向测试通过，未执行生产切换、Docker 真实工具容器和完整三数据库实测 |
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 建立架构文档总索引、维护入口、状态定义和偏差判断方法 | `docs/architecture/`、后续功能文档维护流程 | `main.go`、`router/`、`middleware/`、`service/`、`model/`、`relay/`、`pkg/` 静态核对 |
 | 2026-09-26 | 平台站点同步回归修复 | 渠道 2、4、5 的登录响应分类、兼容回退边界和失败快照语义未在总索引中记录 | 记录真实登录 DTO、交互验证/WAF/网络诊断、404/405 回退和旧快照保留规则，并链接专项文档与测试入口 | 平台站点认证、同步、资源快照、路由可用性和管理员诊断 | `service/upstream_site.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`、`docs/upstream-channel-platform-sites.md` |
 | 2026-09-27 | 面板 Session 复用与品牌默认值 | 登录 Session 和默认产品名的当前事实入口未在总索引中明确 | 登记浏览器 SID 定位、原行复用/凭据轮换、默认活跃上限 `50`、AuthFlow 回滚以及 `NexusTok` 默认名称和旧配置迁移 | 登录、会话限制、前端展示和配置初始化 | 认证专项文档、限流专项文档、`model/frontend_option_migration.go`、回归测试 |

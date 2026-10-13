@@ -15,6 +15,8 @@ export const SYSTEM_UPDATE_PHASE_LABELS: Record<string, string> = {
   replacing: 'Replacing executable',
   ready: 'Ready to restart',
   rolling_back: 'Rolling back binary',
+  backing_up_data: 'Backing up application data',
+  restoring_data: 'Restoring application data',
   pulling_image: 'Pulling Docker image',
   starting_helper: 'Starting update helper',
   recreating_container: 'Recreating Docker container',
@@ -56,9 +58,9 @@ export function getSystemUpdateTaskSummary(task: SystemTask) {
   }
   if (task.type === 'system_rollback' && task.status === 'succeeded') {
     if (result?.restart_required === false || result?.health_status) {
-      return 'Docker container rollback applied.'
+      return 'Docker container switched to {{version}}.'
     }
-    return 'Rollback applied. Restart required.'
+    return 'Switched to {{version}}. Restart required.'
   }
   return getSystemUpdatePhaseLabel(state?.phase)
 }

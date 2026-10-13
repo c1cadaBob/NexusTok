@@ -37,6 +37,14 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Markdown } from '@/components/ui/markdown'
 import { Progress } from '@/components/ui/progress'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { formatTimestamp, formatTimestampToDate } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
@@ -76,6 +84,8 @@ export function UpdateCheckerSection(props: UpdateCheckerSectionProps) {
   const queryClient = useQueryClient()
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null)
   const [releaseDialogOpen, setReleaseDialogOpen] = useState(false)
+  const [rollbackDialogOpen, setRollbackDialogOpen] = useState(false)
+  const [selectedRollbackVersion, setSelectedRollbackVersion] = useState('')
   const [trackedTaskId, setTrackedTaskId] = useState<string | null>(null)
   const [restartProbing, setRestartProbing] = useState(false)
   const notifiedTaskIds = useRef(new Set<string>())
@@ -139,6 +149,28 @@ export function UpdateCheckerSection(props: UpdateCheckerSectionProps) {
   })
 
   const info = updateQuery.data
+  const availableRollbackReleases = useMemo(
+    () => info?.available_releases ?? [],
+    [info?.available_releases]
+  )
+  const rollbackTargetReleases = useMemo(
+    () =>
+      availableRollbackReleases.filter(
+        (release) => !release.current && release.available
+      ),
+    [availableRollbackReleases]
+  )
+  useEffect(() => {
+    const defaultRelease = rollbackTargetReleases[0]
+    if (
+      !selectedRollbackVersion ||
+      !rollbackTargetReleases.some(
+        (release) => release.tag_name === selectedRollbackVersion
+      )
+    ) {
+      setSelectedRollbackVersion(defaultRelease?.tag_name ?? '')
+    }
+  }, [rollbackTargetReleases, selectedRollbackVersion])
   const currentTask = useMemo(() => {
     if (trackedTaskQuery.data) return trackedTaskQuery.data
     if (isActiveTask(currentUpdateTaskQuery.data)) {
@@ -199,13 +231,15 @@ export function UpdateCheckerSection(props: UpdateCheckerSectionProps) {
   })
 
   const rollbackMutation = useMutation({
-    mutationFn: rollbackSystemUpdate,
+    mutationFn: (targetVersion: string) =>
+      rollbackSystemUpdate({ target_version: targetVersion }),
     onSuccess: (response) => {
       if (!response.success || !response.data) {
         throw new Error(response.message || t('Failed to roll back update'))
       }
       setTrackedTaskId(response.data.task_id)
       setConfirmAction(null)
+      setRollbackDialogOpen(false)
       toast.success(t('System rollback task started'))
       void invalidateSystemUpdateQueries()
     },
@@ -427,9 +461,10 @@ export function UpdateCheckerSection(props: UpdateCheckerSectionProps) {
                 <Button
                   type='button'
                   variant='outline'
-                  onClick={() => setConfirmAction('rollback')}
+                  onClick={() => setRollbackDialogOpen(true)}
                   disabled={
                     !info?.rollback_available ||
+                    rollbackTargetReleases.length === 0 ||
                     taskActive ||
                     rollbackMutation.isPending
                   }
@@ -578,6 +613,95 @@ export function UpdateCheckerSection(props: UpdateCheckerSectionProps) {
         )}
       </Dialog>
 
+      <Dialog
+        open={rollbackDialogOpen}
+        onOpenChange={setRollbackDialogOpen}
+        title={t('Select release to roll back to')}
+        description={t(
+          'Choose a published release for this deployment. The selected version will be downloaded and verified before the service is switched.'
+        )}
+        bodyClassName='space-y-4'
+        footer={
+          <>
+            <Button
+              type='button'
+              variant='secondary'
+              onClick={() => setRollbackDialogOpen(false)}
+            >
+              {t('Cancel')}
+            </Button>
+            <Button
+              type='button'
+              variant='destructive'
+              disabled={
+                !rollbackTargetReleases.some(
+                  (release) => release.tag_name === selectedRollbackVersion
+                )
+              }
+              onClick={() => {
+                setRollbackDialogOpen(false)
+                setConfirmAction('rollback')
+              }}
+            >
+              <RotateCcwIcon data-icon='inline-start' aria-hidden='true' />
+              {t('Continue')}
+            </Button>
+          </>
+        }
+      >
+        <Select
+          value={selectedRollbackVersion}
+          onValueChange={(value) => setSelectedRollbackVersion(value ?? '')}
+        >
+          <SelectTrigger
+            aria-label={t('Select a release')}
+            className='w-full'
+          >
+            <SelectValue placeholder={t('Select a release')} />
+          </SelectTrigger>
+          <SelectContent alignItemWithTrigger={false}>
+            <SelectGroup>
+              {availableRollbackReleases.map((release) => (
+                <SelectItem
+                  key={release.tag_name}
+                  value={release.tag_name}
+                  disabled={release.current || !release.available}
+                >
+                  <span className='flex min-w-0 flex-col'>
+                    <span className='flex items-center gap-2'>
+                      <span>{release.tag_name}</span>
+                      {release.current ? (
+                        <Badge variant='secondary'>{t('Current')}</Badge>
+                      ) : null}
+                      {release.prerelease ? (
+                        <Badge variant='outline'>{t('Pre-release')}</Badge>
+                      ) : null}
+                    </span>
+                    <span className='text-muted-foreground text-xs'>
+                      <span>
+                        {release.name || t('Published release')}
+                        {release.published_at
+                          ? ` · ${formatTimestampToDate(
+                              new Date(release.published_at).getTime(),
+                              'milliseconds'
+                            )}`
+                          : null}
+                      </span>
+                      {!release.available ? (
+                        <span className='block'>
+                          {release.unavailable_reason ||
+                            t('Release is not available for this deployment')}
+                        </span>
+                      ) : null}
+                    </span>
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </Dialog>
+
       <ConfirmDialog
         open={Boolean(confirmAction)}
         onOpenChange={(open) => {
@@ -597,7 +721,9 @@ export function UpdateCheckerSection(props: UpdateCheckerSectionProps) {
         isLoading={confirmLoading}
         handleConfirm={() => {
           if (confirmAction === 'apply') applyMutation.mutate()
-          if (confirmAction === 'rollback') rollbackMutation.mutate()
+          if (confirmAction === 'rollback') {
+            rollbackMutation.mutate(selectedRollbackVersion)
+          }
           if (confirmAction === 'restart') restartMutation.mutate()
         }}
       />
@@ -664,6 +790,27 @@ function TaskProgressPanel(props: {
             image: result?.target_image || state?.target_image,
           })}
         </div>
+        {state?.backup_status ? (
+          <div className='text-muted-foreground text-xs'>
+            {props.t('Data backup')}: {state.backup_status}
+          </div>
+        ) : null}
+        {state?.restore_status ? (
+          <div className='text-destructive text-xs'>
+            {props.t('Data restore')}: {state.restore_status}
+          </div>
+        ) : null}
+        {state?.data_restore_failed || result?.data_restore_failed ? (
+          <Alert variant='destructive'>
+            <ShieldAlertIcon aria-hidden='true' />
+            <AlertTitle>{props.t('Data restore failed')}</AlertTitle>
+            <AlertDescription>
+              {props.t(
+                'The data backup was kept because automatic data restoration failed. Review the task error before retrying.'
+              )}
+            </AlertDescription>
+          </Alert>
+        ) : null}
       </div>
     </div>
   )
@@ -840,10 +987,10 @@ function getConfirmContent(action: ConfirmAction | null) {
   }
   if (action === 'rollback') {
     return {
-      title: 'Rollback system update',
+      title: 'Switch to selected release',
       description:
-        'Exchange the current executable with the stable backup. The backup remains available for another rollback.',
-      confirmText: 'Rollback',
+        'Switch to the selected published release and automatically back up application data before changing the running service.',
+      confirmText: 'Switch release',
     }
   }
   return {

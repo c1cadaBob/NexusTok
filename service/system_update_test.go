@@ -1,6 +1,8 @@
 package service
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -23,6 +25,7 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 )
 
@@ -47,6 +50,7 @@ func setupSystemTaskServiceTestDB(t *testing.T) {
 
 type fakeSystemUpdateGitHubClient struct {
 	release       *systemUpdateGitHubRelease
+	releases      []*systemUpdateGitHubRelease
 	fetchErr      error
 	downloadData  []byte
 	checksumData  []byte
@@ -67,6 +71,21 @@ func (c *fakeSystemUpdateGitHubClient) FetchLatestRelease(_ context.Context, rep
 		return nil, c.fetchErr
 	}
 	return c.release, nil
+}
+
+func (c *fakeSystemUpdateGitHubClient) ListReleases(_ context.Context, repo string) ([]*systemUpdateGitHubRelease, error) {
+	c.requestedRepo = repo
+	c.fetchCount++
+	if c.fetchErr != nil {
+		return nil, c.fetchErr
+	}
+	if c.release == nil && len(c.releases) == 0 {
+		return nil, ErrSystemUpdateNoRelease
+	}
+	if len(c.releases) > 0 {
+		return c.releases, nil
+	}
+	return []*systemUpdateGitHubRelease{c.release}, nil
 }
 
 func (c *fakeSystemUpdateGitHubClient) DownloadFile(_ context.Context, _ string, dest string, _ int64, onProgress func(downloaded, total int64)) error {
@@ -154,7 +173,8 @@ func TestSystemUpdateCheckFindsApplicableLinuxAsset(t *testing.T) {
 
 func TestSystemUpdateCheckMatchesPublishedReleaseAssetNames(t *testing.T) {
 	release := &systemUpdateGitHubRelease{
-		TagName: "v0.2.1",
+		TagName:     "v0.2.1",
+		PublishedAt: "2026-10-01T00:00:00Z",
 		Assets: []systemUpdateGitHubAsset{
 			{
 				Name:               "nexustok-linux-amd64-v0.2.1",
@@ -189,7 +209,7 @@ func TestSystemUpdateCheckMapsGitHubNotFoundToNoReleaseInfoForDocker(t *testing.
 	info, err := service.CheckLatest(context.Background(), true)
 
 	require.NoError(t, err)
-	assert.True(t, info.HasUpdate)
+	assert.False(t, info.HasUpdate)
 	assert.False(t, info.CanApply)
 	assert.Equal(t, systemUpdateReleaseStatusNone, info.ReleaseStatus)
 	assert.Equal(t, systemUpdateBuildContainer, info.BuildType)
@@ -289,6 +309,73 @@ func TestSystemUpdateCheckUsesCacheAndForceRefresh(t *testing.T) {
 	assert.Equal(t, 2, client.fetchCount)
 }
 
+func TestSystemUpdateCheckListsAvailableReleasesAndMarksPrerelease(t *testing.T) {
+	current := testSystemUpdateRelease("v1.0.0")
+	current.PublishedAt = "2026-10-01T00:00:00Z"
+	latest := testSystemUpdateRelease("v1.2.0")
+	latest.PublishedAt = "2026-10-03T00:00:00Z"
+	prerelease := testSystemUpdateRelease("v1.1.0-rc.1")
+	prerelease.Prerelease = true
+	prerelease.PublishedAt = "2026-10-02T00:00:00Z"
+	draft := testSystemUpdateRelease("v9.0.0")
+	draft.Draft = true
+	invalid := &systemUpdateGitHubRelease{TagName: "nightly", PublishedAt: "2026-10-04T00:00:00Z"}
+	service := NewSystemUpdateService(&fakeSystemUpdateGitHubClient{
+		releases: []*systemUpdateGitHubRelease{current, latest, prerelease, draft, invalid},
+	})
+	service.currentVersionFn = func() string { return "v1.0.0" }
+	service.goosFn = func() string { return "linux" }
+	service.goarchFn = func() string { return "amd64" }
+	service.isContainerFn = func() bool { return false }
+
+	info, err := service.CheckLatest(context.Background(), true)
+
+	require.NoError(t, err)
+	require.Len(t, info.AvailableReleases, 3)
+	assert.Equal(t, "v1.2.0", info.AvailableReleases[0].TagName)
+	assert.Equal(t, "v1.1.0-rc.1", info.AvailableReleases[1].TagName)
+	assert.True(t, info.AvailableReleases[1].Prerelease)
+	assert.True(t, info.AvailableReleases[2].Current)
+	assert.True(t, info.RollbackAvailable)
+	assert.Equal(t, "v1.2.0", info.LatestVersion)
+}
+
+func TestSystemUpdateCheckUsesTargetRepositoryTagForDockerRelease(t *testing.T) {
+	current := testSystemUpdateRelease("v1.0.0")
+	latest := testSystemUpdateRelease("v1.2.0")
+	service := NewSystemUpdateService(&fakeSystemUpdateGitHubClient{
+		releases: []*systemUpdateGitHubRelease{latest, current},
+	})
+	service.currentVersionFn = func() string { return "v1.0.0" }
+	service.goosFn = func() string { return "linux" }
+	service.goarchFn = func() string { return "amd64" }
+	service.isContainerFn = func() bool { return true }
+	service.dockerSocketPathFn = func() string { return filepath.Join(t.TempDir(), "missing.sock") }
+
+	info, err := service.CheckLatest(context.Background(), true)
+
+	require.NoError(t, err)
+	require.Len(t, info.AvailableReleases, 2)
+	assert.Equal(t, "c1cadabob/nexustok:v1.2.0", info.AvailableReleases[0].DockerTargetImage)
+	assert.NotContains(t, info.AvailableReleases[0].DockerTargetImage, "latest")
+}
+
+func TestResolveTargetReleaseRejectsInvalidCurrentAndUnknownVersions(t *testing.T) {
+	current := testSystemUpdateRelease("v1.0.0")
+	target := testSystemUpdateRelease("v0.9.0")
+	service := newTestSystemUpdateService("v1.0.0", "linux", "amd64", false, current)
+	service.githubClient = &fakeSystemUpdateGitHubClient{releases: []*systemUpdateGitHubRelease{current, target}}
+	info, err := service.CheckLatest(context.Background(), true)
+	require.NoError(t, err)
+
+	_, err = service.resolveTargetRelease(context.Background(), info, "not-semver")
+	require.Error(t, err)
+	_, err = service.resolveTargetRelease(context.Background(), info, "v1.0.0")
+	require.Error(t, err)
+	_, err = service.resolveTargetRelease(context.Background(), info, "v9.9.9")
+	require.Error(t, err)
+}
+
 func TestSystemUpdateCheckDisablesContainerAndSourceBuilds(t *testing.T) {
 	release := testSystemUpdateRelease("v1.1.0")
 
@@ -317,7 +404,7 @@ func TestSystemUpdateCheckKeepsUnparseableBuildComparisonUnknown(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, systemUpdateComparisonUnknown, info.ComparisonStatus)
-	assert.True(t, info.HasUpdate)
+	assert.False(t, info.HasUpdate)
 	assert.False(t, info.CanApply)
 	assert.Contains(t, info.Warning, "Unable to compare")
 	assert.Contains(t, info.ApplyDisabledReason, "/var/run/docker.sock")
@@ -450,6 +537,70 @@ func TestSystemUpdateHTTPClientMapsGitHub404ToNoRelease(t *testing.T) {
 	require.ErrorIs(t, err, ErrSystemUpdateNoRelease)
 }
 
+func TestSystemUpdateHTTPClientListReleasesUsesPaginationAndFilters(t *testing.T) {
+	var requests []string
+	client := &systemUpdateHTTPClient{
+		metadataClient: &http.Client{
+			Transport: systemUpdateTestRoundTripper(func(request *http.Request) (*http.Response, error) {
+				requests = append(requests, request.URL.RawQuery)
+				var body string
+				switch request.URL.Query().Get("page") {
+				case "1":
+					pageReleases := make([]map[string]any, 0, 100)
+					pageReleases = append(pageReleases,
+						map[string]any{
+							"tag_name":     "v1.2.0",
+							"draft":        false,
+							"prerelease":   false,
+							"published_at": "2026-10-03T00:00:00Z",
+						},
+						map[string]any{
+							"tag_name":     "nightly",
+							"draft":        false,
+							"prerelease":   false,
+							"published_at": "2026-10-03T00:00:00Z",
+						},
+						map[string]any{
+							"tag_name":   "v9.0.0",
+							"draft":      true,
+							"prerelease": false,
+						},
+					)
+					for index := len(pageReleases); index < 100; index++ {
+						pageReleases = append(pageReleases, map[string]any{
+							"tag_name":     fmt.Sprintf("build-%d", index),
+							"draft":        false,
+							"prerelease":   false,
+							"published_at": "2026-10-01T00:00:00Z",
+						})
+					}
+					data, marshalErr := common.Marshal(pageReleases)
+					require.NoError(t, marshalErr)
+					body = string(data)
+				case "2":
+					body = `[{"tag_name":"v1.1.0-rc.1","draft":false,"prerelease":true,"published_at":"2026-10-02T00:00:00Z"}]`
+				default:
+					body = `[]`
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(body)),
+					Header:     make(http.Header),
+				}, nil
+			}),
+		},
+		metadataURLValidator: validateSystemUpdateGitHubAPIURL,
+	}
+
+	releases, err := client.ListReleases(context.Background(), systemUpdateDefaultGitHubRepo)
+
+	require.NoError(t, err)
+	require.Len(t, releases, 2)
+	assert.Equal(t, []string{"page=1&per_page=100", "page=2&per_page=100"}, requests)
+	assert.Equal(t, "v1.2.0", releases[0].TagName)
+	assert.True(t, releases[1].Prerelease)
+}
+
 func TestSystemUpdateRedirectCheckerRejectsUntrustedAssetHost(t *testing.T) {
 	request, err := http.NewRequest(http.MethodGet, "https://evil.example/file", nil)
 	require.NoError(t, err)
@@ -496,6 +647,134 @@ func TestSystemUpdateHTTPClientDownloadRejectsOversizedBodyWithoutContentLength(
 	assert.True(t, os.IsNotExist(statErr))
 }
 
+func TestCreateSystemUpdateBackupCapturesDataLogsAndSQLiteSidecars(t *testing.T) {
+	dataDir := t.TempDir()
+	logDir := t.TempDir()
+	backupDir := t.TempDir()
+	sqlitePath := filepath.Join(t.TempDir(), "nexustok.db")
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "settings.json"), []byte(`{"version":1}`), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(logDir, "app.log"), []byte("log"), 0600))
+	require.NoError(t, os.WriteFile(sqlitePath, []byte("sqlite"), 0600))
+	require.NoError(t, os.WriteFile(sqlitePath+"-wal", []byte("wal"), 0600))
+	require.NoError(t, os.WriteFile(sqlitePath+"-shm", []byte("shm"), 0600))
+
+	previousSQLitePath := common.SQLitePath
+	previousLogDir := common.LogDir
+	previousMainType := common.MainDatabaseType()
+	t.Cleanup(func() {
+		common.SQLitePath = previousSQLitePath
+		common.LogDir = previousLogDir
+		common.SetMainDatabaseType(previousMainType)
+	})
+	common.SQLitePath = sqlitePath
+	common.LogDir = &logDir
+	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
+	t.Setenv(systemUpdateDataDirEnv, dataDir)
+	t.Setenv(systemUpdateBackupDirEnv, backupDir)
+
+	backup, err := CreateSystemUpdateBackup(context.Background(), "v0.2.7")
+
+	require.NoError(t, err)
+	require.NotNil(t, backup)
+	assert.Equal(t, systemUpdateBackupStatusReady, backup.Status)
+	assert.Equal(t, 0700, int(fileModePerm(t, filepath.Join(backupDir, backup.ID))))
+	assert.Equal(t, 0600, int(fileModePerm(t, filepath.Join(backupDir, backup.ID, "manifest.json"))))
+
+	manifestData, err := os.ReadFile(filepath.Join(backupDir, backup.ID, "manifest.json"))
+	require.NoError(t, err)
+	var manifest systemUpdateBackupManifest
+	require.NoError(t, common.Unmarshal(manifestData, &manifest))
+	assert.Equal(t, "v0.2.7", manifest.Version)
+	assert.ElementsMatch(t,
+		[]string{"data", "logs", "sqlite", "sqlite-wal", "sqlite-shm"},
+		backupComponentNames(manifest.Components),
+	)
+}
+
+func TestSystemUpdateBackupExcludesBackupRootFromDataArchive(t *testing.T) {
+	dataDir := t.TempDir()
+	logDir := t.TempDir()
+	backupDir := filepath.Join(dataDir, "system-backups")
+	sqlitePath := filepath.Join(t.TempDir(), "nexustok.db")
+	require.NoError(t, os.MkdirAll(backupDir, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "settings.json"), []byte("settings"), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(backupDir, "old.bin"), []byte("old"), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(logDir, "app.log"), []byte("log"), 0600))
+	require.NoError(t, os.WriteFile(sqlitePath, []byte("db"), 0600))
+
+	previousSQLitePath := common.SQLitePath
+	previousLogDir := common.LogDir
+	previousMainType := common.MainDatabaseType()
+	t.Cleanup(func() {
+		common.SQLitePath = previousSQLitePath
+		common.LogDir = previousLogDir
+		common.SetMainDatabaseType(previousMainType)
+	})
+	common.SQLitePath = sqlitePath
+	common.LogDir = &logDir
+	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
+	t.Setenv(systemUpdateDataDirEnv, dataDir)
+	t.Setenv(systemUpdateBackupDirEnv, backupDir)
+
+	backup, err := CreateSystemUpdateBackup(context.Background(), "v1.0.0")
+	require.NoError(t, err)
+	archive, err := os.Open(filepath.Join(backupDir, backup.ID, "data.tar.gz"))
+	require.NoError(t, err)
+	defer archive.Close()
+	gzipReader, err := gzip.NewReader(archive)
+	require.NoError(t, err)
+	defer gzipReader.Close()
+	tarReader := tar.NewReader(gzipReader)
+	var names []string
+	for {
+		header, readErr := tarReader.Next()
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		require.NoError(t, readErr)
+		names = append(names, header.Name)
+	}
+	assert.Contains(t, names, "settings.json")
+	assert.NotContains(t, names, "system-backups/old.bin")
+}
+
+func TestRestoreSystemUpdateBackupRestoresFilesWithoutRedis(t *testing.T) {
+	dataDir := t.TempDir()
+	logDir := t.TempDir()
+	backupDir := t.TempDir()
+	sqlitePath := filepath.Join(t.TempDir(), "nexustok.db")
+	dataPath := filepath.Join(dataDir, "settings.json")
+	logPath := filepath.Join(logDir, "app.log")
+	require.NoError(t, os.WriteFile(dataPath, []byte("before"), 0600))
+	require.NoError(t, os.WriteFile(logPath, []byte("before-log"), 0600))
+	require.NoError(t, os.WriteFile(sqlitePath, []byte("before-db"), 0600))
+
+	previousSQLitePath := common.SQLitePath
+	previousLogDir := common.LogDir
+	previousMainType := common.MainDatabaseType()
+	t.Cleanup(func() {
+		common.SQLitePath = previousSQLitePath
+		common.LogDir = previousLogDir
+		common.SetMainDatabaseType(previousMainType)
+	})
+	common.SQLitePath = sqlitePath
+	common.LogDir = &logDir
+	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
+	t.Setenv(systemUpdateDataDirEnv, dataDir)
+	t.Setenv(systemUpdateBackupDirEnv, backupDir)
+
+	backup, err := CreateSystemUpdateBackup(context.Background(), "v0.2.7")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(dataPath, []byte("after"), 0600))
+	require.NoError(t, os.WriteFile(logPath, []byte("after-log"), 0600))
+	require.NoError(t, os.WriteFile(sqlitePath, []byte("after-db"), 0600))
+
+	require.NoError(t, RestoreSystemUpdateBackup(context.Background(), backup.ID))
+	assertFileContent(t, dataPath, "before")
+	assertFileContent(t, logPath, "before-log")
+	assertFileContent(t, sqlitePath, "before-db")
+}
+
 func TestVerifySystemUpdateChecksum(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "nexustok-v1.1.0")
@@ -522,93 +801,33 @@ func TestVerifySystemUpdateChecksumDetectsMissingAndMismatch(t *testing.T) {
 	require.Error(t, mismatchErr)
 }
 
-func TestReplaceSystemUpdateExecutableKeepsBackup(t *testing.T) {
+func TestReplaceSystemUpdateExecutableAtomicallyInstallsTarget(t *testing.T) {
 	dir := t.TempDir()
 	exePath := filepath.Join(dir, "nexustok")
 	newPath := filepath.Join(dir, "new-nexustok")
 	require.NoError(t, os.WriteFile(exePath, []byte("old"), 0755))
 	require.NoError(t, os.WriteFile(newPath, []byte("new"), 0755))
 
-	backupPath, err := replaceSystemUpdateExecutable(exePath, newPath)
+	err := replaceSystemUpdateExecutableAtomically(exePath, newPath)
 
 	require.NoError(t, err)
-	assert.Equal(t, exePath+".backup", backupPath)
 	assertFileContent(t, exePath, "new")
-	assertFileContent(t, backupPath, "old")
+	_, statErr := os.Stat(exePath + ".backup")
+	assert.True(t, os.IsNotExist(statErr))
 }
 
-func TestReplaceSystemUpdateExecutableRestoresBackupWhenNewRenameFails(t *testing.T) {
+func TestReplaceSystemUpdateExecutableRestoresOriginalWhenTargetMissing(t *testing.T) {
 	dir := t.TempDir()
 	exePath := filepath.Join(dir, "nexustok")
 	missingNewPath := filepath.Join(dir, "missing-nexustok")
 	require.NoError(t, os.WriteFile(exePath, []byte("old"), 0755))
 
-	err := func() error {
-		_, replaceErr := replaceSystemUpdateExecutable(exePath, missingNewPath)
-		return replaceErr
-	}()
+	err := replaceSystemUpdateExecutableAtomically(exePath, missingNewPath)
 
 	require.Error(t, err)
 	assertFileContent(t, exePath, "old")
 	_, statErr := os.Stat(exePath + ".backup")
 	assert.True(t, os.IsNotExist(statErr))
-}
-
-func TestReplaceSystemUpdateExecutableKeepsExistingBackupWhenCommitCannotStart(t *testing.T) {
-	dir := t.TempDir()
-	exePath := filepath.Join(dir, "nexustok")
-	newPath := filepath.Join(dir, "new-nexustok")
-	require.NoError(t, os.WriteFile(exePath, []byte("old"), 0755))
-	require.NoError(t, os.WriteFile(newPath, []byte("new"), 0755))
-	backupPath := exePath + ".backup"
-	require.NoError(t, os.WriteFile(backupPath, []byte("previous-backup"), 0755))
-
-	originalRename := systemUpdateRename
-	t.Cleanup(func() { systemUpdateRename = originalRename })
-	failed := false
-	systemUpdateRename = func(source string, destination string) error {
-		if destination == backupPath && !failed {
-			failed = true
-			return errors.New("injected backup commit failure")
-		}
-		return os.Rename(source, destination)
-	}
-	_, err := replaceSystemUpdateExecutable(exePath, newPath)
-
-	require.Error(t, err)
-	assertFileContent(t, exePath, "old")
-	assertFileContent(t, backupPath, "previous-backup")
-}
-
-func TestReplaceSystemUpdateExecutableRestoresCurrentAndBackupAfterEachExchangeFailure(t *testing.T) {
-	for _, failAt := range []int{1, 2, 3, 4} {
-		t.Run(fmt.Sprintf("rename-%d", failAt), func(t *testing.T) {
-			dir := t.TempDir()
-			exePath := filepath.Join(dir, "nexustok")
-			newPath := filepath.Join(dir, "new-nexustok")
-			backupPath := exePath + ".backup"
-			require.NoError(t, os.WriteFile(exePath, []byte("old"), 0710))
-			require.NoError(t, os.WriteFile(newPath, []byte("new"), 0755))
-			require.NoError(t, os.WriteFile(backupPath, []byte("previous-backup"), 0600))
-
-			originalRename := systemUpdateRename
-			t.Cleanup(func() { systemUpdateRename = originalRename })
-			calls := 0
-			systemUpdateRename = func(source string, destination string) error {
-				calls++
-				if calls == failAt {
-					return errors.New("injected rename failure")
-				}
-				return os.Rename(source, destination)
-			}
-
-			_, err := replaceSystemUpdateExecutable(exePath, newPath)
-
-			require.Error(t, err)
-			assertFileContent(t, exePath, "old")
-			assertFileContent(t, backupPath, "previous-backup")
-		})
-	}
 }
 
 func TestReplaceSystemUpdateExecutablePreservesCurrentPermissions(t *testing.T) {
@@ -618,7 +837,7 @@ func TestReplaceSystemUpdateExecutablePreservesCurrentPermissions(t *testing.T) 
 	require.NoError(t, os.WriteFile(exePath, []byte("old"), 0710))
 	require.NoError(t, os.WriteFile(newPath, []byte("new"), 0755))
 
-	_, err := replaceSystemUpdateExecutable(exePath, newPath)
+	err := replaceSystemUpdateExecutableAtomically(exePath, newPath)
 
 	require.NoError(t, err)
 	info, err := os.Stat(exePath)
@@ -626,85 +845,91 @@ func TestReplaceSystemUpdateExecutablePreservesCurrentPermissions(t *testing.T) 
 	assert.Equal(t, os.FileMode(0710), info.Mode().Perm())
 }
 
-func TestPerformRollbackSwapsCurrentAndBackup(t *testing.T) {
+func TestPerformRollbackDownloadsSelectedRelease(t *testing.T) {
 	dir := t.TempDir()
 	exePath := filepath.Join(dir, "nexustok")
-	backupPath := exePath + ".backup"
-	require.NoError(t, os.WriteFile(exePath, []byte("new"), 0755))
-	require.NoError(t, os.WriteFile(backupPath, []byte("old"), 0755))
-	service := newTestSystemUpdateService("v1.1.0", "linux", "amd64", false, testSystemUpdateRelease("v1.1.0"))
+	currentRelease := testSystemUpdateRelease("v1.1.0")
+	targetRelease := testSystemUpdateRelease("v1.0.0")
+	client := &fakeSystemUpdateGitHubClient{
+		release:      currentRelease,
+		releases:     []*systemUpdateGitHubRelease{currentRelease, targetRelease},
+		downloadData: []byte("target"),
+	}
+	sum := sha256.Sum256(client.downloadData)
+	client.checksumData = []byte(hex.EncodeToString(sum[:]) + "  nexustok-v1.0.0\n")
+	service := NewSystemUpdateService(client)
+	service.currentVersionFn = func() string { return "v1.1.0" }
+	service.goosFn = func() string { return "linux" }
+	service.goarchFn = func() string { return "amd64" }
+	service.isContainerFn = func() bool { return false }
 	service.executableFn = func() (string, error) { return exePath, nil }
 	service.evalSymlinksFn = func(path string) (string, error) { return path, nil }
+	service.backupFn = func(context.Context, string) (*SystemUpdateBackup, error) {
+		return &SystemUpdateBackup{ID: "backup-test", Status: systemUpdateBackupStatusReady}, nil
+	}
+	require.NoError(t, os.WriteFile(exePath, []byte("current"), 0755))
 
-	result, err := service.PerformRollback(context.Background(), nil, "")
+	setupSystemTaskServiceTestDB(t)
+	task, err := model.CreateSystemTask(
+		model.SystemTaskTypeSystemRollback,
+		SystemUpdateTaskPayload{TargetVersion: "v1.0.0"},
+		nil,
+	)
+	require.NoError(t, err)
+	task, claimed, err := model.ClaimSystemTask(
+		task.ID,
+		model.SystemTaskTypeSystemRollback,
+		"runner",
+		common.GetTimestamp()+60,
+	)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	result, err := service.PerformRollback(context.Background(), task, "runner")
 
 	require.NoError(t, err)
 	assert.True(t, result.RestartRequired)
-	assertFileContent(t, exePath, "old")
-	assertFileContent(t, backupPath, "new")
+	assert.Equal(t, "v1.0.0", result.TargetVersion)
+	assertFileContent(t, exePath, "target")
+	_, statErr := os.Stat(exePath + ".backup")
+	assert.True(t, os.IsNotExist(statErr))
+	resultJSON, err := common.Marshal(result)
+	require.NoError(t, err)
+	assert.NotContains(t, string(resultJSON), "current_executable")
 }
 
-func TestPerformRollbackCanBeRepeated(t *testing.T) {
+func TestSystemUpdateDatabaseToolsUseDumpOutputAndRestoreInput(t *testing.T) {
 	dir := t.TempDir()
-	exePath := filepath.Join(dir, "nexustok")
-	backupPath := exePath + ".backup"
-	require.NoError(t, os.WriteFile(exePath, []byte("new"), 0755))
-	require.NoError(t, os.WriteFile(backupPath, []byte("old"), 0755))
-	require.NoError(t, swapSystemUpdateExecutables(exePath, backupPath))
-	assertFileContent(t, exePath, "old")
-	assertFileContent(t, backupPath, "new")
-	require.NoError(t, swapSystemUpdateExecutables(exePath, backupPath))
-	assertFileContent(t, exePath, "new")
-	assertFileContent(t, backupPath, "old")
-}
+	dumpScript := filepath.Join(dir, "pg_dump")
+	restoreScript := filepath.Join(dir, "psql")
+	require.NoError(t, os.WriteFile(dumpScript, []byte("#!/bin/sh\nprintf 'dumped sql'\n"), 0755))
+	require.NoError(t, os.WriteFile(restoreScript, []byte("#!/bin/sh\ncat\n"), 0755))
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-func TestSwapSystemUpdateExecutablesRestoresBothFilesAfterEachRenameFailure(t *testing.T) {
-	for _, failAt := range []int{1, 2, 3} {
-		t.Run(fmt.Sprintf("rename-%d", failAt), func(t *testing.T) {
-			dir := t.TempDir()
-			exePath := filepath.Join(dir, "nexustok")
-			backupPath := exePath + ".backup"
-			require.NoError(t, os.WriteFile(exePath, []byte("new"), 0710))
-			require.NoError(t, os.WriteFile(backupPath, []byte("old"), 0600))
+	dumpPath := filepath.Join(t.TempDir(), "postgres.sql")
+	require.NoError(t, runSystemUpdateDatabaseTool(
+		context.Background(),
+		"pg_dump",
+		nil,
+		dumpPath,
+		[]string{"PGPASSWORD=test-only-secret"},
+	))
+	assertFileContent(t, dumpPath, "dumped sql")
 
-			originalRename := systemUpdateRename
-			t.Cleanup(func() { systemUpdateRename = originalRename })
-			calls := 0
-			systemUpdateRename = func(source string, destination string) error {
-				calls++
-				if calls == failAt {
-					return errors.New("injected rename failure")
-				}
-				return os.Rename(source, destination)
-			}
-
-			err := swapSystemUpdateExecutables(exePath, backupPath)
-
-			require.Error(t, err)
-			assertFileContent(t, exePath, "new")
-			assertFileContent(t, backupPath, "old")
-		})
-	}
-}
-
-func TestPerformRollbackRequiresBackup(t *testing.T) {
-	dir := t.TempDir()
-	exePath := filepath.Join(dir, "nexustok")
-	require.NoError(t, os.WriteFile(exePath, []byte("new"), 0755))
-	service := newTestSystemUpdateService("v1.1.0", "linux", "amd64", false, testSystemUpdateRelease("v1.1.0"))
-	service.executableFn = func() (string, error) { return exePath, nil }
-	service.evalSymlinksFn = func(path string) (string, error) { return path, nil }
-
-	_, err := service.PerformRollback(context.Background(), nil, "")
-
-	require.ErrorIs(t, err, ErrSystemRollbackDisabled)
+	require.NoError(t, runSystemUpdateDatabaseTool(
+		context.Background(),
+		"psql",
+		nil,
+		dumpPath,
+		[]string{"PGPASSWORD=test-only-secret"},
+	))
+	assert.True(t, systemUpdateDatabaseToolWritesOutput("pg_dump"))
+	assert.False(t, systemUpdateDatabaseToolWritesOutput("psql"))
 }
 
 func TestPerformRollbackDisablesRunningWindowsExecutable(t *testing.T) {
 	dir := t.TempDir()
 	exePath := filepath.Join(dir, "nexustok.exe")
 	require.NoError(t, os.WriteFile(exePath, []byte("new"), 0755))
-	require.NoError(t, os.WriteFile(exePath+".backup", []byte("old"), 0755))
 	service := newTestSystemUpdateService("v1.1.0", "windows", "amd64", false, testSystemUpdateRelease("v1.1.0"))
 	service.executableFn = func() (string, error) { return exePath, nil }
 	service.evalSymlinksFn = func(path string) (string, error) { return path, nil }
@@ -713,19 +938,6 @@ func TestPerformRollbackDisablesRunningWindowsExecutable(t *testing.T) {
 
 	require.ErrorIs(t, err, ErrSystemUpdateDisabled)
 	assertFileContent(t, exePath, "new")
-	assertFileContent(t, exePath+".backup", "old")
-}
-
-func TestRollbackAvailableRejectsDirectoryBackup(t *testing.T) {
-	dir := t.TempDir()
-	exePath := filepath.Join(dir, "nexustok")
-	require.NoError(t, os.WriteFile(exePath, []byte("new"), 0755))
-	require.NoError(t, os.Mkdir(exePath+".backup", 0755))
-	service := newTestSystemUpdateService("v1.1.0", "linux", "amd64", false, testSystemUpdateRelease("v1.1.0"))
-	service.executableFn = func() (string, error) { return exePath, nil }
-	service.evalSymlinksFn = func(path string) (string, error) { return path, nil }
-
-	assert.False(t, service.RollbackAvailable())
 }
 
 func TestStartSystemUpdateTaskReturnsActiveTaskBeforeCheckingRelease(t *testing.T) {
@@ -739,12 +951,12 @@ func TestStartSystemUpdateTaskReturnsActiveTaskBeforeCheckingRelease(t *testing.
 	require.Equal(t, activeTask.TaskID, task.TaskID)
 }
 
-func TestStartSystemRollbackTaskReturnsActiveTaskBeforeCheckingBackup(t *testing.T) {
+func TestStartSystemRollbackTaskReturnsActiveTaskBeforeCheckingRelease(t *testing.T) {
 	setupSystemTaskServiceTestDB(t)
 	activeTask, err := model.CreateSystemTaskWithActiveKey(model.SystemTaskTypeSystemUpdate, systemUpdateActiveKey, nil, nil)
 	require.NoError(t, err)
 
-	task, err := StartSystemRollbackTask()
+	task, err := StartSystemRollbackTask(context.Background(), "v1.0.0")
 
 	require.NoError(t, err)
 	require.Equal(t, activeTask.TaskID, task.TaskID)
@@ -1183,6 +1395,10 @@ func dockerTestService(fake *fakeDockerEngine, currentID *string) *SystemUpdateS
 	service.isContainerFn = func() bool { return true }
 	service.dockerSocketPathFn = func() string { return "unused" }
 	service.currentContainerIDFn = func() string { return *currentID }
+	service.backupFn = func(context.Context, string) (*SystemUpdateBackup, error) {
+		return &SystemUpdateBackup{ID: "docker-backup-test", Status: systemUpdateBackupStatusReady}, nil
+	}
+	service.restoreFn = func(context.Context, string) error { return nil }
 	return service
 }
 
@@ -1298,7 +1514,7 @@ func TestDockerUpdatedContainerStartErrorExplainsPortConflictAndMasksSecrets(t *
 	assert.NotContains(t, text, "token-secret")
 }
 
-func TestDockerUpdateKeepsStableBackupAndCleansFailedStagingContainer(t *testing.T) {
+func TestDockerUpdateKeepsOnlyFormalTargetContainer(t *testing.T) {
 	fake := newFakeDockerEngine()
 	current := &dockerInspectContainer{
 		ID:   "current-id",
@@ -1316,14 +1532,7 @@ func TestDockerUpdateKeepsStableBackupAndCleansFailedStagingContainer(t *testing
 			Health:  &dockerContainerHealth{Status: "healthy"},
 		},
 	}
-	backup := &dockerInspectContainer{
-		ID:     "backup-id",
-		Name:   "/nexustok.backup",
-		Config: dockerContainerConfig{Image: "c1cadabob/nexustok:previous"},
-		State:  dockerContainerState{Status: "exited"},
-	}
 	fake.addContainer(current)
-	fake.addContainer(backup)
 	currentID := current.ID
 	service := dockerTestService(fake, &currentID)
 	originalFactory := systemUpdateDockerClientFactory
@@ -1345,8 +1554,8 @@ func TestDockerUpdateKeepsStableBackupAndCleansFailedStagingContainer(t *testing
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, "c1cadabob/nexustok:new", fake.findContainer("nexustok").Config.Image)
-	assert.Equal(t, "c1cadabob/nexustok:old", fake.findContainer("nexustok.backup").Config.Image)
-	assert.True(t, result.RollbackAvailable)
+	assert.Nil(t, fake.findContainer("nexustok.backup"))
+	assert.False(t, result.RollbackAvailable)
 	assert.Equal(t, "healthy", result.HealthStatus)
 	startIndex := -1
 	stopIndex := -1
@@ -1400,14 +1609,7 @@ func TestDockerUpdateUsesPortlessPreflightBeforeReplacingPortBoundContainer(t *t
 			Health:  &dockerContainerHealth{Status: "healthy"},
 		},
 	}
-	backup := &dockerInspectContainer{
-		ID:     "backup-id",
-		Name:   "/nexustok.backup",
-		Config: dockerContainerConfig{Image: "c1cadabob/nexustok:previous"},
-		State:  dockerContainerState{Status: "exited"},
-	}
 	fake.addContainer(current)
-	fake.addContainer(backup)
 	currentID := current.ID
 	service := dockerTestService(fake, &currentID)
 	originalFactory := systemUpdateDockerClientFactory
@@ -1441,11 +1643,55 @@ func TestDockerUpdateUsesPortlessPreflightBeforeReplacingPortBoundContainer(t *t
 	assert.Equal(t, "nexustok", final.Request.Labels["com.docker.compose.service"])
 	assert.Equal(t, []string{"nexustok", "nexustok-1"}, final.Request.NetworkingConfig.EndpointsConfig["nexustok-network"].Aliases)
 	assert.Equal(t, "c1cadabob/nexustok:new", fake.findContainer("nexustok").Config.Image)
-	assert.Equal(t, "c1cadabob/nexustok:old", fake.findContainer("nexustok.backup").Config.Image)
 	assert.Equal(t, []string{preflight.Name, "nexustok"}, fake.startedNames)
 	assert.False(t, fake.hasContainerNamePrefix("nexustok.preflight-"))
 	assert.False(t, fake.hasContainerNamePrefix("nexustok.staging-"))
 	assert.False(t, fake.hasContainerNamePrefix("nexustok.failed-"))
+}
+
+func TestReplaceComposeServiceImageOnlyChangesTargetService(t *testing.T) {
+	var document yaml.Node
+	require.NoError(t, yaml.Unmarshal([]byte(`
+services:
+  nexustok:
+    image: c1cadabob/nexustok:old
+  postgres:
+    image: postgres:15-alpine
+`), &document))
+
+	require.True(t, replaceComposeServiceImage(&document, "nexustok", "c1cadabob/nexustok:v0.2.7"))
+	data, err := yaml.Marshal(&document)
+	require.NoError(t, err)
+	text := string(data)
+	assert.Contains(t, text, "image: c1cadabob/nexustok:v0.2.7")
+	assert.Contains(t, text, "image: postgres:15-alpine")
+}
+
+func TestPrepareComposeImageUpdatesAtomicallyAndCanRestore(t *testing.T) {
+	dir := t.TempDir()
+	composePath := filepath.Join(dir, "compose.yml")
+	original := []byte("services:\n  nexustok:\n    image: c1cadabob/nexustok:old\n")
+	require.NoError(t, os.WriteFile(composePath, original, 0640))
+	current := &dockerInspectContainer{
+		Config: dockerContainerConfig{
+			Labels: map[string]string{
+				"com.docker.compose.service":              "nexustok",
+				"com.docker.compose.project.config_files": composePath,
+			},
+		},
+	}
+
+	backups, err := prepareSystemUpdateComposeImage(current, "c1cadabob/nexustok:v0.2.7")
+	require.NoError(t, err)
+	updated, err := os.ReadFile(composePath)
+	require.NoError(t, err)
+	assert.Contains(t, string(updated), "c1cadabob/nexustok:v0.2.7")
+	assert.NotEqual(t, string(original), string(updated))
+	require.NoError(t, restoreSystemUpdateComposeFiles(backups))
+	restored, err := os.ReadFile(composePath)
+	require.NoError(t, err)
+	assert.Equal(t, string(original), string(restored))
+	assert.Equal(t, os.FileMode(0640), fileModePerm(t, composePath))
 }
 
 func TestDockerUpdateFailureRestoresCurrentAndRemovesStaging(t *testing.T) {
@@ -1489,7 +1735,7 @@ func TestDockerUpdateFailureRestoresCurrentAndRemovesStaging(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Equal(t, "c1cadabob/nexustok:old", fake.findContainer("nexustok").Config.Image)
-	assert.Equal(t, "c1cadabob/nexustok:previous", fake.findContainer("nexustok.backup").Config.Image)
+	assert.Nil(t, fake.findContainer("nexustok.backup"))
 	assert.NotNil(t, fake.findContainer("nexustok"))
 	assert.False(t, fake.hasContainerNamePrefix("nexustok.staging-"))
 }
@@ -1565,7 +1811,7 @@ func TestDockerUpdateFailureBeforeReplacementKeepsCurrentAndBackup(t *testing.T)
 			require.Error(t, err)
 			assert.Equal(t, "c1cadabob/nexustok:old", fake.findContainer("nexustok").Config.Image)
 			assert.True(t, fake.findContainer("nexustok").State.Running)
-			assert.Equal(t, "c1cadabob/nexustok:previous", fake.findContainer("nexustok.backup").Config.Image)
+			assert.Nil(t, fake.findContainer("nexustok.backup"))
 			assert.False(t, fake.hasContainerNamePrefix("nexustok.staging-"))
 			assert.False(t, fake.hasContainerNamePrefix("nexustok.failed-"))
 		})
@@ -1637,12 +1883,89 @@ func TestDockerUpdateFailureAfterFinalStartRestoresCurrentAndBackup(t *testing.T
 			require.Error(t, err)
 			assert.Equal(t, "c1cadabob/nexustok:old", fake.findContainer("nexustok").Config.Image)
 			assert.True(t, fake.findContainer("nexustok").State.Running)
-			assert.Equal(t, "c1cadabob/nexustok:previous", fake.findContainer("nexustok.backup").Config.Image)
+			assert.Nil(t, fake.findContainer("nexustok.backup"))
 			assert.False(t, fake.hasContainerNamePrefix("nexustok.preflight-"))
 			assert.False(t, fake.hasContainerNamePrefix("nexustok.staging-"))
 			assert.False(t, fake.hasContainerNamePrefix("nexustok.failed-"))
 		})
 	}
+}
+
+func TestDockerUpdateDataBackupFailureKeepsCurrentContainerRunning(t *testing.T) {
+	fake := newFakeDockerEngine()
+	current := &dockerInspectContainer{
+		ID:   "current-id",
+		Name: "/nexustok",
+		Config: dockerContainerConfig{
+			Image:       "c1cadabob/nexustok:old",
+			Healthcheck: &dockerHealthcheck{Test: []string{"CMD-SHELL", "true"}},
+		},
+		State: dockerContainerState{Running: true, Status: "running"},
+	}
+	fake.addContainer(current)
+	currentID := current.ID
+	service := dockerTestService(fake, &currentID)
+	service.backupFn = func(context.Context, string) (*SystemUpdateBackup, error) {
+		return nil, errors.New("backup unavailable")
+	}
+	originalFactory := systemUpdateDockerClientFactory
+	t.Cleanup(func() { systemUpdateDockerClientFactory = originalFactory })
+	client, closeServer := fake.client(t)
+	t.Cleanup(closeServer)
+	systemUpdateDockerClientFactory = func(string) *dockerEngineClient { return client }
+
+	_, err := service.performDockerUpdateInProcess(
+		context.Background(),
+		nil,
+		"runner",
+		dockerHelperOptions{TargetImage: "c1cadabob/nexustok:new"},
+	)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "create system update data backup failed")
+	assert.True(t, fake.findContainer("nexustok").State.Running)
+	assert.Equal(t, "c1cadabob/nexustok:old", fake.findContainer("nexustok").Config.Image)
+	assert.NotEmpty(t, fake.createRequests)
+	assert.Contains(t, fake.createRequests[0].Name, "nexustok.preflight-")
+	assert.False(t, fake.hasContainerNamePrefix("nexustok.staging-"))
+	assert.NotContains(t, fake.events, "stop:current-id")
+}
+
+func TestDockerUpdateDataRestoreFailureIsReportedAfterContainerSwitch(t *testing.T) {
+	fake := newFakeDockerEngine()
+	current := &dockerInspectContainer{
+		ID:   "current-id",
+		Name: "/nexustok",
+		Config: dockerContainerConfig{
+			Image:       "c1cadabob/nexustok:old",
+			Healthcheck: &dockerHealthcheck{Test: []string{"CMD-SHELL", "true"}},
+		},
+		State: dockerContainerState{Running: true, Status: "running"},
+	}
+	fake.addContainer(current)
+	fake.healthByNameImage["nexustok\x00c1cadabob/nexustok:new"] = "unhealthy"
+	currentID := current.ID
+	service := dockerTestService(fake, &currentID)
+	service.restoreFn = func(context.Context, string) error {
+		return errors.New("restore unavailable")
+	}
+	originalFactory := systemUpdateDockerClientFactory
+	t.Cleanup(func() { systemUpdateDockerClientFactory = originalFactory })
+	client, closeServer := fake.client(t)
+	t.Cleanup(closeServer)
+	systemUpdateDockerClientFactory = func(string) *dockerEngineClient { return client }
+
+	_, err := service.performDockerUpdateInProcess(
+		context.Background(),
+		nil,
+		"runner",
+		dockerHelperOptions{TargetImage: "c1cadabob/nexustok:new"},
+	)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "data_restore_failed")
+	assert.True(t, fake.findContainer("nexustok").State.Running)
+	assert.Equal(t, "c1cadabob/nexustok:old", fake.findContainer("nexustok").Config.Image)
 }
 
 func TestDockerUpdateSkipsParallelPreflightForHostAndContainerNetworkModes(t *testing.T) {
@@ -1688,7 +2011,7 @@ func TestDockerUpdateSkipsParallelPreflightForHostAndContainerNetworkModes(t *te
 	}
 }
 
-func TestDockerUpdateFailureWhenBackupCommitFailsRestoresStableState(t *testing.T) {
+func TestDockerUpdateIgnoresLegacyBackupContainer(t *testing.T) {
 	fake := newFakeDockerEngine()
 	current := &dockerInspectContainer{
 		ID:   "current-id",
@@ -1707,8 +2030,6 @@ func TestDockerUpdateFailureWhenBackupCommitFailsRestoresStableState(t *testing.
 	}
 	fake.addContainer(current)
 	fake.addContainer(backup)
-	fake.failRenameTo["nexustok.backup"] = 1
-
 	currentID := current.ID
 	service := dockerTestService(fake, &currentID)
 	originalFactory := systemUpdateDockerClientFactory
@@ -1717,17 +2038,17 @@ func TestDockerUpdateFailureWhenBackupCommitFailsRestoresStableState(t *testing.
 	t.Cleanup(closeServer)
 	systemUpdateDockerClientFactory = func(string) *dockerEngineClient { return client }
 
-	_, err := service.performDockerUpdateInProcess(
+	result, err := service.performDockerUpdateInProcess(
 		context.Background(),
 		nil,
 		"runner",
 		dockerHelperOptions{TargetImage: "c1cadabob/nexustok:new"},
 	)
 
-	require.Error(t, err)
-	assert.Equal(t, "c1cadabob/nexustok:old", fake.findContainer("nexustok").Config.Image)
-	assert.True(t, fake.findContainer("nexustok").State.Running)
-	assert.Equal(t, "c1cadabob/nexustok:previous", fake.findContainer("nexustok.backup").Config.Image)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "c1cadabob/nexustok:new", fake.findContainer("nexustok").Config.Image)
+	assert.Nil(t, fake.findContainer("nexustok.backup"))
 	assert.False(t, fake.hasContainerNamePrefix("nexustok.staging-"))
 	assert.False(t, fake.hasContainerNamePrefix("nexustok.failed-"))
 }
@@ -1772,7 +2093,7 @@ func TestDockerUpdateHealthcheckStartingTimesOutAndRestoresCurrent(t *testing.T)
 	assert.False(t, fake.hasContainerNamePrefix("nexustok.staging-"))
 }
 
-func TestDockerRollbackKeepsBackupForRepeatedSwitches(t *testing.T) {
+func TestDockerRollbackUsesExplicitTargetImage(t *testing.T) {
 	fake := newFakeDockerEngine()
 	current := &dockerInspectContainer{
 		ID:   "current-id",
@@ -1787,17 +2108,7 @@ func TestDockerRollbackKeepsBackupForRepeatedSwitches(t *testing.T) {
 			Health:  &dockerContainerHealth{Status: "healthy"},
 		},
 	}
-	backup := &dockerInspectContainer{
-		ID:   "backup-id",
-		Name: "/nexustok.backup",
-		Config: dockerContainerConfig{
-			Image:       "c1cadabob/nexustok:old",
-			Healthcheck: &dockerHealthcheck{Test: []string{"CMD-SHELL", "true"}},
-		},
-		State: dockerContainerState{Status: "exited"},
-	}
 	fake.addContainer(current)
-	fake.addContainer(backup)
 	currentID := current.ID
 	service := dockerTestService(fake, &currentID)
 	originalFactory := systemUpdateDockerClientFactory
@@ -1810,22 +2121,11 @@ func TestDockerRollbackKeepsBackupForRepeatedSwitches(t *testing.T) {
 		context.Background(),
 		nil,
 		"runner",
-		dockerHelperOptions{},
+		dockerHelperOptions{TargetVersion: "v0.2.7", TargetImage: "c1cadabob/nexustok:v0.2.7"},
 	)
 	require.NoError(t, err)
-	assert.Equal(t, "c1cadabob/nexustok:old", fake.findContainer("nexustok").Config.Image)
-	assert.Equal(t, "c1cadabob/nexustok:new", fake.findContainer("nexustok.backup").Config.Image)
-
-	currentID = fake.findContainer("nexustok").ID
-	_, err = service.performDockerRollbackInProcess(
-		context.Background(),
-		nil,
-		"runner",
-		dockerHelperOptions{},
-	)
-	require.NoError(t, err)
-	assert.Equal(t, "c1cadabob/nexustok:new", fake.findContainer("nexustok").Config.Image)
-	assert.Equal(t, "c1cadabob/nexustok:old", fake.findContainer("nexustok.backup").Config.Image)
+	assert.Equal(t, "c1cadabob/nexustok:v0.2.7", fake.findContainer("nexustok").Config.Image)
+	assert.Nil(t, fake.findContainer("nexustok.backup"))
 }
 
 func TestDockerRollbackFailureRestoresCurrentContainer(t *testing.T) {
@@ -1837,24 +2137,6 @@ func TestDockerRollbackFailureRestoresCurrentContainer(t *testing.T) {
 			name: "restore rename failure",
 			setup: func(fake *fakeDockerEngine, _ *dockerInspectContainer) {
 				fake.failRenameTo["nexustok"] = 1
-			},
-		},
-		{
-			name: "backup start failure",
-			setup: func(fake *fakeDockerEngine, _ *dockerInspectContainer) {
-				fake.failStartImage["c1cadabob/nexustok:old"] = 1
-			},
-		},
-		{
-			name: "backup health failure",
-			setup: func(fake *fakeDockerEngine, _ *dockerInspectContainer) {
-				fake.healthByImage["c1cadabob/nexustok:old"] = "unhealthy"
-			},
-		},
-		{
-			name: "backup commit failure",
-			setup: func(fake *fakeDockerEngine, _ *dockerInspectContainer) {
-				fake.failRenameTo["nexustok.backup"] = 1
 			},
 		},
 	}
@@ -1871,17 +2153,7 @@ func TestDockerRollbackFailureRestoresCurrentContainer(t *testing.T) {
 				},
 				State: dockerContainerState{Running: true, Status: "running"},
 			}
-			backup := &dockerInspectContainer{
-				ID:   "backup-id",
-				Name: "/nexustok.backup",
-				Config: dockerContainerConfig{
-					Image:       "c1cadabob/nexustok:old",
-					Healthcheck: &dockerHealthcheck{Test: []string{"CMD-SHELL", "true"}},
-				},
-				State: dockerContainerState{Status: "exited"},
-			}
 			fake.addContainer(current)
-			fake.addContainer(backup)
 			tt.setup(fake, current)
 
 			currentID := current.ID
@@ -1896,13 +2168,13 @@ func TestDockerRollbackFailureRestoresCurrentContainer(t *testing.T) {
 				context.Background(),
 				nil,
 				"runner",
-				dockerHelperOptions{},
+				dockerHelperOptions{TargetVersion: "v0.2.7", TargetImage: "c1cadabob/nexustok:v0.2.7"},
 			)
 
 			require.Error(t, err)
 			assert.Equal(t, "c1cadabob/nexustok:new", fake.findContainer("nexustok").Config.Image)
 			assert.True(t, fake.findContainer("nexustok").State.Running)
-			assert.Equal(t, "c1cadabob/nexustok:old", fake.findContainer("nexustok.backup").Config.Image)
+			assert.Nil(t, fake.findContainer("nexustok.backup"))
 			assert.False(t, fake.hasContainerNamePrefix("nexustok.failed-"))
 		})
 	}
@@ -1924,7 +2196,6 @@ func TestDockerLifecycleNamesUseTheFormalContainerBase(t *testing.T) {
 	assert.Equal(t, "nexustok", canonicalDockerContainerName("/nexustok.backup"))
 	assert.Equal(t, "nexustok", canonicalDockerContainerName("nexustok.staging-abc"))
 	assert.Equal(t, "nexustok", canonicalDockerContainerName("nexustok-update-helper-abc"))
-	assert.Equal(t, "nexustok.backup", dockerBackupContainerName("nexustok.backup"))
 	assert.Contains(t, dockerFailedContainerName("nexustok.failed-abc"), "nexustok.failed-")
 	assert.Contains(t, dockerPreflightContainerName("nexustok.preflight-abc"), "nexustok.preflight-")
 	assert.Contains(t, dockerStagingContainerName("nexustok.staging-abc"), "nexustok.staging-")
@@ -2169,6 +2440,9 @@ func newTestSystemUpdateService(currentVersion string, goos string, goarch strin
 	service.isContainerFn = func() bool { return isContainer }
 	service.executableFn = func() (string, error) { return "", errors.New("not configured") }
 	service.evalSymlinksFn = func(path string) (string, error) { return path, nil }
+	service.backupFn = func(context.Context, string) (*SystemUpdateBackup, error) {
+		return &SystemUpdateBackup{ID: "binary-backup-test", Status: systemUpdateBackupStatusReady}, nil
+	}
 	service.dockerSocketPathFn = func() string { return filepath.Join(os.TempDir(), "nexustok-test-missing-docker.sock") }
 	return service
 }
@@ -2196,4 +2470,19 @@ func assertFileContent(t *testing.T, path string, expected string) {
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
 	assert.Equal(t, expected, string(data))
+}
+
+func fileModePerm(t *testing.T, path string) os.FileMode {
+	t.Helper()
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	return info.Mode().Perm()
+}
+
+func backupComponentNames(components []systemUpdateBackupComponent) []string {
+	names := make([]string, 0, len(components))
+	for _, component := range components {
+		names = append(names, component.Name)
+	}
+	return names
 }

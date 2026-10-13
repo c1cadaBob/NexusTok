@@ -239,30 +239,41 @@ preflight 容器完成健康检查；通过后删除 preflight，再创建保留
 - 独立 Redis、内存缓存和多节点部署会影响限流、缓存传播和插件生成观察窗口，不能只根据单节点测试判断集群语义。
 - `relaykit/` 必须独立构建，根模块的配置、数据库和计费不能下沉到该模块。
 
-### 7.1 系统维护更新边界（2026-09-30）
+### 7.1 系统维护更新边界（2026-10-13）
 
 **变更前**：维护页面在浏览器中直接请求 GitHub Release API，只能显示版本说明；
-后端没有统一的更新、回滚、重启和任务进度入口，旧版裸机回滚会把唯一 `.backup`
-重命名为当前文件，成功后回滚槽位消失。
+后端没有统一的版本选择和更新任务，裸机依赖 `.backup` 文件交换，Docker 依赖稳定
+备份容器作为隐式回滚对象。
 
 **变更后**：Root 管理员通过后端检查默认仓库 `c1cadaBob/NexusTok`，也可用
-`SYSTEM_UPDATE_GITHUB_REPO` 覆盖。Release 检查缓存约 20 分钟，强制检查可绕过缓存；
-版本比较支持 `v` 前缀、预发布和构建元数据。资产只接受 HTTPS 的 GitHub 官方域名，
-下载和 checksum 有大小上限，二进制替换前必须完成 SHA256 校验。
+`SYSTEM_UPDATE_GITHUB_REPO` 覆盖。Release 检查最多读取 3 页、每页 100 条，过滤 draft
+并保留规范 semver 预发布版本；维护页可直接选择目标版本。更新默认选择最新的其它可用
+Release，回滚必须提交后端已查询到的目标版本。资产只接受 HTTPS 的 GitHub 官方域名，
+下载和 checksum 有大小上限，二进制替换前必须完成 SHA256 校验；Docker 镜像由当前仓库
+和目标 Release 标签推导，不能由前端提交任意地址或 `latest`。
 
-裸机更新先在当前可执行文件同目录的临时目录下载和验证，再以临时交换文件提交当前
-文件与稳定 `<executable>.backup`；回滚交换两者而不是消耗备份，因此可以连续切换。
-源码/开发构建和 Windows 正在运行的二进制不强行自动替换，页面返回手动更新提示。
+更新和回滚在停止正式服务、替换二进制或切换容器前，统一创建带随机 ID 的数据备份，
+覆盖 `/data`、日志目录、SQLite 主文件及 WAL/SHM，或 PostgreSQL/MySQL 逻辑导出；
+备份目录默认是 Docker 的 `/data/system-backups`、裸机数据目录下的
+`system-backups`，可由 `SYSTEM_UPDATE_BACKUP_DIR` 覆盖，默认保留最近 5 份。Redis
+只作为缓存、Session 和限流控制面，不作为业务数据恢复源。裸机使用临时文件完成原子
+可执行文件替换，失败时恢复原文件，不创建或读取 `<executable>.backup`。
 
-Docker 部署通过 Docker Engine socket 和独立 helper 重建候选容器，保存环境、挂载、
-端口、网络、重启策略、入口参数和 Compose 标签。2026-10-02 起，普通 bridge/Compose
+Docker 部署通过 Docker Engine socket 和独立 helper 重建候选容器，先拉取目标镜像并完成
+无端口 preflight 健康检查，再完成数据备份；备份失败不会停止正式容器、修改 Compose
+配置或创建正式 staging。通过备份后才保存环境、挂载、
+端口、网络、重启策略、入口参数和 Compose 标签。Compose 模式使用 YAML AST 原子更新
+目标服务镜像标签，并在失败时恢复原始配置。普通 bridge/Compose
 网络先创建不发布宿主端口、无 Compose 服务标签和网络别名的 preflight 容器完成健康
 检查；通过后删除 preflight，再创建保留原始端口和 Compose 元数据的正式 staging
-容器，停旧容器并改名后才启动正式容器，避免旧容器仍占用 `3030` 时触发 Docker
-`port is already allocated`。`host` 和 `container:<id>` 网络无法安全并行预检，按停旧后
-启动正式容器的降级路径执行。helper 在主容器停止前接管系统任务租约，启动失败时把租约
-转回原 runner。管理响应、任务错误、日志和手动命令不包含 `SESSION_SECRET`、`SQL_DSN`、
-`REDIS_CONN_STRING`、Cookie、Token 或完整 Key。
+容器，停旧容器并改名为 failed 后才启动正式 staging 容器，避免旧容器仍占用 `3030`
+时触发 Docker `port is already allocated`。成功后删除 failed 和所有遗留稳定 backup
+容器，只保留正式目标容器。若已改变运行实例后失败，先恢复旧容器再恢复本次数据备份；
+版本尚未切换时不恢复数据；数据恢复失败单独写入 `data_restore_failed` 并保留备份。
+`host` 和 `container:<id>` 网络无法安全并行预检，按停旧后启动正式容器的降级路径执行。
+helper 在主容器停止前接管系统任务租约，启动失败时把租约转回原 runner。管理响应、
+任务错误、日志和手动命令不包含 `SESSION_SECRET`、`SQL_DSN`、`REDIS_CONN_STRING`、
+Cookie、Token 或完整 Key。
 
 ## 8. 维护时需要同步的关联模块
 
@@ -274,6 +285,7 @@ Docker 部署通过 Docker Engine socket 和独立 helper 重建候选容器，�
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 建立启动、分层、请求链路、部署边界和限制说明 | `main.go`、`router/`、`middleware/`、`model/`、`service/`、`relay/` | `main.go`、`model/main.go`、`router/` 静态核对 |
 | 2026-09-30 | 系统维护更新与回滚 | 前端直连 GitHub 且没有后端运维任务；旧版回滚会消耗唯一备份 | 增加 RootAuth 维护接口、SystemTask 进度、GitHub 缓存/checksum、裸机稳定备份交换、Docker helper/健康检查和重启探活 | `router/api-router.go`、`controller/system_update.go`、`service/system_update*.go`、`main.go`、维护页 | `go test ./service ./model ./controller ./router`、前端定向测试；未进行生产容器切换 |
+| 2026-10-13 | 按发布版本选择回滚与数据备份恢复 | 维护页不能选择任意已发布版本，裸机使用 `.backup` 文件、Docker 使用稳定备份容器；更新失败后的数据恢复边界未统一 | 后端分页读取 Release 并校验目标版本；镜像拉取和 preflight 后再备份数据、日志和主数据库，Redis 不恢复；裸机不再创建 `.backup`，Docker 只保留正式目标容器，切换失败按状态恢复旧实例和数据并记录 `data_restore_failed` | `controller/system_update.go`、`service/system_update.go`、`service/system_update_backup.go`、`service/system_update_docker.go`、维护页 | Go service 定向测试、Docker 备份/恢复边界测试和前端定向测试；未进行生产切换、Docker 真实工具容器和完整三数据库矩阵 |
 | 2026-10-02 | Docker 自动更新端口预检 | 更新流程在旧容器仍发布 `3030` 时直接启动同端口 staging 容器，Docker 会返回 `port is already allocated` | bridge/Compose 网络先用无宿主端口、无 Compose 标签/别名的 preflight 容器探活，再停旧并启动保留原端口的正式容器；`host`/`container:<id>` 网络走受控降级 | `service/system_update_docker.go`、系统任务 Docker helper、维护页错误展示 | `go test ./service -run 'Docker(Update\|Updated\|Readiness\|Helper\|Pull\|Staging)' -count=1` |
 | 2026-09-30 | v0.2.2 生产默认部署 | Compose 使用浮动依赖、明文默认密码和相对目录，服务依赖未按健康状态编排；单容器示例未明确不包含外部数据库/缓存 | Compose 固定 PostgreSQL 15 + Redis 7，密码由 `.env`/部署脚本生成，应用端口为 `3030`，数据/日志使用 `/opt/nexustok` 持久化目录，单容器仅保留 SQLite/无 Redis 兼容模式 | `docker-compose.yml`、`scripts/deploy.sh`、`Dockerfile`、`VERSION`、Docker 发布工作流和中文部署文档 | `docker compose config`、`bash -n scripts/deploy.sh`、隔离三服务栈和真实 SQLite 3.50.4/MySQL 8.2.0/PostgreSQL 15.19 矩阵已通过；生产 Dockerfile 完整构建因 `proxy.golang.org` 超时未完成，远端发布以标签工作流为准 |
 | 2026-10-01 | v0.2.3 安全依赖与部署发布 | README 多语言存在旧端口、旧镜像和宣传栏目；发布工作流 Secret 名称不匹配；部署文档未完整覆盖单机、多机、备份和故障边界 | 统一六种 README、宝塔文档和架构事实为 `3030`、Compose、PostgreSQL 15 + Redis 7；补充多机共享外部服务、主从职责、代理和回滚；工作流使用 `DOCKER_USERNAME`/`DOCKER_PASSWORD`；前端/Electron 依赖按本地审计结果最小升级，数据库代码和 Schema 未修改 | `README*.md`、`docs/installation/BT.md`、`.github/workflows/docker-*.yml`、web/Electron 依赖 | Bun/npm 审计、govulncheck、前端全量回归、Go vet/build/test、relaykit 构建、Compose 配置和隔离三服务健康检查已通过；推送反馈仍有 1 条中等级 Dependabot 警报，认证 API、v0.2.3 镜像、多架构 manifest、Cosign 和远端 Release 待验证 |

@@ -1,8 +1,8 @@
 // Package service - system_update.go
-// 该文件实现系统维护更新能力。裸机二进制部署会从 GitHub Release 下载与当前平台
-// 匹配的 NexusTok 二进制，校验 SHA256 后在当前可执行文件同目录完成备份和原子替换；
-// Docker 部署则通过 Docker Engine API 拉取目标镜像并重建当前容器。所有会改变运行
-// 形态的动作都挂在 SystemTask 上，便于 Root 管理员观察进度、失败原因和回滚入口。
+// 该文件实现系统维护更新能力。裸机和 Docker 更新/回滚都从后端校验过的 GitHub
+// Release 解析目标版本，并在切换前创建数据备份；裸机校验 SHA256 后原子替换二进制，
+// Docker 则通过 Docker Engine API 和 helper 重建正式容器。所有会改变运行形态的动作
+// 都挂在 SystemTask 上，便于 Root 管理员观察目标版本、进度、失败原因和数据恢复状态。
 package service
 
 import (
@@ -20,6 +20,7 @@ import (
 	"regexp"
 	"runtime"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -73,6 +74,8 @@ const (
 	SystemUpdatePhaseReplacing           = "replacing"
 	SystemUpdatePhaseReady               = "ready"
 	SystemUpdatePhaseRollingBack         = "rolling_back"
+	SystemUpdatePhaseBackingUpData       = "backing_up_data"
+	SystemUpdatePhaseRestoringData       = "restoring_data"
 	SystemUpdatePhasePullingImage        = "pulling_image"
 	SystemUpdatePhaseStartingHelper      = "starting_helper"
 	SystemUpdatePhaseRecreatingContainer = "recreating_container"
@@ -86,7 +89,7 @@ var (
 	}
 	ErrSystemUpdateUnavailable = errors.New("no system update available")
 	ErrSystemUpdateDisabled    = errors.New("system update cannot be applied")
-	ErrSystemRollbackDisabled  = errors.New("no backup executable found")
+	ErrSystemRollbackDisabled  = errors.New("no other published release is available for rollback")
 	ErrSystemUpdateNoRelease   = errors.New("no published GitHub release was found")
 	ErrSystemUpdateHandedOff   = errors.New("system update task handed off to docker helper")
 )
@@ -113,6 +116,7 @@ type SystemUpdateInfo struct {
 	UpdateMethod           string                   `json:"update_method"`
 	TargetImage            string                   `json:"target_image,omitempty"`
 	Docker                 *SystemUpdateDockerInfo  `json:"docker,omitempty"`
+	AvailableReleases      []SystemUpdateRelease    `json:"available_releases,omitempty"`
 	DockerControlAvailable bool                     `json:"docker_control_available"`
 	CanApply               bool                     `json:"can_apply"`
 	ApplyDisabledReason    string                   `json:"apply_disabled_reason,omitempty"`
@@ -159,6 +163,21 @@ type SystemUpdateReleaseInfo struct {
 	Assets      []SystemUpdateAsset `json:"assets,omitempty"`
 }
 
+// SystemUpdateRelease 描述维护页面可以选择的已发布版本及其平台适配结果。
+type SystemUpdateRelease struct {
+	TagName           string `json:"tag_name"`
+	Name              string `json:"name"`
+	PublishedAt       string `json:"published_at"`
+	HTMLURL           string `json:"html_url"`
+	Current           bool   `json:"current"`
+	Prerelease        bool   `json:"prerelease"`
+	Available         bool   `json:"available"`
+	BinaryAvailable   bool   `json:"binary_available"`
+	ChecksumAvailable bool   `json:"checksum_available"`
+	DockerTargetImage string `json:"docker_target_image,omitempty"`
+	UnavailableReason string `json:"unavailable_reason,omitempty"`
+}
+
 // SystemUpdateAsset 表示一个 GitHub Release 产物。
 type SystemUpdateAsset struct {
 	Name        string `json:"name"`
@@ -172,6 +191,7 @@ type SystemUpdateTaskPayload struct {
 	AssetName     string `json:"asset_name,omitempty"`
 	Mode          string `json:"mode,omitempty"`
 	TargetImage   string `json:"target_image,omitempty"`
+	BackupID      string `json:"backup_id,omitempty"`
 }
 
 // SystemUpdateTaskState 是更新/回滚任务的可观察进度。
@@ -187,6 +207,10 @@ type SystemUpdateTaskState struct {
 	HealthStatus         string `json:"health_status,omitempty"`
 	HealthcheckAvailable bool   `json:"healthcheck_available"`
 	HealthcheckDegraded  bool   `json:"healthcheck_degraded"`
+	BackupID             string `json:"backup_id,omitempty"`
+	BackupStatus         string `json:"backup_status,omitempty"`
+	RestoreStatus        string `json:"restore_status,omitempty"`
+	DataRestoreFailed    bool   `json:"data_restore_failed"`
 }
 
 // SystemUpdateTaskResult 保存更新任务完成后的关键信息，方便前端提示重启和回滚。
@@ -194,22 +218,22 @@ type SystemUpdateTaskResult struct {
 	CurrentVersion       string `json:"current_version"`
 	TargetVersion        string `json:"target_version,omitempty"`
 	AssetName            string `json:"asset_name,omitempty"`
-	CurrentExecutable    string `json:"current_executable,omitempty"`
-	BackupPath           string `json:"backup_path,omitempty"`
 	SHA256               string `json:"sha256,omitempty"`
 	HTMLURL              string `json:"html_url,omitempty"`
 	PublishedAt          string `json:"published_at,omitempty"`
 	RestartRequired      bool   `json:"restart_required"`
 	RollbackAvailable    bool   `json:"rollback_available"`
-	PreviousExecutable   string `json:"previous_executable,omitempty"`
 	Mode                 string `json:"mode,omitempty"`
 	TargetImage          string `json:"target_image,omitempty"`
 	OldContainerID       string `json:"old_container_id,omitempty"`
 	NewContainerID       string `json:"new_container_id,omitempty"`
-	BackupContainerName  string `json:"backup_container_name,omitempty"`
 	HealthStatus         string `json:"health_status,omitempty"`
 	HealthcheckAvailable bool   `json:"healthcheck_available"`
 	HealthcheckDegraded  bool   `json:"healthcheck_degraded"`
+	BackupID             string `json:"backup_id,omitempty"`
+	BackupStatus         string `json:"backup_status,omitempty"`
+	RestoreStatus        string `json:"restore_status,omitempty"`
+	DataRestoreFailed    bool   `json:"data_restore_failed"`
 }
 
 // SystemRestartResult 描述一次重启请求是否已被调度。
@@ -223,6 +247,7 @@ type SystemRestartResult struct {
 // SystemUpdateGitHubClient 抽象 GitHub Release 请求，便于测试中替换为本地实现。
 type SystemUpdateGitHubClient interface {
 	FetchLatestRelease(ctx context.Context, repo string) (*systemUpdateGitHubRelease, error)
+	ListReleases(ctx context.Context, repo string) ([]*systemUpdateGitHubRelease, error)
 	DownloadFile(ctx context.Context, rawURL string, dest string, maxSize int64, onProgress func(downloaded, total int64)) error
 	FetchFile(ctx context.Context, rawURL string, maxSize int64) ([]byte, error)
 }
@@ -233,6 +258,8 @@ type systemUpdateGitHubRelease struct {
 	Body        string                    `json:"body"`
 	PublishedAt string                    `json:"published_at"`
 	HTMLURL     string                    `json:"html_url"`
+	Draft       bool                      `json:"draft"`
+	Prerelease  bool                      `json:"prerelease"`
 	Assets      []systemUpdateGitHubAsset `json:"assets"`
 }
 
@@ -280,6 +307,8 @@ type SystemUpdateService struct {
 	dockerSocketPathFn   func() string
 	currentContainerIDFn func() string
 	nowFn                func() time.Time
+	backupFn             func(context.Context, string) (*SystemUpdateBackup, error)
+	restoreFn            func(context.Context, string) error
 
 	cacheMu  sync.Mutex
 	cached   *SystemUpdateInfo
@@ -314,6 +343,8 @@ func NewSystemUpdateService(githubClient SystemUpdateGitHubClient) *SystemUpdate
 		dockerSocketPathFn:   systemUpdateDockerSocketPath,
 		currentContainerIDFn: systemUpdateCurrentContainerID,
 		nowFn:                time.Now,
+		backupFn:             CreateSystemUpdateBackup,
+		restoreFn:            RestoreSystemUpdateBackup,
 	}
 }
 
@@ -344,7 +375,11 @@ func StartSystemUpdateTask(ctx context.Context) (*model.SystemTask, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !info.HasUpdate && info.UpdateMethod != systemUpdateMethodDockerEngine && info.UpdateMethod != systemUpdateMethodDockerCompose {
+	targetRelease := selectLatestAvailableRelease(info)
+	if targetRelease == nil ||
+		targetRelease.Current ||
+		(info.ComparisonStatus != systemUpdateComparisonOlder &&
+			info.ComparisonStatus != systemUpdateComparisonUnknown) {
 		return nil, ErrSystemUpdateUnavailable
 	}
 	if !info.CanApply {
@@ -355,12 +390,24 @@ func StartSystemUpdateTask(ctx context.Context) (*model.SystemTask, error) {
 	}
 
 	payload := SystemUpdateTaskPayload{
-		TargetVersion: info.LatestVersion,
+		TargetVersion: targetRelease.TagName,
 		Mode:          info.DeploymentMode,
-		TargetImage:   info.TargetImage,
+		TargetImage:   targetRelease.DockerTargetImage,
 	}
-	if info.MatchedAsset != nil {
-		payload.AssetName = info.MatchedAsset.Name
+	if !info.Runtime.IsRunningInContainer {
+		release, resolveErr := defaultSystemUpdateService.resolveTargetRelease(ctx, info, targetRelease.TagName)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		asset := matchSystemUpdateAsset(
+			convertSystemUpdateRelease(release).Assets,
+			info.Runtime.GOOS,
+			info.Runtime.GOARCH,
+			release.TagName,
+		)
+		if asset != nil {
+			payload.AssetName = asset.Name
+		}
 	}
 
 	task, created, err := model.CreateSystemTaskWithActiveKeyIfAbsent(model.SystemTaskTypeSystemUpdate, systemUpdateActiveKey, payload, SystemUpdateTaskState{
@@ -380,8 +427,34 @@ func StartSystemUpdateTask(ctx context.Context) (*model.SystemTask, error) {
 	return task, nil
 }
 
+func selectLatestAvailableRelease(info *SystemUpdateInfo) *SystemUpdateRelease {
+	if info == nil {
+		return nil
+	}
+	for index := range info.AvailableReleases {
+		release := &info.AvailableReleases[index]
+		if release.Available {
+			return release
+		}
+	}
+	return nil
+}
+
+func selectLatestAvailableNonCurrentRelease(info *SystemUpdateInfo) *SystemUpdateRelease {
+	if info == nil {
+		return nil
+	}
+	for index := range info.AvailableReleases {
+		release := &info.AvailableReleases[index]
+		if release.Available && !release.Current {
+			return release
+		}
+	}
+	return nil
+}
+
 // StartSystemRollbackTask 创建系统回滚任务。
-func StartSystemRollbackTask() (*model.SystemTask, error) {
+func StartSystemRollbackTask(ctx context.Context, targetVersion string) (*model.SystemTask, error) {
 	activeTask, err := model.GetActiveSystemTaskByActiveKey(systemUpdateActiveKey)
 	if err != nil {
 		return nil, err
@@ -389,13 +462,39 @@ func StartSystemRollbackTask() (*model.SystemTask, error) {
 	if activeTask != nil {
 		return activeTask, nil
 	}
-	if !defaultSystemUpdateService.RollbackAvailable() {
-		return nil, ErrSystemRollbackDisabled
+
+	info, err := defaultSystemUpdateService.CheckLatest(ctx, true)
+	if err != nil {
+		return nil, err
 	}
-	task, created, err := model.CreateSystemTaskWithActiveKeyIfAbsent(model.SystemTaskTypeSystemRollback, systemUpdateActiveKey, nil, SystemUpdateTaskState{
-		Phase:    SystemUpdatePhaseRollingBack,
-		Progress: 0,
-	})
+	release, err := defaultSystemUpdateService.resolveTargetRelease(ctx, info, targetVersion)
+	if err != nil {
+		return nil, err
+	}
+	candidate := defaultSystemUpdateService.describeRelease(release, info)
+	payload := SystemUpdateTaskPayload{
+		TargetVersion: release.TagName,
+		Mode:          info.DeploymentMode,
+		TargetImage:   candidate.DockerTargetImage,
+	}
+	if !info.Runtime.IsRunningInContainer {
+		asset := matchSystemUpdateAsset(convertSystemUpdateRelease(release).Assets, info.Runtime.GOOS, info.Runtime.GOARCH, release.TagName)
+		if asset != nil {
+			payload.AssetName = asset.Name
+		}
+	}
+	task, created, err := model.CreateSystemTaskWithActiveKeyIfAbsent(
+		model.SystemTaskTypeSystemRollback,
+		systemUpdateActiveKey,
+		payload,
+		SystemUpdateTaskState{
+			Phase:         SystemUpdatePhaseRollingBack,
+			Progress:      0,
+			TargetVersion: payload.TargetVersion,
+			Mode:          payload.Mode,
+			TargetImage:   payload.TargetImage,
+		},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -421,7 +520,7 @@ func (s *SystemUpdateService) CheckLatest(ctx context.Context, force bool) (*Sys
 		}
 	}
 
-	release, err := s.githubClient.FetchLatestRelease(ctx, getSystemUpdateGitHubRepo())
+	releases, err := s.githubClient.ListReleases(ctx, getSystemUpdateGitHubRepo())
 	if err != nil {
 		if errors.Is(err, ErrSystemUpdateNoRelease) {
 			info := s.buildNoReleaseInfo()
@@ -435,7 +534,32 @@ func (s *SystemUpdateService) CheckLatest(ctx context.Context, force bool) (*Sys
 		return nil, err
 	}
 
-	info := s.buildUpdateInfo(release)
+	publishedReleases := make([]*systemUpdateGitHubRelease, 0, len(releases))
+	for _, release := range releases {
+		if release == nil || release.Draft ||
+			strings.TrimSpace(release.PublishedAt) == "" {
+			continue
+		}
+		if _, ok := parseSystemUpdateVersion(release.TagName); !ok {
+			continue
+		}
+		publishedReleases = append(publishedReleases, release)
+	}
+	releases = publishedReleases
+	if len(releases) == 0 {
+		info := s.buildNoReleaseInfo()
+		s.setCachedInfo(info)
+		return cloneSystemUpdateInfo(info), nil
+	}
+	sort.SliceStable(releases, func(i, j int) bool {
+		left, leftOK := parseSystemUpdateVersion(releases[i].TagName)
+		right, rightOK := parseSystemUpdateVersion(releases[j].TagName)
+		if leftOK && rightOK {
+			return compareParsedSystemUpdateVersion(left, right) > 0
+		}
+		return releases[i].PublishedAt > releases[j].PublishedAt
+	})
+	info := s.buildUpdateInfo(releases)
 	s.setCachedInfo(info)
 	return cloneSystemUpdateInfo(info), nil
 }
@@ -457,7 +581,7 @@ func (s *SystemUpdateService) buildNoReleaseInfo() *SystemUpdateInfo {
 		DeploymentMode:      s.deploymentMode(buildType),
 		ComparisonStatus:    systemUpdateComparisonUnknown,
 		UpdateMethod:        systemUpdateMethodManual,
-		RollbackAvailable:   s.RollbackAvailable(),
+		RollbackAvailable:   false,
 		ReleaseStatus:       systemUpdateReleaseStatusNone,
 		ManualUpdateHint:    systemUpdateManualUpdateHint(buildType),
 		CanApply:            false,
@@ -469,7 +593,8 @@ func (s *SystemUpdateService) buildNoReleaseInfo() *SystemUpdateInfo {
 	return info
 }
 
-func (s *SystemUpdateService) buildUpdateInfo(release *systemUpdateGitHubRelease) *SystemUpdateInfo {
+func (s *SystemUpdateService) buildUpdateInfo(releases []*systemUpdateGitHubRelease) *SystemUpdateInfo {
+	release := releases[0]
 	currentVersion := strings.TrimSpace(s.currentVersionFn())
 	latestVersion := strings.TrimSpace(release.TagName)
 	if latestVersion == "" {
@@ -515,13 +640,167 @@ func (s *SystemUpdateService) buildUpdateInfo(release *systemUpdateGitHubRelease
 		DeploymentMode:    s.deploymentMode(s.buildType(currentOK)),
 		ComparisonStatus:  comparisonStatus,
 		UpdateMethod:      systemUpdateMethodManual,
-		RollbackAvailable: s.RollbackAvailable(),
+		RollbackAvailable: false,
 		Warning:           warning,
 		ReleaseStatus:     systemUpdateReleaseStatusPublished,
 	}
 	s.enrichDockerInfo(context.Background(), info)
+	info.AvailableReleases = s.buildAvailableReleases(releases, info)
+	if targetRelease := selectLatestAvailableNonCurrentRelease(info); targetRelease != nil {
+		for _, candidate := range releases {
+			if candidate == nil || strings.TrimSpace(candidate.TagName) != targetRelease.TagName {
+				continue
+			}
+			assets := convertSystemUpdateRelease(candidate).Assets
+			info.MatchedAsset = matchSystemUpdateAsset(assets, s.goosFn(), s.goarchFn(), candidate.TagName)
+			info.ChecksumAsset = matchSystemUpdateChecksumAsset(assets, s.goosFn(), candidate.TagName)
+			break
+		}
+	}
+	if s.isContainerFn() {
+		if targetRelease := selectLatestAvailableRelease(info); targetRelease != nil && !targetRelease.Current {
+			info.TargetImage = targetRelease.DockerTargetImage
+		}
+		if info.Docker != nil {
+			info.Docker.TargetImage = info.TargetImage
+		}
+	}
+	info.RollbackAvailable = slices.ContainsFunc(info.AvailableReleases, func(item SystemUpdateRelease) bool {
+		return item.Available && !item.Current
+	})
 	s.syncApplicability(info)
 	return info
+}
+
+func (s *SystemUpdateService) buildAvailableReleases(releases []*systemUpdateGitHubRelease, info *SystemUpdateInfo) []SystemUpdateRelease {
+	currentVersion := strings.TrimSpace(s.currentVersionFn())
+	repositoryImage := ""
+	if info != nil && info.Docker != nil {
+		repositoryImage = info.Docker.CurrentImage
+	}
+	if repositoryImage == "" {
+		repositoryImage = systemUpdateDefaultDockerImage
+	}
+	result := make([]SystemUpdateRelease, 0, len(releases))
+	for _, release := range releases {
+		if release == nil || release.Draft || strings.TrimSpace(release.PublishedAt) == "" {
+			continue
+		}
+		tagName := strings.TrimSpace(release.TagName)
+		if _, ok := parseSystemUpdateVersion(tagName); !ok {
+			continue
+		}
+		matchedAsset := matchSystemUpdateAsset(
+			convertSystemUpdateRelease(release).Assets,
+			s.goosFn(),
+			s.goarchFn(),
+			tagName,
+		)
+		checksumAsset := matchSystemUpdateChecksumAsset(
+			convertSystemUpdateRelease(release).Assets,
+			s.goosFn(),
+			tagName,
+		)
+		item := SystemUpdateRelease{
+			TagName:     tagName,
+			Name:        release.Name,
+			PublishedAt: release.PublishedAt,
+			HTMLURL:     release.HTMLURL,
+			Current:     systemUpdateVersionsEqual(tagName, currentVersion),
+			Prerelease:  release.Prerelease,
+		}
+		if s.isContainerFn() {
+			item.DockerTargetImage = systemUpdateDockerImageForVersion(repositoryImage, tagName)
+			item.Available = item.DockerTargetImage != ""
+		} else {
+			item.BinaryAvailable = matchedAsset != nil
+			item.ChecksumAvailable = checksumAsset != nil
+			item.Available = item.BinaryAvailable && item.ChecksumAvailable
+		}
+		if !item.Available {
+			switch {
+			case !s.isContainerFn() && matchedAsset == nil:
+				item.UnavailableReason = fmt.Sprintf("No compatible release asset found for %s/%s.", s.goosFn(), s.goarchFn())
+			case !s.isContainerFn() && checksumAsset == nil:
+				item.UnavailableReason = "No checksum file is available for this platform."
+			default:
+				item.UnavailableReason = "No compatible target image is available."
+			}
+		}
+		result = append(result, item)
+	}
+	return result
+}
+
+func (s *SystemUpdateService) resolveTargetRelease(ctx context.Context, info *SystemUpdateInfo, targetVersion string) (*systemUpdateGitHubRelease, error) {
+	targetVersion = strings.TrimSpace(targetVersion)
+	if targetVersion == "" {
+		return nil, errors.New("target version is required")
+	}
+	if _, ok := parseSystemUpdateVersion(targetVersion); !ok {
+		return nil, errors.New("target version must be a semantic version tag")
+	}
+	releases, err := s.githubClient.ListReleases(ctx, getSystemUpdateGitHubRepo())
+	if err != nil {
+		return nil, err
+	}
+	currentVersion := strings.TrimSpace(s.currentVersionFn())
+	for _, release := range releases {
+		if release == nil || release.Draft ||
+			strings.TrimSpace(release.PublishedAt) == "" ||
+			strings.TrimSpace(release.TagName) != targetVersion {
+			continue
+		}
+		if systemUpdateVersionsEqual(targetVersion, currentVersion) {
+			return nil, errors.New("target version is already running")
+		}
+		candidate := s.describeRelease(release, info)
+		if !candidate.Available {
+			if candidate.UnavailableReason != "" {
+				return nil, errors.New(candidate.UnavailableReason)
+			}
+			return nil, ErrSystemUpdateDisabled
+		}
+		return release, nil
+	}
+	return nil, errors.New("target version is not a published GitHub release")
+}
+
+func (s *SystemUpdateService) describeRelease(release *systemUpdateGitHubRelease, info *SystemUpdateInfo) SystemUpdateRelease {
+	if release == nil {
+		return SystemUpdateRelease{}
+	}
+	assets := convertSystemUpdateRelease(release).Assets
+	item := SystemUpdateRelease{
+		TagName:     release.TagName,
+		Name:        release.Name,
+		PublishedAt: release.PublishedAt,
+		HTMLURL:     release.HTMLURL,
+		Prerelease:  release.Prerelease,
+		Current:     strings.TrimSpace(release.TagName) == strings.TrimSpace(s.currentVersionFn()),
+	}
+	if s.isContainerFn() {
+		currentImage := ""
+		if info != nil && info.Docker != nil {
+			currentImage = info.Docker.CurrentImage
+		}
+		item.DockerTargetImage = systemUpdateDockerImageForVersion(currentImage, release.TagName)
+		item.Available = item.DockerTargetImage != ""
+	} else {
+		item.BinaryAvailable = matchSystemUpdateAsset(assets, s.goosFn(), s.goarchFn(), release.TagName) != nil
+		item.ChecksumAvailable = matchSystemUpdateChecksumAsset(assets, s.goosFn(), release.TagName) != nil
+		item.Available = item.BinaryAvailable && item.ChecksumAvailable
+	}
+	if !item.Available {
+		if !s.isContainerFn() && !item.BinaryAvailable {
+			item.UnavailableReason = fmt.Sprintf("No compatible release asset found for %s/%s.", s.goosFn(), s.goarchFn())
+		} else if !s.isContainerFn() && !item.ChecksumAvailable {
+			item.UnavailableReason = "No checksum file is available for this platform."
+		} else {
+			item.UnavailableReason = "No compatible target image is available."
+		}
+	}
+	return item
 }
 
 func (s *SystemUpdateService) buildType(versionComparable bool) string {
@@ -584,11 +863,10 @@ func (s *SystemUpdateService) syncDockerApplicability(info *SystemUpdateInfo) {
 		// 手动命令。这样不依赖镜像内 docker CLI，也避免把 compose 文件路径挂入应用容器。
 		info.UpdateMethod = systemUpdateMethodDockerCompose
 	}
-	if info.ComparisonStatus == systemUpdateComparisonUnknown {
-		info.HasUpdate = true
-	}
 	if info.TargetImage == "" {
-		info.TargetImage = systemUpdateTargetDockerImage("")
+		if release := selectLatestAvailableRelease(info); release != nil && !release.Current {
+			info.TargetImage = release.DockerTargetImage
+		}
 	}
 	if info.Docker != nil {
 		info.DockerControlAvailable = info.Docker.SocketAvailable
@@ -597,6 +875,15 @@ func (s *SystemUpdateService) syncDockerApplicability(info *SystemUpdateInfo) {
 		info.CanApply = false
 		info.ApplyDisabledReason = "Docker automatic updates require mounting /var/run/docker.sock into the NexusTok container."
 		info.ManualUpdateHint = systemUpdateManualUpdateHint(info.BuildType)
+		return
+	}
+	targetRelease := selectLatestAvailableRelease(info)
+	if targetRelease == nil ||
+		targetRelease.Current ||
+		(info.ComparisonStatus != systemUpdateComparisonOlder &&
+			info.ComparisonStatus != systemUpdateComparisonUnknown) {
+		info.CanApply = false
+		info.ApplyDisabledReason = "No other published release is available for this deployment."
 		return
 	}
 	info.CanApply = true
@@ -621,20 +908,9 @@ func systemUpdateDockerManualUpdateHint() string {
 	return "Docker deployments should update by pulling c1cadabob/nexustok:latest and recreating the container with the same mounted data directories."
 }
 
-// RollbackAvailable 检查当前可执行文件旁边是否存在 .backup。
+// RollbackAvailable 保留兼容调用入口；可回滚性现在由已发布版本列表决定。
 func (s *SystemUpdateService) RollbackAvailable() bool {
-	if s.isContainerFn() {
-		return s.DockerRollbackAvailable(context.Background())
-	}
-	if s.goosFn() == "windows" {
-		return false
-	}
-	exePath, err := s.executablePath()
-	if err != nil {
-		return false
-	}
-	_, err = validateSystemUpdateRegularFile(exePath+".backup", "inspect backup executable failed")
-	return err == nil
+	return false
 }
 
 // PerformUpdate 下载并替换当前可执行文件。
@@ -648,23 +924,39 @@ func (s *SystemUpdateService) PerformUpdate(ctx context.Context, task *model.Sys
 	if err != nil {
 		return nil, err
 	}
-	if !info.HasUpdate && info.UpdateMethod != systemUpdateMethodDockerEngine && info.UpdateMethod != systemUpdateMethodDockerCompose {
-		return nil, ErrSystemUpdateUnavailable
+	payload := SystemUpdateTaskPayload{}
+	if task != nil {
+		if err := task.DecodePayload(&payload); err != nil {
+			return nil, fmt.Errorf("decode system update payload failed: %w", err)
+		}
 	}
-	if !info.CanApply {
-		return nil, fmt.Errorf("%w: %s", ErrSystemUpdateDisabled, info.ApplyDisabledReason)
+	if payload.TargetVersion == "" {
+		payload.TargetVersion = info.LatestVersion
+	}
+	release, err := s.resolveTargetRelease(ctx, info, payload.TargetVersion)
+	if err != nil {
+		return nil, err
 	}
 	if info.BuildType == systemUpdateBuildContainer {
-		return s.HandOffDockerUpdate(ctx, task, runnerID, info)
+		payload.TargetImage = systemUpdateDockerImageForVersion(info.Docker.CurrentImage, release.TagName)
+		if payload.TargetImage == "" {
+			return nil, ErrSystemUpdateDisabled
+		}
+		info.TargetImage = payload.TargetImage
+		info.LatestVersion = release.TagName
+		return s.HandOffDockerUpdate(ctx, task, runnerID, info, release.TagName)
 	}
-	if info.MatchedAsset == nil || info.ChecksumAsset == nil || info.ReleaseInfo == nil {
+	releaseInfo := convertSystemUpdateRelease(release)
+	matchedAsset := matchSystemUpdateAsset(releaseInfo.Assets, s.goosFn(), s.goarchFn(), release.TagName)
+	checksumAsset := matchSystemUpdateChecksumAsset(releaseInfo.Assets, s.goosFn(), release.TagName)
+	if matchedAsset == nil || checksumAsset == nil {
 		return nil, ErrSystemUpdateDisabled
 	}
 
-	if err := validateSystemUpdateDownloadURL(info.MatchedAsset.DownloadURL); err != nil {
+	if err := validateSystemUpdateDownloadURL(matchedAsset.DownloadURL); err != nil {
 		return nil, fmt.Errorf("invalid release asset URL: %w", err)
 	}
-	if err := validateSystemUpdateDownloadURL(info.ChecksumAsset.DownloadURL); err != nil {
+	if err := validateSystemUpdateDownloadURL(checksumAsset.DownloadURL); err != nil {
 		return nil, fmt.Errorf("invalid checksum asset URL: %w", err)
 	}
 
@@ -686,21 +978,21 @@ func (s *SystemUpdateService) PerformUpdate(ctx context.Context, task *model.Sys
 	}
 	defer func() { _ = os.RemoveAll(tempDir) }()
 
-	assetName := filepath.Base(info.MatchedAsset.Name)
+	assetName := filepath.Base(matchedAsset.Name)
 	downloadPath := filepath.Join(tempDir, assetName)
 	state = SystemUpdateTaskState{
 		Phase:         SystemUpdatePhaseDownloading,
 		Progress:      10,
-		TargetVersion: info.LatestVersion,
+		TargetVersion: release.TagName,
 		AssetName:     assetName,
-		TotalBytes:    info.MatchedAsset.Size,
+		TotalBytes:    matchedAsset.Size,
 	}
 	if err := updateSystemUpdateTaskState(task, runnerID, state); err != nil {
 		return nil, err
 	}
 
 	progressReporter := newSystemUpdateDownloadProgressReporter(task, runnerID, state)
-	if err := s.githubClient.DownloadFile(ctx, info.MatchedAsset.DownloadURL, downloadPath, systemUpdateMaxDownloadSize, progressReporter); err != nil {
+	if err := s.githubClient.DownloadFile(ctx, matchedAsset.DownloadURL, downloadPath, systemUpdateMaxDownloadSize, progressReporter); err != nil {
 		return nil, fmt.Errorf("download update failed: %w", err)
 	}
 
@@ -710,7 +1002,7 @@ func (s *SystemUpdateService) PerformUpdate(ctx context.Context, task *model.Sys
 		return nil, err
 	}
 
-	checksumData, err := s.githubClient.FetchFile(ctx, info.ChecksumAsset.DownloadURL, systemUpdateChecksumMaxSize)
+	checksumData, err := s.githubClient.FetchFile(ctx, checksumAsset.DownloadURL, systemUpdateChecksumMaxSize)
 	if err != nil {
 		return nil, fmt.Errorf("download checksum failed: %w", err)
 	}
@@ -723,8 +1015,18 @@ func (s *SystemUpdateService) PerformUpdate(ctx context.Context, task *model.Sys
 		return nil, err
 	}
 
-	state.Phase = SystemUpdatePhaseBackingUp
-	state.Progress = 85
+	state.Phase = SystemUpdatePhaseBackingUpData
+	state.Progress = 80
+	if err := updateSystemUpdateTaskState(task, runnerID, state); err != nil {
+		return nil, err
+	}
+	backup, err := s.createUpdateBackup(ctx, task, runnerID, release.TagName, state)
+	if err != nil {
+		return nil, err
+	}
+	state.BackupID = backup.ID
+	state.BackupStatus = backup.Status
+	state.Progress = 90
 	if err := updateSystemUpdateTaskState(task, runnerID, state); err != nil {
 		return nil, err
 	}
@@ -735,8 +1037,7 @@ func (s *SystemUpdateService) PerformUpdate(ctx context.Context, task *model.Sys
 		return nil, err
 	}
 
-	backupPath, err := replaceSystemUpdateExecutable(exePath, downloadPath)
-	if err != nil {
+	if err := replaceSystemUpdateExecutableAtomically(exePath, downloadPath); err != nil {
 		return nil, err
 	}
 
@@ -748,23 +1049,39 @@ func (s *SystemUpdateService) PerformUpdate(ctx context.Context, task *model.Sys
 
 	return &SystemUpdateTaskResult{
 		CurrentVersion:    info.CurrentVersion,
-		TargetVersion:     info.LatestVersion,
+		TargetVersion:     release.TagName,
 		AssetName:         assetName,
-		CurrentExecutable: exePath,
-		BackupPath:        backupPath,
 		SHA256:            actualSHA256,
-		HTMLURL:           info.ReleaseInfo.HTMLURL,
-		PublishedAt:       info.ReleaseInfo.PublishedAt,
+		HTMLURL:           release.HTMLURL,
+		PublishedAt:       release.PublishedAt,
 		RestartRequired:   true,
-		RollbackAvailable: true,
+		RollbackAvailable: false,
 		Mode:              systemUpdateDeploymentBinary,
+		BackupID:          backup.ID,
+		BackupStatus:      backup.Status,
 	}, nil
 }
 
-// PerformRollback 交换当前可执行文件与 .backup，保留可重复回滚能力。
+// PerformRollback 下载指定发布版本并替换当前可执行文件。
 func (s *SystemUpdateService) PerformRollback(ctx context.Context, task *model.SystemTask, runnerID string) (*SystemUpdateTaskResult, error) {
 	if s.isContainerFn() {
-		return s.HandOffDockerRollback(ctx, task, runnerID)
+		payload := SystemUpdateTaskPayload{}
+		if task != nil {
+			if err := task.DecodePayload(&payload); err != nil {
+				return nil, fmt.Errorf("decode system rollback payload failed: %w", err)
+			}
+		}
+		info, err := s.CheckLatest(ctx, true)
+		if err != nil {
+			return nil, err
+		}
+		release, err := s.resolveTargetRelease(ctx, info, payload.TargetVersion)
+		if err != nil {
+			return nil, err
+		}
+		info.TargetImage = systemUpdateDockerImageForVersion(info.Docker.CurrentImage, release.TagName)
+		info.LatestVersion = release.TagName
+		return s.HandOffDockerRollback(ctx, task, runnerID, info, release.TagName)
 	}
 	if s.goosFn() == "windows" {
 		return nil, fmt.Errorf("%w: automatic executable rollback is not supported while a Windows process is running", ErrSystemUpdateDisabled)
@@ -778,30 +1095,116 @@ func (s *SystemUpdateService) PerformRollback(ctx context.Context, task *model.S
 	if err != nil {
 		return nil, err
 	}
-	backupPath := exePath + ".backup"
-	if _, err := validateSystemUpdateRegularFile(backupPath, "inspect backup executable failed"); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, ErrSystemRollbackDisabled
+	payload := SystemUpdateTaskPayload{}
+	if task != nil {
+		if err := task.DecodePayload(&payload); err != nil {
+			return nil, fmt.Errorf("decode system rollback payload failed: %w", err)
 		}
+	}
+	info, err := s.CheckLatest(ctx, true)
+	if err != nil {
 		return nil, err
 	}
-
-	if err := swapSystemUpdateExecutables(exePath, backupPath); err != nil {
+	release, err := s.resolveTargetRelease(ctx, info, payload.TargetVersion)
+	if err != nil {
 		return nil, err
 	}
-
+	releaseInfo := convertSystemUpdateRelease(release)
+	matchedAsset := matchSystemUpdateAsset(releaseInfo.Assets, s.goosFn(), s.goarchFn(), release.TagName)
+	checksumAsset := matchSystemUpdateChecksumAsset(releaseInfo.Assets, s.goosFn(), release.TagName)
+	if matchedAsset == nil || checksumAsset == nil {
+		return nil, ErrSystemUpdateDisabled
+	}
+	if err := validateSystemUpdateDownloadURL(matchedAsset.DownloadURL); err != nil {
+		return nil, fmt.Errorf("invalid rollback asset URL: %w", err)
+	}
+	if err := validateSystemUpdateDownloadURL(checksumAsset.DownloadURL); err != nil {
+		return nil, fmt.Errorf("invalid rollback checksum URL: %w", err)
+	}
+	tempDir, err := os.MkdirTemp(filepath.Dir(exePath), ".nexustok-rollback-*")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+	assetName := filepath.Base(matchedAsset.Name)
+	downloadPath := filepath.Join(tempDir, assetName)
+	if err := s.githubClient.DownloadFile(ctx, matchedAsset.DownloadURL, downloadPath, systemUpdateMaxDownloadSize, nil); err != nil {
+		return nil, fmt.Errorf("download rollback update failed: %w", err)
+	}
+	checksumData, err := s.githubClient.FetchFile(ctx, checksumAsset.DownloadURL, systemUpdateChecksumMaxSize)
+	if err != nil {
+		return nil, fmt.Errorf("download rollback checksum failed: %w", err)
+	}
+	actualSHA256, err := verifySystemUpdateChecksum(downloadPath, assetName, checksumData)
+	if err != nil {
+		return nil, err
+	}
+	executableInfo, err := os.Stat(exePath)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateSystemUpdateBinary(downloadPath, s.goosFn(), executableInfo.Mode().Perm()); err != nil {
+		return nil, err
+	}
+	state.Phase = SystemUpdatePhaseBackingUpData
+	state.Progress = 70
+	if err := updateSystemUpdateTaskState(task, runnerID, state); err != nil {
+		return nil, err
+	}
+	backup, err := s.createUpdateBackup(ctx, task, runnerID, release.TagName, state)
+	if err != nil {
+		return nil, err
+	}
+	if err := replaceSystemUpdateExecutableAtomically(exePath, downloadPath); err != nil {
+		return nil, err
+	}
+	state.Phase = SystemUpdatePhaseReady
 	state.Progress = 100
+	state.BackupID = backup.ID
+	state.BackupStatus = backup.Status
 	if err := updateSystemUpdateTaskState(task, runnerID, state); err != nil {
 		return nil, err
 	}
 
 	return &SystemUpdateTaskResult{
-		CurrentVersion:     s.currentVersionFn(),
-		CurrentExecutable:  exePath,
-		PreviousExecutable: backupPath,
-		RestartRequired:    true,
-		RollbackAvailable:  true,
+		CurrentVersion:    s.currentVersionFn(),
+		TargetVersion:     release.TagName,
+		SHA256:            actualSHA256,
+		HTMLURL:           release.HTMLURL,
+		PublishedAt:       release.PublishedAt,
+		RestartRequired:   true,
+		RollbackAvailable: false,
+		BackupID:          backup.ID,
+		BackupStatus:      backup.Status,
 	}, nil
+}
+
+func (s *SystemUpdateService) createUpdateBackup(ctx context.Context, task *model.SystemTask, runnerID string, version string, state SystemUpdateTaskState) (*SystemUpdateBackup, error) {
+	if s.backupFn == nil {
+		return nil, errors.New("system update data backup is not configured")
+	}
+	backup, err := s.backupFn(ctx, version)
+	if err != nil {
+		state.BackupStatus = systemUpdateBackupStatusFailed
+		_ = updateSystemUpdateTaskState(task, runnerID, state)
+		return nil, fmt.Errorf("create system update data backup failed: %w", err)
+	}
+	if task != nil {
+		payload := SystemUpdateTaskPayload{}
+		if err := task.DecodePayload(&payload); err != nil {
+			return nil, fmt.Errorf("decode system update payload failed: %w", err)
+		}
+		payload.BackupID = backup.ID
+		if err := model.UpdateSystemTaskPayload(task.TaskID, runnerID, payload); err != nil {
+			return nil, fmt.Errorf("save system update backup id failed: %w", err)
+		}
+		payloadData, err := common.Marshal(payload)
+		if err != nil {
+			return nil, fmt.Errorf("encode system update payload failed: %w", err)
+		}
+		task.Payload = string(payloadData)
+	}
+	return backup, nil
 }
 
 func (s *SystemUpdateService) executablePath() (string, error) {
@@ -824,7 +1227,6 @@ func (s *SystemUpdateService) getCachedInfo() *SystemUpdateInfo {
 	}
 	info := cloneSystemUpdateInfo(s.cached)
 	info.Cached = true
-	info.RollbackAvailable = s.RollbackAvailable()
 	s.syncApplicability(info)
 	return info
 }
@@ -935,6 +1337,79 @@ func (c *systemUpdateHTTPClient) FetchLatestRelease(ctx context.Context, repo st
 		return nil, err
 	}
 	return &release, nil
+}
+
+func (c *systemUpdateHTTPClient) ListReleases(ctx context.Context, repo string) ([]*systemUpdateGitHubRelease, error) {
+	if !systemUpdateGitHubRepoPattern.MatchString(repo) {
+		return nil, errors.New("invalid GitHub repository")
+	}
+	const (
+		pageSize = 100
+		maxPages = 3
+	)
+	releases := make([]*systemUpdateGitHubRelease, 0, pageSize)
+	for page := 1; page <= maxPages; page++ {
+		requestURL := fmt.Sprintf(
+			"https://api.github.com/repos/%s/releases?page=%d&per_page=%d",
+			repo,
+			page,
+			pageSize,
+		)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("User-Agent", "NexusTok-Updater")
+		if c.metadataURLValidator != nil {
+			if err := c.metadataURLValidator(req.URL.String()); err != nil {
+				return nil, err
+			}
+		}
+		resp, err := c.metadataClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		data, readErr := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+		_ = resp.Body.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+		if resp.StatusCode == http.StatusNotFound {
+			if page == 1 {
+				return nil, ErrSystemUpdateNoRelease
+			}
+			break
+		}
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("GitHub releases API returned %d", resp.StatusCode)
+		}
+		var pageReleases []systemUpdateGitHubRelease
+		if err := common.Unmarshal(data, &pageReleases); err != nil {
+			return nil, err
+		}
+		if len(pageReleases) == 0 {
+			break
+		}
+		for i := range pageReleases {
+			release := pageReleases[i]
+			if release.Draft || strings.TrimSpace(release.PublishedAt) == "" {
+				continue
+			}
+			if _, ok := parseSystemUpdateVersion(release.TagName); !ok {
+				continue
+			}
+			releaseCopy := release
+			releases = append(releases, &releaseCopy)
+		}
+		if len(pageReleases) < pageSize {
+			break
+		}
+	}
+	if len(releases) == 0 {
+		return nil, ErrSystemUpdateNoRelease
+	}
+	return releases, nil
 }
 
 func (c *systemUpdateHTTPClient) DownloadFile(ctx context.Context, rawURL string, dest string, maxSize int64, onProgress func(downloaded, total int64)) error {
@@ -1281,123 +1756,45 @@ func sha256File(filePath string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func replaceSystemUpdateExecutable(exePath string, newBinaryPath string) (string, error) {
-	backupPath := exePath + ".backup"
-	swapID := common.GetUUID()
-	oldBackupPath := filepath.Join(filepath.Dir(exePath), ".nexustok-old-backup-"+swapID)
-	oldExecutablePath := filepath.Join(filepath.Dir(exePath), ".nexustok-old-executable-"+swapID)
-
+func replaceSystemUpdateExecutableAtomically(exePath string, newBinaryPath string) error {
 	executableInfo, err := validateSystemUpdateRegularFile(exePath, "inspect current executable failed")
 	if err != nil {
-		return "", err
+		return err
 	}
 	if err := os.Chmod(newBinaryPath, executableInfo.Mode().Perm()); err != nil {
-		return "", fmt.Errorf("preserve executable permissions failed: %w", err)
+		return fmt.Errorf("preserve executable permissions failed: %w", err)
 	}
-
-	_, backupStatErr := os.Stat(backupPath)
-	backupExists := backupStatErr == nil
-	if backupStatErr != nil && !os.IsNotExist(backupStatErr) {
-		return "", fmt.Errorf("inspect old backup failed: %w", backupStatErr)
-	}
-	if backupExists {
-		if _, err := validateSystemUpdateRegularFile(backupPath, "inspect old backup failed"); err != nil {
-			return "", err
-		}
-	}
-
-	oldBackupMoved := false
-	oldExecutableMoved := false
-	newExecutableInstalled := false
+	swapID := common.GetUUID()
+	oldPath := filepath.Join(filepath.Dir(exePath), ".nexustok-old-executable-"+swapID)
+	currentMoved := false
+	newInstalled := false
 	restore := func(operationErr error) error {
 		var restoreErrs []string
-		if newExecutableInstalled {
+		if newInstalled {
 			if err := os.Remove(exePath); err != nil && !os.IsNotExist(err) {
 				restoreErrs = append(restoreErrs, "remove new executable: "+err.Error())
 			}
 		}
-		if oldExecutableMoved {
-			if err := systemUpdateRename(oldExecutablePath, exePath); err != nil {
-				restoreErrs = append(restoreErrs, "restore current executable: "+err.Error())
-			}
-		}
-		if oldBackupMoved {
-			if err := systemUpdateRename(oldBackupPath, backupPath); err != nil {
-				restoreErrs = append(restoreErrs, "restore previous backup: "+err.Error())
-			}
-		}
-		if len(restoreErrs) > 0 {
-			return fmt.Errorf("%w; update rollback failed: %s", operationErr, strings.Join(restoreErrs, "; "))
-		}
-		return operationErr
-	}
-
-	if backupExists {
-		if err := systemUpdateRename(backupPath, oldBackupPath); err != nil {
-			return "", fmt.Errorf("stage old backup failed: %w", err)
-		}
-		oldBackupMoved = true
-	}
-	if err := systemUpdateRename(exePath, oldExecutablePath); err != nil {
-		return "", restore(fmt.Errorf("stage current executable failed: %w", err))
-	}
-	oldExecutableMoved = true
-	if err := systemUpdateRename(newBinaryPath, exePath); err != nil {
-		return "", restore(fmt.Errorf("install new executable failed: %w", err))
-	}
-	newExecutableInstalled = true
-	if err := systemUpdateRename(oldExecutablePath, backupPath); err != nil {
-		return "", restore(fmt.Errorf("commit new backup failed: %w", err))
-	}
-	oldExecutableMoved = false
-	if oldBackupMoved {
-		// The former rollback slot is no longer needed only after the new
-		// executable and its new backup have both been committed.
-		_ = os.Remove(oldBackupPath)
-	}
-	return backupPath, nil
-}
-
-func swapSystemUpdateExecutables(exePath string, backupPath string) error {
-	swapID := common.GetUUID()
-	currentStash := filepath.Join(filepath.Dir(exePath), ".nexustok-current-"+swapID)
-
-	if _, err := validateSystemUpdateRegularFile(backupPath, "inspect backup executable failed"); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return ErrSystemRollbackDisabled
-		}
-		return fmt.Errorf("inspect backup executable failed: %w", err)
-	}
-
-	if err := systemUpdateRename(exePath, currentStash); err != nil {
-		return fmt.Errorf("stage current executable for rollback failed: %w", err)
-	}
-	currentMoved := true
-	backupInstalled := false
-	restore := func(operationErr error) error {
-		var restoreErrs []string
-		if backupInstalled {
-			if err := systemUpdateRename(exePath, backupPath); err != nil {
-				restoreErrs = append(restoreErrs, "restore backup executable: "+err.Error())
-			}
-		}
 		if currentMoved {
-			if err := systemUpdateRename(currentStash, exePath); err != nil {
+			if err := systemUpdateRename(oldPath, exePath); err != nil {
 				restoreErrs = append(restoreErrs, "restore current executable: "+err.Error())
 			}
 		}
 		if len(restoreErrs) > 0 {
-			return fmt.Errorf("%w; rollback recovery failed: %s", operationErr, strings.Join(restoreErrs, "; "))
+			return fmt.Errorf("%w; executable recovery failed: %s", operationErr, strings.Join(restoreErrs, "; "))
 		}
 		return operationErr
 	}
-
-	if err := systemUpdateRename(backupPath, exePath); err != nil {
-		return restore(fmt.Errorf("install backup executable failed: %w", err))
+	if err := systemUpdateRename(exePath, oldPath); err != nil {
+		return fmt.Errorf("stage current executable failed: %w", err)
 	}
-	backupInstalled = true
-	if err := systemUpdateRename(currentStash, backupPath); err != nil {
-		return restore(fmt.Errorf("commit current executable swap failed: %w", err))
+	currentMoved = true
+	if err := systemUpdateRename(newBinaryPath, exePath); err != nil {
+		return restore(fmt.Errorf("install new executable failed: %w", err))
+	}
+	newInstalled = true
+	if err := os.Remove(oldPath); err != nil {
+		return restore(fmt.Errorf("remove staged old executable failed: %w", err))
 	}
 	currentMoved = false
 	return nil
@@ -1579,6 +1976,15 @@ func compareParsedSystemUpdateVersion(current parsedSystemUpdateVersion, latest 
 	return compareInt(len(currentParts), len(latestParts))
 }
 
+func systemUpdateVersionsEqual(left string, right string) bool {
+	leftParsed, leftOK := parseSystemUpdateVersion(left)
+	rightParsed, rightOK := parseSystemUpdateVersion(right)
+	if leftOK && rightOK {
+		return compareParsedSystemUpdateVersion(leftParsed, rightParsed) == 0
+	}
+	return strings.TrimSpace(left) == strings.TrimSpace(right)
+}
+
 func validSystemUpdateNumericIdentifier(value string) bool {
 	if value == "" {
 		return false
@@ -1685,6 +2091,7 @@ func cloneSystemUpdateInfo(info *SystemUpdateInfo) *SystemUpdateInfo {
 		dockerClone := *info.Docker
 		clone.Docker = &dockerClone
 	}
+	clone.AvailableReleases = append([]SystemUpdateRelease(nil), info.AvailableReleases...)
 	return &clone
 }
 

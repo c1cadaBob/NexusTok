@@ -450,6 +450,40 @@ func UpdateSystemTaskState(taskID string, lockedBy string, state any) error {
 	return nil
 }
 
+// UpdateSystemTaskPayload 更新 running 任务的输入快照。
+//
+// 更新器在创建业务数据备份后回写 backup_id，使任务在切换失败、helper 重启或
+// 管理员刷新页面后仍能定位本次备份；调用方必须继续持有任务租约。
+func UpdateSystemTaskPayload(taskID string, lockedBy string, payload any) error {
+	payloadText, err := marshalSystemTaskJSON(payload)
+	if err != nil {
+		return err
+	}
+	now := common.GetTimestamp()
+	result := DB.Model(&SystemTask{}).
+		Where("task_id = ? AND status = ? AND locked_by = ?", taskID, SystemTaskStatusRunning, lockedBy).
+		Where("EXISTS (SELECT 1 FROM system_task_locks WHERE system_task_locks.task_id = system_tasks.task_id AND system_task_locks.locked_by = ? AND system_task_locks.locked_until >= ?)", lockedBy, now).
+		Updates(map[string]any{
+			"payload":    payloadText,
+			"updated_at": now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		var held int64
+		if err := DB.Model(&SystemTask{}).
+			Where("task_id = ? AND status = ? AND locked_by = ?", taskID, SystemTaskStatusRunning, lockedBy).
+			Where("EXISTS (SELECT 1 FROM system_task_locks WHERE system_task_locks.task_id = system_tasks.task_id AND system_task_locks.locked_by = ? AND system_task_locks.locked_until >= ?)", lockedBy, now).
+			Count(&held).Error; err != nil {
+			return err
+		} else if held == 0 {
+			return ErrSystemTaskLockLost
+		}
+	}
+	return nil
+}
+
 // RenewSystemTaskLock 延长 runner 当前持有的任务租约。
 func RenewSystemTaskLock(taskID string, lockedBy string, lockUntil int64) error {
 	now := common.GetTimestamp()
@@ -642,6 +676,7 @@ func sanitizeSystemUpdateTaskPayload(value any) any {
 		"asset_name":     {},
 		"mode":           {},
 		"target_image":   {},
+		"backup_id":      {},
 	})
 }
 
@@ -658,6 +693,10 @@ func sanitizeSystemUpdateTaskState(value any) any {
 		"health_status":         {},
 		"healthcheck_available": {},
 		"healthcheck_degraded":  {},
+		"backup_id":             {},
+		"backup_status":         {},
+		"restore_status":        {},
+		"data_restore_failed":   {},
 	})
 }
 
@@ -673,6 +712,10 @@ func sanitizeSystemUpdateTaskResult(value any) any {
 		"health_status":         {},
 		"healthcheck_available": {},
 		"healthcheck_degraded":  {},
+		"backup_id":             {},
+		"backup_status":         {},
+		"restore_status":        {},
+		"data_restore_failed":   {},
 	})
 }
 

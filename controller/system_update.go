@@ -4,6 +4,7 @@
 package controller
 
 import (
+	"net/http"
 	"strconv"
 
 	"github.com/c1cadaBob/NexusTok/common"
@@ -30,20 +31,48 @@ func ApplySystemUpdate(c *gin.Context) {
 		common.ApiErrorMsg(c, service.SystemUpdateErrorMessage(err))
 		return
 	}
+	payload := service.SystemUpdateTaskPayload{}
+	_ = task.DecodePayload(&payload)
+	recordManageAudit(c, "system_update.apply", map[string]any{
+		"target_version": payload.TargetVersion,
+		"result_status":  "accepted",
+	})
 	common.ApiSuccess(c, task.ToResponse())
 }
 
 // RollbackSystemUpdate 创建系统回滚后台任务。
 func RollbackSystemUpdate(c *gin.Context) {
-	task, err := service.StartSystemRollbackTask()
+	var request struct {
+		TargetVersion string `json:"target_version"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "target_version is required",
+		})
+		return
+	}
+	task, err := service.StartSystemRollbackTask(c.Request.Context(), request.TargetVersion)
 	if err != nil {
 		common.ApiErrorMsg(c, service.SystemUpdateErrorMessage(err))
 		return
 	}
+	recordManageAudit(c, "system_update.rollback", map[string]any{
+		"target_version": request.TargetVersion,
+		"result_status":  "accepted",
+	})
 	common.ApiSuccess(c, task.ToResponse())
 }
 
 // RestartSystemUpdate 调度服务重启。
 func RestartSystemUpdate(c *gin.Context) {
-	common.ApiSuccess(c, service.RestartSystemService())
+	result := service.RestartSystemService()
+	resultStatus := "manual_required"
+	if result.RestartScheduled {
+		resultStatus = "scheduled"
+	} else if result.RestartSupported {
+		resultStatus = "accepted"
+	}
+	recordManageAudit(c, "system_update.restart", map[string]any{"result_status": resultStatus})
+	common.ApiSuccess(c, result)
 }

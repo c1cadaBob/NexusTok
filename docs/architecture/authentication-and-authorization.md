@@ -250,8 +250,9 @@ Token 分页参数、兼容回退和现代 Dashboard 会话刷新容易被宽泛
 **变更后**：`/api/system-update/latest`、`/api/system-update/apply`、
 `/api/system-update/rollback` 和 `/api/system-update/restart` 均挂载在
 `RootAuth()` 下。前端 ConfirmDialog 是误操作保护，服务端仍会重新检查 Release、
-资产、checksum、当前部署方式、Docker socket 和回滚槽位。POST 操作沿用管理审计中间件，
-记录 action、操作者、结果、路由和非秘密上下文，不新增 Casbin 权限类别。
+资产、checksum、当前部署方式、Docker socket 和目标镜像。回滚只能选择后端查询到的
+其它已发布版本。POST 操作沿用管理审计中间件，记录 action、目标版本、结果、路由和
+非秘密上下文，不新增 Casbin 权限类别。
 
 系统任务响应只返回版本、镜像摘要、阶段、进度、结果摘要和脱敏错误；密码、Cookie、
 Session Secret、数据库 DSN、Redis 连接串、Access/Refresh Token、Admin Key 和完整

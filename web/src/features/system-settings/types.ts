@@ -109,6 +109,20 @@ export type SystemUpdateReleaseInfo = {
   assets?: SystemUpdateAsset[]
 }
 
+export type SystemUpdateRelease = {
+  tag_name: string
+  name?: string
+  published_at?: string
+  html_url?: string
+  current: boolean
+  prerelease: boolean
+  available: boolean
+  binary_available: boolean
+  checksum_available: boolean
+  docker_target_image?: string
+  unavailable_reason?: string
+}
+
 export type SystemUpdateRuntime = {
   goos: string
   goarch: string
@@ -150,6 +164,7 @@ export type SystemUpdateInfo = {
   warning?: string
   release_status: string
   manual_update_hint?: string
+  available_releases?: SystemUpdateRelease[]
 }
 
 export type SystemUpdateTaskState = {
@@ -164,6 +179,10 @@ export type SystemUpdateTaskState = {
   health_status?: string
   healthcheck_available?: boolean
   healthcheck_degraded?: boolean
+  backup_id?: string
+  backup_status?: string
+  restore_status?: string
+  data_restore_failed?: boolean
 }
 
 export type SystemUpdateTaskResult = {
@@ -177,6 +196,10 @@ export type SystemUpdateTaskResult = {
   health_status?: string
   healthcheck_available?: boolean
   healthcheck_degraded?: boolean
+  backup_id?: string
+  backup_status?: string
+  restore_status?: string
+  data_restore_failed?: boolean
 }
 
 export type SystemUpdateTask = SystemTask<
