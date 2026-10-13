@@ -501,7 +501,7 @@ func finalizePlatformSitePasswordCredential(
 				credential.UserID = loginUserID
 			}
 			if loginUsername != "" {
-				credential.Username = loginUsername
+				updatePlatformSiteLoginIdentity(platform, credential, loginUsername)
 			}
 			credential.AuthType = model.UpstreamAuthPassword
 			credential.LastAuthAt = common.GetTimestamp()
@@ -527,7 +527,7 @@ func finalizePlatformSitePasswordCredential(
 		credential.UserID = userID
 	}
 	if username != "" {
-		credential.Username = username
+		updatePlatformSiteLoginIdentity(platform, credential, username)
 	}
 	credential.AuthType = model.UpstreamAuthPassword
 	credential.LastAuthAt = common.GetTimestamp()

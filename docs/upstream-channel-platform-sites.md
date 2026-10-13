@@ -998,6 +998,20 @@ cd web && bunx oxlint src/features/channels/components/drawers/channel-mutate-dr
   Key、完整上游响应和真实站点账号不会写入日志、错误响应、文档、测试 fixture 或
   Git 提交。
 
+### 9.8.1 2026-10-13 Sub2API 邮箱登录凭据保存
+
+**变更前**：账号密码认证流程在验证上游当前用户后，无条件把上游返回的站点
+`username` 写回最终平台凭据。对于输入邮箱的 Sub2API 账号，这会把原始登录邮箱
+替换成站点内部用户名；后续同步再次使用 `username` 字段登录严格要求邮箱的站点时，
+会在登录参数校验阶段返回 HTTP 400 `INVALID_REQUEST`。
+
+**变更后**：Sub2API 密码认证保留原始登录主体。邮箱主体继续作为长期加密凭据的
+`Username`，用于下一次 `/api/v1/auth/login` 的 `email/password` 请求；上游
+`username` 只作为平台身份信息使用，不覆盖该登录邮箱。非邮箱用户名仍可根据上游
+当前用户响应保存规范名称。当前用户接口不可用而从登录响应提取身份时使用相同规则。
+该修复不新增字段、迁移或业务接口，也不改变 HTTP 401 的邮箱到用户名兼容回退和
+HTTP 400 不回退规则。
+
 ### 9.9 2026-10-03 Sub2API Relay 发现与严格登录请求
 
 **变更前**

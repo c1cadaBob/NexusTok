@@ -2705,6 +2705,77 @@ func TestPlatformSitePasswordAuthenticationPersistsCurrentUsername(t *testing.T)
 	}
 }
 
+func TestFinalizePlatformSitePasswordCredentialPreservesSub2APIEmail(t *testing.T) {
+	tests := []struct {
+		name              string
+		currentUserStatus int
+		currentUserBody   string
+		loginPayload      map[string]any
+		wantUserID        string
+	}{
+		{
+			name:              "当前用户接口返回站点用户名",
+			currentUserStatus: http.StatusOK,
+			currentUserBody:   `{"code":0,"data":{"id":23,"username":"c1cada","email":"operator@example.com"}}`,
+			wantUserID:        "23",
+		},
+		{
+			name:              "当前用户接口缺失时使用登录响应身份",
+			currentUserStatus: http.StatusNotFound,
+			loginPayload: map[string]any{
+				"data": map[string]any{
+					"id":       "24",
+					"username": "c1cada",
+				},
+			},
+			wantUserID: "24",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(
+				writer http.ResponseWriter,
+				request *http.Request,
+			) {
+				if request.URL.Path == "/api/v1/auth/me" {
+					writer.Header().Set("Content-Type", "application/json")
+					writer.WriteHeader(testCase.currentUserStatus)
+					if testCase.currentUserBody != "" {
+						_, _ = writer.Write([]byte(testCase.currentUserBody))
+					}
+					return
+				}
+				http.NotFound(writer, request)
+			}))
+			t.Cleanup(server.Close)
+
+			session, err := newPlatformSiteSession(server.URL, make(http.Header))
+			require.NoError(t, err)
+			session.Platform = model.PlatformSub2API
+			attachPlatformSiteHTTPClient(session, server.Client())
+
+			credential := &model.PlatformSiteCredential{
+				AuthType: model.UpstreamAuthPassword,
+				Username: "operator@example.com",
+				Password: "synthetic-password",
+			}
+			err = finalizePlatformSitePasswordCredential(
+				context.Background(),
+				model.PlatformSub2API,
+				session,
+				credential,
+				testCase.loginPayload,
+			)
+			require.NoError(t, err)
+			assert.Equal(t, "operator@example.com", credential.Username)
+			assert.Equal(t, testCase.wantUserID, credential.UserID)
+			assert.Equal(t, model.UpstreamAuthPassword, credential.AuthType)
+			assert.NotZero(t, credential.LastAuthAt)
+		})
+	}
+}
+
 func TestSub2APIAdapterParsesRealLoginEnvelopeWithoutCredentialDrift(t *testing.T) {
 	loginRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -3347,7 +3418,7 @@ func TestSub2APIAuthFlowTwoFAUsesBrowserHeaders(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.Equal(t, "23", verified.UserID)
-	assert.Equal(t, "sub-operator", verified.Username)
+	assert.Equal(t, "operator@example.com", verified.Username)
 	assert.Equal(t, model.UpstreamAuthPassword, verified.AuthType)
 	resolution, err := ResolvePlatformSiteAuthFlow(
 		41,
@@ -3361,7 +3432,7 @@ func TestSub2APIAuthFlowTwoFAUsesBrowserHeaders(t *testing.T) {
 	assert.Empty(t, resolution.Credential.RefreshToken)
 	assert.Empty(t, resolution.Credential.SessionID)
 	assert.Empty(t, resolution.Credential.Cookie)
-	assert.Equal(t, "sub-operator", resolution.Credential.Username)
+	assert.Equal(t, "operator@example.com", resolution.Credential.Username)
 }
 
 func TestSub2APIAuthFlowResolutionNormalizesManagementBaseURL(t *testing.T) {

@@ -308,7 +308,7 @@ func (adapter *NewAPIAdapter) Authenticate(ctx context.Context, baseURL string, 
 			credential.UserID = userID
 		}
 		if username := platformSiteUsernameFromRecord(firstNestedRecord(currentUser, "user", "account", "profile")); username != "" {
-			credential.Username = username
+			updatePlatformSiteLoginIdentity(model.PlatformNewAPI, &credential, username)
 		}
 		credential.LastAuthAt = common.GetTimestamp()
 		credential.RefreshStatus = "active"
@@ -875,8 +875,6 @@ func (adapter *Sub2APIAdapter) Authenticate(ctx context.Context, baseURL string,
 		resetSub2APISessionBeforePasswordLogin(session, &credential)
 	}
 	prepareSub2APIManagementSession(ctx, session)
-	loginIdentity := strings.TrimSpace(credential.Username)
-	loginIdentityIsEmail := strings.Contains(loginIdentity, "@")
 	switch platformSiteCredentialAuthType(credential) {
 	case model.UpstreamAuthPassword:
 		payload, requestErr := loginSub2APIWithPassword(ctx, session, credential)
@@ -954,12 +952,7 @@ func (adapter *Sub2APIAdapter) Authenticate(ctx context.Context, baseURL string,
 		credential.UserID = userID
 	}
 	if username := platformSiteUsernameFromRecord(firstNestedRecord(currentUser, "user", "account", "profile")); username != "" {
-		if platformSiteCredentialAuthType(credential) != model.UpstreamAuthPassword ||
-			!loginIdentityIsEmail {
-			credential.Username = username
-		} else {
-			credential.Username = loginIdentity
-		}
+		updatePlatformSiteLoginIdentity(model.PlatformSub2API, &credential, username)
 	}
 	credential.LastAuthAt = common.GetTimestamp()
 	credential.RefreshStatus = "active"
@@ -999,6 +992,26 @@ func platformSiteCredentialAuthType(credential model.PlatformSiteCredential) str
 	default:
 		return ""
 	}
+}
+
+func updatePlatformSiteLoginIdentity(
+	platform string,
+	credential *model.PlatformSiteCredential,
+	upstreamUsername string,
+) {
+	if credential == nil {
+		return
+	}
+	upstreamUsername = strings.TrimSpace(upstreamUsername)
+	if upstreamUsername == "" {
+		return
+	}
+	if platform == model.PlatformSub2API &&
+		platformSiteCredentialAuthType(*credential) == model.UpstreamAuthPassword &&
+		strings.Contains(strings.TrimSpace(credential.Username), "@") {
+		return
+	}
+	credential.Username = upstreamUsername
 }
 
 func (adapter *Sub2APIAdapter) FetchSnapshot(ctx context.Context, session *PlatformSiteSession) (PlatformSiteSnapshot, error) {
