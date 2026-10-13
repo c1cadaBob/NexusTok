@@ -1074,6 +1074,8 @@ func TestUpstreamChannelDatabaseCompatibility(t *testing.T) {
 			t.Cleanup(func() { _ = sqlDB.Close() })
 			t.Cleanup(func() {
 				_ = db.Migrator().DropTable(
+					&PlatformSiteUsageCostWindow{},
+					&PlatformSiteUsageCost{},
 					&UpstreamKeyAbility{},
 					&UpstreamKey{},
 					&PlatformSiteAccount{},
@@ -1089,13 +1091,23 @@ func TestUpstreamChannelDatabaseCompatibility(t *testing.T) {
 			previousDB := DB
 			previousMainType := common.MainDatabaseType()
 			previousLogType := common.LogDatabaseType()
+			previousLogDB := LOG_DB
+			logDSN := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(test.name+"-"+t.Name(), "/", "_"))
+			logDB, err := gorm.Open(sqlite.Open(logDSN), &gorm.Config{})
+			require.NoError(t, err)
+			require.NoError(t, logDB.AutoMigrate(&Log{}))
+			LOG_DB = logDB
 			DB = db
-			common.SetMainDatabaseType(test.dbType)
+			common.SetDatabaseTypes(test.dbType, common.DatabaseTypeSQLite)
 			initCol()
 			t.Cleanup(func() {
 				DB = previousDB
+				LOG_DB = previousLogDB
 				common.SetDatabaseTypes(previousMainType, previousLogType)
 				initCol()
+				if sqlDB, closeErr := logDB.DB(); closeErr == nil {
+					_ = sqlDB.Close()
+				}
 			})
 
 			require.NoError(t, db.Table(prefix+"channels").AutoMigrate(&upstreamCompatibilityLegacyChannel{}))
@@ -1122,6 +1134,8 @@ func TestUpstreamChannelDatabaseCompatibility(t *testing.T) {
 					&ChannelKey{},
 					&RoutingKeyHealth{},
 					&PlatformSiteAccount{},
+					&PlatformSiteUsageCost{},
+					&PlatformSiteUsageCostWindow{},
 					&UpstreamKey{},
 					&UpstreamKeyAbility{},
 					&Ability{},
@@ -1131,6 +1145,8 @@ func TestUpstreamChannelDatabaseCompatibility(t *testing.T) {
 			}
 			assert.True(t, db.Migrator().HasColumn(&UpstreamKey{}, "LastUsedAt"))
 			assert.True(t, db.Migrator().HasTable(&RoutingKeyHealth{}))
+			assert.True(t, db.Migrator().HasTable(&PlatformSiteUsageCost{}))
+			assert.True(t, db.Migrator().HasTable(&PlatformSiteUsageCostWindow{}))
 
 			var migratedLegacy Channel
 			require.NoError(t, db.First(&migratedLegacy, "id = ?", 41).Error)
@@ -1174,6 +1190,56 @@ func TestUpstreamChannelDatabaseCompatibility(t *testing.T) {
 				UpstreamKind: UpstreamKindPlatformSite,
 			}
 			require.NoError(t, db.Create(channel).Error)
+			require.NoError(t, UpsertPlatformSiteUsageCost(PlatformSiteUsageCost{
+				RequestID: "cost-compatibility-request",
+				ChannelID: channel.Id,
+				Cost:      125,
+				Source:    PlatformSiteUsageCostSourceEstimated,
+				UpdatedAt: 1000,
+			}))
+			require.NoError(t, UpsertPlatformSiteUsageCost(PlatformSiteUsageCost{
+				RequestID:         "cost-compatibility-request",
+				ChannelID:         channel.Id,
+				UpstreamRequestID: "upstream-cost-request",
+				Cost:              100,
+				Source:            PlatformSiteUsageCostSourceUpstream,
+				UpdatedAt:         1100,
+			}))
+			cost, err := FindPlatformSiteUsageCost("cost-compatibility-request")
+			require.NoError(t, err)
+			require.NotNil(t, cost)
+			assert.Equal(t, int64(100), cost.Cost)
+			assert.Equal(t, PlatformSiteUsageCostSourceUpstream, cost.Source)
+			require.NoError(t, SavePlatformSiteUsageCostWindow(
+				&PlatformSiteUsageCostWindow{ChannelID: channel.Id, WindowStart: 900},
+				1000,
+				300,
+			))
+			dueWindows, err := ListDuePlatformSiteUsageCostWindows(channel.Id, 1300, 10)
+			require.NoError(t, err)
+			require.Len(t, dueWindows, 1)
+			require.NoError(t, db.AutoMigrate(&PlatformSiteUsageCost{}, &PlatformSiteUsageCostWindow{}))
+			require.NoError(t, db.AutoMigrate(&PlatformSiteUsageCost{}, &PlatformSiteUsageCostWindow{}))
+			var preservedCost PlatformSiteUsageCost
+			require.NoError(t, db.Where("request_id = ?", "cost-compatibility-request").Take(&preservedCost).Error)
+			assert.Equal(t, int64(100), preservedCost.Cost)
+			require.NoError(t, logDB.Create(&Log{
+				Type:      LogTypeConsume,
+				RequestId: "cost-compatibility-request",
+				ChannelId: channel.Id,
+				CreatedAt: 950,
+			}).Error)
+			logs, err := ListPlatformSiteUsageCostLogs(channel.Id, 900, 1200)
+			require.NoError(t, err)
+			require.Len(t, logs, 1)
+			require.NoError(t, AttachPlatformSiteUsageCosts([]*Log{&logs[0]}))
+			adminLogs := []*Log{{Other: logs[0].Other}}
+			FormatAdminLogs(adminLogs)
+			assert.Contains(t, adminLogs[0].Other, `"upstream_cost":100`)
+			userLogs := []*Log{{Other: logs[0].Other}}
+			formatUserLogs(userLogs, 0)
+			assert.NotContains(t, userLogs[0].Other, "upstream_cost")
+
 			account := &PlatformSiteAccount{
 				ChannelID:       channel.Id,
 				Platform:        PlatformNewAPI,
@@ -2068,6 +2134,173 @@ func TestPlatformSiteRoutingSelectionRepairsRelationsAndUsesMappedModels(t *test
 	_, err = GetRoutableKeyByID(channel, 2001, "default", "alias-model")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, errRoutingKeySelectionUnavailable)
+}
+
+func TestPlatformSiteUsageCostUpgradesEstimateAndRetriesWindow(t *testing.T) {
+	previousDB := DB
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&PlatformSiteUsageCost{}, &PlatformSiteUsageCostWindow{}))
+	DB = db
+	t.Cleanup(func() {
+		DB = previousDB
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	estimate := PlatformSiteUsageCost{
+		RequestID: "request-cost-1",
+		ChannelID: 42,
+		Cost:      150,
+		Source:    PlatformSiteUsageCostSourceEstimated,
+		UpdatedAt: 1000,
+	}
+	require.NoError(t, UpsertPlatformSiteUsageCost(estimate))
+	upstream := estimate
+	upstream.Cost = 125
+	upstream.Source = PlatformSiteUsageCostSourceUpstream
+	upstream.UpstreamRequestID = "upstream-1"
+	upstream.UpdatedAt = 1100
+	require.NoError(t, UpsertPlatformSiteUsageCost(upstream))
+	estimate.Cost = 200
+	estimate.UpdatedAt = 1200
+	require.NoError(t, UpsertPlatformSiteUsageCost(estimate))
+
+	cost, err := FindPlatformSiteUsageCost("request-cost-1")
+	require.NoError(t, err)
+	require.NotNil(t, cost)
+	assert.Equal(t, PlatformSiteUsageCostSourceUpstream, cost.Source)
+	assert.Equal(t, int64(125), cost.Cost)
+	assert.Equal(t, "upstream-1", cost.UpstreamRequestID)
+
+	window := &PlatformSiteUsageCostWindow{ChannelID: 42, WindowStart: 900}
+	require.NoError(t, SavePlatformSiteUsageCostWindow(window, 1000, 300))
+	assert.Equal(t, 1, window.Attempts)
+	assert.Equal(t, PlatformSiteUsageCostWindowRetry, window.Status)
+	due, err := ListDuePlatformSiteUsageCostWindows(42, 1299, 10)
+	require.NoError(t, err)
+	assert.Empty(t, due)
+	due, err = ListDuePlatformSiteUsageCostWindows(42, 1300, 10)
+	require.NoError(t, err)
+	require.Len(t, due, 1)
+
+	require.NoError(t, SavePlatformSiteUsageCostWindow(&due[0], 1300, 300))
+	latest, err := GetLatestPlatformSiteUsageCostWindow(42)
+	require.NoError(t, err)
+	require.NotNil(t, latest)
+	assert.Equal(t, PlatformSiteUsageCostWindowRetry, latest.Status)
+	assert.Equal(t, 2, latest.Attempts)
+
+	due, err = ListDuePlatformSiteUsageCostWindows(42, 1600, 10)
+	require.NoError(t, err)
+	require.Len(t, due, 1)
+	require.NoError(t, SavePlatformSiteUsageCostWindow(&due[0], 1600, 300))
+	due, err = ListDuePlatformSiteUsageCostWindows(42, 1900, 10)
+	require.NoError(t, err)
+	require.Len(t, due, 1)
+	require.NoError(t, SavePlatformSiteUsageCostWindow(&due[0], 1900, 0))
+
+	latest, err = GetLatestPlatformSiteUsageCostWindow(42)
+	require.NoError(t, err)
+	require.NotNil(t, latest)
+	assert.Equal(t, PlatformSiteUsageCostWindowComplete, latest.Status)
+	assert.Equal(t, 4, latest.Attempts)
+
+	assert.Error(t, UpsertPlatformSiteUsageCost(PlatformSiteUsageCost{
+		RequestID: "negative-cost",
+		ChannelID: 42,
+		Cost:      -1,
+		Source:    PlatformSiteUsageCostSourceEstimated,
+	}))
+}
+
+func TestPlatformSiteUsageCostAccountsExcludeDisabledAccounts(t *testing.T) {
+	previousDB := DB
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&PlatformSiteAccount{}))
+	DB = db
+	t.Cleanup(func() {
+		DB = previousDB
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	require.NoError(t, db.Create(&PlatformSiteAccount{
+		ChannelID: 10,
+		Platform:  PlatformSub2API,
+		BaseURL:   "https://sub2api.example",
+	}).Error)
+	require.NoError(t, db.Create(&PlatformSiteAccount{
+		ChannelID:  11,
+		Platform:   PlatformNewAPI,
+		BaseURL:    "https://newapi.example",
+		DisabledAt: 100,
+	}).Error)
+	require.NoError(t, db.Create(&PlatformSiteAccount{
+		ChannelID: 12,
+		Platform:  "other",
+		BaseURL:   "https://other.example",
+	}).Error)
+
+	accounts, err := ListPlatformSiteUsageCostAccounts()
+	require.NoError(t, err)
+	require.Len(t, accounts, 1)
+	assert.Equal(t, 10, accounts[0].ChannelID)
+}
+
+func TestAttachPlatformSiteUsageCostsOnlySurvivesAdminFormatting(t *testing.T) {
+	previousDB := DB
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&PlatformSiteUsageCost{}))
+	DB = db
+	t.Cleanup(func() {
+		DB = previousDB
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+	require.NoError(t, UpsertPlatformSiteUsageCost(PlatformSiteUsageCost{
+		RequestID: "request-cost-admin",
+		ChannelID: 17,
+		Cost:      240,
+		Source:    PlatformSiteUsageCostSourceUpstream,
+	}))
+
+	logs := []*Log{{
+		Type:      LogTypeConsume,
+		RequestId: "request-cost-admin",
+		ChannelId: 17,
+		Other:     `{"large_id":9007199254740993,"admin_info":{"upstream_key_ratio":1.2}}`,
+	}}
+	require.NoError(t, AttachPlatformSiteUsageCosts(logs))
+	assert.Contains(t, logs[0].Other, `"large_id":9007199254740993`)
+	adminLogs := []*Log{{Other: logs[0].Other}}
+	FormatAdminLogs(adminLogs)
+	assert.Contains(t, adminLogs[0].Other, `"upstream_cost":240`)
+	assert.Contains(t, adminLogs[0].Other, `"upstream_cost_source":"upstream"`)
+
+	userLogs := []*Log{{Other: logs[0].Other}}
+	formatUserLogs(userLogs, 0)
+	assert.NotContains(t, userLogs[0].Other, "upstream_cost")
+
+	malformedLogs := []*Log{{
+		Type:      LogTypeConsume,
+		RequestId: "request-cost-admin",
+		ChannelId: 17,
+		Other:     "{",
+	}}
+	require.NoError(t, AttachPlatformSiteUsageCosts(malformedLogs))
+	assert.Equal(t, "{", malformedLogs[0].Other)
 }
 
 func ptrTime(value time.Time) *time.Time {

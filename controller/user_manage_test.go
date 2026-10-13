@@ -13,12 +13,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/c1cadaBob/NexusTok/common"
 	"github.com/c1cadaBob/NexusTok/i18n"
 	"github.com/c1cadaBob/NexusTok/middleware"
 	"github.com/c1cadaBob/NexusTok/model"
 	"github.com/c1cadaBob/NexusTok/service/authz"
-	"github.com/alicebob/miniredis/v2"
 	"github.com/go-redis/redis/v8"
 
 	"github.com/gin-gonic/gin"
@@ -200,6 +200,65 @@ func createQuotaTestOperator(t *testing.T, db *gorm.DB, role int) model.User {
 	operator := model.User{Id: 9999, Username: "root-operator", Role: role, Status: common.UserStatusEnabled, AuthVersion: 1, AffCode: "root-operator-aff"}
 	require.NoError(t, db.Create(&operator).Error)
 	return operator
+}
+
+func TestPlatformSiteUsageCostIsOnlyAddedToAdminLogs(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Token{}, &model.PlatformSiteUsageCost{}))
+	logDB, _ := newAuditTestDatabase(t, "sqlite", "")
+	require.NoError(t, logDB.AutoMigrate(&model.Log{}))
+	previousLogDB := model.LOG_DB
+	previousMainType := common.MainDatabaseType()
+	previousLogType := common.LogDatabaseType()
+	model.LOG_DB = logDB
+	t.Cleanup(func() {
+		model.LOG_DB = previousLogDB
+		common.SetDatabaseTypes(previousMainType, previousLogType)
+	})
+	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+
+	channel := model.Channel{Name: "cost-log-channel"}
+	require.NoError(t, db.Create(&channel).Error)
+	require.NoError(t, logDB.Create(&model.Log{
+		UserId:    23,
+		CreatedAt: 1_792_000_201,
+		Type:      model.LogTypeConsume,
+		Username:  "cost-log-user",
+		ModelName: "gpt-test",
+		Quota:     100,
+		ChannelId: channel.Id,
+		TokenId:   7,
+		RequestId: "admin-visible-cost-request",
+		Other:     `{"admin_info":{"upstream_key_ratio":1.25}}`,
+	}).Error)
+	require.NoError(t, db.Create(&model.PlatformSiteUsageCost{
+		RequestID: "admin-visible-cost-request",
+		ChannelID: channel.Id,
+		Cost:      125,
+		Source:    model.PlatformSiteUsageCostSourceEstimated,
+	}).Error)
+
+	adminRecorder := httptest.NewRecorder()
+	adminContext, _ := gin.CreateTestContext(adminRecorder)
+	adminContext.Set("role", common.RoleAdminUser)
+	adminContext.Request = httptest.NewRequest(http.MethodGet, "/api/log/", nil)
+	GetAllLogs(adminContext)
+	assert.Contains(t, adminRecorder.Body.String(), `\"upstream_cost\":125`)
+	assert.Contains(t, adminRecorder.Body.String(), `\"upstream_cost_source\":\"estimated\"`)
+
+	userRecorder := httptest.NewRecorder()
+	userContext, _ := gin.CreateTestContext(userRecorder)
+	userContext.Set("id", 23)
+	userContext.Request = httptest.NewRequest(http.MethodGet, "/api/log/self", nil)
+	GetUserLogs(userContext)
+	assert.NotContains(t, userRecorder.Body.String(), "upstream_cost")
+
+	tokenRecorder := httptest.NewRecorder()
+	tokenContext, _ := gin.CreateTestContext(tokenRecorder)
+	tokenContext.Set("token_id", 7)
+	tokenContext.Request = httptest.NewRequest(http.MethodGet, "/api/log/token", nil)
+	GetLogByKey(tokenContext)
+	assert.NotContains(t, tokenRecorder.Body.String(), "upstream_cost")
 }
 
 func TestManageUserQuotaRecordsTopupAndAudit(t *testing.T) {

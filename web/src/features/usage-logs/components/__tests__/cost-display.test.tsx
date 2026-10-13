@@ -23,7 +23,7 @@ import { beforeAll, describe, expect, test } from 'vitest'
 
 import { formatLogQuota } from '@/lib/format'
 
-import { LogCostDisplay } from '../log-cost-display'
+import { LogCostDisplay, UpstreamCostDisplay } from '../log-cost-display'
 
 function renderCost(
   props: React.ComponentProps<typeof LogCostDisplay>
@@ -79,5 +79,52 @@ describe('log cost display', () => {
     expect(
       screen.getByRole('img', { name: 'Includes tool-call surcharge' })
     ).toHaveAttribute('data-tool-surcharge-indicator', 'true')
+  })
+
+  test.each([
+    {
+      source: 'upstream' as const,
+      label: 'Upstream',
+      tone: 'green',
+    },
+    {
+      source: 'estimated' as const,
+      label: 'Estimated',
+      tone: 'yellow',
+    },
+  ])(
+    'labels $source cost with the $tone source treatment',
+    ({ source, label, tone }) => {
+      render(
+        <UpstreamCostDisplay
+          other={{
+            admin_info: {
+              upstream_cost: 12500,
+              upstream_cost_source: source,
+            },
+          }}
+        />
+      )
+
+      expect(screen.getByText(label)).toBeVisible()
+      expect(screen.getByText(formatLogQuota(12500))).toBeVisible()
+      expect(
+        screen.getByLabelText(`${formatLogQuota(12500)} ${label}`)
+      ).toHaveAttribute('data-cost-tone', tone)
+    }
+  )
+
+  test('does not render a cost without a recognized source', () => {
+    const rendered = render(
+      <UpstreamCostDisplay
+        other={{
+          admin_info: {
+            upstream_cost: 12500,
+          },
+        }}
+      />
+    )
+
+    expect(rendered.container).toBeEmptyDOMElement()
   })
 })

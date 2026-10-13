@@ -352,6 +352,8 @@ func migrateDB() error {
 		&PlatformSiteEndpoint{},
 		&PlatformSiteEndpointCapability{},
 		&PlatformSiteResourceSync{},
+		&PlatformSiteUsageCost{},
+		&PlatformSiteUsageCostWindow{},
 		&UpstreamKey{},
 		&UpstreamKeyAbility{},
 		&Token{},

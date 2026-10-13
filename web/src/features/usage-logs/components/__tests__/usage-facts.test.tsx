@@ -36,6 +36,12 @@ const i18nKeys = {
   'Group Ratio': 'Group Ratio',
   'Total Cost': 'Total Cost',
   'Usage parameters': 'Usage parameters',
+  'Upstream Cost': 'Upstream Cost',
+  Upstream: 'Upstream',
+  Estimated: 'Estimated',
+  'Synced from upstream usage logs': 'Synced from upstream usage logs',
+  'Estimated locally from the upstream key multiplier':
+    'Estimated locally from the upstream key multiplier',
 }
 
 function makeLog(other: LogOtherData): UsageLog {
@@ -64,7 +70,7 @@ function makeLog(other: LogOtherData): UsageLog {
   }
 }
 
-function renderDetails(other: LogOtherData): QueryClient {
+function renderDetails(other: LogOtherData, isAdmin = false): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -80,7 +86,7 @@ function renderDetails(other: LogOtherData): QueryClient {
     <QueryClientProvider client={queryClient}>
       <DetailsDialog
         log={makeLog(other)}
-        isAdmin={false}
+        isAdmin={isAdmin}
         isRoot={false}
         open
         onOpenChange={() => undefined}
@@ -162,5 +168,32 @@ describe('usage facts billing details', () => {
     expect(screen.queryByText('resolution')).toBeNull()
     expect(screen.queryByText('seconds')).toBeNull()
     expect(screen.getByText('Total Cost')).toBeInTheDocument()
+  })
+
+  test('shows upstream cost in the administrator detail view', () => {
+    const other: LogOtherData = {
+      group_ratio: 1,
+      admin_info: {
+        upstream_cost: 12500,
+        upstream_cost_source: 'estimated',
+      },
+    }
+    queryClients.push(renderDetails(other, true))
+
+    expect(screen.getByText('Upstream Cost')).toBeVisible()
+    expect(screen.getByText('Estimated')).toBeVisible()
+  })
+
+  test('hides upstream cost in the self detail view', () => {
+    queryClients.push(
+      renderDetails({
+        group_ratio: 1,
+        admin_info: {
+          upstream_cost: 12500,
+          upstream_cost_source: 'estimated',
+        },
+      })
+    )
+    expect(screen.queryByText('Upstream Cost')).not.toBeInTheDocument()
   })
 })

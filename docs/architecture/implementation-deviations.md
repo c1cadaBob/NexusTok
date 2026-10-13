@@ -1,7 +1,7 @@
 # 实现偏差登记
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-05
+> 事实基线日期：2026-10-13
 > 主要代码来源：`router/relay-router.go`、`common/api_type.go`、`relay/relay_adaptor.go`、`relay/channel/*/adaptor.go`、`router/task-plugin-protocol-router.go`、`docs/architecture/*.md`
 > 关联详细文档：[`README.md`](./README.md)、[`relay-routing-and-conversion.md`](./relay-routing-and-conversion.md)、[`provider-capability-matrix.md`](./provider-capability-matrix.md)、[`../plugin-api/README.md`](../plugin-api/README.md)
 
@@ -61,6 +61,7 @@
 | DEV-026 | Sub2API Relay 地址与登录请求兼容 | 页面重定向到独立 Relay 域名或使用相对 `api_base_url` 时，旧规则可能错误拒绝或按原始地址解析；严格 DTO 部署可能因混合主体/无条件条款字段返回 `400 INVALID_REQUEST`；跨主机重定向可能丢失认证 Header，Relay 探测可能携带管理态 | 保留最终 HTML 响应 URL，按最终页面解析相对地址；页面明确声明且与最终页面或原始管理地址同协议/主机/有效端口，或与原始管理地址满足严格 `api.` 父子域关系的 Relay 才接受；同源可信最终页面来源作为本轮管理请求根地址但不覆盖持久化管理地址；Relay 探测隔离管理 Header、Cookie 和 Cookie Jar；邮箱首请求只发 `email/password`，400 不重试，只有 404/405 回退 `/auth/login`、401 凭据错误回退用户名；未确认单 Key 模型不进入路由，资源失败保留最近成功快照 | 已实现/待真实站点持续核验 | `service/upstream_site_adapters.go`、`service/upstream_site_test.go`、`service/upstream_site.go`；Sub2API `auth_handler.go`、all-api-hub `realSite/sub2api.ts` | 2026-10-03 |
 | DEV-027 | Sub2API 页面声明外部 Relay | `api_base_url` 为空或页面使用独立 `custom_endpoints` Relay 时，Helper 只回传管理地址；服务端若仅依赖客户端 `relay_base_url`，可能无法区分未声明地址和真实页面配置 | Helper/服务端解析 `custom_endpoints` 与 `customEndpoints`，Capture 完成使用请求上下文匿名重读 `record.BaseURL` 页面并要求 Relay 规范化完全匹配页面声明；管理地址仍遵守同 Host/严格 `api.` 关系，Relay 请求隔离管理会话 | 已实现/指定站点已验收 | `service/platform_site_capture.go`、`service/upstream_site_adapters.go`、`service/upstream_site.go`、`service/upstream_site_test.go`；Sub2API 参考源与真实站点脱敏验收 | 2026-10-05 |
 | DEV-028 | Sub2API 邮箱登录身份保存 | 认证流程完成后无条件把上游站点 `username` 覆盖到密码登录凭据，导致输入邮箱的渠道后续使用 `username` 登录严格邮箱接口并收到 `400 INVALID_REQUEST` | Sub2API 密码认证保留原始邮箱主体；上游 `username` 仅用于身份信息，非邮箱主体仍保存上游规范用户名；当前用户接口和登录响应回退路径统一处理；不新增数据库字段或迁移 | 已实现/待真实站点持续核查 | `service/platform_site_auth_flow.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`、Sub2API `auth_handler.go` | 2026-10-13 |
+| DEV-029 | 平台站点使用日志成本 | 平台站点上游用量日志和 NexusTok 消费日志没有请求级成本映射，管理员只能看到本地费用；将成本写入日志数据库会扩大 ClickHouse/独立日志库迁移范围 | 新增主数据库成本映射与 UTC 五分钟窗口状态；Sub2API 读取 `actual_cost`、NewAPI 读取 `quota`，优先按上游请求 ID、其次按模型和两秒内唯一时间匹配；无法可靠取得时使用倍率快照估算，最多在后三个周期重试；管理员查询时将成本注入 `other.admin_info`，普通用户和 Token 接口不返回；不修改日志数据库、ClickHouse 或公开 API | 已实现/待真实站点持续核查 | `model/platform_site_usage_cost.go`、`service/platform_site_usage_cost.go`、`controller/log.go`、`web/src/features/usage-logs/`、Sub2API `admin/usage_handler.go`、NewAPI `controller/log.go` | 2026-10-13 |
 
 ### 3.2 2026-09-26 实现核对结果
 

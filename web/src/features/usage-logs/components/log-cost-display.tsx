@@ -142,3 +142,54 @@ export function LogCostDisplay(props: LogCostDisplayProps) {
     </TooltipProvider>
   )
 }
+
+export function UpstreamCostDisplay(props: { other: LogOtherData | null }) {
+  const { t } = useTranslation()
+  const adminInfo = props.other?.admin_info
+  const cost = adminInfo?.upstream_cost
+  const source = adminInfo?.upstream_cost_source
+
+  if (
+    typeof cost !== 'number' ||
+    !Number.isFinite(cost) ||
+    (source !== 'upstream' && source !== 'estimated')
+  ) {
+    return null
+  }
+
+  const isUpstream = source === 'upstream'
+  const sourceLabel = isUpstream ? t('Upstream') : t('Estimated')
+  const description = isUpstream
+    ? t('Synced from upstream usage logs')
+    : t('Estimated locally from the upstream key multiplier')
+
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Badge
+              variant='outline'
+              data-cost-source={source}
+              data-cost-tone={isUpstream ? 'green' : 'yellow'}
+              aria-label={`${formatLogQuota(cost)} ${sourceLabel}`}
+              className={
+                isUpstream
+                  ? 'h-auto min-h-6 max-w-full flex-wrap border-emerald-300 bg-emerald-50 px-2 py-1 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200'
+                  : 'h-auto min-h-6 max-w-full flex-wrap border-amber-300 bg-amber-50 px-2 py-1 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200'
+              }
+            >
+              <span className='font-semibold tabular-nums'>
+                {formatLogQuota(cost)}
+              </span>
+              <span className='border-l border-current/30 pl-1.5 text-[10px] font-medium'>
+                {sourceLabel}
+              </span>
+            </Badge>
+          }
+        />
+        <TooltipContent>{description}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
+}

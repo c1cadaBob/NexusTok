@@ -1,7 +1,7 @@
 # 密钥调度策略与日志可观测性
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-05
+> 事实基线日期：2026-10-13
 > 主要代码来源：`model/routing_key.go`、`model/upstream_routing.go`、`middleware/distributor.go`、`service/channel_select.go`、`controller/channel-test.go`、`model/channel_cache.go`
 > 关联架构文档：[`docs/architecture/relay-routing-and-conversion.md`](architecture/relay-routing-and-conversion.md)、[`docs/architecture/provider-capability-matrix.md`](architecture/provider-capability-matrix.md)、[`docs/architecture/implementation-deviations.md`](architecture/implementation-deviations.md)、[`平台站点资源获取比较`](platform-site-resource-acquisition-comparison.md)
 
@@ -830,3 +830,23 @@ Origin、Capture ID 校验的失败消息。失败不调用完成接口、不创
 - 管理接口在普通多密钥和平台站点子密钥响应中返回恢复阶段、下次测试时间和确认
   进度，前端只在存在恢复状态时展示恢复测试提示，不返回凭据、Token、Cookie 或
   上游响应正文。
+
+### 14.18 2026-10-13 使用日志成本与密钥倍率快照
+
+**变更前**：密钥调度会把 `upstream_key_ratio` 写入消费日志的管理员信息，但平台站点
+使用日志没有消费该快照来计算上游成本，也没有在上游日志可用时建立请求级成本映射。
+
+**变更后**：
+
+- 每个消费日志仍通过已选中的统一 `routing_key_id` 记录当时使用的上游密钥倍率
+  快照；成本同步只读取脱敏的 `admin_info.upstream_key_ratio`，不会重新解密或猜测
+  密钥倍率；
+- Sub2API 成本来自 `/api/v1/admin/usage.actual_cost`，转换为当前
+  `common.QuotaPerUnit` 额度单位；NewAPI 成本来自 `/api/log/.quota`，沿用本项目
+  额度单位。上游成本优先，无法可靠取得时才写入估算成本；
+- 请求 ID 匹配优先使用日志 `upstream_request_id`，否则使用相同渠道、模型和两秒
+  时间容差的唯一最近候选。多候选、时间超出容差、权限/认证/分页/安全验证失败都
+  进入估算或不估算路径，不把不可靠的上游记录强行归给某个密钥；
+- 成本映射与窗口状态保存在主数据库，窗口按 UTC 五分钟半开区间处理并最多在之后
+  三个周期重试。该状态不改变密钥候选过滤、权重、优先级或恢复测试节奏；Redis 不
+  参与成本同步。

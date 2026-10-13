@@ -27,6 +27,9 @@ func GetAllLogs(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if err := model.AttachPlatformSiteUsageCosts(logs); err != nil {
+		common.SysError("failed to attach platform site usage costs to admin logs")
+	}
 	if c.GetInt("role") < common.RoleRootUser {
 		model.FormatAdminLogs(logs)
 	} else {

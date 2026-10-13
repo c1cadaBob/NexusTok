@@ -108,6 +108,343 @@ func TestRealPlatformSiteAdaptersReadOnly(t *testing.T) {
 	}
 }
 
+func TestPlatformSiteUsageCostWindowAndUnitConversion(t *testing.T) {
+	windowTime := time.Date(2026, time.October, 13, 14, 14, 59, 0, time.FixedZone("UTC+8", 8*60*60))
+	assert.Equal(t, time.Date(2026, time.October, 13, 6, 10, 0, 0, time.UTC).Unix(),
+		PlatformSiteUsageCostWindowStart(windowTime.Unix()))
+
+	oldQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 500_000
+	t.Cleanup(func() { common.QuotaPerUnit = oldQuotaPerUnit })
+
+	sub2Record, ok := parsePlatformSiteUsageCostRecord(map[string]any{
+		"upstream_request_id": "sub2-request",
+		"model":               "gpt-test",
+		"created_at":          "2026-10-13T14:10:01Z",
+		"actual_cost":         0.02,
+	}, model.PlatformSub2API)
+	require.True(t, ok)
+	assert.Equal(t, int64(10_000), sub2Record.cost)
+
+	newAPIRecord, ok := parsePlatformSiteUsageCostRecord(map[string]any{
+		"upstream_request_id": "newapi-request",
+		"model_name":          "gpt-test",
+		"created_at":          float64(1_792_000_201_000),
+		"quota":               321,
+	}, model.PlatformNewAPI)
+	require.True(t, ok)
+	assert.Equal(t, int64(321), newAPIRecord.cost)
+	assert.Equal(t, "newapi-request", newAPIRecord.requestID)
+
+	newAPIRecord, ok = parsePlatformSiteUsageCostRecord(map[string]any{
+		"request_id": "newapi-log-id",
+		"model_name": "gpt-test",
+		"created_at": 1_792_000_201,
+		"quota":      321,
+	}, model.PlatformNewAPI)
+	require.True(t, ok)
+	assert.Empty(t, newAPIRecord.requestID)
+
+	_, ok = parsePlatformSiteUsageCostRecord(map[string]any{
+		"model":      "gpt-test",
+		"created_at": "2026-10-13T14:10:01Z",
+		"quota":      321,
+	}, model.PlatformSub2API)
+	assert.False(t, ok)
+	_, ok = parsePlatformSiteUsageCostRecord(map[string]any{
+		"model_name":  "gpt-test",
+		"created_at":  1_792_000_201,
+		"actual_cost": 0.02,
+	}, model.PlatformNewAPI)
+	assert.False(t, ok)
+}
+
+func TestPlatformSiteUsageCostPaginationReadsAllNewAPIPages(t *testing.T) {
+	requestedPages := make([]string, 0, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		page := request.URL.Query().Get("p")
+		requestedPages = append(requestedPages, page)
+		if page == "1" {
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"page":1,"page_size":100,"total":101,"pages":2,"items":[{"upstream_request_id":"r-1","model_name":"gpt-test","created_at":1791900601,"quota":100}]}}`))
+			return
+		}
+		_, _ = writer.Write([]byte(`{"success":true,"data":{"page":2,"page_size":100,"total":101,"pages":2,"items":[{"upstream_request_id":"r-2","model_name":"gpt-test","created_at":1791900602,"quota":200}]}}`))
+	}))
+	defer server.Close()
+
+	session := &PlatformSiteSession{
+		BaseURL:  server.URL,
+		Client:   server.Client(),
+		Headers:  make(http.Header),
+		Platform: model.PlatformNewAPI,
+	}
+	records, err := fetchNewAPIUsageCosts(
+		context.Background(),
+		session,
+		1_791_900_600,
+		1_791_900_900,
+	)
+	require.NoError(t, err)
+	require.Len(t, records, 2)
+	assert.Equal(t, []string{"1", "2"}, requestedPages)
+	assert.Equal(t, int64(100), records[0].cost)
+	assert.Equal(t, int64(200), records[1].cost)
+}
+
+func TestPlatformSiteUsageCostMatchingPrefersIDsAndRejectsAmbiguity(t *testing.T) {
+	logs := []model.Log{
+		{RequestId: "local-id", UpstreamRequestId: "upstream-id", ModelName: "different", CreatedAt: 100},
+		{RequestId: "local-time", ModelName: "gpt-test", CreatedAt: 200},
+		{RequestId: "local-ambiguous-a", ModelName: "gpt-ambiguous", CreatedAt: 300},
+		{RequestId: "local-ambiguous-b", ModelName: "gpt-ambiguous", CreatedAt: 300},
+		{RequestId: "local-conflict", UpstreamRequestId: "another-upstream-id", ModelName: "gpt-conflict", CreatedAt: 400},
+		{RequestId: "local-duplicate-id", ModelName: "gpt-duplicate", CreatedAt: 500},
+		{RequestId: "local-time-with-id", UpstreamRequestId: "provider-id", ModelName: "gpt-no-upstream-id", CreatedAt: 600},
+	}
+	records := []platformSiteUsageCostRecord{
+		{requestID: "upstream-id", model: "not-used-for-id-match", createdAt: time.Unix(900, 0), cost: 10},
+		{model: "gpt-test", createdAt: time.Unix(202, 0), cost: 20},
+		{model: "gpt-ambiguous", createdAt: time.Unix(300, 0), cost: 30},
+		{requestID: "new-upstream-id", model: "gpt-conflict", createdAt: time.Unix(400, 0), cost: 40},
+		{requestID: "duplicate-upstream-id", model: "gpt-duplicate", createdAt: time.Unix(500, 0), cost: 50},
+		{requestID: "duplicate-upstream-id", model: "gpt-duplicate", createdAt: time.Unix(500, 0), cost: 60},
+		{model: "gpt-no-upstream-id", createdAt: time.Unix(600, 0), cost: 70},
+	}
+
+	matched := matchPlatformSiteUsageCostRecords(logs, records)
+	require.Len(t, matched, 3)
+	assert.Equal(t, int64(10), matched["local-id"].cost)
+	assert.Equal(t, int64(20), matched["local-time"].cost)
+	assert.Equal(t, int64(70), matched["local-time-with-id"].cost)
+	assert.NotContains(t, matched, "local-ambiguous-a")
+	assert.NotContains(t, matched, "local-ambiguous-b")
+	assert.NotContains(t, matched, "local-conflict")
+	assert.NotContains(t, matched, "local-duplicate-id")
+}
+
+func TestEstimatePlatformSiteUsageCostRequiresRatioSnapshot(t *testing.T) {
+	estimate, ok := estimatePlatformSiteUsageCost(model.Log{
+		Quota: 200,
+		Other: `{"admin_info":{"upstream_key_ratio":1.25}}`,
+	})
+	require.True(t, ok)
+	assert.Equal(t, int64(250), estimate)
+
+	_, ok = estimatePlatformSiteUsageCost(model.Log{Quota: 200, Other: `{}`})
+	assert.False(t, ok)
+
+	freeEstimate, ok := estimatePlatformSiteUsageCost(model.Log{
+		Quota: 200,
+		Other: `{"admin_info":{"upstream_key_ratio":0}}`,
+	})
+	require.True(t, ok)
+	assert.Zero(t, freeEstimate)
+}
+
+func TestPlatformSiteUsageCostMatchingRejectsTimeOffsetsOverTwoSeconds(t *testing.T) {
+	matched := matchPlatformSiteUsageCostRecords(
+		[]model.Log{{
+			RequestId: "local-request",
+			ModelName: "gpt-test",
+			CreatedAt: 100,
+		}},
+		[]platformSiteUsageCostRecord{{
+			model:     "gpt-test",
+			createdAt: time.Unix(102, 1),
+			cost:      50,
+		}},
+	)
+
+	assert.Empty(t, matched)
+
+	matched = matchPlatformSiteUsageCostRecords(
+		[]model.Log{{
+			RequestId: "local-request",
+			ModelName: "gpt-test",
+			CreatedAt: 100,
+		}},
+		[]platformSiteUsageCostRecord{{
+			model:     "gpt-test",
+			createdAt: time.Unix(101, 999_999_999),
+			cost:      50,
+		}},
+	)
+	require.Len(t, matched, 1)
+	assert.Equal(t, int64(50), matched["local-request"].cost)
+}
+
+func TestPlatformSiteUsageCostTimestampKeepsSubsecondPrecision(t *testing.T) {
+	expected := time.Date(2026, time.October, 13, 14, 10, 1, 900_000_000, time.UTC)
+	parsed := parsePlatformSiteUsageTimestamp("2026-10-13T14:10:01.9Z")
+	assert.True(t, parsed.Equal(expected))
+
+	parsed = parsePlatformSiteUsageTimestamp(float64(expected.UnixMilli()))
+	assert.True(t, parsed.Equal(expected.Truncate(time.Millisecond)))
+	parsed = parsePlatformSiteUsageTimestamp(expected.UnixMilli())
+	assert.True(t, parsed.Equal(expected.Truncate(time.Millisecond)))
+}
+
+func TestPlatformSiteUsageCostUsesEstimateWhenUpstreamDeniesAdminUsage(t *testing.T) {
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	oldMainType := common.MainDatabaseType()
+	oldLogType := common.LogDatabaseType()
+	oldCryptoSecret := common.CryptoSecret
+	common.CryptoSecret = "platform-site-cost-test-secret"
+	mainDSN := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	mainDB, err := gorm.Open(sqlite.Open(mainDSN), &gorm.Config{})
+	require.NoError(t, err)
+	logDSN := fmt.Sprintf("file:%s-logs?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	logDB, err := gorm.Open(sqlite.Open(logDSN), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, mainDB.AutoMigrate(
+		&model.Channel{},
+		&model.PlatformSiteAccount{},
+		&model.PlatformSiteUsageCost{},
+		&model.PlatformSiteUsageCostWindow{},
+	))
+	require.NoError(t, logDB.AutoMigrate(&model.Log{}))
+	model.DB = mainDB
+	model.LOG_DB = logDB
+	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		common.SetDatabaseTypes(oldMainType, oldLogType)
+		common.CryptoSecret = oldCryptoSecret
+		for _, db := range []*gorm.DB{mainDB, logDB} {
+			if sqlDB, closeErr := db.DB(); closeErr == nil {
+				_ = sqlDB.Close()
+			}
+		}
+	})
+
+	start := time.Date(2026, time.October, 13, 14, 10, 0, 0, time.UTC).Unix()
+	requestedPaths := make([]string, 0, 3)
+	allowUpstreamUsage := false
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requestedPaths = append(requestedPaths, request.URL.Path)
+		switch request.URL.Path {
+		case "/api/v1/auth/me":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"user":{"id":17,"username":"admin"}}}`))
+		case "/api/v1/admin/usage":
+			if allowUpstreamUsage {
+				_, _ = writer.Write([]byte(`{"code":0,"data":{"items":[{"request_id":"upstream-fallback-request","model":"gpt-test","created_at":"2026-10-13T14:10:01Z","actual_cost":0.01}],"pages":1}}`))
+				return
+			}
+			http.Error(writer, `{"message":"forbidden"}`, http.StatusForbidden)
+		case "/api/v1/auth/login":
+			http.Error(writer, `{"message":"invalid credentials"}`, http.StatusUnauthorized)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	ciphertext, err := model.EncryptPlatformSiteCredential(model.PlatformSiteCredential{
+		AuthType:    model.UpstreamAuthAccessToken,
+		AccessToken: "test-access-token",
+	})
+	require.NoError(t, err)
+	require.NoError(t, mainDB.Create(&model.PlatformSiteAccount{
+		ChannelID:            77,
+		Platform:             model.PlatformSub2API,
+		BaseURL:              server.URL,
+		AuthType:             model.UpstreamAuthAccessToken,
+		CredentialCiphertext: ciphertext,
+	}).Error)
+	require.NoError(t, logDB.Create(&model.Log{
+		Type:      model.LogTypeConsume,
+		RequestId: "cost-fallback-request",
+		ChannelId: 77,
+		ModelName: "gpt-test",
+		CreatedAt: start + 1,
+		Quota:     100,
+		Other:     `{"admin_info":{"upstream_key_ratio":1.25}}`,
+	}).Error)
+
+	result, err := SyncPlatformSiteUsageCosts(
+		context.Background(),
+		time.Unix(start+platformSiteUsageCostWindowSeconds, 0).UTC(),
+	)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.WindowsProcessed)
+	assert.Equal(t, 1, result.EstimatedCosts)
+	assert.Equal(t, 1, result.UpstreamFailures)
+	assert.Equal(t, 1, result.RetryWindows)
+
+	cost, err := model.FindPlatformSiteUsageCost("cost-fallback-request")
+	require.NoError(t, err)
+	require.NotNil(t, cost)
+	assert.Equal(t, int64(125), cost.Cost)
+	assert.Equal(t, model.PlatformSiteUsageCostSourceEstimated, cost.Source)
+	assert.Contains(t, requestedPaths, "/api/v1/admin/usage")
+
+	allowUpstreamUsage = true
+	retryResult, err := SyncPlatformSiteUsageCosts(
+		context.Background(),
+		time.Unix(start+2*platformSiteUsageCostWindowSeconds, 0).UTC(),
+	)
+	require.NoError(t, err)
+	assert.Equal(t, 2, retryResult.WindowsProcessed)
+	assert.Equal(t, 1, retryResult.UpstreamCosts)
+	cost, err = model.FindPlatformSiteUsageCost("cost-fallback-request")
+	require.NoError(t, err)
+	require.NotNil(t, cost)
+	assert.Equal(t, int64(5_000), cost.Cost)
+	assert.Equal(t, model.PlatformSiteUsageCostSourceUpstream, cost.Source)
+
+	passwordCiphertext, err := model.EncryptPlatformSiteCredential(model.PlatformSiteCredential{
+		AuthType: model.UpstreamAuthPassword,
+		Username: "private-user@example.test",
+		Password: "private-password",
+	})
+	require.NoError(t, err)
+	_, err = fetchPlatformSiteUsageCostRecords(context.Background(), &model.PlatformSiteAccount{
+		ChannelID:            77,
+		Platform:             model.PlatformSub2API,
+		BaseURL:              server.URL,
+		AuthType:             model.UpstreamAuthPassword,
+		CredentialCiphertext: passwordCiphertext,
+	}, start, start+platformSiteUsageCostWindowSeconds)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "private-password")
+}
+
+func TestFetchSub2APIUsageCostsPaginatesAndUsesActualCost(t *testing.T) {
+	requestedPages := make([]string, 0, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requestedPages = append(requestedPages, request.URL.Query().Get("page"))
+		assert.Equal(t, "UTC", request.URL.Query().Get("timezone"))
+		assert.Equal(t, "100", request.URL.Query().Get("page_size"))
+		writer.Header().Set("Content-Type", "application/json")
+		if request.URL.Query().Get("page") == "1" {
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"items":[{"request_id":"r1","model":"gpt-test","created_at":"2026-10-13T14:10:01Z","actual_cost":0.02}],"total":2,"page":1,"page_size":1,"pages":2}}`))
+			return
+		}
+		_, _ = writer.Write([]byte(`{"code":0,"data":{"items":[{"request_id":"r2","model":"gpt-test","created_at":"2026-10-13T14:10:03Z","actual_cost":0.04}],"total":2,"page":2,"page_size":1,"pages":2}}`))
+	}))
+	defer server.Close()
+
+	oldQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 500_000
+	t.Cleanup(func() { common.QuotaPerUnit = oldQuotaPerUnit })
+
+	session := &PlatformSiteSession{
+		BaseURL:  server.URL,
+		Client:   server.Client(),
+		Headers:  make(http.Header),
+		Platform: model.PlatformSub2API,
+	}
+	start := time.Date(2026, time.October, 13, 14, 10, 0, 0, time.UTC).Unix()
+	records, err := fetchSub2APIUsageCosts(context.Background(), session, start, start+300)
+	require.NoError(t, err)
+	require.Len(t, records, 2)
+	assert.Equal(t, []string{"1", "2"}, requestedPages)
+	assert.Equal(t, int64(10_000), records[0].cost)
+	assert.Equal(t, int64(20_000), records[1].cost)
+}
+
 func TestValidatePlatformSiteURLAllowsHTTPAndPrivateTargets(t *testing.T) {
 	for _, rawURL := range []string{
 		"http://127.0.0.1",

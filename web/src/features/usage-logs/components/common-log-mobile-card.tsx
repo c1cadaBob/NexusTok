@@ -83,7 +83,7 @@ export function CommonLogMobileCard<TData>(props: {
       visible: displayable && props.cells.has('model_name') && !!model.name,
     },
     cost: {
-      label: t('Cost'),
+      label: t('Fee'),
       value: formatLogQuota(log.quota),
       visible: displayable && props.cells.has('quota'),
     },
@@ -125,6 +125,7 @@ export function CommonLogMobileCard<TData>(props: {
   const metadata: FieldName[] = ['user', 'channel', 'token', 'group']
   const visibleMetadata = metadata.filter((id) => fields[id].visible)
   const costCell = props.cells.get('quota')
+  const upstreamCostCell = props.cells.get('upstream_cost')
   const contentCell = props.cells.get('content')
   const channelCell = props.cells.get('channel')
   const cacheRead = other?.cache_tokens || 0
@@ -155,8 +156,31 @@ export function CommonLogMobileCard<TData>(props: {
           </div>
         )}
         {fields.cost.visible && costCell && (
-          <div className='ml-auto max-w-full min-w-0 self-center [overflow-wrap:anywhere] [&_.inline-flex]:h-auto [&_.inline-flex]:min-h-6 [&_.inline-flex]:max-w-full [&_.inline-flex]:flex-wrap'>
-            {flexRender(costCell.column.columnDef.cell, costCell.getContext())}
+          <div className='ml-auto flex max-w-full min-w-0 flex-wrap items-start justify-end gap-x-2 gap-y-1'>
+            <div className='min-w-0 space-y-0.5'>
+              <span className='text-muted-foreground block text-[10px] leading-none'>
+                {t('Fee')}
+              </span>
+              <div className='max-w-full [overflow-wrap:anywhere] [&_.inline-flex]:h-auto [&_.inline-flex]:min-h-6 [&_.inline-flex]:max-w-full [&_.inline-flex]:flex-wrap'>
+                {flexRender(
+                  costCell.column.columnDef.cell,
+                  costCell.getContext()
+                )}
+              </div>
+            </div>
+            {upstreamCostCell && (
+              <div className='min-w-0 space-y-0.5'>
+                <span className='text-muted-foreground block text-[10px] leading-none'>
+                  {t('Upstream Cost')}
+                </span>
+                <div className='max-w-full [overflow-wrap:anywhere] [&_.inline-flex]:h-auto [&_.inline-flex]:min-h-6 [&_.inline-flex]:max-w-full [&_.inline-flex]:flex-wrap'>
+                  {flexRender(
+                    upstreamCostCell.column.columnDef.cell,
+                    upstreamCostCell.getContext()
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

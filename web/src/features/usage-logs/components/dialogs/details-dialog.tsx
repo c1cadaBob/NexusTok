@@ -85,6 +85,7 @@ import {
   isTimingLogType,
 } from '../../lib/utils'
 import { USAGE_BILLING_PATH, type LogOtherData } from '../../types'
+import { UpstreamCostDisplay } from '../log-cost-display'
 import { PluginAuthorLink } from '../plugin-author-link'
 import { DetailRow, DetailSection } from './log-detail-layout'
 
@@ -362,6 +363,16 @@ function BillingBreakdown(props: {
         value={formatLogQuota(log.quota)}
         mono
       />
+      {isAdmin &&
+        typeof other.admin_info?.upstream_cost === 'number' &&
+        Number.isFinite(other.admin_info.upstream_cost) &&
+        (other.admin_info.upstream_cost_source === 'upstream' ||
+          other.admin_info.upstream_cost_source === 'estimated') && (
+          <DetailRow
+            label={t('Upstream Cost')}
+            value={<UpstreamCostDisplay other={other} />}
+          />
+        )}
     </DetailSection>
   )
 }

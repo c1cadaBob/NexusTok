@@ -1,7 +1,7 @@
 # 数据库、缓存与后台任务
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-05
+> 事实基线日期：2026-10-13
 > 主要代码来源：`model/main.go`、`common/database.go`、`common/redis.go`、`model/channel_cache.go`、`model/sync.go`、`service/system_task.go`、`service/task_polling.go`、`main.go`
 > 关联详细文档：[`system-overview.md`](./system-overview.md)、[`authentication-and-authorization.md`](./authentication-and-authorization.md)、[`tasks-and-plugins.md`](./tasks-and-plugins.md)、[`../rate-limiting.md`](../rate-limiting.md)
 
@@ -489,6 +489,33 @@ TTL 为 5 分钟，取消、过期、失败和消费后均不能继续读取。
 分组和 Key 资源状态。资源表记录 `keys=partial`、`models=stale`，父渠道同步状态
 为成功；没有历史成功快照的新渠道仍必须等待至少一个真实单 Key 模型能力确认。
 模型广场、分组模型目录和账号级模型不会被复制为单 Key 能力。
+
+### 9.11 2026-10-13 平台站点使用日志成本同步
+
+**变更前**：平台站点请求的本地费用日志没有独立的上游成本映射；管理员只能看到
+NexusTok 侧费用，无法区分上游实际成本和按密钥倍率估算的成本。
+
+**变更后**：`platform_site_usage_cost` 和
+`platform_site_usage_cost_window` 作为主数据库模型纳入迁移，日志数据库和
+ClickHouse `logs` 表不新增字段。`platform_site_usage_cost` 只保存本地
+`request_id`、渠道、上游请求 ID、额度单位成本、来源和更新时间；
+窗口表保存 UTC 五分钟半开窗口、处理次数、状态和最多三次后续重试时间。
+
+系统任务每分钟运行一次，但只处理已经结束的窗口
+`[window_start, window_start+300)`；调度器重启或延迟时按窗口时间顺序补处理。每个窗口
+先读取 Sub2API `/api/v1/admin/usage` 的 `actual_cost` 或 NewAPI `/api/log/` 的
+`quota`，分页、认证、管理员权限或响应失败均不影响本地计费，而是使用日志中保存的
+`admin_info.upstream_key_ratio` 计算估算值。没有倍率快照时不猜测成本。
+
+上游请求 ID 优先匹配；缺少 ID 时按渠道、模型和最近时间匹配，容差最多两秒，存在并列
+候选则放弃匹配并保留估算路径。估算记录在之后三个五分钟周期内重新核对，上游成本一旦
+可靠取得即可覆盖估算值，估算值不能覆盖已经同步的上游值。Redis 不参与成本持久化或
+恢复。
+
+管理员查询日志时，服务端按 `request_id` 将成本注入
+`other.admin_info.upstream_cost` 和 `upstream_cost_source`；普通用户和令牌日志接口
+在格式化阶段移除整个 `admin_info`，因此不会返回成本。该注入只改变查询响应对象，不回写
+独立日志数据库。
 
 ### 9.5 2026-09-30 系统维护任务与缓存边界
 

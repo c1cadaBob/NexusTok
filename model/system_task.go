@@ -24,15 +24,16 @@ const (
 	SystemTaskStatusSucceeded SystemTaskStatus = "succeeded"
 	SystemTaskStatusFailed    SystemTaskStatus = "failed"
 
-	SystemTaskTypeLogCleanup         = "log_cleanup"
-	SystemTaskTypeChannelTest        = "channel_test"
-	SystemTaskTypeModelUpdate        = "model_update"
-	SystemTaskTypeMidjourneyPoll     = "midjourney_poll"
-	SystemTaskTypeAsyncTaskPoll      = "async_task_poll"
-	SystemTaskTypeUpstreamSync       = "upstream_sync"
-	SystemTaskTypeRoutingKeyRecovery = "routing_key_recovery"
-	SystemTaskTypeSystemUpdate       = "system_update"
-	SystemTaskTypeSystemRollback     = "system_rollback"
+	SystemTaskTypeLogCleanup            = "log_cleanup"
+	SystemTaskTypeChannelTest           = "channel_test"
+	SystemTaskTypeModelUpdate           = "model_update"
+	SystemTaskTypeMidjourneyPoll        = "midjourney_poll"
+	SystemTaskTypeAsyncTaskPoll         = "async_task_poll"
+	SystemTaskTypeUpstreamSync          = "upstream_sync"
+	SystemTaskTypeRoutingKeyRecovery    = "routing_key_recovery"
+	SystemTaskTypePlatformSiteUsageCost = "platform_site_usage_cost"
+	SystemTaskTypeSystemUpdate          = "system_update"
+	SystemTaskTypeSystemRollback        = "system_rollback"
 )
 
 var (

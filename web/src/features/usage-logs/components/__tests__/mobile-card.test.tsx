@@ -170,6 +170,37 @@ it('keeps input, output and cache quantities readable without empty metric cells
   expect(screen.getByText('Cache ↑ 200')).toBeVisible()
 })
 
+it('shows the upstream cost beside the fee on mobile for administrators', () => {
+  const logWithCost = {
+    ...log,
+    other: JSON.stringify({
+      admin_info: {
+        upstream_cost: 12345,
+        upstream_cost_source: 'upstream',
+      },
+    }),
+  }
+  renderLogs({ logs: [logWithCost] })
+
+  expect(screen.getByText('Fee')).toBeVisible()
+  expect(screen.getByText('Upstream Cost')).toBeVisible()
+  expect(screen.getByText('Upstream')).toBeVisible()
+})
+
+it('hides upstream cost on mobile in the self view', () => {
+  const logWithCost = {
+    ...log,
+    other: JSON.stringify({
+      admin_info: {
+        upstream_cost: 12345,
+        upstream_cost_source: 'upstream',
+      },
+    }),
+  }
+  renderLogs({ admin: false, logs: [logWithCost] })
+  expect(screen.queryByText('Upstream Cost')).not.toBeInTheDocument()
+})
+
 it('shows the established empty state when no logs exist', () => {
   renderLogs({ logs: [] })
   expect(screen.getByText('No Logs Found')).toBeVisible()

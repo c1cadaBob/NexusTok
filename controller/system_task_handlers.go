@@ -22,6 +22,7 @@ func RegisterScheduledSystemTasks() {
 	service.RegisterSystemTaskHandler(modelUpdateHandler{})
 	service.RegisterSystemTaskHandler(upstreamSiteSyncHandler{})
 	service.RegisterSystemTaskHandler(routingKeyRecoveryHandler{})
+	service.RegisterSystemTaskHandler(platformSiteUsageCostHandler{})
 	service.RegisterSystemTaskHandler(midjourneyPollHandler{})
 	service.RegisterSystemTaskHandler(asyncTaskPollHandler{})
 }
@@ -65,6 +66,37 @@ func (upstreamSiteSyncHandler) Run(ctx context.Context, task *model.SystemTask, 
 	}
 	if err != nil {
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, result, err)
+		return
+	}
+	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, result, nil)
+}
+
+type platformSiteUsageCostHandler struct{}
+
+func (platformSiteUsageCostHandler) Type() string {
+	return model.SystemTaskTypePlatformSiteUsageCost
+}
+
+func (platformSiteUsageCostHandler) Enabled() bool {
+	return common.GetEnvOrDefaultBool("PLATFORM_SITE_USAGE_COST_SYNC_ENABLED", true)
+}
+
+func (platformSiteUsageCostHandler) Interval() time.Duration {
+	return time.Minute
+}
+
+func (platformSiteUsageCostHandler) NewPayload() any { return nil }
+
+func (platformSiteUsageCostHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	result, err := service.SyncPlatformSiteUsageCosts(ctx, time.Now().UTC())
+	if err != nil {
+		finishSystemTaskHandler(
+			task,
+			runnerID,
+			model.SystemTaskStatusFailed,
+			result,
+			fmt.Errorf("平台站点使用日志成本同步失败"),
+		)
 		return
 	}
 	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, result, nil)
