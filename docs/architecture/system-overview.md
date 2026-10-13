@@ -21,7 +21,7 @@ NexusTok 是一个 Go AI API Gateway。Go 进程对外提供管理 API、统一 
 4. 初始化选项、日志数据库、Redis、性能指标、系统监控和 i18n。
 5. 启动鉴权产物清理、渠道缓存、选项同步、插件同步、授权策略同步、数据看板。
 6. 按配置启动渠道自动更新、Codex 凭据刷新、订阅额度重置、节点状态上报。
-7. 注册渠道检测、上游模型更新、异步任务轮询和系统维护更新/回滚等系统任务，启动
+7. 注册渠道检测、上游模型更新、密钥自动恢复测试、异步任务轮询和系统维护更新/回滚等系统任务，启动
    `service.StartSystemTaskRunner`。
 8. 创建 Gin Server，配置可信代理、Request ID、版本、i18n、日志和静态前端，再由
    `router.SetRouter` 安装路由。以 `system-update-helper` 子命令启动时走最小初始化路径，
@@ -240,7 +240,19 @@ preflight 容器完成健康检查；通过后删除 preflight，再创建保留
 - 独立 Redis、内存缓存和多节点部署会影响限流、缓存传播和插件生成观察窗口，不能只根据单节点测试判断集群语义。
 - `relaykit/` 必须独立构建，根模块的配置、数据库和计费不能下沉到该模块。
 
-### 7.1 系统维护更新边界（2026-10-13）
+### 7.1 密钥自动恢复测试边界（2026-10-13）
+
+失效健康状态或自动禁用状态的统一 `routing_key_id` 密钥，由 Master 节点的
+`routing_key_recovery` 系统任务按到期时间测试。普通多密钥和平台站点子密钥共用
+`routing_key_healths` 的最近 5 条样本窗口；首次失败间隔 30 分钟重试，首次成功后
+额外确认 5 次、每次间隔 5 分钟。确认失败不会提前结束本轮，任务结果只保存测试、
+成功、失败和下次到期数量，不记录密钥或上游响应正文。
+
+恢复测试使用显式密钥选择路径，正常 Relay 路由仍过滤失效密钥。手动禁用密钥和手动
+禁用父渠道始终排除；凭据不可解密、模型能力不可用、额度耗尽或过期等静态不可测试
+情况记录失败样本。Redis 不参与恢复调度、样本保存或判定。
+
+### 7.2 系统维护更新边界（2026-10-13）
 
 **变更前**：维护页面在浏览器中直接请求 GitHub Release API，只能显示版本说明；
 后端没有统一的版本选择和更新任务，裸机依赖 `.backup` 文件交换，Docker 依赖稳定
@@ -285,6 +297,7 @@ Cookie、Token 或完整 Key。
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 建立启动、分层、请求链路、部署边界和限制说明 | `main.go`、`router/`、`middleware/`、`model/`、`service/`、`relay/` | `main.go`、`model/main.go`、`router/` 静态核对 |
+| 2026-10-13 | 密钥自动恢复测试 | 失效或自动禁用密钥没有统一的密钥级周期测试，后台任务索引未记录恢复测试职责 | Master 注册并调度 `routing_key_recovery`，按 30 分钟探测和 5 次/5 分钟确认写入统一健康样本；手动禁用不自动恢复，Redis 不参与 | `main.go`、`controller/system_task_handlers.go`、`model/routing_key_health.go` | SQLite 定向模型/控制器测试、前端受影响组件测试；MySQL/PostgreSQL DSN 未配置 |
 | 2026-09-30 | 系统维护更新与回滚 | 前端直连 GitHub 且没有后端运维任务；旧版回滚会消耗唯一备份 | 增加 RootAuth 维护接口、SystemTask 进度、GitHub 缓存/checksum、裸机稳定备份交换、Docker helper/健康检查和重启探活 | `router/api-router.go`、`controller/system_update.go`、`service/system_update*.go`、`main.go`、维护页 | `go test ./service ./model ./controller ./router`、前端定向测试；未进行生产容器切换 |
 | 2026-10-13 | 按发布版本选择回滚与数据备份恢复 | 维护页不能选择任意已发布版本，裸机使用 `.backup` 文件、Docker 使用稳定备份容器；更新失败后的数据恢复边界未统一 | 后端分页读取 Release 并校验目标版本；镜像拉取和 preflight 后再备份数据、日志和主数据库，Redis 不恢复；裸机不再创建 `.backup`，Docker 只保留正式目标容器，切换失败按状态恢复旧实例和数据并记录 `data_restore_failed` | `controller/system_update.go`、`service/system_update.go`、`service/system_update_backup.go`、`service/system_update_docker.go`、维护页 | Go service 定向测试、Docker 备份/恢复边界测试和前端定向测试；未进行生产切换、Docker 真实工具容器和完整三数据库矩阵 |
 | 2026-10-02 | Docker 自动更新端口预检 | 更新流程在旧容器仍发布 `3030` 时直接启动同端口 staging 容器，Docker 会返回 `port is already allocated` | bridge/Compose 网络先用无宿主端口、无 Compose 标签/别名的 preflight 容器探活，再停旧并启动保留原端口的正式容器；`host`/`container:<id>` 网络走受控降级 | `service/system_update_docker.go`、系统任务 Docker helper、维护页错误展示 | `go test ./service -run 'Docker(Update\|Updated\|Readiness\|Helper\|Pull\|Staging)' -count=1` |

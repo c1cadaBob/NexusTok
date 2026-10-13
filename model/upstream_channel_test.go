@@ -477,6 +477,315 @@ func TestRoutingKeyHealthFiltersRoutableChannelKeys(t *testing.T) {
 	assert.Equal(t, degradedKey.RoutingKeyID, keys[0].KeyID)
 }
 
+func TestListDueRoutingKeyRecoveryCandidatesIncludesInvalidAndAutoDisabledKeys(t *testing.T) {
+	previousDB := DB
+	previousSecret := common.CryptoSecret
+	common.CryptoSecret = "routing-key-recovery-candidate-secret"
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&Channel{},
+		&RoutingKey{},
+		&ChannelKey{},
+		&UpstreamKey{},
+		&UpstreamKeyAbility{},
+		&PlatformSiteAccount{},
+		&RoutingKeyHealth{},
+	))
+	DB = db
+	t.Cleanup(func() {
+		DB = previousDB
+		common.CryptoSecret = previousSecret
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	ordinaryChannel := &Channel{
+		Id:           810,
+		Name:         "recovery-key-channel",
+		Status:       common.ChannelStatusAutoDisabled,
+		UpstreamKind: UpstreamKindKeyChannel,
+		Models:       "gpt-test",
+		Group:        "default",
+	}
+	require.NoError(t, db.Create(ordinaryChannel).Error)
+	ordinaryKey, err := createChannelKey(
+		db,
+		ordinaryChannel,
+		"synthetic-channel-secret",
+		0,
+		common.ChannelStatusAutoDisabled,
+		"upstream failure",
+		1,
+	)
+	require.NoError(t, err)
+
+	invalidKey, err := createChannelKey(
+		db,
+		ordinaryChannel,
+		"synthetic-invalid-secret",
+		1,
+		common.ChannelStatusEnabled,
+		"",
+		0,
+	)
+	require.NoError(t, err)
+	now := time.Unix(2_000_100_000, 0)
+	for index := range routingKeyHealthWindowSize {
+		require.NoError(t, RecordRoutingKeyHealthSample(
+			invalidKey.RoutingKeyID,
+			ordinaryChannel.Id,
+			RoutingKeySourceKeyChannel,
+			index == 0,
+			100,
+			now.Unix()+int64(index),
+		))
+	}
+
+	manualKey, err := createChannelKey(
+		db,
+		ordinaryChannel,
+		"synthetic-manual-secret",
+		2,
+		common.ChannelStatusManuallyDisabled,
+		"manual operation",
+		1,
+	)
+	require.NoError(t, err)
+
+	platformChannel := &Channel{
+		Id:           811,
+		Name:         "recovery-platform-channel",
+		Status:       common.ChannelStatusAutoDisabled,
+		UpstreamKind: UpstreamKindPlatformSite,
+		Models:       "gpt-test",
+		Group:        "default",
+	}
+	require.NoError(t, db.Create(platformChannel).Error)
+	require.NoError(t, db.Create(&PlatformSiteAccount{
+		ChannelID:  platformChannel.Id,
+		Platform:   PlatformSub2API,
+		BaseURL:    "https://upstream.example",
+		SyncStatus: UpstreamSiteSyncSuccess,
+		LastSyncAt: now.Unix(),
+	}).Error)
+	platformCredential, err := EncryptPlatformSiteCredential(PlatformSiteCredential{
+		AccessToken: "synthetic-access-token",
+	})
+	require.NoError(t, err)
+	platformKey := &UpstreamKey{
+		ChannelID:        platformChannel.Id,
+		ExternalID:       "platform-key",
+		SecretCiphertext: platformCredential,
+		Models:           "gpt-test",
+		ModelsSynced:     true,
+		Status:           UpstreamKeyStatusAutoDisabled,
+	}
+	require.NoError(t, db.Create(platformKey).Error)
+	require.NoError(t, EnsureRoutingKeyForUpstreamKey(db, platformKey))
+
+	candidates, err := ListDueRoutingKeyRecoveryCandidates(now)
+	require.NoError(t, err)
+	candidateIDs := make(map[uint]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		candidateIDs[candidate.RoutingKeyID] = struct{}{}
+	}
+	_, ordinaryKeyIncluded := candidateIDs[ordinaryKey.RoutingKeyID]
+	_, invalidKeyIncluded := candidateIDs[invalidKey.RoutingKeyID]
+	_, manualKeyIncluded := candidateIDs[manualKey.RoutingKeyID]
+	_, platformKeyIncluded := candidateIDs[platformKey.RoutingKeyID]
+	assert.True(t, ordinaryKeyIncluded)
+	assert.True(t, invalidKeyIncluded)
+	assert.False(t, manualKeyIncluded)
+	assert.True(t, platformKeyIncluded)
+	platformSelection, err := GetRoutingKeyForRecoveryTest(
+		platformChannel,
+		platformKey.RoutingKeyID,
+		"default",
+		"gpt-test",
+		now,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, RoutingKeySourcePlatformSite, platformSelection.Source)
+	assert.Equal(t, platformKey.ID, platformSelection.UpstreamKeyID)
+
+	manualParent := &Channel{
+		Id:           813,
+		Name:         "manual-parent",
+		Status:       common.ChannelStatusManuallyDisabled,
+		UpstreamKind: UpstreamKindKeyChannel,
+		Models:       "gpt-test",
+		Group:        "default",
+	}
+	require.NoError(t, db.Create(manualParent).Error)
+	manualParentKey, err := createChannelKey(
+		db,
+		manualParent,
+		"synthetic-manual-parent-secret",
+		0,
+		common.ChannelStatusAutoDisabled,
+		"automatic disable",
+		1,
+	)
+	require.NoError(t, err)
+	_, err = GetRoutingKeyForRecoveryTest(
+		manualParent,
+		manualParentKey.RoutingKeyID,
+		"default",
+		"gpt-test",
+		now,
+	)
+	require.Error(t, err)
+}
+
+func TestRoutingKeyRecoveryCadenceRestoresAutoDisabledKey(t *testing.T) {
+	previousDB := DB
+	previousSecret := common.CryptoSecret
+	common.CryptoSecret = "routing-key-recovery-cadence-secret"
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&Channel{},
+		&RoutingKey{},
+		&ChannelKey{},
+		&RoutingKeyHealth{},
+		&Ability{},
+	))
+	DB = db
+	t.Cleanup(func() {
+		DB = previousDB
+		common.CryptoSecret = previousSecret
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	channel := &Channel{
+		Id:           812,
+		Name:         "recovery-cadence",
+		Status:       common.ChannelStatusAutoDisabled,
+		UpstreamKind: UpstreamKindKeyChannel,
+		Models:       "gpt-test",
+		Group:        "default",
+	}
+	require.NoError(t, db.Create(channel).Error)
+	key, err := createChannelKey(
+		db,
+		channel,
+		"synthetic-cadence-secret",
+		0,
+		common.ChannelStatusAutoDisabled,
+		"automatic disable",
+		1,
+	)
+	require.NoError(t, err)
+
+	now := time.Unix(2_000_200_000, 0)
+	require.Error(t, func() error {
+		_, selectionErr := GetRoutableKeyByID(channel, key.RoutingKeyID, "default", "gpt-test")
+		return selectionErr
+	}())
+	selection, err := GetRoutingKeyForRecoveryTest(
+		channel,
+		key.RoutingKeyID,
+		"default",
+		"gpt-test",
+		now,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	assert.Equal(t, key.RoutingKeyID, selection.KeyID)
+	manualKey, err := createChannelKey(
+		db,
+		channel,
+		"synthetic-manual-cadence-secret",
+		1,
+		common.ChannelStatusManuallyDisabled,
+		"manual operation",
+		1,
+	)
+	require.NoError(t, err)
+	_, err = GetRoutingKeyForRecoveryTest(
+		channel,
+		manualKey.RoutingKeyID,
+		"default",
+		"gpt-test",
+		now,
+	)
+	require.Error(t, err)
+	require.NoError(t, RecordRoutingKeyRecoverySample(
+		key.RoutingKeyID,
+		channel.Id,
+		RoutingKeySourceKeyChannel,
+		false,
+		0,
+		now,
+	))
+	var health RoutingKeyHealth
+	require.NoError(t, db.First(&health, "routing_key_id = ?", key.RoutingKeyID).Error)
+	assert.Equal(t, RoutingKeyRecoveryPhaseProbing, health.RecoveryPhase)
+	assert.Equal(t, now.Add(RoutingKeyRecoveryRetryInterval).Unix(), health.RecoveryNextTestAt)
+	assert.Equal(t, common.ChannelStatusAutoDisabled, keyStatusForTest(t, db, key.RoutingKeyID))
+
+	now = now.Add(RoutingKeyRecoveryRetryInterval)
+	require.NoError(t, RecordRoutingKeyRecoverySample(
+		key.RoutingKeyID,
+		channel.Id,
+		RoutingKeySourceKeyChannel,
+		true,
+		120,
+		now,
+	))
+	require.NoError(t, db.First(&health, "routing_key_id = ?", key.RoutingKeyID).Error)
+	assert.Equal(t, RoutingKeyRecoveryPhaseConfirming, health.RecoveryPhase)
+	assert.Equal(t, 0, health.RecoveryConfirmationsDone)
+	assert.Equal(t, now.Add(RoutingKeyRecoveryConfirmInterval).Unix(), health.RecoveryNextTestAt)
+	assert.Equal(t, common.ChannelStatusEnabled, keyStatusForTest(t, db, key.RoutingKeyID))
+
+	now = now.Add(RoutingKeyRecoveryConfirmInterval)
+	require.NoError(t, RecordRoutingKeyRecoverySample(
+		key.RoutingKeyID,
+		channel.Id,
+		RoutingKeySourceKeyChannel,
+		false,
+		0,
+		now,
+	))
+	require.NoError(t, db.First(&health, "routing_key_id = ?", key.RoutingKeyID).Error)
+	assert.Equal(t, RoutingKeyRecoveryPhaseConfirming, health.RecoveryPhase)
+	assert.Equal(t, 1, health.RecoveryConfirmationsDone)
+	assert.Equal(t, now.Add(RoutingKeyRecoveryConfirmInterval).Unix(), health.RecoveryNextTestAt)
+
+	for range RoutingKeyRecoveryConfirmations - 1 {
+		now = now.Add(RoutingKeyRecoveryConfirmInterval)
+		require.NoError(t, RecordRoutingKeyRecoverySample(
+			key.RoutingKeyID,
+			channel.Id,
+			RoutingKeySourceKeyChannel,
+			true,
+			120,
+			now,
+		))
+	}
+	require.NoError(t, db.First(&health, "routing_key_id = ?", key.RoutingKeyID).Error)
+	assert.Empty(t, health.RecoveryPhase)
+	assert.Zero(t, health.RecoveryNextTestAt)
+	assert.Equal(t, RoutingKeyRecoveryConfirmations, health.RecoveryConfirmationsDone)
+	assert.Equal(t, common.ChannelStatusEnabled, keyStatusForTest(t, db, key.RoutingKeyID))
+}
+
+func keyStatusForTest(t *testing.T, db *gorm.DB, routingKeyID uint) int {
+	t.Helper()
+	var key ChannelKey
+	require.NoError(t, db.Where("routing_key_id = ?", routingKeyID).First(&key).Error)
+	return key.Status
+}
+
 func TestPersistPlatformSiteKeyModelsMarksEmptyFetchAsSynced(t *testing.T) {
 	previousDB := DB
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))

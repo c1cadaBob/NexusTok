@@ -258,6 +258,8 @@ Redis、独立 Redis 和关闭 Redis 的 Session/限流差异继续按现有代�
 - 渠道缓存、选项、插件、授权策略和系统节点状态同步；
 - 可选的批量更新、性能监控和 pprof。
 - 系统维护版本检查、二进制更新、可重复回滚、Docker 更新/回滚和 helper 接管。
+- 密钥自动恢复测试：扫描统一 `routing_key_id` 的失效/自动禁用密钥，并按到期时间
+  执行首次探测和确认阶段。
 
 每个任务是否启用、运行间隔、Master 限制和失败重试由各自 Handler 的 `Enabled`、配置和系统任务实现决定，不能只根据任务名称判断正在运行。
 
@@ -359,6 +361,23 @@ preflight、failed 或 helper 容器继续切换。稳定 backup 容器不再是
 本次只修改容器生命周期和数据库关闭防护，不新增数据库字段、缓存键或迁移。已通过
 `go test ./model -run 'TestCloseDB' -count=1`、`go test ./service -run 'TestDocker(Update|Updated|Readiness|Helper|Rollback|Staging|Pull)' -count=1`
 和 Docker 生命周期名称/自清理回归测试。
+
+### 8.4 2026-10-13 密钥自动恢复任务
+
+**变更前**：系统任务没有统一的密钥级恢复调度；失效或自动禁用密钥只有在真实流量、
+渠道测试或人工操作中才可能重新产生健康样本。
+
+**变更后**：新增 `routing_key_recovery` SystemTask，由 Master 节点通过现有
+`SystemTask` 数据库租约每分钟扫描到期候选。候选同时覆盖普通多密钥和平台站点
+子密钥，排除手动禁用密钥和手动禁用父渠道。任务的 Payload/State/Result 继续复用
+现有 JSON 字段，不新增数据库表或 SystemTask 列；Result 只记录 `tested`、
+`succeeded`、`failed`、`next_due` 数量。
+
+恢复测试前端和后端都使用统一的显式 `routing_key_id` 选择路径。健康样本仍写入
+`routing_key_healths`，新增的恢复阶段、下次测试时间、最近测试时间和确认进度字段
+由 GORM `AutoMigrate` 在 SQLite、MySQL、PostgreSQL 上复用现有表扩展能力。首次失败
+下次测试为 30 分钟，首次成功后额外确认 5 次、每次间隔 5 分钟；确认失败不中断本轮。
+Redis 不保存恢复状态，也不作为恢复判定来源。
 
 ## 9. 维护时需要同步的关联模块
 

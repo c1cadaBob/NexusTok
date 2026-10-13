@@ -559,9 +559,15 @@ func UpdateRoutingKeyStatus(channelID int, routingKeyID uint, status int, reason
 			} else {
 				updates["disabled_reason"] = reason
 			}
-			return tx.Model(&UpstreamKey{}).
+			if err := tx.Model(&UpstreamKey{}).
 				Where("routing_key_id = ? AND channel_id = ?", routingKeyID, channelID).
-				Updates(updates).Error
+				Updates(updates).Error; err != nil {
+				return err
+			}
+			if status == common.ChannelStatusEnabled {
+				return updatePlatformSiteChannelAvailability(tx, channelID)
+			}
+			return nil
 		default:
 			return fmt.Errorf("unsupported routing key source %s", routingKey.Source)
 		}
@@ -571,6 +577,43 @@ func UpdateRoutingKeyStatus(channelID int, routingKeyID uint, status int, reason
 		return false
 	}
 	return true
+}
+
+func updatePlatformSiteChannelAvailability(tx *gorm.DB, channelID int) error {
+	if tx == nil {
+		tx = DB
+	}
+	var channel Channel
+	if err := tx.Select("id", "status").First(&channel, "id = ?", channelID).Error; err != nil {
+		return err
+	}
+	if channel.Status == common.ChannelStatusManuallyDisabled {
+		return nil
+	}
+	var keys []UpstreamKey
+	if err := tx.Where("channel_id = ?", channelID).Find(&keys).Error; err != nil {
+		return err
+	}
+	hasEnabledKey := false
+	for index := range keys {
+		if keys[index].Status == UpstreamKeyStatusEnabled &&
+			keys[index].AvailabilityReason(time.Now()) == UpstreamAvailabilityRoutable {
+			hasEnabledKey = true
+			break
+		}
+	}
+	if !hasEnabledKey || channel.Status == common.ChannelStatusEnabled {
+		return nil
+	}
+	if err := tx.Model(&Channel{}).
+		Where("id = ?", channelID).
+		Update("status", common.ChannelStatusEnabled).Error; err != nil {
+		return err
+	}
+	return tx.Model(&Ability{}).
+		Where("channel_id = ?", channelID).
+		Select("enabled").
+		Update("enabled", true).Error
 }
 
 func updateKeyChannelAvailability(tx *gorm.DB, channelID int, status int, reason string) error {
@@ -616,7 +659,10 @@ func updateKeyChannelAvailability(tx *gorm.DB, channelID int, status int, reason
 	}).Error; err != nil {
 		return err
 	}
-	return UpdateAbilityStatus(channelID, channelStatus == common.ChannelStatusEnabled)
+	return tx.Model(&Ability{}).
+		Where("channel_id = ?", channelID).
+		Select("enabled").
+		Update("enabled", channelStatus == common.ChannelStatusEnabled).Error
 }
 
 func GetRoutableKeyByID(channel *Channel, routingKeyID uint, group, modelName string) (*RoutingKeySelection, error) {
@@ -669,6 +715,95 @@ func GetRoutableKeyByID(channel *Channel, routingKeyID uint, group, modelName st
 	default:
 		return nil, fmt.Errorf("unsupported routing key source %s", routingKey.Source)
 	}
+}
+
+// GetRoutingKeyForRecoveryTest 为自动恢复测试显式选择密钥。与正常路由不同，它允许
+// 启用和自动禁用密钥，并有意绕过健康摘要；手动禁用、缺失的平台密钥和静态不可用
+// 的凭据仍会被拒绝。
+func GetRoutingKeyForRecoveryTest(channel *Channel, routingKeyID uint, group, modelName string, now time.Time) (*RoutingKeySelection, error) {
+	if channel == nil {
+		return nil, errors.New("channel is nil")
+	}
+	if routingKeyID == 0 {
+		return nil, errors.New("key_id is required")
+	}
+	if channel.Status == common.ChannelStatusManuallyDisabled {
+		return nil, errors.New("channel is manually disabled")
+	}
+	if channel.Status != common.ChannelStatusEnabled &&
+		channel.Status != common.ChannelStatusAutoDisabled {
+		return nil, errors.New("channel is not available for recovery test")
+	}
+
+	if channel.UpstreamKind == UpstreamKindPlatformSite {
+		key, err := resolvePlatformSiteUpstreamKey(channel, routingKeyID)
+		if err != nil {
+			return nil, err
+		}
+		if key.Status == UpstreamKeyStatusManualDisabled ||
+			key.Status == UpstreamKeyStatusMissing ||
+			key.MissingSince != 0 {
+			return nil, errors.New("upstream key is not eligible for recovery test")
+		}
+		if key.Status != UpstreamKeyStatusEnabled &&
+			key.Status != UpstreamKeyStatusAutoDisabled {
+			return nil, errors.New("upstream key is not eligible for recovery test")
+		}
+		var account PlatformSiteAccount
+		if err := DB.Select("sync_status", "last_sync_at").
+			Where("channel_id = ?", channel.Id).
+			First(&account).Error; err != nil {
+			return nil, errors.New("platform site snapshot is unavailable")
+		}
+		if !PlatformSiteSnapshotUsable(&account) {
+			return nil, errors.New("platform site snapshot is unavailable")
+		}
+		availabilityKey := *key
+		availabilityKey.Status = UpstreamKeyStatusEnabled
+		if availabilityKey.AvailabilityReason(now) != UpstreamAvailabilityRoutable {
+			return nil, errors.New("upstream key is not statically testable")
+		}
+		upstreamModelName := resolveChannelUpstreamModelName(channel, modelName)
+		if strings.TrimSpace(upstreamModelName) != "" &&
+			!upstreamKeySupportsModel(key, group, upstreamModelName) {
+			return nil, errors.New("upstream key does not support the test model")
+		}
+		if err := key.LoadSecret(); err != nil {
+			return nil, errors.New("upstream key credential is unavailable")
+		}
+		return upstreamKeySelection(channel, key), nil
+	}
+
+	var routingKey RoutingKey
+	if err := DB.Where("id = ? AND channel_id = ?", routingKeyID, channel.Id).
+		First(&routingKey).Error; err != nil {
+		return nil, err
+	}
+	if routingKey.Source != RoutingKeySourceKeyChannel {
+		return nil, errRoutingKeySelectionUnavailable
+	}
+	var key ChannelKey
+	if err := DB.Where(
+		"routing_key_id = ? AND channel_id = ?",
+		routingKeyID,
+		channel.Id,
+	).First(&key).Error; err != nil {
+		return nil, err
+	}
+	if key.Status == common.ChannelStatusManuallyDisabled {
+		return nil, errors.New("channel key is manually disabled")
+	}
+	if key.Status != common.ChannelStatusEnabled &&
+		key.Status != common.ChannelStatusAutoDisabled {
+		return nil, errors.New("channel key is not eligible for recovery test")
+	}
+	if strings.TrimSpace(modelName) != "" && !channelSupportsModel(channel, modelName) {
+		return nil, errors.New("channel key does not support the test model")
+	}
+	if err := key.LoadSecret(); err != nil {
+		return nil, errors.New("channel key credential is unavailable")
+	}
+	return channelKeySelection(channel, &key), nil
 }
 
 func GetRoutingKeyForModelFetch(channel *Channel, routingKeyID uint) (*RoutingKeySelection, error) {

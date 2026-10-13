@@ -71,6 +71,7 @@ import { useChannels } from '../channels-provider'
 import { NumericSpinnerInput } from '../numeric-spinner-input'
 import { StatisticsCard } from './multi-key-statistics-card'
 import { MultiKeyTableRowActions } from './multi-key-table-row-actions'
+import { RoutingKeyRecoveryBadge } from '../routing-key-recovery-badge'
 
 type MultiKeyManageDialogProps = {
   open: boolean
@@ -471,12 +472,20 @@ export function MultiKeyManageDialog({
   const renderStatusBadge = (keyStatus: KeyStatus) => {
     const config = getMultiKeyHealthStatusConfig(keyStatus)
     return (
-      <StatusBadge
-        label={t(config.label)}
-        variant={config.variant}
-        showDot
-        copyable={false}
-      />
+      <div className='flex flex-wrap items-center justify-center gap-1'>
+        <StatusBadge
+          label={t(config.label)}
+          variant={config.variant}
+          showDot
+          copyable={false}
+        />
+        <RoutingKeyRecoveryBadge
+          recoveryPhase={keyStatus.recovery_phase}
+          recoveryNextTestAt={keyStatus.recovery_next_test_at}
+          recoveryConfirmationsDone={keyStatus.recovery_confirmations_done}
+          recoveryConfirmationsTotal={keyStatus.recovery_confirmations_total}
+        />
+      </div>
     )
   }
 

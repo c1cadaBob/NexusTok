@@ -30,7 +30,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func routingKeyFirstLatencyMs(info *relaycommon.RelayInfo) int64 {
+func RoutingKeyFirstLatencyMs(info *relaycommon.RelayInfo) int64 {
 	if info == nil {
 		return 0
 	}
@@ -47,7 +47,7 @@ func recordSelectedRoutingKeyHealth(ctx *gin.Context, info *relaycommon.RelayInf
 	}
 	latencyMs := int64(0)
 	if success {
-		latencyMs = routingKeyFirstLatencyMs(info)
+		latencyMs = RoutingKeyFirstLatencyMs(info)
 	}
 	err := model.RecordRoutingKeyHealthSample(
 		uint(routingKeyID),

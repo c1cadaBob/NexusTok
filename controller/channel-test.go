@@ -36,9 +36,10 @@ import (
 )
 
 type testResult struct {
-	context     *gin.Context
-	localErr    error
-	newAPIError *types.NewAPIError
+	context        *gin.Context
+	localErr       error
+	newAPIError    *types.NewAPIError
+	firstLatencyMs int64
 }
 
 func normalizeChannelTestEndpoint(channel *model.Channel, endpointType string) string {
@@ -70,6 +71,34 @@ func resolveChannelTestUserID(c *gin.Context) (int, error) {
 }
 
 func testChannel(ctx context.Context, channel *model.Channel, testUserID int, testModel string, endpointType string, isStream bool, keyID uint, upstreamKeyID uint) testResult {
+	return testChannelWithOptions(
+		ctx,
+		channel,
+		testUserID,
+		testModel,
+		endpointType,
+		isStream,
+		keyID,
+		upstreamKeyID,
+		channelTestOptions{},
+	)
+}
+
+type channelTestOptions struct {
+	recoveryTest bool
+}
+
+func testChannelWithOptions(
+	ctx context.Context,
+	channel *model.Channel,
+	testUserID int,
+	testModel string,
+	endpointType string,
+	isStream bool,
+	keyID uint,
+	upstreamKeyID uint,
+	options channelTestOptions,
+) testResult {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -169,7 +198,13 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	c.Set("group", group)
 
 	if keyID > 0 {
-		selection, keyErr := model.GetRoutableKeyByID(channel, keyID, group, testModel)
+		var selection *model.RoutingKeySelection
+		var keyErr error
+		if options.recoveryTest {
+			selection, keyErr = model.GetRoutingKeyForRecoveryTest(channel, keyID, group, testModel, time.Now())
+		} else {
+			selection, keyErr = model.GetRoutableKeyByID(channel, keyID, group, testModel)
+		}
 		if keyErr != nil {
 			return testResult{
 				context:     c,
@@ -179,9 +214,44 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		}
 		channelCopy := *channel
 		channelCopy.SelectedRoutingKey = selection
+		if selection.Source == model.RoutingKeySourcePlatformSite &&
+			selection.UpstreamKeyID > 0 {
+			channelCopy.SelectedUpstreamKey = &model.UpstreamKey{
+				ID:              selection.UpstreamKeyID,
+				RoutingKeyID:    selection.KeyID,
+				ChannelID:       selection.ChannelID,
+				Secret:          selection.Secret,
+				Name:            selection.Name,
+				KeyPriority:     selection.KeyPriority,
+				Weight:          selection.Weight,
+				ConversionRatio: selection.ConversionRatio,
+			}
+		}
 		channel = &channelCopy
 	} else if upstreamKeyID > 0 {
-		key, keyErr := model.GetRoutableUpstreamKeyByID(channel.Id, upstreamKeyID, group, testModel, time.Now())
+		var key *model.UpstreamKey
+		var keyErr error
+		if options.recoveryTest {
+			selection, selectionErr := model.GetRoutingKeyForRecoveryTest(channel, upstreamKeyID, group, testModel, time.Now())
+			if selectionErr == nil {
+				channelCopy := *channel
+				channelCopy.SelectedRoutingKey = selection
+				channelCopy.SelectedUpstreamKey = &model.UpstreamKey{
+					ID:              selection.UpstreamKeyID,
+					RoutingKeyID:    selection.KeyID,
+					ChannelID:       selection.ChannelID,
+					Secret:          selection.Secret,
+					Name:            selection.Name,
+					KeyPriority:     selection.KeyPriority,
+					Weight:          selection.Weight,
+					ConversionRatio: selection.ConversionRatio,
+				}
+				channel = &channelCopy
+			}
+			keyErr = selectionErr
+		} else {
+			key, keyErr = model.GetRoutableUpstreamKeyByID(channel.Id, upstreamKeyID, group, testModel, time.Now())
+		}
 		if keyErr != nil {
 			return testResult{
 				context:     c,
@@ -189,18 +259,20 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 				newAPIError: types.NewError(keyErr, types.ErrorCodeChannelNoAvailableKey),
 			}
 		}
-		selection, keyErr := model.GetRoutableKeyByID(channel, key.RoutingKeyID, group, testModel)
-		if keyErr != nil {
-			return testResult{
-				context:     c,
-				localErr:    keyErr,
-				newAPIError: types.NewError(keyErr, types.ErrorCodeChannelNoAvailableKey),
+		if !options.recoveryTest {
+			selection, keyErr := model.GetRoutableKeyByID(channel, key.RoutingKeyID, group, testModel)
+			if keyErr != nil {
+				return testResult{
+					context:     c,
+					localErr:    keyErr,
+					newAPIError: types.NewError(keyErr, types.ErrorCodeChannelNoAvailableKey),
+				}
 			}
+			channelCopy := *channel
+			channelCopy.SelectedUpstreamKey = key
+			channelCopy.SelectedRoutingKey = selection
+			channel = &channelCopy
 		}
-		channelCopy := *channel
-		channelCopy.SelectedUpstreamKey = key
-		channelCopy.SelectedRoutingKey = selection
-		channel = &channelCopy
 	} else if channel.UpstreamKind == model.UpstreamKindPlatformSite {
 		selectedChannel := model.SelectRoutableUpstreamKey(channel, group, testModel)
 		if selectedChannel == nil || selectedChannel.SelectedUpstreamKey == nil {
@@ -561,12 +633,20 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		Group:            info.UsingGroup,
 		Other:            other,
 	})
-	common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
-	service.TouchSelectedUpstreamKeyLastUsed(c, info)
+	firstLatencyMs := service.RoutingKeyFirstLatencyMs(info)
+	if options.recoveryTest {
+		common.SysLog(fmt.Sprintf("testing channel #%d, recovery response received", channel.Id))
+	} else {
+		common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
+	}
+	if !options.recoveryTest {
+		service.TouchSelectedUpstreamKeyLastUsed(c, info)
+	}
 	return testResult{
-		context:     c,
-		localErr:    nil,
-		newAPIError: nil,
+		context:        c,
+		localErr:       nil,
+		newAPIError:    nil,
+		firstLatencyMs: firstLatencyMs,
 	}
 }
 

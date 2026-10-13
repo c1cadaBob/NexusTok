@@ -101,6 +101,9 @@ test('多密钥管理表展示全局 key_id 并用 key_id 保存编辑', async (
           weight: 300,
           auto_weight: 200,
           health_status: 'degraded',
+          recovery_phase: 'confirming',
+          recovery_confirmations_done: 2,
+          recovery_confirmations_total: 5,
         },
       ],
       total: 1,
@@ -121,6 +124,7 @@ test('多密钥管理表展示全局 key_id 并用 key_id 保存编辑', async (
   expect(await screen.findByText('#1201')).toBeInTheDocument()
   expect(screen.getByText('7')).toBeInTheDocument()
   expect(screen.getByText('Degraded')).toBeInTheDocument()
+  expect(screen.getByText('Recovery confirmation 2/5')).toBeInTheDocument()
   expect(screen.getByText('300')).toBeInTheDocument()
   expect(screen.getByText('Override')).toBeInTheDocument()
   expect(screen.queryByText('300 (200)')).not.toBeInTheDocument()

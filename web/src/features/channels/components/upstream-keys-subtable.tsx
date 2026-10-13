@@ -79,6 +79,7 @@ import {
 import type { Channel, UpstreamKey } from '../types'
 import { useChannels } from './channels-provider'
 import { NumericSpinnerInput } from './numeric-spinner-input'
+import { RoutingKeyRecoveryBadge } from './routing-key-recovery-badge'
 
 const SENSITIVE_MASK = '••••'
 
@@ -255,6 +256,12 @@ function UpstreamKeyStatusBadge({ upstreamKey }: { upstreamKey: UpstreamKey }) {
           copyable={false}
         />
       )}
+      <RoutingKeyRecoveryBadge
+        recoveryPhase={upstreamKey.recovery_phase}
+        recoveryNextTestAt={upstreamKey.recovery_next_test_at}
+        recoveryConfirmationsDone={upstreamKey.recovery_confirmations_done}
+        recoveryConfirmationsTotal={upstreamKey.recovery_confirmations_total}
+      />
     </div>
   )
 }

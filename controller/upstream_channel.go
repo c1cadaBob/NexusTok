@@ -79,38 +79,43 @@ type UpstreamSiteStatusResponse struct {
 }
 
 type UpstreamKeyResponse struct {
-	ID                      uint       `json:"id"`
-	KeyID                   uint       `json:"key_id"`
-	ChannelID               int        `json:"channel_id"`
-	ExternalID              string     `json:"external_id"`
-	Name                    string     `json:"name"`
-	KeyPreview              string     `json:"key_preview"`
-	Models                  []string   `json:"models"`
-	AllowedModels           *[]string  `json:"allowed_models,omitempty"`
-	ModelsSynced            bool       `json:"models_synced"`
-	KeyPriority             int64      `json:"key_priority"`
-	SourceConversionRatio   float64    `json:"source_conversion_ratio"`
-	ConversionRatio         float64    `json:"conversion_ratio"`
-	ConversionRatioOverride *float64   `json:"conversion_ratio_override"`
-	Weight                  int        `json:"weight"`
-	AutoWeight              int        `json:"auto_weight"`
-	WeightOverride          *int       `json:"weight_override"`
-	UsedQuota               int64      `json:"used_quota"`
-	RemainQuota             *int64     `json:"remain_quota,omitempty"`
-	ExpiresAt               *time.Time `json:"expires_at,omitempty"`
-	Status                  int        `json:"status"`
-	DisabledReason          string     `json:"disabled_reason"`
-	LastSyncAt              int64      `json:"last_sync_at"`
-	LastUsedAt              int64      `json:"last_used_at"`
-	Routable                bool       `json:"routable"`
-	AvailabilityReason      string     `json:"availability_reason,omitempty"`
-	SnapshotOnly            bool       `json:"snapshot_only,omitempty"`
-	CredentialUnavailable   bool       `json:"credential_unavailable,omitempty"`
-	HealthStatus            string     `json:"health_status,omitempty"`
-	HealthReason            string     `json:"health_reason,omitempty"`
-	HealthSampleCount       int        `json:"health_sample_count,omitempty"`
-	HealthSuccessCount      int        `json:"health_success_count,omitempty"`
-	HealthFirstLatencyMs    int64      `json:"health_first_latency_ms,omitempty"`
+	ID                         uint       `json:"id"`
+	KeyID                      uint       `json:"key_id"`
+	ChannelID                  int        `json:"channel_id"`
+	ExternalID                 string     `json:"external_id"`
+	Name                       string     `json:"name"`
+	KeyPreview                 string     `json:"key_preview"`
+	Models                     []string   `json:"models"`
+	AllowedModels              *[]string  `json:"allowed_models,omitempty"`
+	ModelsSynced               bool       `json:"models_synced"`
+	KeyPriority                int64      `json:"key_priority"`
+	SourceConversionRatio      float64    `json:"source_conversion_ratio"`
+	ConversionRatio            float64    `json:"conversion_ratio"`
+	ConversionRatioOverride    *float64   `json:"conversion_ratio_override"`
+	Weight                     int        `json:"weight"`
+	AutoWeight                 int        `json:"auto_weight"`
+	WeightOverride             *int       `json:"weight_override"`
+	UsedQuota                  int64      `json:"used_quota"`
+	RemainQuota                *int64     `json:"remain_quota,omitempty"`
+	ExpiresAt                  *time.Time `json:"expires_at,omitempty"`
+	Status                     int        `json:"status"`
+	DisabledReason             string     `json:"disabled_reason"`
+	LastSyncAt                 int64      `json:"last_sync_at"`
+	LastUsedAt                 int64      `json:"last_used_at"`
+	Routable                   bool       `json:"routable"`
+	AvailabilityReason         string     `json:"availability_reason,omitempty"`
+	SnapshotOnly               bool       `json:"snapshot_only,omitempty"`
+	CredentialUnavailable      bool       `json:"credential_unavailable,omitempty"`
+	HealthStatus               string     `json:"health_status,omitempty"`
+	HealthReason               string     `json:"health_reason,omitempty"`
+	HealthSampleCount          int        `json:"health_sample_count,omitempty"`
+	HealthSuccessCount         int        `json:"health_success_count,omitempty"`
+	HealthFirstLatencyMs       int64      `json:"health_first_latency_ms,omitempty"`
+	RecoveryPhase              string     `json:"recovery_phase,omitempty"`
+	RecoveryNextTestAt         int64      `json:"recovery_next_test_at,omitempty"`
+	RecoveryLastTestAt         int64      `json:"recovery_last_test_at,omitempty"`
+	RecoveryConfirmationsDone  int        `json:"recovery_confirmations_done,omitempty"`
+	RecoveryConfirmationsTotal int        `json:"recovery_confirmations_total,omitempty"`
 }
 
 type PlatformSiteResourceIdentityResponse struct {
@@ -737,30 +742,36 @@ func toUpstreamKeyResponse(key *model.UpstreamKey) UpstreamKeyResponse {
 	if configured {
 		allowedModelsResponse = &allowedModels
 	}
+	recovery := model.GetRoutingKeyRecoveryState(key.RoutingKeyID)
 	return UpstreamKeyResponse{
-		ID:                      key.ID,
-		KeyID:                   key.RoutingKeyID,
-		ChannelID:               key.ChannelID,
-		ExternalID:              key.ExternalID,
-		Name:                    key.Name,
-		KeyPreview:              upstreamKeyPreview(key),
-		Models:                  models,
-		AllowedModels:           allowedModelsResponse,
-		KeyPriority:             key.KeyPriority,
-		SourceConversionRatio:   key.EffectiveSourceConversionRatio(),
-		ConversionRatio:         key.ConversionRatio,
-		ConversionRatioOverride: key.ConversionRatioOverride,
-		Weight:                  key.EffectiveWeight(),
-		AutoWeight:              key.AutoWeight(),
-		WeightOverride:          key.WeightOverride,
-		UsedQuota:               key.UsedQuota,
-		RemainQuota:             key.RemainQuota,
-		ExpiresAt:               key.ExpiresAt,
-		ModelsSynced:            key.ModelsSynced,
-		Status:                  key.Status,
-		DisabledReason:          key.DisabledReason,
-		LastSyncAt:              key.LastSyncAt,
-		LastUsedAt:              key.LastUsedAt,
+		ID:                         key.ID,
+		KeyID:                      key.RoutingKeyID,
+		ChannelID:                  key.ChannelID,
+		ExternalID:                 key.ExternalID,
+		Name:                       key.Name,
+		KeyPreview:                 upstreamKeyPreview(key),
+		Models:                     models,
+		AllowedModels:              allowedModelsResponse,
+		KeyPriority:                key.KeyPriority,
+		SourceConversionRatio:      key.EffectiveSourceConversionRatio(),
+		ConversionRatio:            key.ConversionRatio,
+		ConversionRatioOverride:    key.ConversionRatioOverride,
+		Weight:                     key.EffectiveWeight(),
+		AutoWeight:                 key.AutoWeight(),
+		WeightOverride:             key.WeightOverride,
+		UsedQuota:                  key.UsedQuota,
+		RemainQuota:                key.RemainQuota,
+		ExpiresAt:                  key.ExpiresAt,
+		ModelsSynced:               key.ModelsSynced,
+		Status:                     key.Status,
+		DisabledReason:             key.DisabledReason,
+		LastSyncAt:                 key.LastSyncAt,
+		LastUsedAt:                 key.LastUsedAt,
+		RecoveryPhase:              recovery.Phase,
+		RecoveryNextTestAt:         recovery.NextTestAt,
+		RecoveryLastTestAt:         recovery.LastTestAt,
+		RecoveryConfirmationsDone:  recovery.ConfirmationsDone,
+		RecoveryConfirmationsTotal: recovery.ConfirmationsTotal,
 	}
 }
 

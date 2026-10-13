@@ -31,6 +31,12 @@
 只初始化数据库、租约和 Docker Engine 操作，不启动 HTTP 服务、Redis runner 或插件。
 该链路与普通用户异步任务的计费、Artifact 和插件状态无关。
 
+`routing_key_recovery` 是另一类按分钟调度的系统任务。它由 Master 节点通过现有
+`SystemTask` 类型租约单实例执行，扫描统一 `routing_key_id` 的到期恢复候选，显式
+选择普通多密钥或平台站点子密钥执行一次渠道测试，并把脱敏的测试数量写入 Result。
+恢复阶段和下次到期时间保存在 `routing_key_healths`，不使用 Redis；手动禁用密钥和
+手动禁用父渠道不进入候选。
+
 ## 3. 插件编译、校验和注册
 
 插件由 `pkg/jsplugin` 读取 ECMAScript 模块，经编译、Manifest Schema/类型校验、协议/路由冲突检查后进入 Registry。内置插件位于 `plugins/tasks/`；管理员上传插件是高信任操作，启用前需要通过校验和路由生成检查。
@@ -105,5 +111,6 @@ Capability URL 不是上游 URL。读取时 Host 仍要加载任务、用户和�
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 建立任务生命周期、插件边界、协议、轮询、Generation Pinning 和 Artifact 说明 | `pkg/jsplugin/`、`plugins/tasks/`、`service/task_polling.go`、`router/`、`model/task*` | 插件 API 详细文档、任务路由和轮询代码静态核对 |
+| 2026-10-13 | 密钥自动恢复测试 | 没有统一的密钥级恢复系统任务，失效/自动禁用密钥只能依赖真实请求或人工操作产生健康样本 | 新增 `routing_key_recovery` 定时任务，复用 SystemTask 租约扫描普通多密钥和平台站点子密钥，恢复请求只写入健康样本并按首次失败 30 分钟、首次成功后 5 次/5 分钟确认推进 | `controller/system_task_handlers.go`、`model/routing_key_health.go`、`model/routing_key.go`、`service/upstream_key_usage.go` | SQLite 定向模型/控制器测试和前端 37 个受影响用例通过；MySQL/PostgreSQL DSN 未配置 |
 | 2026-10-13 | 按发布版本选择系统维护目标 | 系统任务没有保存发布版本目标，更新/回滚依赖 `.backup` 文件或稳定备份容器 | `SystemTask` 的 JSON Payload/State/Result 保存目标版本、目标镜像、数据备份 ID、备份/恢复状态；更新默认选择最新可用 Release，回滚接收并校验 `target_version`；Docker 镜像拉取和 preflight 后才备份，备份失败不停止正式容器，切换已改变运行实例后失败才恢复数据；不新增数据库字段或迁移 | `service/system_update.go`、`service/system_update_backup.go`、`service/system_update_docker.go`、`model/system_task.go`、维护页 | 系统更新 Go 定向测试、Docker 备份/恢复边界测试、任务脱敏测试和前端定向测试；未执行生产切换和完整三数据库矩阵 |
 | 2026-10-02 | Docker 更新任务端口预检 | 更新任务在旧容器仍绑定宿主端口时启动同端口 staging 容器，可能因端口占用失败 | 增加无端口 preflight 探活和正式容器停旧后启动流程；失败时恢复旧容器并保留稳定 backup | `service/system_update_docker.go`、系统更新任务状态和失败终态 | `go test ./service -run 'Docker(Update\|Updated\|Readiness\|Helper\|Pull\|Staging)' -count=1` |

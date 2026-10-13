@@ -114,6 +114,10 @@ function upstreamKey(overrides: Partial<UpstreamKey> = {}): UpstreamKey {
     health_sample_count: 5,
     health_success_count: 5,
     health_first_latency_ms: 800,
+    recovery_phase: 'probing',
+    recovery_next_test_at: 1_700_000_300,
+    recovery_confirmations_done: 0,
+    recovery_confirmations_total: 5,
   }
   return { ...key, ...overrides }
 }
@@ -164,6 +168,7 @@ test('平台站点展开区按密钥级字段展示且不暴露明文密钥', ()
   expect(screen.getByText('Production key')).toBeInTheDocument()
   expect(screen.getByText('sk-live...mask')).toBeInTheDocument()
   expect(screen.getByText('Normal')).toBeInTheDocument()
+  expect(screen.getByText('Recovery test')).toBeInTheDocument()
   expect(screen.queryByText('sk-secret-real')).not.toBeInTheDocument()
 })
 

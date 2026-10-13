@@ -21,6 +21,7 @@ func RegisterScheduledSystemTasks() {
 	service.RegisterSystemTaskHandler(channelTestHandler{})
 	service.RegisterSystemTaskHandler(modelUpdateHandler{})
 	service.RegisterSystemTaskHandler(upstreamSiteSyncHandler{})
+	service.RegisterSystemTaskHandler(routingKeyRecoveryHandler{})
 	service.RegisterSystemTaskHandler(midjourneyPollHandler{})
 	service.RegisterSystemTaskHandler(asyncTaskPollHandler{})
 }
@@ -154,6 +155,100 @@ func (modelUpdateHandler) Run(ctx context.Context, task *model.SystemTask, runne
 	}
 	summary := runChannelUpstreamModelUpdateTaskOnce(ctx, payload.Manual, !payload.Manual, service.NewSystemTaskProgressReporter(task, runnerID))
 	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, summary, nil)
+}
+
+type routingKeyRecoveryHandler struct{}
+
+func (routingKeyRecoveryHandler) Type() string {
+	return model.SystemTaskTypeRoutingKeyRecovery
+}
+
+func (routingKeyRecoveryHandler) Enabled() bool {
+	return common.GetEnvOrDefaultBool("ROUTING_KEY_RECOVERY_TASK_ENABLED", true)
+}
+
+func (routingKeyRecoveryHandler) Interval() time.Duration {
+	return time.Minute
+}
+
+func (routingKeyRecoveryHandler) NewPayload() any { return nil }
+
+type routingKeyRecoveryResult struct {
+	Tested    int `json:"tested"`
+	Succeeded int `json:"succeeded"`
+	Failed    int `json:"failed"`
+	NextDue   int `json:"next_due"`
+}
+
+func (routingKeyRecoveryHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	candidates, err := model.ListDueRoutingKeyRecoveryCandidates(time.Now())
+	if err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
+		return
+	}
+	result := routingKeyRecoveryResult{}
+	report := service.NewSystemTaskProgressReporter(task, runnerID)
+	if len(candidates) == 0 {
+		report(0, 0)
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, result, nil)
+		return
+	}
+
+	testUserID, err := resolveChannelTestUserID(nil)
+	if err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, result, err)
+		return
+	}
+	for index := range candidates {
+		if ctx.Err() != nil {
+			finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, result, ctx.Err())
+			return
+		}
+		candidate := candidates[index]
+		testResult := testChannelWithOptions(
+			ctx,
+			candidate.Channel,
+			testUserID,
+			"",
+			"",
+			shouldUseStreamForAutomaticChannelTest(candidate.Channel),
+			candidate.RoutingKeyID,
+			0,
+			channelTestOptions{recoveryTest: true},
+		)
+		if ctx.Err() != nil {
+			finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, result, ctx.Err())
+			return
+		}
+		success := testResult.localErr == nil && testResult.newAPIError == nil
+		result.Tested++
+		if success {
+			result.Succeeded++
+		} else {
+			result.Failed++
+		}
+		if err := model.RecordRoutingKeyRecoverySample(
+			candidate.RoutingKeyID,
+			candidate.ChannelID,
+			candidate.Source,
+			success,
+			testResult.firstLatencyMs,
+			time.Now(),
+		); err != nil {
+			common.SysLog(fmt.Sprintf(
+				"记录密钥恢复测试样本失败: key_id=%d channel_id=%d error=%v",
+				candidate.RoutingKeyID,
+				candidate.ChannelID,
+				err,
+			))
+			result.Failed++
+		}
+		if state := model.GetRoutingKeyRecoveryState(candidate.RoutingKeyID); state.NextTestAt > time.Now().Unix() {
+			result.NextDue++
+		}
+		report(index+1, len(candidates))
+	}
+	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, result, nil)
 }
 
 // midjourneyPollHandler runs one Midjourney polling pass per scheduled run.

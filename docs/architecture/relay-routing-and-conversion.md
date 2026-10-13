@@ -11,6 +11,19 @@ Relay 层将多个上游供应商统一到 OpenAI、Claude、Gemini、Responses�
 
 “渠道类型注册”“API 类型映射”“Adaptor 存在”“具体 Endpoint 支持”是四个独立事实。本文件和[`provider-capability-matrix.md`](./provider-capability-matrix.md)始终按这四层记录。
 
+### 2026-10-13 密钥自动恢复测试边界
+
+正常 Relay 路由仍只选择父渠道和密钥状态、模型能力、额度、凭据及
+`RoutingKeyHealthAllowsRouting` 均满足条件的候选，不会因为恢复任务而把 `invalid`
+或 `auto_disabled` 密钥放回生产流量。新增的恢复测试任务使用显式
+`routing_key_id` 选择路径，仅允许启用或自动禁用密钥，始终拒绝手动禁用密钥、缺失
+密钥、父渠道手动禁用和静态不可解密凭据。
+
+恢复请求完成后不另建独立健康判定：成功和失败都按真实请求一样写入
+`routing_key_healths` 样本窗口，确认阶段按 5 次/5 分钟推进。是否恢复调度资格仍由
+既有健康策略决定；当自动禁用密钥的健康样本恢复为可路由状态时，业务状态同步恢复并
+重算父渠道可用性。恢复任务不使用 Redis，不改变业务请求协议和 Relay 转换接口。
+
 ## 2. 对外入口
 
 | 入口类别 | 当前路由/入口 | Relay Format 或处理方式 |
