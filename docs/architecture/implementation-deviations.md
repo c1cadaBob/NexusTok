@@ -1,7 +1,7 @@
 # 实现偏差登记
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-13
+> 事实基线日期：2026-10-14
 > 主要代码来源：`router/relay-router.go`、`common/api_type.go`、`relay/relay_adaptor.go`、`relay/channel/*/adaptor.go`、`router/task-plugin-protocol-router.go`、`docs/architecture/*.md`
 > 关联详细文档：[`README.md`](./README.md)、[`relay-routing-and-conversion.md`](./relay-routing-and-conversion.md)、[`provider-capability-matrix.md`](./provider-capability-matrix.md)、[`../plugin-api/README.md`](../plugin-api/README.md)
 
@@ -62,6 +62,7 @@
 | DEV-027 | Sub2API 页面声明外部 Relay | `api_base_url` 为空或页面使用独立 `custom_endpoints` Relay 时，Helper 只回传管理地址；服务端若仅依赖客户端 `relay_base_url`，可能无法区分未声明地址和真实页面配置 | Helper/服务端解析 `custom_endpoints` 与 `customEndpoints`，Capture 完成使用请求上下文匿名重读 `record.BaseURL` 页面并要求 Relay 规范化完全匹配页面声明；管理地址仍遵守同 Host/严格 `api.` 关系，Relay 请求隔离管理会话 | 已实现/指定站点已验收 | `service/platform_site_capture.go`、`service/upstream_site_adapters.go`、`service/upstream_site.go`、`service/upstream_site_test.go`；Sub2API 参考源与真实站点脱敏验收 | 2026-10-05 |
 | DEV-028 | Sub2API 邮箱登录身份保存 | 认证流程完成后无条件把上游站点 `username` 覆盖到密码登录凭据，导致输入邮箱的渠道后续使用 `username` 登录严格邮箱接口并收到 `400 INVALID_REQUEST` | Sub2API 密码认证保留原始邮箱主体；上游 `username` 仅用于身份信息，非邮箱主体仍保存上游规范用户名；当前用户接口和登录响应回退路径统一处理；不新增数据库字段或迁移 | 已实现/待真实站点持续核查 | `service/platform_site_auth_flow.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go`、Sub2API `auth_handler.go` | 2026-10-13 |
 | DEV-029 | 平台站点使用日志成本 | 平台站点上游用量日志和 NexusTok 消费日志没有请求级成本映射，管理员只能看到本地费用；将成本写入日志数据库会扩大 ClickHouse/独立日志库迁移范围 | 新增主数据库成本映射与 UTC 五分钟窗口状态；Sub2API 读取 `actual_cost`、NewAPI 读取 `quota`，优先按上游请求 ID、其次按模型和两秒内唯一时间匹配；无法可靠取得时使用倍率快照估算，最多在后三个周期重试；管理员查询时将成本注入 `other.admin_info`，普通用户和 Token 接口不返回；不修改日志数据库、ClickHouse 或公开 API | 已实现/待真实站点持续核查 | `model/platform_site_usage_cost.go`、`service/platform_site_usage_cost.go`、`controller/log.go`、`web/src/features/usage-logs/`、Sub2API `admin/usage_handler.go`、NewAPI `controller/log.go` | 2026-10-13 |
+| DEV-030 | 平台站点管理跳转与管理员余额 | 渠道行没有直接进入上游管理页面的入口，钱包只展示 NexusTok 用户自身额度和用量 | 平台站点状态返回经过服务端校验的 `management_url`，管理员从渠道行打开新标签页且不携带凭据；管理员 `/api/user/self` 按 NewAPI/Sub2API 平台账号汇总本地余额快照，禁用账号仍计入，不触发上游同步，普通用户不可见 | 已实现/待真实站点持续核查 | `service/upstream_site.go`、`controller/upstream_channel.go`、`model/platform_site_balance.go`、`controller/user.go`、`web/src/features/channels/`、`web/src/features/wallet/` | 2026-10-14 |
 
 ### 3.2 2026-09-26 实现核对结果
 
@@ -390,6 +391,21 @@ nil，退出 defer 调用 `CloseDB()` 会再次触发空指针。更新器从
 验证：`model/main_test.go` 覆盖 nil、共享数据库和独立数据库关闭；`service/system_update_test.go`
 覆盖正式容器名归一、helper 自清理、数据备份和目标版本切换；现有 Docker 更新/回滚/helper
 定向测试继续通过。
+
+### 3.21 2026-10-14 平台站点管理跳转与钱包余额
+
+**变更前**：管理员只能在渠道编辑或同步状态中查看平台站点，渠道行没有直接进入上游
+管理页面的入口；钱包没有平台账号共享余额统计。
+
+**变更后**：平台站点状态响应增加服务端生成的 `management_url`。只允许 HTTP/HTTPS，
+拒绝用户信息、查询参数、片段、无效地址和未知平台；Sub2API 使用 `/admin/dashboard`，
+NewAPI 使用 `/dashboard`，已存在管理路径时不重复拼接。前端仅向管理员和超级管理员
+展示新标签页跳转，并使用 `noopener,noreferrer`，不发送凭据。
+
+管理员钱包通过 `PlatformSiteAccount` 的本地快照汇总 NewAPI/Sub2API 账号，一账号一份，
+包括手动禁用、自动禁用和保留旧快照的同步失败账号，不按子密钥重复累加。异常余额被
+安全忽略，账号数量和最新同步时间仍按配置记录；普通用户、API Token 和非管理员上下文
+不返回该字段。该功能不新增数据库 Schema、迁移或上游认证数据暴露。
 
 ## 4. 维护规则
 

@@ -33,6 +33,7 @@ import {
   Trash2,
   RefreshCw,
   Loader2,
+  ExternalLink,
 } from 'lucide-react'
 import { useContext, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -61,6 +62,7 @@ import {
 } from '@/lib/admin-permissions'
 import { handleServerError } from '@/lib/handle-server-error'
 import { createServerError } from '@/lib/server-error-message'
+import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { syncUpstreamSite } from '../api'
@@ -97,6 +99,11 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
 
   const isEnabled = isChannelEnabled(channel)
   const isMultiKey = isMultiKeyChannel(channel)
+  const isAdministrator = (currentUser?.role ?? 0) >= ROLE.ADMIN
+  const managementURL =
+    channel.upstream_kind === 'platform_site'
+      ? channel.upstream_site_status?.management_url
+      : undefined
   const canEditSensitive = hasPermission(
     currentUser,
     ADMIN_PERMISSION_RESOURCES.CHANNEL,
@@ -200,6 +207,13 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
     } finally {
       setIsSyncing(false)
     }
+  }
+
+  const handleOpenUpstreamPlatform = () => {
+    if (!isAdministrator || !managementURL) {
+      return
+    }
+    window.open(managementURL, '_blank', 'noopener,noreferrer')
   }
 
   let statusIcon = <Power className='size-4' />
@@ -389,6 +403,15 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
                 ) : (
                   <RefreshCw className='size-4' />
                 )}
+              </DropdownMenuShortcut>
+            </DropdownMenuItem>
+          )}
+
+          {isAdministrator && managementURL && (
+            <DropdownMenuItem onClick={handleOpenUpstreamPlatform}>
+              {t('Open upstream platform')}
+              <DropdownMenuShortcut>
+                <ExternalLink size={16} />
               </DropdownMenuShortcut>
             </DropdownMenuItem>
           )}

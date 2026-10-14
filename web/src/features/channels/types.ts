@@ -465,6 +465,7 @@ export interface UpstreamSiteStatus {
   channel_id: number
   platform: string
   base_url: string
+  management_url?: string
   relay_base_url?: string
   auth_type: UpstreamAuthType
   username?: string

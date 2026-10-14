@@ -1,7 +1,7 @@
 # 系统总览与请求生命周期
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-08
+> 事实基线日期：2026-10-14
 > 主要代码来源：`main.go`、`router/main.go`、`router/`、`middleware/`、`controller/`、`service/`、`model/main.go`、`common/`
 > 关联详细文档：[`README.md`](./README.md)、[`authentication-and-authorization.md`](./authentication-and-authorization.md)、[`data-cache-and-background-jobs.md`](./data-cache-and-background-jobs.md)
 
@@ -289,6 +289,25 @@ helper 在主容器停止前接管系统任务租约，启动失败时把租约�
 任务错误、日志和手动命令不包含 `SESSION_SECRET`、`SQL_DSN`、`REDIS_CONN_STRING`、
 Cookie、Token 或完整 Key。
 
+### 7.3 平台站点管理入口与管理员钱包余额（2026-10-14）
+
+**变更前**：平台站点渠道行的“更多”菜单没有直接进入上游管理页面的入口；钱包只
+展示 NexusTok 用户自身的额度、使用量和请求数。
+
+**变更后**：平台站点状态接口在既有管理员渠道读取权限下增加安全校验后的
+`management_url`。Sub2API 进入 `/admin/dashboard`，NewAPI 进入 `/dashboard`；
+服务端只接受 HTTP/HTTPS，并拒绝用户信息、查询参数、片段和未知平台地址，前端不
+自行猜测路径，也不向地址附加 Cookie、Token、Admin Key 或密码。管理员可以从渠道
+行“更多”菜单在新标签页打开该地址，普通用户看不到入口。
+
+管理员的 `/api/user/self` 响应增加 `upstream_platform_balance`，按
+`PlatformSiteAccount` 账号而不是 `UpstreamKey` 汇总 NewAPI/Sub2API 的本地余额快照。
+手动禁用、自动禁用、同步失败但仍保留快照的账号仍计入，每个账号只计算一次，并将
+美元余额通过 `common.QuotaPerUnit` 转换为系统 quota。钱包页面显示总余额、纳入统计
+的账号数和最近同步时间；打开钱包不会触发上游网络同步。余额聚合失败只记录脱敏系统
+错误，不影响普通钱包数据，也不会向普通用户、API Token 或非管理员上下文返回该字段。
+本次不新增数据库字段、迁移、独立公开接口或认证数据暴露。
+
 ## 8. 维护时需要同步的关联模块
 
 修改启动顺序、节点职责、路由安装或中间件顺序时，必须同步 `main.go`、`router/main.go`、对应路由和本文档。修改数据库/Redis/日志边界时同步 `model/main.go`、`common/redis.go`、缓存模型和[`data-cache-and-background-jobs.md`](./data-cache-and-background-jobs.md)。修改用户请求链路时同步鉴权、路由、计费和能力矩阵文档。
@@ -302,6 +321,7 @@ Cookie、Token 或完整 Key。
 | 2026-09-30 | 系统维护更新与回滚 | 前端直连 GitHub 且没有后端运维任务；旧版回滚会消耗唯一备份 | 增加 RootAuth 维护接口、SystemTask 进度、GitHub 缓存/checksum、裸机稳定备份交换、Docker helper/健康检查和重启探活 | `router/api-router.go`、`controller/system_update.go`、`service/system_update*.go`、`main.go`、维护页 | `go test ./service ./model ./controller ./router`、前端定向测试；未进行生产容器切换 |
 | 2026-10-13 | 按发布版本选择回滚与数据备份恢复 | 维护页不能选择任意已发布版本，裸机使用 `.backup` 文件、Docker 使用稳定备份容器；更新失败后的数据恢复边界未统一 | 后端分页读取 Release 并校验目标版本；镜像拉取和 preflight 后再备份数据、日志和主数据库，Redis 不恢复；裸机不再创建 `.backup`，Docker 只保留正式目标容器，切换失败按状态恢复旧实例和数据并记录 `data_restore_failed` | `controller/system_update.go`、`service/system_update.go`、`service/system_update_backup.go`、`service/system_update_docker.go`、维护页 | Go service 定向测试、Docker 备份/恢复边界测试和前端定向测试；未进行生产切换、Docker 真实工具容器和完整三数据库矩阵 |
 | 2026-10-13 | 平台站点使用日志成本同步 | Sub2API/NewAPI 的上游费用没有与本地消费日志关联，管理员只能看到本地费用；成本状态若落入独立日志库会扩大日志表迁移范围 | Master 每分钟调度 UTC 五分钟已结束窗口，主库保存请求成本映射和窗口重试状态；优先读取 Sub2API `actual_cost`/NewAPI `quota`，无法可靠匹配时按密钥倍率快照估算并最多重试三次；成本仅通过管理员 `other.admin_info` 注入，Redis 和日志库 schema 不参与 | `controller/system_task_handlers.go`、`service/platform_site_usage_cost.go`、`model/platform_site_usage_cost.go`、`controller/log.go`、使用日志前端 | Go 定向服务/模型/控制器测试、前端成本展示测试；完整 MySQL/PostgreSQL 实例矩阵和真实上游管理员接口需按最终报告核对 |
+| 2026-10-14 | 平台站点管理跳转与管理员余额 | 渠道行没有直接进入上游管理页面的入口，钱包不展示平台站点账号余额 | 平台站点状态返回经服务端校验的 `management_url`，管理员可在新标签页打开；`/api/user/self` 的管理员分支按平台账号汇总 NewAPI/Sub2API 本地余额快照，禁用账号仍计入且不触发上游同步 | `service/upstream_site.go`、`controller/upstream_channel.go`、`model/platform_site_balance.go`、`controller/user.go`、渠道和钱包前端 | Go 定向模型/控制器/服务测试、前端定向组件测试、`bun run typecheck`、`bun run lint`、i18n 同步；未新增数据库 Schema 或迁移 |
 | 2026-10-02 | Docker 自动更新端口预检 | 更新流程在旧容器仍发布 `3030` 时直接启动同端口 staging 容器，Docker 会返回 `port is already allocated` | bridge/Compose 网络先用无宿主端口、无 Compose 标签/别名的 preflight 容器探活，再停旧并启动保留原端口的正式容器；`host`/`container:<id>` 网络走受控降级 | `service/system_update_docker.go`、系统任务 Docker helper、维护页错误展示 | `go test ./service -run 'Docker(Update\|Updated\|Readiness\|Helper\|Pull\|Staging)' -count=1` |
 | 2026-09-30 | v0.2.2 生产默认部署 | Compose 使用浮动依赖、明文默认密码和相对目录，服务依赖未按健康状态编排；单容器示例未明确不包含外部数据库/缓存 | Compose 固定 PostgreSQL 15 + Redis 7，密码由 `.env`/部署脚本生成，应用端口为 `3030`，数据/日志使用 `/opt/nexustok` 持久化目录，单容器仅保留 SQLite/无 Redis 兼容模式 | `docker-compose.yml`、`scripts/deploy.sh`、`Dockerfile`、`VERSION`、Docker 发布工作流和中文部署文档 | `docker compose config`、`bash -n scripts/deploy.sh`、隔离三服务栈和真实 SQLite 3.50.4/MySQL 8.2.0/PostgreSQL 15.19 矩阵已通过；生产 Dockerfile 完整构建因 `proxy.golang.org` 超时未完成，远端发布以标签工作流为准 |
 | 2026-10-01 | v0.2.3 安全依赖与部署发布 | README 多语言存在旧端口、旧镜像和宣传栏目；发布工作流 Secret 名称不匹配；部署文档未完整覆盖单机、多机、备份和故障边界 | 统一六种 README、宝塔文档和架构事实为 `3030`、Compose、PostgreSQL 15 + Redis 7；补充多机共享外部服务、主从职责、代理和回滚；工作流使用 `DOCKER_USERNAME`/`DOCKER_PASSWORD`；前端/Electron 依赖按本地审计结果最小升级，数据库代码和 Schema 未修改 | `README*.md`、`docs/installation/BT.md`、`.github/workflows/docker-*.yml`、web/Electron 依赖 | Bun/npm 审计、govulncheck、前端全量回归、Go vet/build/test、relaykit 构建、Compose 配置和隔离三服务健康检查已通过；推送反馈仍有 1 条中等级 Dependabot 警报，认证 API、v0.2.3 镜像、多架构 manifest、Cosign 和远端 Release 待验证 |

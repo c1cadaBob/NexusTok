@@ -1,7 +1,7 @@
 # 上游渠道与平台站点设计
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-13
+> 事实基线日期：2026-10-14
 > 主要代码来源：`model/upstream_channel.go`、`model/routing_key.go`、`service/upstream_site.go`、`controller/upstream_channel.go`、`controller/channel-test.go`
 > 关联架构文档：[`docs/architecture/relay-routing-and-conversion.md`](architecture/relay-routing-and-conversion.md)、[`docs/architecture/provider-capability-matrix.md`](architecture/provider-capability-matrix.md)、[`docs/architecture/data-cache-and-background-jobs.md`](architecture/data-cache-and-background-jobs.md)、[`平台站点资源获取比较`](platform-site-resource-acquisition-comparison.md)
 
@@ -448,6 +448,39 @@ Sub2API 普通用户接口如果只能返回掩码密钥，不会伪造真实密
 
 同步日志只记录站点 ID、平台、结果、数量、耗时和脱敏错误，不记录任何凭据或实际密钥。
 
+### 5.1 管理员管理入口与平台账号余额（2026-10-14）
+
+**变更前**：平台站点渠道行的“更多”菜单没有直接进入上游管理页面的入口，管理员
+需要手动复制或重新输入平台地址；钱包只展示 NexusTok 用户自身额度和用量。
+
+**变更后**：`GET /api/channel/:id/upstream-sync` 在管理员渠道读取权限下返回
+`management_url`。服务端根据平台生成最终管理页面地址：Sub2API 使用
+`/admin/dashboard`，NewAPI 使用 `/dashboard`；已包含对应管理路径时不重复拼接。
+地址只允许 HTTP/HTTPS，拒绝用户信息、查询参数、片段、无效 Host 和未知平台，
+并且不携带 Cookie、Token、Admin Key、密码或其它认证材料。前端渠道行只为管理员
+和超级管理员显示“打开上游平台”，使用新标签页和 `noopener,noreferrer`；安全地址
+缺失时不显示该操作。
+
+管理员的 `GET /api/user/self` 响应额外包含：
+
+```json
+{
+  "upstream_platform_balance": {
+    "quota": 123456,
+    "account_count": 3,
+    "last_sync_at": 1700000000
+  }
+}
+```
+
+该汇总只查询主数据库中每个 `PlatformSiteAccount` 的本地余额快照，范围为 NewAPI
+和 Sub2API。手动禁用、自动禁用以及同步失败但仍保留最近余额快照的账号都纳入统计；
+同一平台账号不按子密钥重复累加，美元余额使用 `common.QuotaPerUnit` 转换为系统
+quota。钱包页面显示总余额、账号数和最近同步时间，打开钱包不会触发上游网络同步。
+普通用户、普通 API Token 和非管理员登录上下文不会收到该字段；余额聚合失败只记录
+脱敏错误，不影响普通钱包字段。本次不新增数据库字段、迁移、独立余额接口或上游
+认证数据暴露。
+
 ## 6. API
 
 现有对外渠道接口保持兼容。新增管理员接口：
@@ -508,6 +541,10 @@ POST  /api/channel/:id/upstream-resources/sync
 
 失败时返回脱敏错误，保留最近一次成功余额、模型和密钥快照，不把上游响应正文
 或凭据内容传递给前端。
+
+`GET /api/channel/:id/upstream-sync` 的平台站点状态在管理员渠道读取权限下还会返回
+可选的 `management_url`。该字段是服务端生成并校验的管理页面地址，前端不得根据
+`base_url` 自行拼接，也不得把任何认证信息附加到 URL。
 
 平台站点认证失败提示会区分 Sub2API 服务条款要求；条款拒绝只说明 NexusTok 已尝试
 提交公开设置提供的当前 revision，不代表 NexusTok 代替用户完成或记录法律同意。

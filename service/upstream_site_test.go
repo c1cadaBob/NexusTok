@@ -458,6 +458,79 @@ func TestValidatePlatformSiteURLAllowsHTTPAndPrivateTargets(t *testing.T) {
 	}
 }
 
+func TestPlatformSiteManagementURLBuildsSafeAdministratorDestinations(t *testing.T) {
+	tests := []struct {
+		name     string
+		platform string
+		rawURL   string
+		expected string
+	}{
+		{
+			name:     "Sub2API base",
+			platform: model.PlatformSub2API,
+			rawURL:   "https://sub2api.example",
+			expected: "https://sub2api.example/admin/dashboard",
+		},
+		{
+			name:     "Sub2API admin path",
+			platform: model.PlatformSub2API,
+			rawURL:   "https://sub2api.example/admin",
+			expected: "https://sub2api.example/admin/dashboard",
+		},
+		{
+			name:     "Sub2API reverse proxy path",
+			platform: model.PlatformSub2API,
+			rawURL:   "https://example.test/gateway/admin",
+			expected: "https://example.test/gateway/admin/dashboard",
+		},
+		{
+			name:     "NewAPI base",
+			platform: model.PlatformNewAPI,
+			rawURL:   "http://newapi.example/",
+			expected: "http://newapi.example/dashboard",
+		},
+		{
+			name:     "NewAPI dashboard path",
+			platform: model.PlatformNewAPI,
+			rawURL:   "https://newapi.example/dashboard",
+			expected: "https://newapi.example/dashboard",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			assert.Equal(
+				t,
+				testCase.expected,
+				PlatformSiteManagementURL(testCase.platform, testCase.rawURL),
+			)
+		})
+	}
+}
+
+func TestPlatformSiteManagementURLRejectsSensitiveOrInvalidDestinations(t *testing.T) {
+	for _, rawURL := range []string{
+		"https://user:password@example.com",
+		"https://example.com/path?token=secret",
+		"https://example.com/path#credentials",
+		"javascript:alert(1)",
+		"ftp://example.com",
+		"example.com",
+	} {
+		t.Run(rawURL, func(t *testing.T) {
+			assert.Empty(
+				t,
+				PlatformSiteManagementURL(model.PlatformSub2API, rawURL),
+			)
+		})
+	}
+
+	assert.Empty(
+		t,
+		PlatformSiteManagementURL("other", "https://example.com"),
+	)
+}
+
 func TestPlatformSiteHTTPClientAllowsPrivateHTTPWithoutGlobalSSRFClient(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")

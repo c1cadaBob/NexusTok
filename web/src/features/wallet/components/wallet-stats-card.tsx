@@ -16,26 +16,33 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@c1cadabob.dev
 */
-import { Activity, BarChart3, WalletCards } from 'lucide-react'
+import { Activity, BarChart3, Globe2, WalletCards } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { IconBadge, type IconBadgeTone } from '@/components/ui/icon-badge'
 import { Skeleton } from '@/components/ui/skeleton'
-import { formatQuota } from '@/lib/format'
+import { formatQuota, formatTimestampToDate } from '@/lib/format'
 
 import type { UserWalletData } from '../types'
 
 interface WalletStatsCardProps {
   user: UserWalletData | null
   loading?: boolean
+  isAdmin?: boolean
 }
 
 export function WalletStatsCard(props: WalletStatsCardProps) {
   const { t } = useTranslation()
+  const gridClass = props.isAdmin
+    ? 'grid-cols-2 sm:grid-cols-4'
+    : 'grid-cols-2 sm:grid-cols-3'
   if (props.loading) {
+    const loadingItems = props.isAdmin
+      ? ['balance', 'usage', 'requests', 'upstream']
+      : ['balance', 'usage', 'requests']
     return (
-      <div className='grid grid-cols-3 divide-x rounded-lg border'>
-        {['balance', 'usage', 'requests'].map((key) => (
+      <div className={`grid ${gridClass} divide-x rounded-lg border`}>
+        {loadingItems.map((key) => (
           <div key={key} className='min-w-0 px-2.5 py-2.5 sm:px-5 sm:py-4'>
             <Skeleton className='h-3.5 w-full' />
             <Skeleton className='mt-2 h-6 w-full sm:h-7' />
@@ -76,8 +83,31 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
     },
   ]
 
+  if (props.isAdmin) {
+    const upstreamBalance = props.user?.upstream_platform_balance
+    const accountCount = upstreamBalance?.account_count ?? 0
+    const lastSyncDescription =
+      upstreamBalance?.last_sync_at && upstreamBalance.last_sync_at > 0
+        ? t('Last synced: {{time}}', {
+            time: formatTimestampToDate(upstreamBalance.last_sync_at),
+          })
+        : t('Upstream balance sync pending')
+
+    stats.push({
+      label: t('Upstream platform total balance'),
+      value: formatQuota(
+        upstreamBalance?.quota ?? 0
+      ),
+      description: `${t('Configured upstream accounts: {{count}}', {
+        count: accountCount,
+      })} · ${lastSyncDescription}`,
+      icon: Globe2,
+      tone: 'chart-5',
+    })
+  }
+
   return (
-    <div className='grid grid-cols-3 divide-x rounded-lg border'>
+    <div className={`grid ${gridClass} divide-x rounded-lg border`}>
       {stats.map((item) => (
         <div key={item.label} className='min-w-0 px-2.5 py-2.5 sm:px-5 sm:py-4'>
           <div className='flex items-center gap-1.5 sm:gap-2.5'>

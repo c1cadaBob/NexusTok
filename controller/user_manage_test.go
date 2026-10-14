@@ -93,6 +93,77 @@ func performManageUserRequest(t *testing.T, body string) *httptest.ResponseRecor
 	return recorder
 }
 
+func TestGetSelfExposesUpstreamBalanceOnlyToAdministrators(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.PlatformSiteAccount{}))
+	require.NoError(t, authz.Init(db))
+	previousQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 500_000
+	t.Cleanup(func() {
+		common.QuotaPerUnit = previousQuotaPerUnit
+	})
+
+	require.NoError(t, db.Create(&model.PlatformSiteAccount{
+		ChannelID:  20,
+		Platform:   model.PlatformSub2API,
+		Balance:    2,
+		LastSyncAt: 100,
+	}).Error)
+	require.NoError(t, db.Create(&model.PlatformSiteAccount{
+		ChannelID:  21,
+		Platform:   model.PlatformNewAPI,
+		Balance:    1,
+		DisabledAt: 200,
+		LastSyncAt: 200,
+	}).Error)
+
+	admin := &model.User{
+		Username: "self-balance-admin",
+		Role:     common.RoleAdminUser,
+		Status:   common.UserStatusEnabled,
+		Group:    "default",
+		AffCode:  "self-balance-admin",
+	}
+	user := &model.User{
+		Username: "self-balance-user",
+		Role:     common.RoleCommonUser,
+		Status:   common.UserStatusEnabled,
+		Group:    "default",
+		AffCode:  "self-balance-user",
+	}
+	require.NoError(t, db.Create(admin).Error)
+	require.NoError(t, db.Create(user).Error)
+
+	getSelfData := func(t *testing.T, id, role int, useAccessToken bool) map[string]any {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest(http.MethodGet, "/api/user/self", nil)
+		ctx.Set("id", id)
+		ctx.Set("role", role)
+		ctx.Set("use_access_token", useAccessToken)
+		GetSelf(ctx)
+		require.Equal(t, http.StatusOK, recorder.Code)
+
+		var response struct {
+			Success bool           `json:"success"`
+			Data    map[string]any `json:"data"`
+		}
+		require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+		require.True(t, response.Success)
+		return response.Data
+	}
+
+	adminData := getSelfData(t, admin.Id, common.RoleAdminUser, false)
+	assert.Equal(t, float64(1_500_000), adminData["upstream_platform_balance"].(map[string]any)["quota"])
+
+	adminTokenData := getSelfData(t, admin.Id, common.RoleAdminUser, true)
+	assert.NotContains(t, adminTokenData, "upstream_platform_balance")
+
+	userData := getSelfData(t, user.Id, common.RoleCommonUser, false)
+	assert.NotContains(t, userData, "upstream_platform_balance")
+}
+
 func TestManageUserDisableAdvancesAuthVersionOnceAndRevokesSession(t *testing.T) {
 	db := setupManageUserTestDB(t)
 	now := time.Now().Unix()

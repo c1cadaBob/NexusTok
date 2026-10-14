@@ -242,6 +242,12 @@ export interface UserWalletData {
   aff_count: number
   /** User group */
   group: string
+  /** Administrator-only aggregate of configured upstream platform balances */
+  upstream_platform_balance?: {
+    quota: number
+    account_count: number
+    last_sync_at: number
+  }
 }
 
 /**

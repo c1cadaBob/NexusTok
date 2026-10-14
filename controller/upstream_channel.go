@@ -53,6 +53,7 @@ type UpstreamSiteStatusResponse struct {
 	ChannelID           int     `json:"channel_id"`
 	Platform            string  `json:"platform"`
 	BaseURL             string  `json:"base_url"`
+	ManagementURL       string  `json:"management_url,omitempty"`
 	RelayBaseURL        string  `json:"relay_base_url,omitempty"`
 	AuthType            string  `json:"auth_type"`
 	Username            string  `json:"username,omitempty"`
@@ -699,6 +700,7 @@ func platformSiteStatus(account *model.PlatformSiteAccount) UpstreamSiteStatusRe
 		ChannelID:           account.ChannelID,
 		Platform:            account.Platform,
 		BaseURL:             redactBaseURL(account.BaseURL),
+		ManagementURL:       service.PlatformSiteManagementURL(account.Platform, account.BaseURL),
 		RelayBaseURL:        redactBaseURL(account.RelayBaseURL),
 		AuthType:            account.AuthType,
 		Username:            username,

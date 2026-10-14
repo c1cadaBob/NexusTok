@@ -1013,6 +1013,7 @@ func TestGetUpstreamSiteStatusReturnsBalanceRefreshAndKeyCounts(t *testing.T) {
 	assert.Equal(t, int64(1_800_000_000), response.Data.BalanceUpdatedTime)
 	assert.Equal(t, float64(8), response.Data.Balance)
 	assert.Equal(t, int64(20), response.Data.UsedQuota)
+	assert.Equal(t, "https://upstream.example/dashboard", response.Data.ManagementURL)
 	assert.Equal(t, 3, response.Data.KeyCount)
 	assert.Equal(t, 1, response.Data.RoutableKeyCount)
 }

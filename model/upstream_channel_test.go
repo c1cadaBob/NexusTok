@@ -2255,6 +2255,67 @@ func TestPlatformSiteUsageCostAccountsExcludeDisabledAccounts(t *testing.T) {
 	assert.Equal(t, 10, accounts[0].ChannelID)
 }
 
+func TestGetPlatformSiteBalanceSummaryIncludesDisabledAccountsOnce(t *testing.T) {
+	previousDB := DB
+	previousQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 500_000
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&PlatformSiteAccount{}))
+	DB = db
+	t.Cleanup(func() {
+		DB = previousDB
+		common.QuotaPerUnit = previousQuotaPerUnit
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	require.NoError(t, db.Create(&[]PlatformSiteAccount{
+		{
+			ChannelID:  20,
+			Platform:   PlatformSub2API,
+			Balance:    1.5,
+			LastSyncAt: 100,
+		},
+		{
+			ChannelID:  21,
+			Platform:   PlatformNewAPI,
+			Balance:    2,
+			DisabledAt: 200,
+			LastSyncAt: 200,
+		},
+		{
+			ChannelID:  22,
+			Platform:   PlatformNewAPI,
+			Balance:    0.25,
+			LastSyncAt: 300,
+		},
+		{
+			ChannelID:  23,
+			Platform:   PlatformSub2API,
+			Balance:    -1,
+			DisabledAt: 400,
+			LastSyncAt: 400,
+		},
+		{
+			ChannelID:  24,
+			Platform:   "other",
+			Balance:    100,
+			LastSyncAt: 500,
+		},
+	}).Error)
+
+	summary, err := GetPlatformSiteBalanceSummary()
+	require.NoError(t, err)
+	require.NotNil(t, summary)
+	assert.Equal(t, int64(1_875_000), summary.Quota)
+	assert.Equal(t, 4, summary.AccountCount)
+	assert.Equal(t, int64(400), summary.LastSyncAt)
+}
+
 func TestAttachPlatformSiteUsageCostsOnlySurvivesAdminFormatting(t *testing.T) {
 	previousDB := DB
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))

@@ -411,6 +411,60 @@ func ValidatePlatformSiteURLForAdmin(raw string) error {
 	return validatePlatformSiteURL(raw)
 }
 
+// PlatformSiteManagementURL 生成不携带任何认证材料的平台站点管理员页面地址。
+func PlatformSiteManagementURL(platform, raw string) string {
+	raw = strings.TrimSpace(raw)
+	rawParsed, err := url.Parse(raw)
+	if err != nil ||
+		rawParsed.Scheme == "" ||
+		rawParsed.Host == "" ||
+		rawParsed.User != nil ||
+		rawParsed.RawQuery != "" ||
+		rawParsed.Fragment != "" {
+		return ""
+	}
+	if rawParsed.Scheme != "https" && rawParsed.Scheme != "http" {
+		return ""
+	}
+
+	normalized, err := normalizePlatformSiteURL(raw)
+	if err != nil {
+		return ""
+	}
+
+	parsed, err := url.Parse(normalized)
+	if err != nil {
+		return ""
+	}
+
+	var managementPath string
+	switch strings.ToLower(strings.TrimSpace(platform)) {
+	case model.PlatformSub2API:
+		managementPath = "/admin/dashboard"
+		if parsed.Path == "/admin" || strings.HasSuffix(parsed.Path, "/admin") {
+			parsed.Path = strings.TrimSuffix(parsed.Path, "/admin") + managementPath
+			return strings.TrimRight(parsed.String(), "/")
+		}
+	case model.PlatformNewAPI:
+		managementPath = "/dashboard"
+	default:
+		return ""
+	}
+
+	if parsed.Path == managementPath ||
+		strings.HasPrefix(parsed.Path, managementPath+"/") {
+		return strings.TrimRight(parsed.String(), "/")
+	}
+
+	basePath := strings.TrimRight(parsed.Path, "/")
+	if basePath == "" {
+		parsed.Path = managementPath
+	} else {
+		parsed.Path = basePath + managementPath
+	}
+	return strings.TrimRight(parsed.String(), "/")
+}
+
 func newPlatformSiteHTTPClient() (*http.Client, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {

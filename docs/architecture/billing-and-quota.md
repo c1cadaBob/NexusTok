@@ -1,7 +1,7 @@
 # 计费、额度与结算原理
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-25
+> 事实基线日期：2026-10-14
 > 主要代码来源：`service/billing.go`、`service/billing_session.go`、`service/quota.go`、`service/tiered_settle.go`、`relay/helper/price.go`、`relay/common/relay_info.go`、`common/quota_math.go`、`service/log_info_generate.go`、`pkg/billingexpr/`
 > 关联详细文档：[`../key-routing-strategy.md`](../key-routing-strategy.md)、[`../plugin-api/README.md`](../plugin-api/README.md)、[`../../pkg/billingexpr/expr.md`](../../pkg/billingexpr/expr.md)、[`relay-routing-and-conversion.md`](./relay-routing-and-conversion.md)、[`tasks-and-plugins.md`](./tasks-and-plugins.md)
 
@@ -72,6 +72,23 @@
 
 订阅预扣不足、没有可用订阅、钱包不足和 Token quota 不足会映射为不同的内部错误原因，但对外通常都属于额度不足/禁止继续请求。订阅额度通知和钱包额度通知的计算来源不同。
 
+### 5.1 管理员钱包中的上游平台总余额（2026-10-14）
+
+**变更前**：钱包统计只展示当前 NexusTok 用户的余额、累计使用量和请求数，不展示
+平台站点账号的共享余额。
+
+**变更后**：管理员钱包增加“上游平台总余额”统计项。后端只在管理员或超级管理员的
+`GET /api/user/self` 响应中追加 `upstream_platform_balance`，按
+`PlatformSiteAccount` 汇总 NewAPI/Sub2API 的本地余额快照，并通过
+`common.QuotaPerUnit` 转换为系统 quota。每个账号只统计一次，不按平台子密钥重复
+累加；手动禁用、自动禁用和同步失败但仍保留余额快照的账号仍计入，异常负数、NaN、
+Inf 和无法安全转换的值不计入总额，但账号数量仍表示已配置账号数。
+
+钱包页面同时显示纳入统计的账号数量和最近同步时间。读取钱包不会登录或请求上游，
+Redis 也不参与该聚合；普通用户、普通 API Token 和非管理员上下文不会收到该字段。
+余额聚合失败只记录脱敏错误并保留普通钱包响应。本次不新增数据库字段、迁移或公开
+独立接口。
+
 ## 6. 任务计费
 
 任务提交前需要根据任务平台或插件 `usageSchema` 估计费用并强制预扣；轮询到终态后由任务结算路径根据最终 Usage、失败状态、超时和取消策略进行结算或退款。`model.Task`、任务私有数据、`service/task_polling.go` 和任务计费函数共同维持任务状态与账务关联。
@@ -115,3 +132,4 @@
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 建立价格来源、BillingSession、资金来源、任务结算和额度安全不变量说明 | `service/`、`relay/`、`common/quota_math.go`、`pkg/billingexpr/` | 计费会话、quota helper、日志和表达式文档静态核对 |
+| 2026-10-14 | 管理员钱包平台余额 | 钱包只显示 NexusTok 用户自身额度和使用量 | 管理员从 `/api/user/self` 读取按平台账号去重的 NewAPI/Sub2API 本地余额快照总额；禁用账号仍计入，不触发上游同步，普通用户不可见 | `model/platform_site_balance.go`、`controller/user.go`、`web/src/features/wallet/` | SQLite 汇总/管理员权限定向测试、钱包组件测试、TypeScript、lint 和 i18n 同步 |
