@@ -96,10 +96,24 @@ func GetPlatformSiteUsageCosts(requestIDs []string) (map[string]PlatformSiteUsag
 	return result, nil
 }
 
+func GetPlatformSiteUsageCostAccount(channelID int) (*PlatformSiteAccount, error) {
+	if channelID <= 0 {
+		return nil, nil
+	}
+	var account PlatformSiteAccount
+	err := DB.Where("channel_id = ?", channelID).Take(&account).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return &account, err
+}
+
 func AttachPlatformSiteUsageCosts(logs []*Log) error {
 	requestIDs := make([]string, 0, len(logs))
 	for _, log := range logs {
-		if log != nil && log.Type == LogTypeConsume && log.RequestId != "" {
+		if log != nil &&
+			(log.Type == LogTypeConsume || log.Type == LogTypeError) &&
+			log.RequestId != "" {
 			requestIDs = append(requestIDs, log.RequestId)
 		}
 	}
@@ -109,7 +123,9 @@ func AttachPlatformSiteUsageCosts(logs []*Log) error {
 	}
 
 	for _, log := range logs {
-		if log == nil || log.Type != LogTypeConsume || log.RequestId == "" {
+		if log == nil ||
+			(log.Type != LogTypeConsume && log.Type != LogTypeError) ||
+			log.RequestId == "" {
 			continue
 		}
 		cost, ok := costs[log.RequestId]

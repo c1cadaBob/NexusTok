@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"net/url"
@@ -12,7 +13,10 @@ import (
 	"time"
 
 	"github.com/c1cadaBob/NexusTok/common"
+	"github.com/c1cadaBob/NexusTok/constant"
 	"github.com/c1cadaBob/NexusTok/model"
+
+	"github.com/gin-gonic/gin"
 )
 
 const (
@@ -22,6 +26,7 @@ const (
 	platformSiteUsageCostPageSize      = 100
 	platformSiteUsageCostMaxPages      = 1000
 	platformSiteUsageCostBatchWindows  = 24
+	platformSiteUsageCostLookupTimeout = 8 * time.Second
 )
 
 type platformSiteUsageCostRecord struct {
@@ -38,6 +43,197 @@ type PlatformSiteUsageCostTaskResult struct {
 	EstimatedCosts   int `json:"estimated_costs"`
 	RetryWindows     int `json:"retry_windows"`
 	UpstreamFailures int `json:"upstream_failures"`
+}
+
+type PlatformSiteUsageCostRequest struct {
+	RequestID           string
+	ChannelID           int
+	UpstreamRequestID   string
+	ModelName           string
+	CreatedAt           time.Time
+	Quota               int
+	Other               *model.LogOther
+	IsError             bool
+	CarriedCost         *int64
+	CarriedCostPlatform string
+}
+
+type platformSiteUsageCostState struct {
+	errorHandled   bool
+	queryAttempted bool
+}
+
+type platformSiteCarriedCost struct {
+	Platform string
+	Cost     int64
+}
+
+// SetPlatformSiteResponseCost allows a platform-specific response parser to
+// attach a verified cost without making generic usage.cost values authoritative.
+func SetPlatformSiteResponseCost(c *gin.Context, platform string, cost int64) {
+	if c == nil || (platform != model.PlatformSub2API && platform != model.PlatformNewAPI) ||
+		cost < 0 {
+		return
+	}
+	common.SetContextKey(c, constant.ContextKeyPlatformSiteUsageCost, platformSiteCarriedCost{
+		Platform: platform,
+		Cost:     cost,
+	})
+}
+
+func ResolvePlatformSiteUsageCost(ctx *gin.Context, request PlatformSiteUsageCostRequest) error {
+	if ctx == nil || request.ChannelID <= 0 {
+		return nil
+	}
+	if request.RequestID == "" {
+		request.RequestID = ctx.GetString(common.RequestIdKey)
+		if request.RequestID == "" {
+			request.RequestID = common.NewRequestId()
+			ctx.Set(common.RequestIdKey, request.RequestID)
+		}
+	}
+	if request.UpstreamRequestID == "" {
+		request.UpstreamRequestID = ctx.GetString(common.UpstreamRequestIdKey)
+	}
+	if request.CreatedAt.IsZero() {
+		request.CreatedAt = common.GetContextKeyTime(ctx, constant.ContextKeyRequestStartTime)
+		if request.CreatedAt.IsZero() {
+			request.CreatedAt = time.Now().UTC()
+		}
+	}
+
+	account, err := model.GetPlatformSiteUsageCostAccount(request.ChannelID)
+	if err != nil {
+		return err
+	}
+	if account == nil ||
+		(account.Platform != model.PlatformSub2API && account.Platform != model.PlatformNewAPI) {
+		return nil
+	}
+
+	state, _ := common.GetContextKeyType[*platformSiteUsageCostState](
+		ctx,
+		constant.ContextKeyPlatformSiteUsageCostState,
+	)
+	if state == nil {
+		state = &platformSiteUsageCostState{}
+		common.SetContextKey(ctx, constant.ContextKeyPlatformSiteUsageCostState, state)
+	}
+	if request.IsError {
+		if state.errorHandled {
+			return nil
+		}
+		state.errorHandled = true
+		return model.UpsertPlatformSiteUsageCost(model.PlatformSiteUsageCost{
+			RequestID:         request.RequestID,
+			ChannelID:         request.ChannelID,
+			UpstreamRequestID: request.UpstreamRequestID,
+			Cost:              0,
+			Source:            model.PlatformSiteUsageCostSourceEstimated,
+			UpdatedAt:         request.CreatedAt.Unix(),
+		})
+	}
+	existing, err := model.FindPlatformSiteUsageCost(request.RequestID)
+	if err != nil {
+		return err
+	}
+	if existing != nil && existing.Source == model.PlatformSiteUsageCostSourceUpstream {
+		return nil
+	}
+
+	if request.CarriedCost != nil &&
+		request.CarriedCostPlatform == account.Platform &&
+		*request.CarriedCost >= 0 {
+		return model.UpsertPlatformSiteUsageCost(model.PlatformSiteUsageCost{
+			RequestID:         request.RequestID,
+			ChannelID:         request.ChannelID,
+			UpstreamRequestID: request.UpstreamRequestID,
+			Cost:              *request.CarriedCost,
+			Source:            model.PlatformSiteUsageCostSourceUpstream,
+			UpdatedAt:         request.CreatedAt.Unix(),
+		})
+	}
+	if carriedCost, ok := common.GetContextKeyType[platformSiteCarriedCost](
+		ctx,
+		constant.ContextKeyPlatformSiteUsageCost,
+	); ok && carriedCost.Platform == account.Platform && carriedCost.Cost >= 0 {
+		return model.UpsertPlatformSiteUsageCost(model.PlatformSiteUsageCost{
+			RequestID:         request.RequestID,
+			ChannelID:         request.ChannelID,
+			UpstreamRequestID: request.UpstreamRequestID,
+			Cost:              carriedCost.Cost,
+			Source:            model.PlatformSiteUsageCostSourceUpstream,
+			UpdatedAt:         request.CreatedAt.Unix(),
+		})
+	}
+
+	var record *platformSiteUsageCostRecord
+	if !state.queryAttempted {
+		state.queryAttempted = true
+		lookupCtx, cancel := context.WithTimeout(ctx, platformSiteUsageCostLookupTimeout)
+		records, lookupErr := fetchPlatformSiteUsageCostRecordsOnce(lookupCtx, account, request.CreatedAt, request.UpstreamRequestID, request.ModelName)
+		cancel()
+		if lookupErr == nil {
+			record = matchPlatformSiteUsageCostRequest(request, records)
+		} else {
+			common.SysError(fmt.Sprintf(
+				"平台站点请求成本查询失败: channel_id=%d platform=%s",
+				request.ChannelID,
+				account.Platform,
+			))
+		}
+	}
+
+	cost := int64(0)
+	source := model.PlatformSiteUsageCostSourceEstimated
+	upstreamRequestID := request.UpstreamRequestID
+	if record != nil {
+		cost = record.cost
+		source = model.PlatformSiteUsageCostSourceUpstream
+		upstreamRequestID = record.requestID
+	} else {
+		cost, _ = estimatePlatformSiteUsageCost(model.Log{
+			RequestId:         request.RequestID,
+			ChannelId:         request.ChannelID,
+			UpstreamRequestId: request.UpstreamRequestID,
+			ModelName:         request.ModelName,
+			CreatedAt:         request.CreatedAt.Unix(),
+			Quota:             request.Quota,
+			Other:             request.Other.JSONString(),
+		})
+	}
+	return model.UpsertPlatformSiteUsageCost(model.PlatformSiteUsageCost{
+		RequestID:         request.RequestID,
+		ChannelID:         request.ChannelID,
+		UpstreamRequestID: upstreamRequestID,
+		Cost:              cost,
+		Source:            source,
+		UpdatedAt:         request.CreatedAt.Unix(),
+	})
+}
+
+func ResolvePlatformSiteUsageCostForLog(
+	ctx *gin.Context,
+	channelID int,
+	modelName string,
+	quota int,
+	other *model.LogOther,
+	isError bool,
+) {
+	if ctx == nil {
+		return
+	}
+	if err := ResolvePlatformSiteUsageCost(ctx, PlatformSiteUsageCostRequest{
+		RequestID:         ctx.GetString(common.RequestIdKey),
+		ChannelID:         channelID,
+		UpstreamRequestID: ctx.GetString(common.UpstreamRequestIdKey),
+		ModelName:         modelName,
+		Quota:             quota,
+		Other:             other,
+		IsError:           isError,
+	}); err != nil {
+		common.SysError(fmt.Sprintf("平台站点请求成本记录失败: channel_id=%d", channelID))
+	}
 }
 
 func PlatformSiteUsageCostWindowStart(timestamp int64) int64 {
@@ -244,51 +440,94 @@ func fetchPlatformSiteUsageCostRecords(
 	start int64,
 	end int64,
 ) ([]platformSiteUsageCostRecord, error) {
+	session, adapter, err := authenticatePlatformSiteUsageCostAccount(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanupPlatformSiteUsageCostSession(adapter, session)
+
+	switch account.Platform {
+	case model.PlatformSub2API:
+		return fetchSub2APIUsageCosts(ctx, session, start, end)
+	case model.PlatformNewAPI:
+		return fetchNewAPIUsageCosts(ctx, session, start, end)
+	default:
+		return nil, ErrUnsupportedPlatformSite
+	}
+}
+
+func authenticatePlatformSiteUsageCostAccount(
+	ctx context.Context,
+	account *model.PlatformSiteAccount,
+) (*PlatformSiteSession, PlatformSiteAdapter, error) {
+	if account == nil {
+		return nil, nil, ErrPlatformSiteCredential
+	}
 	credential, err := model.DecryptPlatformSiteCredential(account.CredentialCiphertext)
 	if err != nil {
-		return nil, ErrPlatformSiteCredential
+		return nil, nil, ErrPlatformSiteCredential
 	}
 	authType := strings.ToLower(strings.TrimSpace(account.AuthType))
 	if !model.IsPlatformSiteAuthType(authType) {
 		authType = model.InferPlatformSiteAuthType(credential)
 	}
 	if !model.IsPlatformSiteAuthType(authType) {
-		return nil, ErrPlatformSiteAuth
+		return nil, nil, ErrPlatformSiteAuth
 	}
 	credential.AuthType = authType
 	client, err := platformSiteHTTPClientForChannel(account.ChannelID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	adapter, err := adapterForPlatform(account.Platform, client)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	session, authErr := adapter.Authenticate(ctx, account.BaseURL, credential)
 	if session == nil {
 		if authErr != nil {
-			return nil, authErr
+			return nil, nil, authErr
 		}
-		return nil, ErrPlatformSiteAuth
+		return nil, nil, ErrPlatformSiteAuth
 	}
-	defer func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), upstreamSiteRequestTimeout)
-		defer cancel()
-		_ = adapter.Cleanup(cleanupCtx, session)
-	}()
 	if authErr != nil {
-		return nil, authErr
+		return nil, nil, authErr
 	}
 	if session.CredentialUpdate != nil {
 		if err := persistPlatformSiteCredential(account, *session.CredentialUpdate); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
+	return session, adapter, nil
+}
+
+func cleanupPlatformSiteUsageCostSession(adapter PlatformSiteAdapter, session *PlatformSiteSession) {
+	if adapter == nil || session == nil {
+		return
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), upstreamSiteRequestTimeout)
+	defer cancel()
+	_ = adapter.Cleanup(cleanupCtx, session)
+}
+
+func fetchPlatformSiteUsageCostRecordsOnce(
+	ctx context.Context,
+	account *model.PlatformSiteAccount,
+	createdAt time.Time,
+	upstreamRequestID string,
+	modelName string,
+) ([]platformSiteUsageCostRecord, error) {
+	session, adapter, err := authenticatePlatformSiteUsageCostAccount(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanupPlatformSiteUsageCostSession(adapter, session)
+
 	switch account.Platform {
 	case model.PlatformSub2API:
-		return fetchSub2APIUsageCosts(ctx, session, start, end)
+		return fetchSub2APIUsageCostsOnce(ctx, session, createdAt, upstreamRequestID)
 	case model.PlatformNewAPI:
-		return fetchNewAPIUsageCosts(ctx, session, start, end)
+		return fetchNewAPIUsageCostsOnce(ctx, session, createdAt, upstreamRequestID, modelName)
 	default:
 		return nil, ErrUnsupportedPlatformSite
 	}
@@ -348,6 +587,44 @@ func fetchSub2APIUsageCosts(
 	return nil, errors.New("Sub2API 使用日志分页超出限制")
 }
 
+func fetchSub2APIUsageCostsOnce(
+	ctx context.Context,
+	session *PlatformSiteSession,
+	createdAt time.Time,
+	upstreamRequestID string,
+) ([]platformSiteUsageCostRecord, error) {
+	if session == nil {
+		return nil, ErrPlatformSiteSessionLimit
+	}
+	query := url.Values{
+		"start_date": {createdAt.Add(-2 * time.Second).UTC().Format("2006-01-02")},
+		"end_date":   {createdAt.Add(2 * time.Second).UTC().Format("2006-01-02")},
+		"timezone":   {"UTC"},
+		"page":       {"1"},
+		"page_size":  {strconv.Itoa(platformSiteUsageCostPageSize)},
+		"sort_by":    {"created_at"},
+		"sort_order": {"desc"},
+	}
+	if upstreamRequestID != "" {
+		query.Set("request_id", upstreamRequestID)
+	}
+	payload, err := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/admin/usage", query, nil)
+	if err != nil {
+		return nil, err
+	}
+	items, _, err := usageCostPage(payload)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]platformSiteUsageCostRecord, 0, len(items))
+	for _, item := range items {
+		if record, ok := parsePlatformSiteUsageCostRecord(item, model.PlatformSub2API); ok {
+			result = append(result, record)
+		}
+	}
+	return result, nil
+}
+
 func fetchNewAPIUsageCosts(
 	ctx context.Context,
 	session *PlatformSiteSession,
@@ -385,6 +662,48 @@ func fetchNewAPIUsageCosts(
 		}
 	}
 	return nil, errors.New("NewAPI 使用日志分页超出限制")
+}
+
+func fetchNewAPIUsageCostsOnce(
+	ctx context.Context,
+	session *PlatformSiteSession,
+	createdAt time.Time,
+	upstreamRequestID string,
+	modelName string,
+) ([]platformSiteUsageCostRecord, error) {
+	if session == nil {
+		return nil, ErrPlatformSiteSessionLimit
+	}
+	start := createdAt.Add(-2 * time.Second).Unix()
+	end := createdAt.Add(2 * time.Second).Unix()
+	query := url.Values{
+		"type":            {strconv.Itoa(model.LogTypeConsume)},
+		"start_timestamp": {strconv.FormatInt(start, 10)},
+		"end_timestamp":   {strconv.FormatInt(end, 10)},
+		"p":               {"1"},
+		"page_size":       {strconv.Itoa(platformSiteUsageCostPageSize)},
+	}
+	if upstreamRequestID != "" {
+		query.Set("request_id", upstreamRequestID)
+	}
+	if modelName != "" {
+		query.Set("model_name", modelName)
+	}
+	payload, err := platformSiteRequest(ctx, session, http.MethodGet, "/api/log/", query, nil)
+	if err != nil {
+		return nil, err
+	}
+	items, _, err := usageCostPage(payload)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]platformSiteUsageCostRecord, 0, len(items))
+	for _, item := range items {
+		if record, ok := parsePlatformSiteUsageCostRecord(item, model.PlatformNewAPI); ok {
+			result = append(result, record)
+		}
+	}
+	return result, nil
 }
 
 func usageCostPage(payload any) ([]any, int, error) {
@@ -458,11 +777,18 @@ func parsePlatformSiteUsageCostRecord(value any, platform string) (platformSiteU
 	if err != nil {
 		return platformSiteUsageCostRecord{}, false
 	}
-	if cost < 0 || modelName == "" || createdAt.IsZero() {
+	requestID := firstMapString(
+		object,
+		"upstream_request_id",
+		"upstreamRequestId",
+		"request_id",
+		"requestId",
+	)
+	if cost < 0 || (requestID == "" && (modelName == "" || createdAt.IsZero())) {
 		return platformSiteUsageCostRecord{}, false
 	}
 	return platformSiteUsageCostRecord{
-		requestID:  firstMapString(object, "upstream_request_id", "upstreamRequestId"),
+		requestID:  requestID,
 		model:      modelName,
 		modelNames: modelNames,
 		createdAt:  createdAt,
@@ -734,6 +1060,44 @@ func matchPlatformSiteUsageCostRecords(
 		matched[log.RequestId] = records[pair.recordIndex]
 	}
 	return matched
+}
+
+func matchPlatformSiteUsageCostRequest(
+	request PlatformSiteUsageCostRequest,
+	records []platformSiteUsageCostRecord,
+) *platformSiteUsageCostRecord {
+	if request.RequestID == "" {
+		return nil
+	}
+	if request.UpstreamRequestID != "" {
+		var matched *platformSiteUsageCostRecord
+		for i := range records {
+			if records[i].requestID != request.UpstreamRequestID {
+				continue
+			}
+			if matched != nil {
+				return nil
+			}
+			matched = &records[i]
+		}
+		if matched != nil {
+			return matched
+		}
+	}
+
+	log := model.Log{
+		RequestId:         request.RequestID,
+		ChannelId:         request.ChannelID,
+		UpstreamRequestId: request.UpstreamRequestID,
+		ModelName:         request.ModelName,
+		CreatedAt:         request.CreatedAt.Unix(),
+	}
+	matched := matchPlatformSiteUsageCostRecords([]model.Log{log}, records)
+	record, ok := matched[request.RequestID]
+	if !ok {
+		return nil
+	}
+	return &record
 }
 
 func platformSiteUsageCostLogModels(log model.Log) []string {

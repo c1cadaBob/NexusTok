@@ -26,6 +26,7 @@ import (
 	"github.com/c1cadaBob/NexusTok/common"
 	"github.com/c1cadaBob/NexusTok/model"
 	"github.com/c1cadaBob/NexusTok/setting/system_setting"
+	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -143,7 +144,7 @@ func TestPlatformSiteUsageCostWindowAndUnitConversion(t *testing.T) {
 		"quota":      321,
 	}, model.PlatformNewAPI)
 	require.True(t, ok)
-	assert.Empty(t, newAPIRecord.requestID)
+	assert.Equal(t, "newapi-log-id", newAPIRecord.requestID)
 
 	_, ok = parsePlatformSiteUsageCostRecord(map[string]any{
 		"model":      "gpt-test",
@@ -157,6 +158,166 @@ func TestPlatformSiteUsageCostWindowAndUnitConversion(t *testing.T) {
 		"actual_cost": 0.02,
 	}, model.PlatformNewAPI)
 	assert.False(t, ok)
+}
+
+func TestPlatformSiteUsageCostRequestUsesExactIDOnceAndKeepsErrorAtZero(t *testing.T) {
+	oldDB := model.DB
+	oldCryptoSecret := common.CryptoSecret
+	oldMainType := common.MainDatabaseType()
+	oldLogType := common.LogDatabaseType()
+	oldQuotaPerUnit := common.QuotaPerUnit
+	common.CryptoSecret = "platform-site-request-cost-test-secret"
+	mainDSN := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	mainDB, err := gorm.Open(sqlite.Open(mainDSN), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, mainDB.AutoMigrate(
+		&model.Channel{},
+		&model.PlatformSiteAccount{},
+		&model.PlatformSiteUsageCost{},
+	))
+	model.DB = mainDB
+	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	t.Cleanup(func() {
+		model.DB = oldDB
+		common.CryptoSecret = oldCryptoSecret
+		common.QuotaPerUnit = oldQuotaPerUnit
+		common.SetDatabaseTypes(oldMainType, oldLogType)
+		if sqlDB, closeErr := mainDB.DB(); closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	usageRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v1/settings/public":
+			http.NotFound(writer, request)
+		case "/api/v1/auth/me":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"id":17,"username":"operator"}}`))
+		case "/api/v1/admin/usage":
+			usageRequests++
+			if requestID := request.URL.Query().Get("request_id"); requestID != "" {
+				assert.Equal(t, "upstream-request", requestID)
+			}
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"items":[{"request_id":"upstream-request","actual_cost":0.02}],"pages":1}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	ciphertext, err := model.EncryptPlatformSiteCredential(model.PlatformSiteCredential{
+		AuthType:    model.UpstreamAuthAccessToken,
+		AccessToken: "synthetic-access-token",
+	})
+	require.NoError(t, err)
+	require.NoError(t, mainDB.Create(&model.PlatformSiteAccount{
+		ChannelID:            9810,
+		Platform:             model.PlatformSub2API,
+		BaseURL:              server.URL,
+		AuthType:             model.UpstreamAuthAccessToken,
+		CredentialCiphertext: ciphertext,
+	}).Error)
+	require.NoError(t, mainDB.Create(&model.Channel{
+		Id: 9810,
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Set(common.RequestIdKey, "local-request")
+	ctx.Set(common.UpstreamRequestIdKey, "upstream-request")
+	common.QuotaPerUnit = 500_000
+	other := model.NewLogOther()
+	other.SetAdmin("upstream_key_ratio", 1.5)
+	createdAt := time.Date(2026, time.October, 14, 14, 10, 1, 0, time.UTC)
+	err = ResolvePlatformSiteUsageCost(ctx, PlatformSiteUsageCostRequest{
+		ChannelID: 9810,
+		ModelName: "gpt-test",
+		Quota:     100,
+		Other:     other,
+		CreatedAt: createdAt,
+	})
+	require.NoError(t, err)
+	err = ResolvePlatformSiteUsageCost(ctx, PlatformSiteUsageCostRequest{
+		ChannelID: 9810,
+		ModelName: "gpt-test",
+		Quota:     100,
+		Other:     other,
+		CreatedAt: createdAt,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, usageRequests)
+
+	cost, err := model.FindPlatformSiteUsageCost("local-request")
+	require.NoError(t, err)
+	require.NotNil(t, cost)
+	assert.Equal(t, int64(10_000), cost.Cost)
+	assert.Equal(t, model.PlatformSiteUsageCostSourceUpstream, cost.Source)
+
+	carriedContext, _ := gin.CreateTestContext(httptest.NewRecorder())
+	carriedContext.Set(common.RequestIdKey, "carried-cost-request")
+	SetPlatformSiteResponseCost(carriedContext, model.PlatformSub2API, 777)
+	err = ResolvePlatformSiteUsageCost(carriedContext, PlatformSiteUsageCostRequest{
+		ChannelID: 9810,
+		ModelName: "gpt-test",
+		Quota:     100,
+		Other:     other,
+		CreatedAt: createdAt,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, usageRequests)
+	carriedCost, err := model.FindPlatformSiteUsageCost("carried-cost-request")
+	require.NoError(t, err)
+	require.NotNil(t, carriedCost)
+	assert.Equal(t, int64(777), carriedCost.Cost)
+	assert.Equal(t, model.PlatformSiteUsageCostSourceUpstream, carriedCost.Source)
+
+	estimatedContext, _ := gin.CreateTestContext(httptest.NewRecorder())
+	estimatedContext.Set(common.RequestIdKey, "estimated-then-carried-request")
+	err = ResolvePlatformSiteUsageCost(estimatedContext, PlatformSiteUsageCostRequest{
+		ChannelID: 9810,
+		ModelName: "gpt-test",
+		Quota:     100,
+		Other:     other,
+		CreatedAt: createdAt,
+	})
+	require.NoError(t, err)
+	estimatedCost, err := model.FindPlatformSiteUsageCost("estimated-then-carried-request")
+	require.NoError(t, err)
+	require.NotNil(t, estimatedCost)
+	assert.Equal(t, int64(150), estimatedCost.Cost)
+	assert.Equal(t, model.PlatformSiteUsageCostSourceEstimated, estimatedCost.Source)
+
+	SetPlatformSiteResponseCost(estimatedContext, model.PlatformSub2API, 888)
+	err = ResolvePlatformSiteUsageCost(estimatedContext, PlatformSiteUsageCostRequest{
+		ChannelID: 9810,
+		ModelName: "gpt-test",
+		Quota:     100,
+		Other:     other,
+		CreatedAt: createdAt,
+	})
+	require.NoError(t, err)
+	estimatedCost, err = model.FindPlatformSiteUsageCost("estimated-then-carried-request")
+	require.NoError(t, err)
+	require.NotNil(t, estimatedCost)
+	assert.Equal(t, int64(888), estimatedCost.Cost)
+	assert.Equal(t, model.PlatformSiteUsageCostSourceUpstream, estimatedCost.Source)
+
+	errorContext, _ := gin.CreateTestContext(httptest.NewRecorder())
+	errorContext.Set(common.RequestIdKey, "error-request")
+	err = ResolvePlatformSiteUsageCost(errorContext, PlatformSiteUsageCostRequest{
+		ChannelID: 9810,
+		IsError:   true,
+		CreatedAt: createdAt,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, usageRequests)
+	errorCost, err := model.FindPlatformSiteUsageCost("error-request")
+	require.NoError(t, err)
+	require.NotNil(t, errorCost)
+	assert.Zero(t, errorCost.Cost)
+	assert.Equal(t, model.PlatformSiteUsageCostSourceEstimated, errorCost.Source)
 }
 
 func TestPlatformSiteUsageCostPaginationReadsAllNewAPIPages(t *testing.T) {

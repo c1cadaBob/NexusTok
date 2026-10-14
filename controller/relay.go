@@ -425,6 +425,7 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		other.SetPublic("status_code", err.StatusCode)
 		service.AppendRelayLogAdminInfo(c, relayInfo, other)
 		service.AppendTaskPluginContextAuditInfo(c, other)
+		service.ResolvePlatformSiteUsageCostForLog(c, channelError.ChannelId, modelName, 0, other, true)
 		startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
 		if startTime.IsZero() {
 			startTime = time.Now()

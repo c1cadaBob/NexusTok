@@ -121,6 +121,7 @@ func testChannelWithOptions(
 	}
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
+	c.Set(common.RequestIdKey, common.NewRequestId())
 
 	testModel = strings.TrimSpace(testModel)
 	if testModel == "" {
@@ -620,6 +621,7 @@ func testChannelWithOptions(
 	milliseconds := tok.Sub(tik).Milliseconds()
 	consumedTime := float64(milliseconds) / 1000.0
 	other := buildTestLogOther(c, info, priceData, usage, tieredResult)
+	service.ResolvePlatformSiteUsageCostForLog(c, channel.Id, info.OriginModelName, quota, other, false)
 	model.RecordConsumeLog(c, testUserID, model.RecordConsumeLogParams{
 		ChannelId:        channel.Id,
 		PromptTokens:     usage.PromptTokens,
@@ -725,6 +727,7 @@ func recordManualChannelTestError(result testResult, channel *model.Channel, tes
 	if modelName == "" {
 		modelName = ctx.GetString("model")
 	}
+	service.ResolvePlatformSiteUsageCostForLog(ctx, channel.Id, modelName, 0, other, true)
 	model.RecordErrorLog(
 		ctx,
 		testUserID,

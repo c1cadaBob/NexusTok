@@ -21,8 +21,8 @@ NexusTok 是一个 Go AI API Gateway。Go 进程对外提供管理 API、统一 
 4. 初始化选项、日志数据库、Redis、性能指标、系统监控和 i18n。
 5. 启动鉴权产物清理、渠道缓存、选项同步、插件同步、授权策略同步、数据看板。
 6. 按配置启动渠道自动更新、Codex 凭据刷新、订阅额度重置、节点状态上报。
-7. 注册渠道检测、上游模型更新、密钥自动恢复测试、平台站点使用日志成本同步、
-   异步任务轮询和系统维护更新/回滚等系统任务，启动
+7. 注册渠道检测、上游模型更新、密钥自动恢复测试、异步任务轮询和系统维护更新/回滚
+   等系统任务，启动
    `service.StartSystemTaskRunner`。
 8. 创建 Gin Server，配置可信代理、Request ID、版本、i18n、日志和静态前端，再由
    `router.SetRouter` 安装路由。以 `system-update-helper` 子命令启动时走最小初始化路径，
@@ -320,7 +320,7 @@ Cookie、Token 或完整 Key。
 | 2026-10-13 | 密钥自动恢复测试 | 失效或自动禁用密钥没有统一的密钥级周期测试，后台任务索引未记录恢复测试职责 | Master 注册并调度 `routing_key_recovery`，按 30 分钟探测和 5 次/5 分钟确认写入统一健康样本；手动禁用不自动恢复，Redis 不参与 | `main.go`、`controller/system_task_handlers.go`、`model/routing_key_health.go` | SQLite 定向模型/控制器测试、前端受影响组件测试；MySQL/PostgreSQL DSN 未配置 |
 | 2026-09-30 | 系统维护更新与回滚 | 前端直连 GitHub 且没有后端运维任务；旧版回滚会消耗唯一备份 | 增加 RootAuth 维护接口、SystemTask 进度、GitHub 缓存/checksum、裸机稳定备份交换、Docker helper/健康检查和重启探活 | `router/api-router.go`、`controller/system_update.go`、`service/system_update*.go`、`main.go`、维护页 | `go test ./service ./model ./controller ./router`、前端定向测试；未进行生产容器切换 |
 | 2026-10-13 | 按发布版本选择回滚与数据备份恢复 | 维护页不能选择任意已发布版本，裸机使用 `.backup` 文件、Docker 使用稳定备份容器；更新失败后的数据恢复边界未统一 | 后端分页读取 Release 并校验目标版本；镜像拉取和 preflight 后再备份数据、日志和主数据库，Redis 不恢复；裸机不再创建 `.backup`，Docker 只保留正式目标容器，切换失败按状态恢复旧实例和数据并记录 `data_restore_failed` | `controller/system_update.go`、`service/system_update.go`、`service/system_update_backup.go`、`service/system_update_docker.go`、维护页 | Go service 定向测试、Docker 备份/恢复边界测试和前端定向测试；未进行生产切换、Docker 真实工具容器和完整三数据库矩阵 |
-| 2026-10-13 | 平台站点使用日志成本同步 | Sub2API/NewAPI 的上游费用没有与本地消费日志关联，管理员只能看到本地费用；成本状态若落入独立日志库会扩大日志表迁移范围 | Master 每分钟调度 UTC 五分钟已结束窗口，主库保存请求成本映射和窗口重试状态；优先读取 Sub2API `actual_cost`/NewAPI `quota`，无法可靠匹配时按密钥倍率快照估算并最多重试三次；成本仅通过管理员 `other.admin_info` 注入，Redis 和日志库 schema 不参与 | `controller/system_task_handlers.go`、`service/platform_site_usage_cost.go`、`model/platform_site_usage_cost.go`、`controller/log.go`、使用日志前端 | Go 定向服务/模型/控制器测试、前端成本展示测试；完整 MySQL/PostgreSQL 实例矩阵和真实上游管理员接口需按最终报告核对 |
+| 2026-10-14 | 平台站点请求级使用日志成本 | 之前按 UTC 五分钟窗口查询上游成本并在之后三个周期重试，且请求 ID 字段兼容不完整，部分成功请求只能看到本地费用 | 每条平台站点请求完成时只处理一次成本；优先使用平台确认的响应成本，否则一次性读取 Sub2API `/api/v1/admin/usage` 或 NewAPI `/api/log/`，兼容四种请求 ID并在两秒内唯一匹配；查询失败直接使用一次性倍率估算，错误请求固定为 `0 estimated`，不再注册窗口同步任务 | `controller/system_task_handlers.go`、`service/platform_site_usage_cost.go`、`model/platform_site_usage_cost.go`、`controller/log.go`、使用日志前端 | Go 服务/模型/控制器定向测试、前端成本展示测试、真实站点管理员接口待部署环境核验；未修改日志库、ClickHouse、Redis 或数据库结构 |
 | 2026-10-14 | 平台站点管理跳转与管理员余额 | 渠道行没有直接进入上游管理页面的入口，钱包不展示平台站点账号余额 | 平台站点状态返回经服务端校验的 `management_url`，管理员可在新标签页打开；`/api/user/self` 的管理员分支按平台账号汇总 NewAPI/Sub2API 本地余额快照，禁用账号仍计入且不触发上游同步 | `service/upstream_site.go`、`controller/upstream_channel.go`、`model/platform_site_balance.go`、`controller/user.go`、渠道和钱包前端 | Go 定向模型/控制器/服务测试、前端定向组件测试、`bun run typecheck`、`bun run lint`、i18n 同步；未新增数据库 Schema 或迁移 |
 | 2026-10-02 | Docker 自动更新端口预检 | 更新流程在旧容器仍发布 `3030` 时直接启动同端口 staging 容器，Docker 会返回 `port is already allocated` | bridge/Compose 网络先用无宿主端口、无 Compose 标签/别名的 preflight 容器探活，再停旧并启动保留原端口的正式容器；`host`/`container:<id>` 网络走受控降级 | `service/system_update_docker.go`、系统任务 Docker helper、维护页错误展示 | `go test ./service -run 'Docker(Update\|Updated\|Readiness\|Helper\|Pull\|Staging)' -count=1` |
 | 2026-09-30 | v0.2.2 生产默认部署 | Compose 使用浮动依赖、明文默认密码和相对目录，服务依赖未按健康状态编排；单容器示例未明确不包含外部数据库/缓存 | Compose 固定 PostgreSQL 15 + Redis 7，密码由 `.env`/部署脚本生成，应用端口为 `3030`，数据/日志使用 `/opt/nexustok` 持久化目录，单容器仅保留 SQLite/无 Redis 兼容模式 | `docker-compose.yml`、`scripts/deploy.sh`、`Dockerfile`、`VERSION`、Docker 发布工作流和中文部署文档 | `docker compose config`、`bash -n scripts/deploy.sh`、隔离三服务栈和真实 SQLite 3.50.4/MySQL 8.2.0/PostgreSQL 15.19 矩阵已通过；生产 Dockerfile 完整构建因 `proxy.golang.org` 超时未完成，远端发布以标签工作流为准 |

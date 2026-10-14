@@ -1336,24 +1336,31 @@ Capture Session 加密凭据、一次性 claim、最近成功快照或浏览器 
   `PlatformSiteCredential`、浏览器 Cleanup 隔离和资源失败保留最近成功快照的
   语义均不变。代码与前端回归已验证，真实浏览器复验仍需使用新的 Capture Session。
 
-### 10.7 2026-10-13 平台站点使用日志成本
+### 10.7 2026-10-14 平台站点请求级使用日志成本
 
-**变更前**：Sub2API 和 NewAPI 平台站点只同步资源与身份快照，使用日志中的本地费用
-没有与上游实际成本建立映射，管理员无法区分上游成本和本地估算。
+**变更前**：Sub2API 和 NewAPI 平台站点的成本在 UTC 五分钟窗口结束后批量同步，
+无法匹配时还会在之后三个周期重试；部分上游日志只返回 `request_id`，无法与本地
+`upstream_request_id` 关联，管理员只能看到本地费用。
 
-**变更后**：首期对 Sub2API 和 NewAPI 启用 UTC 五分钟窗口成本同步。每个已结束窗口先
-使用已认证的平台站点会话读取 Sub2API 管理接口
-`GET /api/v1/admin/usage` 的 `actual_cost`，或 NewAPI
-`GET /api/log/` 的 `quota`。请求 ID 使用本项目日志的
-`upstream_request_id` 与上游记录的 `upstream_request_id` 精确匹配；没有可靠 ID 时，
-只按模型和最近时间在两秒容差内匹配，歧义不强行关联。
+**变更后**：每条平台站点请求在成功结算或失败记日志时只处理一次成本。成功响应阶段
+如果明确识别并确认了平台成本，直接使用 Sub2API 的 `actual_cost` 或 NewAPI 的
+`quota`；否则复用平台站点认证、HTTP 客户端、渠道代理和 Cleanup 流程，只访问一次
+对应的管理员接口：
 
-上游认证失败、管理员权限不足、分页失败、响应结构无效或安全验证不会改变本地请求
-计费。此时仅在日志保存了上游密钥倍率快照时按“本地费用 × 倍率”写入估算成本；
-没有倍率快照不猜测。估算窗口最多在之后三个周期重新核对，可靠上游记录可覆盖估算，
-反向覆盖被禁止。会话仍复用平台站点现有认证、渠道代理和本轮 Cleanup 流程，不保存
-上游响应正文、密码、Cookie、Token 或完整 Key。
+- Sub2API：`GET /api/v1/admin/usage`，只读取当前请求附近的第一页；
+- NewAPI：`GET /api/log/`，只读取当前请求附近的第一页。
 
-成本映射和窗口状态保存在主数据库；独立日志数据库及 ClickHouse 日志表保持不变。
-管理员日志查询时成本通过 `other.admin_info` 注入，普通用户和 Token 日志响应不会
-返回该字段。该功能不把账号级模型、资源快照或 Redis 缓存当作成本来源。
+请求 ID按 `upstream_request_id`、`upstreamRequestId`、`request_id`、`requestId` 顺序
+解析。有可靠请求 ID时优先精确匹配；没有 ID时按同一渠道、模型和最近时间做唯一匹配，
+时间容差最多两秒。Sub2API 的美元成本乘以 `common.QuotaPerUnit`，NewAPI 的 quota
+沿用本项目额度单位。查询失败、认证或权限失败、空结果、日志尚未生成、非法成本或
+歧义匹配均立即执行本地兜底，不再进行窗口重试；有密钥倍率快照时用“本地费用 ×
+倍率”，缺少可靠快照时仍写入 `0 estimated`。
+
+请求错误不访问上游费用接口，直接写入 `upstream_cost=0`；如果同一请求后续通过重试
+成功，成功日志可用真实上游成本覆盖先前估算的 0。成本写入主数据库的现有
+`platform_site_usage_cost` 映射，历史窗口模型和表结构保留但不再由新的生产调度更新；
+独立日志数据库、ClickHouse 和 Redis 不参与成本持久化。管理员日志通过
+`other.admin_info` 获取成本，普通用户和 Token 日志继续移除该字段，前端只用绿色/
+黄色背景区分上游和估算，不显示来源文字。全过程不记录密码、Cookie、Token、Admin Key、
+DSN 或完整 Key。

@@ -84,17 +84,16 @@ describe('log cost display', () => {
   test.each([
     {
       source: 'upstream' as const,
-      label: 'Upstream',
       tone: 'green',
     },
     {
       source: 'estimated' as const,
-      label: 'Estimated',
       tone: 'yellow',
     },
   ])(
-    'labels $source cost with the $tone source treatment',
-    ({ source, label, tone }) => {
+    'shows only the numeric $source cost with the $tone source treatment',
+    ({ source, tone }) => {
+      const formattedCost = formatLogQuota(12500)
       render(
         <UpstreamCostDisplay
           other={{
@@ -102,17 +101,37 @@ describe('log cost display', () => {
               upstream_cost: 12500,
               upstream_cost_source: source,
             },
-          }}
-        />
+        }}
+      />
       )
 
-      expect(screen.getByText(label)).toBeVisible()
-      expect(screen.getByText(formatLogQuota(12500))).toBeVisible()
-      expect(
-        screen.getByLabelText(`${formatLogQuota(12500)} ${label}`)
-      ).toHaveAttribute('data-cost-tone', tone)
+      const cost = screen.getByLabelText(formattedCost)
+      expect(cost).toHaveAttribute('data-cost-tone', tone)
+      expect(cost).toHaveTextContent(formattedCost)
+      expect(screen.queryByText('Upstream')).not.toBeInTheDocument()
+      expect(screen.queryByText('Estimated')).not.toBeInTheDocument()
     }
   )
+
+  test('renders zero estimated cost without a source label', () => {
+    const formattedCost = formatLogQuota(0)
+    render(
+      <UpstreamCostDisplay
+        other={{
+          admin_info: {
+            upstream_cost: 0,
+            upstream_cost_source: 'estimated',
+          },
+        }}
+      />
+    )
+
+    expect(screen.getByLabelText(formattedCost)).toHaveAttribute(
+      'data-cost-tone',
+      'yellow'
+    )
+    expect(screen.queryByText('Estimated')).not.toBeInTheDocument()
+  })
 
   test('does not render a cost without a recognized source', () => {
     const rendered = render(

@@ -88,4 +88,11 @@ const (
 	ContextKeyTokenAuditParams ContextKey = "token_audit_params"
 	// ContextKeyTokenAuditSucceeded disambiguates token responses that exceed the audit buffer.
 	ContextKeyTokenAuditSucceeded ContextKey = "token_audit_succeeded"
+
+	// ContextKeyPlatformSiteUsageCostState prevents repeated cost lookups while
+	// keeping an earlier error estimate eligible for a later successful log.
+	ContextKeyPlatformSiteUsageCostState ContextKey = "platform_site_usage_cost_state"
+	// ContextKeyPlatformSiteUsageCost carries only a platform-validated response
+	// cost. Generic usage.cost values must not be stored here.
+	ContextKeyPlatformSiteUsageCost ContextKey = "platform_site_usage_cost"
 )

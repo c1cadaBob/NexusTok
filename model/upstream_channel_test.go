@@ -2336,15 +2336,27 @@ func TestAttachPlatformSiteUsageCostsOnlySurvivesAdminFormatting(t *testing.T) {
 		Cost:      240,
 		Source:    PlatformSiteUsageCostSourceUpstream,
 	}))
+	require.NoError(t, UpsertPlatformSiteUsageCost(PlatformSiteUsageCost{
+		RequestID: "request-cost-error",
+		ChannelID: 17,
+		Cost:      0,
+		Source:    PlatformSiteUsageCostSourceEstimated,
+	}))
 
 	logs := []*Log{{
 		Type:      LogTypeConsume,
 		RequestId: "request-cost-admin",
 		ChannelId: 17,
 		Other:     `{"large_id":9007199254740993,"admin_info":{"upstream_key_ratio":1.2}}`,
+	}, {
+		Type:      LogTypeError,
+		RequestId: "request-cost-error",
+		ChannelId: 17,
 	}}
 	require.NoError(t, AttachPlatformSiteUsageCosts(logs))
 	assert.Contains(t, logs[0].Other, `"large_id":9007199254740993`)
+	assert.Contains(t, logs[1].Other, `"upstream_cost":0`)
+	assert.Contains(t, logs[1].Other, `"upstream_cost_source":"estimated"`)
 	adminLogs := []*Log{{Other: logs[0].Other}}
 	FormatAdminLogs(adminLogs)
 	assert.Contains(t, adminLogs[0].Other, `"upstream_cost":240`)

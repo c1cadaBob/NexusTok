@@ -490,32 +490,37 @@ TTL 为 5 分钟，取消、过期、失败和消费后均不能继续读取。
 为成功；没有历史成功快照的新渠道仍必须等待至少一个真实单 Key 模型能力确认。
 模型广场、分组模型目录和账号级模型不会被复制为单 Key 能力。
 
-### 9.11 2026-10-13 平台站点使用日志成本同步
+### 9.11 2026-10-14 平台站点请求级使用日志成本
 
-**变更前**：平台站点请求的本地费用日志没有独立的上游成本映射；管理员只能看到
-NexusTok 侧费用，无法区分上游实际成本和按密钥倍率估算的成本。
+**变更前**：平台站点请求按 UTC 五分钟已结束窗口主动查询上游使用日志，估算结果还会在
+之后三个周期内重试；请求级处理不稳定时，Sub2API/NewAPI 的 `request_id` 也可能无法与
+本地 `upstream_request_id` 对齐。
 
-**变更后**：`platform_site_usage_cost` 和
-`platform_site_usage_cost_window` 作为主数据库模型纳入迁移，日志数据库和
-ClickHouse `logs` 表不新增字段。`platform_site_usage_cost` 只保存本地
-`request_id`、渠道、上游请求 ID、额度单位成本、来源和更新时间；
-窗口表保存 UTC 五分钟半开窗口、处理次数、状态和最多三次后续重试时间。
+**变更后**：每条 Sub2API/NewAPI 平台站点请求在成功结算或失败记日志时只执行一次成本
+处理。成功响应如果已经由平台类型解析阶段携带并确认 `actual_cost` 或 `quota`，直接
+写入上游成本；没有携带成本时，使用同一认证会话访问一次 Sub2API
+`GET /api/v1/admin/usage` 或 NewAPI `GET /api/log/`，只读取当前请求附近的第一页结果。
+查询失败、空结果、权限/认证失败、日志尚未生成、非法成本或匹配歧义都立即进入本地
+估算路径，不再创建延迟重试。
 
-系统任务每分钟运行一次，但只处理已经结束的窗口
-`[window_start, window_start+300)`；调度器重启或延迟时按窗口时间顺序补处理。每个窗口
-先读取 Sub2API `/api/v1/admin/usage` 的 `actual_cost` 或 NewAPI `/api/log/` 的
-`quota`，分页、认证、管理员权限或响应失败均不影响本地计费，而是使用日志中保存的
-`admin_info.upstream_key_ratio` 计算估算值。没有倍率快照时不猜测成本。
+上游请求 ID按以下顺序兼容解析：
+`upstream_request_id`、`upstreamRequestId`、`request_id`、`requestId`。有可靠 ID 时优先
+精确匹配；缺少 ID 时只按渠道、模型和最近时间唯一匹配，容差最多两秒。Sub2API 的
+`actual_cost` 按 `common.QuotaPerUnit` 转换，NewAPI 的 `quota` 沿用本项目额度单位；
+所有转换拒绝负数、NaN、无穷、溢出和非法值。
 
-上游请求 ID 优先匹配；缺少 ID 时按渠道、模型和最近时间匹配，容差最多两秒，存在并列
-候选则放弃匹配并保留估算路径。估算记录在之后三个五分钟周期内重新核对，上游成本一旦
-可靠取得即可覆盖估算值，估算值不能覆盖已经同步的上游值。Redis 不参与成本持久化或
-恢复。
+请求错误不访问上游费用接口，直接写入 `upstream_cost=0` 和
+`upstream_cost_source=estimated`；成功请求没有可靠密钥倍率快照时也写入
+`0 estimated`，确保管理员日志成本字段不为空。有倍率快照时按“本地费用 × 上游密钥
+倍率”估算。上游成本可以覆盖此前的估算值，估算值不能覆盖已保存的上游值；同一请求
+上下文不会重复访问上游。错误日志中的估算 0 不阻止同一请求后续成功日志写入真实上游
+成本。
 
-管理员查询日志时，服务端按 `request_id` 将成本注入
-`other.admin_info.upstream_cost` 和 `upstream_cost_source`；普通用户和令牌日志接口
-在格式化阶段移除整个 `admin_info`，因此不会返回成本。该注入只改变查询响应对象，不回写
-独立日志数据库。
+成本映射仍保存在主数据库，保留历史 `platform_site_usage_cost_window` 表但不再由新的
+生产调度写入；独立日志数据库、ClickHouse 和 Redis 不参与成本持久化。管理员查询日志
+时，服务端按 `request_id` 将成本注入 `other.admin_info.upstream_cost` 和
+`upstream_cost_source`；普通用户和令牌日志接口在格式化阶段移除整个 `admin_info`。
+前端只用绿色背景表示上游成本、黄色背景表示估算成本，不显示来源文字。
 
 ### 9.5 2026-09-30 系统维护任务与缓存边界
 
