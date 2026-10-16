@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/c1cadaBob/NexusTok/common"
+	"github.com/c1cadaBob/NexusTok/constant"
 	"github.com/c1cadaBob/NexusTok/model"
 	"github.com/c1cadaBob/NexusTok/setting/system_setting"
 	"github.com/gin-gonic/gin"
@@ -119,13 +120,15 @@ func TestPlatformSiteUsageCostWindowAndUnitConversion(t *testing.T) {
 	t.Cleanup(func() { common.QuotaPerUnit = oldQuotaPerUnit })
 
 	sub2Record, ok := parsePlatformSiteUsageCostRecord(map[string]any{
-		"upstream_request_id": "sub2-request",
+		"request_id":          "client:sub2-request",
+		"upstream_request_id": "provider-request",
 		"model":               "gpt-test",
 		"created_at":          "2026-10-13T14:10:01Z",
 		"actual_cost":         0.02,
 	}, model.PlatformSub2API)
 	require.True(t, ok)
 	assert.Equal(t, int64(10_000), sub2Record.cost)
+	assert.Equal(t, "client:sub2-request", sub2Record.requestID)
 
 	newAPIRecord, ok := parsePlatformSiteUsageCostRecord(map[string]any{
 		"upstream_request_id": "newapi-request",
@@ -167,11 +170,29 @@ func TestCaptureUpstreamRequestIDPrefersCustomHeaderAndSupportsStandardHeader(t 
 	}
 
 	context := newContext()
+	PreparePlatformSiteRelayRequest(context, model.PlatformSub2API)
+	requestID := common.GetContextKeyString(context, constant.ContextKeyPlatformSiteClientRequestID)
+	clientRequestID, found := strings.CutPrefix(requestID, "client:")
+	require.True(t, found)
+	require.NotEmpty(t, clientRequestID)
+	requestHeaders := make(http.Header)
+	ApplyPlatformSiteRelayRequestID(context, requestHeaders)
+	assert.Equal(t, clientRequestID, requestHeaders.Get("X-Client-Request-ID"))
 	CaptureUpstreamRequestID(context, http.Header{
-		common.RequestIdKey: []string{"custom-request"},
-		"X-Request-ID":      []string{"standard-request"},
+		common.RequestIdKey:   []string{"custom-request"},
+		"X-Request-ID":        []string{"standard-request"},
+		"X-Client-Request-ID": []string{"response-echo-must-not-replace-request-id"},
 	})
 	assert.Equal(t, "custom-request", context.GetString(common.UpstreamRequestIdKey))
+	assert.Equal(t, requestID, common.GetContextKeyString(context, constant.ContextKeyPlatformSiteClientRequestID))
+
+	context = newContext()
+	PreparePlatformSiteRelayRequest(context, model.PlatformNewAPI)
+	CaptureUpstreamRequestID(context, http.Header{"X-Client-Request-ID": []string{"unrelated-client-id"}})
+	assert.Empty(t, common.GetContextKeyString(context, constant.ContextKeyPlatformSiteClientRequestID))
+	requestHeaders = make(http.Header)
+	ApplyPlatformSiteRelayRequestID(context, requestHeaders)
+	assert.Empty(t, requestHeaders.Get("X-Client-Request-ID"))
 
 	context = newContext()
 	CaptureUpstreamRequestID(context, http.Header{"X-Request-Id": []string{"standard-request"}})
@@ -187,6 +208,95 @@ func TestCaptureUpstreamRequestIDPrefersCustomHeaderAndSupportsStandardHeader(t 
 	assert.Equal(t, "standard-request", context.GetString(common.UpstreamRequestIdKey))
 	assert.False(t, ShouldCopyUpstreamHeader(context, common.RequestIdKey, []string{"custom-request"}))
 	assert.Equal(t, "custom-request", context.GetString(common.UpstreamRequestIdKey))
+}
+
+func TestPlatformSiteUsageCostMatchesSub2APIClientRequestIDBeforeGenericID(t *testing.T) {
+	matched, diagnostic := matchPlatformSiteUsageCostRequestWithDiagnostic(
+		PlatformSiteUsageCostRequest{
+			RequestID:             "local-request",
+			PlatformSiteRequestID: "client:sub2api-request",
+			UpstreamRequestID:     "generic-request",
+			ModelName:             "different-model",
+			CreatedAt:             time.Unix(100, 0),
+		},
+		[]platformSiteUsageCostRecord{
+			{requestID: "generic-request", model: "different-model", createdAt: time.Unix(100, 0), cost: 1},
+			{requestID: "client:sub2api-request", model: "gpt-test", createdAt: time.Unix(100, 0), cost: 2},
+		},
+	)
+	require.NotNil(t, matched)
+	assert.Equal(t, int64(2), matched.cost)
+	assert.Empty(t, diagnostic.reason)
+
+	matched, diagnostic = matchPlatformSiteUsageCostRequestWithDiagnostic(
+		PlatformSiteUsageCostRequest{
+			RequestID:             "local-request",
+			PlatformSiteRequestID: "client:missing",
+			ModelName:             "gpt-test",
+			CreatedAt:             time.Unix(100, 0),
+		},
+		[]platformSiteUsageCostRecord{{model: "gpt-test", createdAt: time.Unix(100, 0), cost: 3}},
+	)
+	assert.Nil(t, matched)
+	assert.Equal(t, model.PlatformSiteUsageCostFallbackRequestIDNoMatch, diagnostic.reason)
+
+	matched, diagnostic = matchPlatformSiteUsageCostRequestWithDiagnostic(
+		PlatformSiteUsageCostRequest{
+			RequestID: "local-request",
+			ModelName: "gpt-test",
+			CreatedAt: time.Unix(100, 0),
+		},
+		[]platformSiteUsageCostRecord{{model: "gpt-test", createdAt: time.Unix(102, 0), cost: 4}},
+	)
+	require.NotNil(t, matched)
+	assert.Equal(t, int64(4), matched.cost)
+	assert.Empty(t, diagnostic.reason)
+
+	newAPIRequest := platformSiteUsageCostMatchRequestForPlatform(PlatformSiteUsageCostRequest{
+		RequestID:             "local-newapi-request",
+		UpstreamRequestID:     "newapi-upstream-request",
+		PlatformSiteRequestID: "client:unrelated-echo",
+	}, model.PlatformNewAPI)
+	matched, diagnostic = matchPlatformSiteUsageCostRequestWithDiagnostic(newAPIRequest, []platformSiteUsageCostRecord{
+		{requestID: "newapi-upstream-request", cost: 5},
+		{requestID: "client:unrelated-echo", cost: 6},
+	})
+	require.NotNil(t, matched)
+	assert.Equal(t, int64(5), matched.cost)
+	assert.Empty(t, diagnostic.reason)
+
+	sub2APIRequest := platformSiteUsageCostMatchRequestForPlatform(PlatformSiteUsageCostRequest{
+		RequestID:         "local-sub2api-request",
+		UpstreamRequestID: "generic-upstream-id",
+		ModelName:         "gpt-test",
+		CreatedAt:         time.Unix(100, 0),
+	}, model.PlatformSub2API)
+	matched, diagnostic = matchPlatformSiteUsageCostRequestWithDiagnostic(sub2APIRequest, []platformSiteUsageCostRecord{
+		{requestID: "generic-upstream-id", model: "wrong-model", createdAt: time.Unix(100, 0), cost: 7},
+		{model: "gpt-test", createdAt: time.Unix(101, 0), cost: 8},
+	})
+	require.NotNil(t, matched)
+	assert.Equal(t, int64(8), matched.cost)
+	assert.Empty(t, diagnostic.reason)
+}
+
+func TestPlatformSiteUsageCostFallbackDiagnosticIncludesSafeHTTPDetails(t *testing.T) {
+	other := model.NewLogOther()
+	err := &platformSiteHTTPStatusError{
+		statusCode: http.StatusTooManyRequests,
+		diagnostics: platformSiteResponseDiagnostics{
+			errorCode:     "AUTH_SESSION_ISSUANCE_LIMIT",
+			errorCategory: platformSiteErrorCategorySessionLimit,
+		},
+	}
+	diagnostic := platformSiteUsageCostDiagnosticFromError(err)
+	setPlatformSiteUsageCostFallbackDiagnostic(other, diagnostic)
+
+	adminInfo, ok := other.Snapshot()["admin_info"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, model.PlatformSiteUsageCostFallbackAuthenticationFailed, adminInfo[model.PlatformSiteUsageCostFallbackReasonKey])
+	assert.Equal(t, http.StatusTooManyRequests, adminInfo[model.PlatformSiteUsageCostFallbackStatusKey])
+	assert.Equal(t, "AUTH_SESSION_ISSUANCE_LIMIT", adminInfo[model.PlatformSiteUsageCostFallbackCodeKey])
 }
 
 func TestFetchNewAPIUsageCostsUsesSelfAndOnlyFallsBackForMissingRoute(t *testing.T) {
@@ -207,6 +317,12 @@ func TestFetchNewAPIUsageCostsUsesSelfAndOnlyFallsBackForMissingRoute(t *testing
 		{
 			name:             "forbidden does not fallback",
 			selfStatus:       http.StatusForbidden,
+			wantError:        true,
+			wantRequestedURL: []string{"/api/log/self"},
+		},
+		{
+			name:             "rate limited does not fallback",
+			selfStatus:       http.StatusTooManyRequests,
 			wantError:        true,
 			wantRequestedURL: []string{"/api/log/self"},
 		},
@@ -355,12 +471,12 @@ func TestPlatformSiteUsageCostPasswordSessionReuseExpiryAndSessionLimitCooldown(
 	createdAt := time.Date(2026, time.October, 16, 10, 0, 1, 0, time.UTC)
 
 	records, err := fetchPlatformSiteUsageCostRecordsOnce(
-		context.Background(), account, createdAt, "newapi-upstream-request", "gpt-test",
+		context.Background(), account, createdAt, "", "newapi-upstream-request", "gpt-test",
 	)
 	require.NoError(t, err)
 	require.Len(t, records, 1)
 	_, err = fetchPlatformSiteUsageCostRecordsOnce(
-		context.Background(), account, createdAt, "newapi-upstream-request", "gpt-test",
+		context.Background(), account, createdAt, "", "newapi-upstream-request", "gpt-test",
 	)
 	require.NoError(t, err)
 	assert.Equal(t, 1, serverLoginRequests)
@@ -374,14 +490,14 @@ func TestPlatformSiteUsageCostPasswordSessionReuseExpiryAndSessionLimitCooldown(
 	entry.expiresAt = time.Now().Add(-time.Second)
 	entry.mu.Unlock()
 	_, err = fetchPlatformSiteUsageCostRecordsOnce(
-		context.Background(), account, createdAt, "newapi-upstream-request", "gpt-test",
+		context.Background(), account, createdAt, "", "newapi-upstream-request", "gpt-test",
 	)
 	require.NoError(t, err)
 	assert.Equal(t, 2, serverLoginRequests)
 
 	unauthorizedOnce = true
 	_, err = fetchPlatformSiteUsageCostRecordsOnce(
-		context.Background(), account, createdAt, "newapi-upstream-request", "gpt-test",
+		context.Background(), account, createdAt, "", "newapi-upstream-request", "gpt-test",
 	)
 	require.NoError(t, err)
 	assert.Equal(t, 3, serverLoginRequests)
@@ -391,12 +507,12 @@ func TestPlatformSiteUsageCostPasswordSessionReuseExpiryAndSessionLimitCooldown(
 	sessionLimit = true
 	serverLoginRequests = 0
 	_, err = fetchPlatformSiteUsageCostRecordsOnce(
-		context.Background(), account, createdAt, "newapi-upstream-request", "gpt-test",
+		context.Background(), account, createdAt, "", "newapi-upstream-request", "gpt-test",
 	)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrPlatformSiteSessionLimit)
 	_, err = fetchPlatformSiteUsageCostRecordsOnce(
-		context.Background(), account, createdAt, "newapi-upstream-request", "gpt-test",
+		context.Background(), account, createdAt, "", "newapi-upstream-request", "gpt-test",
 	)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrPlatformSiteSessionLimit)
@@ -442,7 +558,7 @@ func TestPlatformSiteUsageCostRequestUsesExactIDOnceAndKeepsErrorAtZero(t *testi
 			usageRequests++
 			assert.Empty(t, request.URL.Query().Get("request_id"))
 			assert.Equal(t, "gpt-test", request.URL.Query().Get("model"))
-			_, _ = writer.Write([]byte(`{"code":0,"data":{"items":[{"request_id":"upstream-request","actual_cost":0.02}],"pages":1}}`))
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"items":[{"request_id":"client:sub2api-client-request","actual_cost":0.02}],"pages":1}}`))
 		default:
 			http.NotFound(writer, request)
 		}
@@ -468,7 +584,13 @@ func TestPlatformSiteUsageCostRequestUsesExactIDOnceAndKeepsErrorAtZero(t *testi
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Set(common.RequestIdKey, "local-request")
-	ctx.Set(common.UpstreamRequestIdKey, "upstream-request")
+	common.SetContextKey(ctx, constant.ContextKeyPlatformSiteClientRequestID, "client:sub2api-client-request")
+	PreparePlatformSiteRelayRequest(ctx, model.PlatformSub2API)
+	CaptureUpstreamRequestID(ctx, http.Header{
+		common.RequestIdKey:   []string{"upstream-request"},
+		"X-Client-Request-ID": []string{"sub2api-client-request"},
+	})
+	assert.Equal(t, "client:sub2api-client-request", common.GetContextKeyString(ctx, constant.ContextKeyPlatformSiteClientRequestID))
 	common.QuotaPerUnit = 500_000
 	other := model.NewLogOther()
 	other.SetAdmin("upstream_key_ratio", 1.5)
@@ -530,6 +652,9 @@ func TestPlatformSiteUsageCostRequestUsesExactIDOnceAndKeepsErrorAtZero(t *testi
 	require.NotNil(t, estimatedCost)
 	assert.Equal(t, int64(150), estimatedCost.Cost)
 	assert.Equal(t, model.PlatformSiteUsageCostSourceEstimated, estimatedCost.Source)
+	adminInfo, ok := other.Snapshot()["admin_info"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, model.PlatformSiteUsageCostFallbackModelTimeNoMatch, adminInfo[model.PlatformSiteUsageCostFallbackReasonKey])
 
 	SetPlatformSiteResponseCost(estimatedContext, model.PlatformSub2API, 888)
 	err = ResolvePlatformSiteUsageCost(estimatedContext, PlatformSiteUsageCostRequest{
@@ -545,6 +670,9 @@ func TestPlatformSiteUsageCostRequestUsesExactIDOnceAndKeepsErrorAtZero(t *testi
 	require.NotNil(t, estimatedCost)
 	assert.Equal(t, int64(888), estimatedCost.Cost)
 	assert.Equal(t, model.PlatformSiteUsageCostSourceUpstream, estimatedCost.Source)
+	adminInfo, ok = other.Snapshot()["admin_info"].(map[string]any)
+	require.True(t, ok)
+	assert.NotContains(t, adminInfo, model.PlatformSiteUsageCostFallbackReasonKey)
 
 	errorContext, _ := gin.CreateTestContext(httptest.NewRecorder())
 	errorContext.Set(common.RequestIdKey, "error-request")

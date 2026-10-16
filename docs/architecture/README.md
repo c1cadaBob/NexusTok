@@ -213,6 +213,18 @@ Preview 或 `ChannelAccount` 同步链路。
 `404/405` 时回退 `/api/v1/admin/usage`；权限不足不视为路由缺失。查询失败日志只记录
 脱敏原因，不记录响应正文、凭据或会话信息。
 
+### 2026-10-16 平台站点成本关联与兜底原因
+
+**变更前**：Sub2API 使用日志 `request_id=client:<X-Client-Request-ID>` 来源于请求侧关联头，
+Relay 未发送该请求头，只依赖不同语义的通用响应 ID；黄色估算成本也没有显示具体失败原因。
+
+**变更后**：仅选中平台站点 Sub2API 渠道时生成并发送 `X-Client-Request-ID`，在上下文
+保留 `client:<id>` 精确匹配 usage；响应回显不覆盖请求侧 ID，通用上游响应 ID仍独立保存。
+NewAPI 匹配忽略该客户端 ID。只有没有精确关联 ID时才尝试唯一模型/时间匹配。实时估算原因、HTTP 状态和安全错误码
+放入 `other.admin_info`，仅管理员可见；共享成本组件为估算值提供可聚焦/触屏 Tooltip，
+旧记录没有原因时显示历史兼容说明。NewAPI `429 AUTH_SESSION_ISSUANCE_LIMIT` 仍由上游
+管理员清理会话，NexusTok 不绕过限流。
+
 ## 变更记录
 
 | 日期 | 变更类型 | 变更前 | 变更后 | 影响范围 | 验证依据 |

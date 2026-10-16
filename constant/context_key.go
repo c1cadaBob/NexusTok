@@ -95,4 +95,9 @@ const (
 	// ContextKeyPlatformSiteUsageCost carries only a platform-validated response
 	// cost. Generic usage.cost values must not be stored here.
 	ContextKeyPlatformSiteUsageCost ContextKey = "platform_site_usage_cost"
+	// ContextKeyPlatformSiteClientRequestID 保存 Sub2API usage 使用的客户端请求 ID，
+	// 不覆盖通用上游响应 ID。
+	ContextKeyPlatformSiteClientRequestID ContextKey = "platform_site_client_request_id"
+	// ContextKeyPlatformSitePlatform 标识当前选中的平台站点类型，用于限制专用请求头。
+	ContextKeyPlatformSitePlatform ContextKey = "platform_site_platform"
 )

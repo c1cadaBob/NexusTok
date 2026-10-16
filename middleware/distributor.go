@@ -618,6 +618,16 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 			types.ErrOptionWithSkipRetry(),
 		)
 	}
+	platformSitePlatform := ""
+	if channel.UpstreamKind == model.UpstreamKindPlatformSite {
+		switch channel.Type {
+		case constant.ChannelTypeSub2API:
+			platformSitePlatform = model.PlatformSub2API
+		case constant.ChannelTypeNewAPI:
+			platformSitePlatform = model.PlatformNewAPI
+		}
+	}
+	service.PreparePlatformSiteRelayRequest(c, platformSitePlatform)
 	if candidate, matched := pinnedEndpointCandidateForChannel(c, channel, expectedPlugin); matched {
 		if value, exists := c.Get(jsplugin.ContextKeyPinnedEndpoint); exists {
 			if pinned, ok := value.(jsplugin.PinnedEndpoint); ok && candidate.Plugin != nil && candidate.Plugin != pinned.Plugin {

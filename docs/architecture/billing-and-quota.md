@@ -100,7 +100,10 @@ Sub2API 优先访问当前登录用户的普通使用日志接口 `/api/v1/usage
 `404/405` 时回退 `/api/v1/admin/usage`；NewAPI 普通账号访问 `/api/log/self`，仅
 `404/405` 时回退 `/api/log/`，并按
 `upstream_request_id`、`upstreamRequestId`、`request_id`、`requestId` 的兼容优先级进行匹配。
-没有可靠请求 ID 时，按同渠道、模型和三秒内唯一的最近时间匹配。Sub2API 的美元
+Sub2API 平台站点在出站请求中发送独立生成的 `X-Client-Request-ID`，并以
+`client:<id>` 精确匹配其普通使用日志 `request_id`；响应头回显只作兼容，不覆盖已发送 ID。
+NewAPI 使用标准上游请求 ID。没有可用精确关联 ID 时，按同渠道、模型和
+三秒内唯一的最近时间匹配。Sub2API 的美元
 `actual_cost` 使用 `common.QuotaPerUnit` 转换，
 NewAPI 的 `quota` 使用本项目额度单位。
 
@@ -111,7 +114,8 @@ NewAPI 的 `quota` 使用本项目额度单位。
 
 成本映射继续只保存在主数据库，独立日志数据库和 ClickHouse 日志表不变，Redis 不参与
 成本持久化。管理员日志通过 `other.admin_info` 查看成本；普通用户和普通令牌日志移除
-整个 `admin_info`。前端仅通过绿色/黄色背景区分上游和估算来源，不显示来源文字。
+整个 `admin_info`。估算来源使用黄色显示，鼠标悬停、键盘聚焦或触屏激活时显示安全的
+兜底原因；上游真实成本为绿色且不显示兜底说明。
 
 ### 5.2.1 2026-10-16 Sub2API 普通用户成本接口修正
 
@@ -126,7 +130,22 @@ NewAPI 的 `quota` 使用本项目额度单位。
 NewAPI 与 Sub2API 成本查询复用按渠道隔离的内存会话并串行访问，密码会话材料不写回凭据；
 已知 Token 过期或认证失效时才重新认证，`429 AUTH_SESSION_ISSUANCE_LIMIT` 使用失败冷却，
 避免登录风暴。响应头捕获保留 `X-Oneapi-Request-Id` 优先级，并兼容标准
-`X-Request-ID`/`X-Request-Id`，以便 usage 记录优先按精确上游请求 ID匹配。
+`X-Request-ID`/`X-Request-Id`；Sub2API 出站时另发专用客户端关联 ID，NewAPI 匹配时忽略该字段。
+
+### 5.2.2 2026-10-16 Sub2API 请求关联与估算原因
+
+**变更前**：Sub2API usage 的 `request_id` 使用 `client:<X-Client-Request-ID>`，Relay
+没有向上游发送该关联头，只捕获通用响应 ID；错误 ID 会阻止按模型/时间安全回退。估算成本仅有颜色，
+管理员无法从该日志看出是认证失败、无记录还是关联失败。
+
+**变更后**：仅选中平台站点 Sub2API 渠道时生成独立请求 ID，出站请求发送
+`X-Client-Request-ID` 并在上下文保留 `client:<id>`，精确匹配 usage；响应回显不覆盖请求侧
+ID，标准上游响应 ID独立保存。NewAPI 匹配忽略平台客户端 ID。只有精确关联 ID 不可用时
+才尝试唯一模型/时间匹配。实时失败原因码及可选 HTTP
+状态/平台错误码保存在原始日志 `other.admin_info`，不新增日志表字段，不写请求 ID、凭据、
+Cookie、Token 或响应正文；普通用户和 Token 日志仍剥离 `admin_info`。黄色成本 Tooltip
+支持鼠标、键盘和触屏，旧记录无原因时标注为历史估算。NewAPI `429
+AUTH_SESSION_ISSUANCE_LIMIT` 不触发管理员路由回退或绕过认证，需上游管理员清理旧会话。
 
 ## 6. 任务计费
 

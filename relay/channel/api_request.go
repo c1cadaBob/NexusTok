@@ -391,6 +391,7 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	for key, value := range headerOverride {
 		targetHeader.Set(key, value)
 	}
+	service.ApplyPlatformSiteRelayRequestID(c, targetHeader)
 	targetHeader.Set("Content-Type", c.Request.Header.Get("Content-Type"))
 	targetConn, _, err := websocket.DefaultDialer.Dial(fullRequestURL, targetHeader)
 	if err != nil {
@@ -528,6 +529,7 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 			}()
 		}
 	}
+	service.ApplyPlatformSiteRelayRequestID(c, req.Header)
 
 	resp, err := relayClient.Do(req)
 	if err != nil {

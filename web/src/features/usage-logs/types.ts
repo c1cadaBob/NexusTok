@@ -132,6 +132,19 @@ export interface LogOtherData {
     channel_affinity?: ChannelAffinityInfo
     upstream_cost?: number
     upstream_cost_source?: 'upstream' | 'estimated'
+    upstream_cost_fallback_reason?:
+      | 'request_error'
+      | 'authentication_failed'
+      | 'permission_denied'
+      | 'http_request_failed'
+      | 'empty_result'
+      | 'request_id_no_match'
+      | 'model_or_time_no_match'
+      | 'ambiguous_match'
+      | 'invalid_cost_record'
+      | string
+    upstream_cost_fallback_status?: number
+    upstream_cost_fallback_code?: string
     // Top-up audit fields (type=1, admin only)
     payment_method?: string
     callback_payment_method?: string

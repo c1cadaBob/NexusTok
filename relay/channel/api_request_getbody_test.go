@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/c1cadaBob/NexusTok/common"
+	"github.com/c1cadaBob/NexusTok/constant"
+	"github.com/c1cadaBob/NexusTok/model"
 	relaycommon "github.com/c1cadaBob/NexusTok/relay/common"
 	"github.com/c1cadaBob/NexusTok/service"
 	"github.com/gin-gonic/gin"
@@ -247,6 +249,60 @@ func TestDoTaskApiRequest_KeepsReplayableGetBody(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, rc.Close())
 		assert.Equal(t, payload, replay, "replay %d must equal the original payload", i+1)
+	}
+}
+
+func TestDoTaskApiRequestSendsSub2APIClientRequestID(t *testing.T) {
+	service.InitHttpClient()
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name     string
+		platform string
+		wantID   bool
+	}{
+		{name: "Sub2API platform site", platform: model.PlatformSub2API, wantID: true},
+		{name: "NewAPI platform site", platform: model.PlatformNewAPI},
+		{name: "regular channel"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			receivedID := make(chan string, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				receivedID <- request.Header.Get("X-Client-Request-ID")
+				writer.Header().Set("X-Client-Request-ID", "response-echo")
+				writer.WriteHeader(http.StatusOK)
+			}))
+			defer server.Close()
+
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/video/generations", strings.NewReader("{}"))
+			service.PreparePlatformSiteRelayRequest(ctx, test.platform)
+			storedID := common.GetContextKeyString(ctx, constant.ContextKeyPlatformSiteClientRequestID)
+
+			adaptor := &stubTaskAdaptor{baseURL: server.URL}
+			response, err := DoTaskApiRequest(adaptor, ctx, &relaycommon.RelayInfo{
+				ChannelMeta: &relaycommon.ChannelMeta{},
+			}, strings.NewReader("{}"))
+			require.NoError(t, err)
+			defer response.Body.Close()
+
+			if test.wantID {
+				require.NotEmpty(t, storedID)
+				clientID, found := strings.CutPrefix(storedID, "client:")
+				require.True(t, found)
+				assert.Equal(t, clientID, <-receivedID)
+				assert.Equal(t, storedID, common.GetContextKeyString(ctx, constant.ContextKeyPlatformSiteClientRequestID))
+				assert.Equal(t, clientID, adaptor.capturedReq.Header.Get("X-Client-Request-ID"))
+				return
+			}
+
+			assert.Empty(t, <-receivedID)
+			assert.Empty(t, storedID)
+			assert.Empty(t, common.GetContextKeyString(ctx, constant.ContextKeyPlatformSiteClientRequestID))
+		})
 	}
 }
 

@@ -1390,3 +1390,20 @@ DSN 或完整 Key。
 `X-Oneapi-Request-Id` 优先，并兼容 `X-Request-ID`/`X-Request-Id`，Sub2API/NewAPI
 usage 记录优先按精确请求 ID匹配。失败日志只记录脱敏阶段、状态码、错误码和匹配结果，
 真实失败仍安全回退本地估算；历史黄色记录不会自动回填。
+
+### 10.7.3 2026-10-16 Sub2API 成本关联与兜底原因展示
+
+**变更前**：Sub2API 普通 usage DTO 的 `request_id=client:<X-Client-Request-ID>` 来源于
+请求侧标识，但 Relay 未发送该请求头，只将通用响应 `X-Request-ID` 当成精确日志 ID；估算
+成本虽标黄，但没有本条请求的失败原因。
+
+**变更后**：仅在选中平台站点 Sub2API 渠道时生成独立 ID，并在出站请求发送
+`X-Client-Request-ID`；上下文保留 `client:<id>` 供 usage 精确关联，响应回显不覆盖请求侧
+ID，且不改变 `X-Oneapi-Request-Id`/`X-Request-ID` 通用上游 ID。NewAPI 匹配忽略此客户端 ID。
+仅没有可用精确关联 ID
+时才尝试唯一模型/时间匹配；精确 ID 存在但未命中时明确显示 ID 不匹配。实时成本兜底将
+稳定原因码及可选 HTTP 状态/平台错误码写入已有日志 `other.admin_info`，普通用户/Token
+日志仍删除整个该字段；日志查询仅在内存中附加成本来源，成功上游成本不会显示旧兜底原因。
+黄色估算成本由共享组件在悬停、键盘聚焦和触屏激活时显示原因；旧估算日志无原因时显示
+历史记录兼容说明。NewAPI `429 AUTH_SESSION_ISSUANCE_LIMIT` 仍需要站点管理员清理会话，
+NexusTok 不重试登录以绕过上游限制。

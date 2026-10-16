@@ -2347,7 +2347,7 @@ func TestAttachPlatformSiteUsageCostsOnlySurvivesAdminFormatting(t *testing.T) {
 		Type:      LogTypeConsume,
 		RequestId: "request-cost-admin",
 		ChannelId: 17,
-		Other:     `{"large_id":9007199254740993,"admin_info":{"upstream_key_ratio":1.2}}`,
+		Other:     `{"large_id":9007199254740993,"admin_info":{"upstream_key_ratio":1.2,"upstream_cost_fallback_reason":"model_or_time_no_match","upstream_cost_fallback_status":429,"upstream_cost_fallback_code":"AUTH_SESSION_ISSUANCE_LIMIT"}}`,
 	}, {
 		Type:      LogTypeError,
 		RequestId: "request-cost-error",
@@ -2361,10 +2361,12 @@ func TestAttachPlatformSiteUsageCostsOnlySurvivesAdminFormatting(t *testing.T) {
 	FormatAdminLogs(adminLogs)
 	assert.Contains(t, adminLogs[0].Other, `"upstream_cost":240`)
 	assert.Contains(t, adminLogs[0].Other, `"upstream_cost_source":"upstream"`)
+	assert.NotContains(t, adminLogs[0].Other, PlatformSiteUsageCostFallbackReasonKey)
 
 	userLogs := []*Log{{Other: logs[0].Other}}
 	formatUserLogs(userLogs, 0)
 	assert.NotContains(t, userLogs[0].Other, "upstream_cost")
+	assert.NotContains(t, userLogs[0].Other, PlatformSiteUsageCostFallbackReasonKey)
 
 	malformedLogs := []*Log{{
 		Type:      LogTypeConsume,

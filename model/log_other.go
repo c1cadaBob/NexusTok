@@ -85,6 +85,17 @@ func (o *LogOther) SetAdmin(key string, value any) bool {
 	return true
 }
 
+func (o *LogOther) DeleteAdmin(key string) bool {
+	if o == nil || o.adminInfo == nil || key == "" {
+		return false
+	}
+	if _, exists := o.adminInfo[key]; !exists {
+		return false
+	}
+	delete(o.adminInfo, key)
+	return true
+}
+
 func (o *LogOther) MergeAdmin(values map[string]any) {
 	for key, value := range values {
 		o.SetAdmin(key, value)

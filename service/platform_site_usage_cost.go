@@ -53,16 +53,17 @@ type PlatformSiteUsageCostTaskResult struct {
 }
 
 type PlatformSiteUsageCostRequest struct {
-	RequestID           string
-	ChannelID           int
-	UpstreamRequestID   string
-	ModelName           string
-	CreatedAt           time.Time
-	Quota               int
-	Other               *model.LogOther
-	IsError             bool
-	CarriedCost         *int64
-	CarriedCostPlatform string
+	RequestID             string
+	ChannelID             int
+	UpstreamRequestID     string
+	PlatformSiteRequestID string
+	ModelName             string
+	CreatedAt             time.Time
+	Quota                 int
+	Other                 *model.LogOther
+	IsError               bool
+	CarriedCost           *int64
+	CarriedCostPlatform   string
 }
 
 type platformSiteUsageCostState struct {
@@ -98,6 +99,14 @@ var platformSiteUsageCostSessionCache = struct {
 	entries: make(map[int]*platformSiteUsageCostSessionCacheEntry),
 }
 
+type platformSiteUsageCostDiagnostic struct {
+	reason     string
+	statusCode int
+	errorCode  string
+}
+
+var errPlatformSiteUsageCostInvalidRecord = errors.New("平台站点使用日志成本字段无效")
+
 // SetPlatformSiteResponseCost allows a platform-specific response parser to
 // attach a verified cost without making generic usage.cost values authoritative.
 func SetPlatformSiteResponseCost(c *gin.Context, platform string, cost int64) {
@@ -125,6 +134,12 @@ func ResolvePlatformSiteUsageCost(ctx *gin.Context, request PlatformSiteUsageCos
 	if request.UpstreamRequestID == "" {
 		request.UpstreamRequestID = ctx.GetString(common.UpstreamRequestIdKey)
 	}
+	if request.PlatformSiteRequestID == "" {
+		request.PlatformSiteRequestID = common.GetContextKeyString(
+			ctx,
+			constant.ContextKeyPlatformSiteClientRequestID,
+		)
+	}
 	if request.CreatedAt.IsZero() {
 		request.CreatedAt = common.GetContextKeyTime(ctx, constant.ContextKeyRequestStartTime)
 		if request.CreatedAt.IsZero() {
@@ -140,7 +155,6 @@ func ResolvePlatformSiteUsageCost(ctx *gin.Context, request PlatformSiteUsageCos
 		(account.Platform != model.PlatformSub2API && account.Platform != model.PlatformNewAPI) {
 		return nil
 	}
-
 	state, _ := common.GetContextKeyType[*platformSiteUsageCostState](
 		ctx,
 		constant.ContextKeyPlatformSiteUsageCostState,
@@ -154,6 +168,10 @@ func ResolvePlatformSiteUsageCost(ctx *gin.Context, request PlatformSiteUsageCos
 			return nil
 		}
 		state.errorHandled = true
+		setPlatformSiteUsageCostFallbackDiagnostic(
+			request.Other,
+			platformSiteUsageCostDiagnostic{reason: model.PlatformSiteUsageCostFallbackRequestError},
+		)
 		return model.UpsertPlatformSiteUsageCost(model.PlatformSiteUsageCost{
 			RequestID:         request.RequestID,
 			ChannelID:         request.ChannelID,
@@ -174,6 +192,7 @@ func ResolvePlatformSiteUsageCost(ctx *gin.Context, request PlatformSiteUsageCos
 	if request.CarriedCost != nil &&
 		request.CarriedCostPlatform == account.Platform &&
 		*request.CarriedCost >= 0 {
+		clearPlatformSiteUsageCostFallbackDiagnostic(request.Other)
 		return model.UpsertPlatformSiteUsageCost(model.PlatformSiteUsageCost{
 			RequestID:         request.RequestID,
 			ChannelID:         request.ChannelID,
@@ -187,6 +206,7 @@ func ResolvePlatformSiteUsageCost(ctx *gin.Context, request PlatformSiteUsageCos
 		ctx,
 		constant.ContextKeyPlatformSiteUsageCost,
 	); ok && carriedCost.Platform == account.Platform && carriedCost.Cost >= 0 {
+		clearPlatformSiteUsageCostFallbackDiagnostic(request.Other)
 		return model.UpsertPlatformSiteUsageCost(model.PlatformSiteUsageCost{
 			RequestID:         request.RequestID,
 			ChannelID:         request.ChannelID,
@@ -201,17 +221,39 @@ func ResolvePlatformSiteUsageCost(ctx *gin.Context, request PlatformSiteUsageCos
 	if !state.queryAttempted {
 		state.queryAttempted = true
 		lookupCtx, cancel := context.WithTimeout(ctx, platformSiteUsageCostLookupTimeout)
-		records, lookupErr := fetchPlatformSiteUsageCostRecordsOnce(lookupCtx, account, request.CreatedAt, request.UpstreamRequestID, request.ModelName)
+		records, lookupErr := fetchPlatformSiteUsageCostRecordsOnce(
+			lookupCtx,
+			account,
+			request.CreatedAt,
+			request.PlatformSiteRequestID,
+			request.UpstreamRequestID,
+			request.ModelName,
+		)
 		cancel()
 		if lookupErr == nil {
-			record = matchPlatformSiteUsageCostRequest(request, records)
+			var diagnostic platformSiteUsageCostDiagnostic
+			matchRequest := platformSiteUsageCostMatchRequestForPlatform(request, account.Platform)
+			record, diagnostic = matchPlatformSiteUsageCostRequestWithDiagnostic(matchRequest, records)
 			if len(records) == 0 {
-				logPlatformSiteUsageCostDiagnostic(request.ChannelID, account.Platform, "empty_result", nil)
+				diagnostic = platformSiteUsageCostDiagnostic{reason: model.PlatformSiteUsageCostFallbackEmptyResult}
 			} else if record == nil {
-				logPlatformSiteUsageCostDiagnostic(request.ChannelID, account.Platform, "no_match", nil)
+				if diagnostic.reason == "" {
+					diagnostic.reason = model.PlatformSiteUsageCostFallbackModelTimeNoMatch
+				}
+			}
+			if record == nil {
+				setPlatformSiteUsageCostFallbackDiagnostic(request.Other, diagnostic)
+			}
+			if record != nil {
+				clearPlatformSiteUsageCostFallbackDiagnostic(request.Other)
+			}
+			if diagnostic.reason != "" {
+				logPlatformSiteUsageCostDiagnostic(request.ChannelID, account.Platform, diagnostic.reason, nil)
 			}
 		} else {
-			logPlatformSiteUsageCostDiagnostic(request.ChannelID, account.Platform, "query_failed", lookupErr)
+			diagnostic := platformSiteUsageCostDiagnosticFromError(lookupErr)
+			setPlatformSiteUsageCostFallbackDiagnostic(request.Other, diagnostic)
+			logPlatformSiteUsageCostDiagnostic(request.ChannelID, account.Platform, diagnostic.reason, lookupErr)
 		}
 	}
 
@@ -233,6 +275,9 @@ func ResolvePlatformSiteUsageCost(ctx *gin.Context, request PlatformSiteUsageCos
 			Other:             request.Other.JSONString(),
 		})
 	}
+	if source == model.PlatformSiteUsageCostSourceUpstream {
+		clearPlatformSiteUsageCostFallbackDiagnostic(request.Other)
+	}
 	return model.UpsertPlatformSiteUsageCost(model.PlatformSiteUsageCost{
 		RequestID:         request.RequestID,
 		ChannelID:         request.ChannelID,
@@ -241,6 +286,19 @@ func ResolvePlatformSiteUsageCost(ctx *gin.Context, request PlatformSiteUsageCos
 		Source:            source,
 		UpdatedAt:         request.CreatedAt.Unix(),
 	})
+}
+
+func platformSiteUsageCostMatchRequestForPlatform(
+	request PlatformSiteUsageCostRequest,
+	platform string,
+) PlatformSiteUsageCostRequest {
+	switch platform {
+	case model.PlatformSub2API:
+		request.UpstreamRequestID = ""
+	case model.PlatformNewAPI:
+		request.PlatformSiteRequestID = ""
+	}
+	return request
 }
 
 func ResolvePlatformSiteUsageCostForLog(
@@ -258,10 +316,14 @@ func ResolvePlatformSiteUsageCostForLog(
 		RequestID:         ctx.GetString(common.RequestIdKey),
 		ChannelID:         channelID,
 		UpstreamRequestID: ctx.GetString(common.UpstreamRequestIdKey),
-		ModelName:         modelName,
-		Quota:             quota,
-		Other:             other,
-		IsError:           isError,
+		PlatformSiteRequestID: common.GetContextKeyString(
+			ctx,
+			constant.ContextKeyPlatformSiteClientRequestID,
+		),
+		ModelName: modelName,
+		Quota:     quota,
+		Other:     other,
+		IsError:   isError,
 	}); err != nil {
 		common.SysError(fmt.Sprintf("平台站点请求成本记录失败: channel_id=%d", channelID))
 	}
@@ -410,7 +472,7 @@ func syncPlatformSiteUsageCostWindow(
 	if err != nil {
 		return false, 0, 0, false, err
 	}
-	matched := matchPlatformSiteUsageCostRecords(matchingLogs, upstreamRecords)
+	matched := matchPlatformSiteUsageCostRecordsForPlatform(account.Platform, matchingLogs, upstreamRecords)
 	upstreamCount := 0
 	for _, log := range localLogs {
 		record, ok := matched[log.RequestId]
@@ -709,6 +771,7 @@ func fetchPlatformSiteUsageCostRecordsOnce(
 	ctx context.Context,
 	account *model.PlatformSiteAccount,
 	createdAt time.Time,
+	platformSiteRequestID string,
 	upstreamRequestID string,
 	modelName string,
 ) ([]platformSiteUsageCostRecord, error) {
@@ -720,7 +783,7 @@ func fetchPlatformSiteUsageCostRecordsOnce(
 		var records []platformSiteUsageCostRecord
 		switch account.Platform {
 		case model.PlatformSub2API:
-			records, err = fetchSub2APIUsageCostsOnce(ctx, lease.session, createdAt, upstreamRequestID, modelName)
+			records, err = fetchSub2APIUsageCostsOnce(ctx, lease.session, createdAt, platformSiteRequestID, modelName)
 		case model.PlatformNewAPI:
 			records, err = fetchNewAPIUsageCostsOnce(ctx, lease.session, createdAt, upstreamRequestID, modelName)
 		default:
@@ -795,7 +858,7 @@ func fetchSub2APIUsageCostsOnce(
 	ctx context.Context,
 	session *PlatformSiteSession,
 	createdAt time.Time,
-	upstreamRequestID string,
+	platformSiteRequestID string,
 	modelName string,
 ) ([]platformSiteUsageCostRecord, error) {
 	if session == nil {
@@ -813,7 +876,7 @@ func fetchSub2APIUsageCostsOnce(
 	if modelName != "" {
 		query.Set("model", modelName)
 	}
-	payload, err := fetchSub2APIUsagePage(ctx, session, query, upstreamRequestID)
+	payload, err := fetchSub2APIUsagePage(ctx, session, query, platformSiteRequestID)
 	if err != nil {
 		return nil, err
 	}
@@ -826,6 +889,9 @@ func fetchSub2APIUsageCostsOnce(
 		if record, ok := parsePlatformSiteUsageCostRecord(item, model.PlatformSub2API); ok {
 			result = append(result, record)
 		}
+	}
+	if len(items) > 0 && len(result) == 0 {
+		return nil, errPlatformSiteUsageCostInvalidRecord
 	}
 	return result, nil
 }
@@ -936,6 +1002,9 @@ func fetchNewAPIUsageCostsOnce(
 			result = append(result, record)
 		}
 	}
+	if len(items) > 0 && len(result) == 0 {
+		return nil, errPlatformSiteUsageCostInvalidRecord
+	}
 	return result, nil
 }
 
@@ -995,6 +1064,52 @@ func logPlatformSiteUsageCostDiagnostic(channelID int, platform string, stage st
 	common.SysError(strings.Join(parts, " "))
 }
 
+func platformSiteUsageCostDiagnosticFromError(err error) platformSiteUsageCostDiagnostic {
+	diagnostic := platformSiteUsageCostDiagnostic{
+		reason: model.PlatformSiteUsageCostFallbackHTTPFailed,
+	}
+	if err == nil {
+		return diagnostic
+	}
+	diagnostic.statusCode, _ = platformSiteHTTPStatusCode(err)
+	diagnostic.errorCode = platformSiteErrorCodeOf(err)
+	switch {
+	case platformSiteSessionLimit(err), errors.Is(err, ErrPlatformSiteAuth), errors.Is(err, ErrPlatformSiteCredentials), diagnostic.statusCode == http.StatusUnauthorized:
+		diagnostic.reason = model.PlatformSiteUsageCostFallbackAuthenticationFailed
+	case errors.Is(err, ErrPlatformSitePermission), diagnostic.statusCode == http.StatusForbidden:
+		diagnostic.reason = model.PlatformSiteUsageCostFallbackPermissionDenied
+	case errors.Is(err, errPlatformSiteUsageCostInvalidRecord), errors.Is(err, ErrPlatformSiteResponse):
+		diagnostic.reason = model.PlatformSiteUsageCostFallbackInvalidRecord
+	}
+	return diagnostic
+}
+
+func setPlatformSiteUsageCostFallbackDiagnostic(other *model.LogOther, diagnostic platformSiteUsageCostDiagnostic) {
+	if other == nil || diagnostic.reason == "" {
+		return
+	}
+	other.SetAdmin(model.PlatformSiteUsageCostFallbackReasonKey, diagnostic.reason)
+	if diagnostic.statusCode > 0 {
+		other.SetAdmin(model.PlatformSiteUsageCostFallbackStatusKey, diagnostic.statusCode)
+	} else {
+		other.DeleteAdmin(model.PlatformSiteUsageCostFallbackStatusKey)
+	}
+	if diagnostic.errorCode != "" {
+		other.SetAdmin(model.PlatformSiteUsageCostFallbackCodeKey, diagnostic.errorCode)
+	} else {
+		other.DeleteAdmin(model.PlatformSiteUsageCostFallbackCodeKey)
+	}
+}
+
+func clearPlatformSiteUsageCostFallbackDiagnostic(other *model.LogOther) {
+	if other == nil {
+		return
+	}
+	other.DeleteAdmin(model.PlatformSiteUsageCostFallbackReasonKey)
+	other.DeleteAdmin(model.PlatformSiteUsageCostFallbackStatusKey)
+	other.DeleteAdmin(model.PlatformSiteUsageCostFallbackCodeKey)
+}
+
 func parsePlatformSiteUsageCostRecord(value any, platform string) (platformSiteUsageCostRecord, bool) {
 	object, ok := value.(map[string]any)
 	if !ok {
@@ -1036,13 +1151,11 @@ func parsePlatformSiteUsageCostRecord(value any, platform string) (platformSiteU
 	if err != nil {
 		return platformSiteUsageCostRecord{}, false
 	}
-	requestID := firstMapString(
-		object,
-		"upstream_request_id",
-		"upstreamRequestId",
-		"request_id",
-		"requestId",
-	)
+	requestIDKeys := []string{"upstream_request_id", "upstreamRequestId", "request_id", "requestId"}
+	if platform == model.PlatformSub2API {
+		requestIDKeys = []string{"request_id", "requestId", "upstream_request_id", "upstreamRequestId"}
+	}
+	requestID := firstMapString(object, requestIDKeys...)
 	if cost < 0 || (requestID == "" && (modelName == "" || createdAt.IsZero())) {
 		return platformSiteUsageCostRecord{}, false
 	}
@@ -1222,6 +1335,14 @@ func matchPlatformSiteUsageCostRecords(
 	logs []model.Log,
 	records []platformSiteUsageCostRecord,
 ) map[string]platformSiteUsageCostRecord {
+	return matchPlatformSiteUsageCostRecordsForPlatform("", logs, records)
+}
+
+func matchPlatformSiteUsageCostRecordsForPlatform(
+	platform string,
+	logs []model.Log,
+	records []platformSiteUsageCostRecord,
+) map[string]platformSiteUsageCostRecord {
 	matched := make(map[string]platformSiteUsageCostRecord)
 	usedLogs := make(map[int]bool)
 	usedRecords := make(map[int]bool)
@@ -1246,7 +1367,9 @@ func matchPlatformSiteUsageCostRecords(
 		}
 		candidates := make([]int, 0, 1)
 		for logIndex := range logs {
-			if logs[logIndex].RequestId != "" && logs[logIndex].UpstreamRequestId == record.requestID {
+			if logs[logIndex].RequestId != "" &&
+				platformSiteUsageCostLogHasPreciseRequestID(platform, logs[logIndex]) &&
+				logs[logIndex].UpstreamRequestId == record.requestID {
 				candidates = append(candidates, logIndex)
 			}
 		}
@@ -1279,6 +1402,7 @@ func matchPlatformSiteUsageCostRecords(
 				log.RequestId == "" ||
 				!platformSiteUsageCostModelsMatch(logModels[logIndex], record) ||
 				(record.requestID != "" &&
+					platformSiteUsageCostLogHasPreciseRequestID(platform, log) &&
 					log.UpstreamRequestId != "" &&
 					log.UpstreamRequestId != record.requestID) {
 				continue
@@ -1321,42 +1445,100 @@ func matchPlatformSiteUsageCostRecords(
 	return matched
 }
 
+func platformSiteUsageCostLogHasPreciseRequestID(platform string, log model.Log) bool {
+	if log.UpstreamRequestId == "" {
+		return false
+	}
+	if platform == model.PlatformSub2API {
+		return strings.HasPrefix(strings.ToLower(log.UpstreamRequestId), "client:")
+	}
+	return true
+}
+
 func matchPlatformSiteUsageCostRequest(
 	request PlatformSiteUsageCostRequest,
 	records []platformSiteUsageCostRecord,
 ) *platformSiteUsageCostRecord {
+	record, _ := matchPlatformSiteUsageCostRequestWithDiagnostic(request, records)
+	return record
+}
+
+func matchPlatformSiteUsageCostRequestWithDiagnostic(
+	request PlatformSiteUsageCostRequest,
+	records []platformSiteUsageCostRecord,
+) (*platformSiteUsageCostRecord, platformSiteUsageCostDiagnostic) {
 	if request.RequestID == "" {
-		return nil
+		return nil, platformSiteUsageCostDiagnostic{
+			reason: model.PlatformSiteUsageCostFallbackRequestIDNoMatch,
+		}
 	}
-	if request.UpstreamRequestID != "" {
+	exactRequestID := request.PlatformSiteRequestID
+	if exactRequestID == "" {
+		exactRequestID = request.UpstreamRequestID
+	}
+	if exactRequestID != "" {
 		var matched *platformSiteUsageCostRecord
 		for i := range records {
-			if records[i].requestID != request.UpstreamRequestID {
+			if records[i].requestID != exactRequestID {
 				continue
 			}
 			if matched != nil {
-				return nil
+				return nil, platformSiteUsageCostDiagnostic{
+					reason: model.PlatformSiteUsageCostFallbackAmbiguousMatch,
+				}
 			}
 			matched = &records[i]
 		}
 		if matched != nil {
-			return matched
+			return matched, platformSiteUsageCostDiagnostic{}
+		}
+		return nil, platformSiteUsageCostDiagnostic{
+			reason: model.PlatformSiteUsageCostFallbackRequestIDNoMatch,
 		}
 	}
 
-	log := model.Log{
-		RequestId:         request.RequestID,
-		ChannelId:         request.ChannelID,
-		UpstreamRequestId: request.UpstreamRequestID,
-		ModelName:         request.ModelName,
-		CreatedAt:         request.CreatedAt.Unix(),
+	logModels := firstNonEmptyStrings(request.ModelName)
+	if len(logModels) == 0 || request.CreatedAt.IsZero() {
+		return nil, platformSiteUsageCostDiagnostic{
+			reason: model.PlatformSiteUsageCostFallbackModelTimeNoMatch,
+		}
 	}
-	matched := matchPlatformSiteUsageCostRecords([]model.Log{log}, records)
-	record, ok := matched[request.RequestID]
-	if !ok {
-		return nil
+	var matched *platformSiteUsageCostRecord
+	minDistance := time.Duration(math.MaxInt64)
+	ambiguous := false
+	for i := range records {
+		record := records[i]
+		if record.createdAt.IsZero() || !platformSiteUsageCostModelsMatch(logModels, record) {
+			continue
+		}
+		distance := record.createdAt.Sub(request.CreatedAt)
+		if distance < -platformSiteUsageCostMatchWindow || distance > platformSiteUsageCostMatchWindow {
+			continue
+		}
+		if distance < 0 {
+			distance = -distance
+		}
+		if distance < minDistance {
+			minDistance = distance
+			matched = &records[i]
+			ambiguous = false
+			continue
+		}
+		if distance == minDistance {
+			ambiguous = true
+		}
 	}
-	return &record
+	if matched == nil {
+		return nil, platformSiteUsageCostDiagnostic{
+			reason: model.PlatformSiteUsageCostFallbackModelTimeNoMatch,
+		}
+	}
+	if ambiguous {
+		return nil, platformSiteUsageCostDiagnostic{
+			reason: model.PlatformSiteUsageCostFallbackAmbiguousMatch,
+		}
+	}
+	return matched, platformSiteUsageCostDiagnostic{}
 }
 
 func platformSiteUsageCostLogModels(log model.Log) []string {

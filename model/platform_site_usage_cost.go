@@ -13,6 +13,20 @@ const (
 	PlatformSiteUsageCostSourceUpstream  = "upstream"
 	PlatformSiteUsageCostSourceEstimated = "estimated"
 
+	PlatformSiteUsageCostFallbackReasonKey = "upstream_cost_fallback_reason"
+	PlatformSiteUsageCostFallbackStatusKey = "upstream_cost_fallback_status"
+	PlatformSiteUsageCostFallbackCodeKey   = "upstream_cost_fallback_code"
+
+	PlatformSiteUsageCostFallbackRequestError         = "request_error"
+	PlatformSiteUsageCostFallbackAuthenticationFailed = "authentication_failed"
+	PlatformSiteUsageCostFallbackPermissionDenied     = "permission_denied"
+	PlatformSiteUsageCostFallbackHTTPFailed           = "http_request_failed"
+	PlatformSiteUsageCostFallbackEmptyResult          = "empty_result"
+	PlatformSiteUsageCostFallbackRequestIDNoMatch     = "request_id_no_match"
+	PlatformSiteUsageCostFallbackModelTimeNoMatch     = "model_or_time_no_match"
+	PlatformSiteUsageCostFallbackAmbiguousMatch       = "ambiguous_match"
+	PlatformSiteUsageCostFallbackInvalidRecord        = "invalid_cost_record"
+
 	PlatformSiteUsageCostWindowComplete = "complete"
 	PlatformSiteUsageCostWindowRetry    = "retry"
 )
@@ -157,6 +171,11 @@ func AttachPlatformSiteUsageCosts(logs []*Log) error {
 		}
 		adminInfo["upstream_cost"] = costValue
 		adminInfo["upstream_cost_source"] = sourceValue
+		if cost.Source == PlatformSiteUsageCostSourceUpstream {
+			delete(adminInfo, PlatformSiteUsageCostFallbackReasonKey)
+			delete(adminInfo, PlatformSiteUsageCostFallbackStatusKey)
+			delete(adminInfo, PlatformSiteUsageCostFallbackCodeKey)
+		}
 		adminInfoJSON, err := common.Marshal(adminInfo)
 		if err != nil {
 			return err

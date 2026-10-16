@@ -8,7 +8,9 @@ import (
 	"strings"
 
 	"github.com/c1cadaBob/NexusTok/common"
+	"github.com/c1cadaBob/NexusTok/constant"
 	"github.com/c1cadaBob/NexusTok/logger"
+	"github.com/c1cadaBob/NexusTok/model"
 
 	"github.com/gin-gonic/gin"
 )
@@ -25,11 +27,55 @@ func CloseResponseBodyGracefully(httpResponse *http.Response) {
 
 const upstreamRequestIDSourceContextKey = "nexustok.upstream_request_id_source"
 
+// PreparePlatformSiteRelayRequest 为当前选中的平台站点准备请求级关联标识。
+func PreparePlatformSiteRelayRequest(c *gin.Context, platform string) {
+	if c == nil {
+		return
+	}
+	if platform != model.PlatformSub2API && platform != model.PlatformNewAPI {
+		platform = ""
+	}
+	common.SetContextKey(c, constant.ContextKeyPlatformSitePlatform, platform)
+	if platform != model.PlatformSub2API {
+		common.SetContextKey(c, constant.ContextKeyPlatformSiteClientRequestID, "")
+		return
+	}
+	requestID := common.GetContextKeyString(c, constant.ContextKeyPlatformSiteClientRequestID)
+	clientRequestID, valid := strings.CutPrefix(requestID, "client:")
+	if !valid || clientRequestID == "" {
+		requestID = "client:" + common.NewRequestId()
+	}
+	common.SetContextKey(c, constant.ContextKeyPlatformSiteClientRequestID, requestID)
+}
+
+// ApplyPlatformSiteRelayRequestID 仅将 Sub2API 的关联标识写入对应上游请求。
+func ApplyPlatformSiteRelayRequestID(c *gin.Context, headers http.Header) {
+	if c == nil || headers == nil ||
+		common.GetContextKeyString(c, constant.ContextKeyPlatformSitePlatform) != model.PlatformSub2API {
+		return
+	}
+	requestID := common.GetContextKeyString(c, constant.ContextKeyPlatformSiteClientRequestID)
+	clientRequestID, found := strings.CutPrefix(requestID, "client:")
+	if found && clientRequestID != "" {
+		headers.Set("X-Client-Request-ID", clientRequestID)
+	}
+}
+
 // CaptureUpstreamRequestID captures the upstream request ID while preferring
 // the NexusTok-compatible header over standard request ID headers.
 func CaptureUpstreamRequestID(c *gin.Context, headers http.Header) {
 	if c == nil || headers == nil {
 		return
+	}
+	if common.GetContextKeyString(c, constant.ContextKeyPlatformSitePlatform) == model.PlatformSub2API &&
+		common.GetContextKeyString(c, constant.ContextKeyPlatformSiteClientRequestID) == "" {
+		clientRequestID := upstreamHeaderValue(headers, "X-Client-Request-ID")
+		if clientRequestID != "" {
+			if !strings.HasPrefix(strings.ToLower(clientRequestID), "client:") {
+				clientRequestID = "client:" + clientRequestID
+			}
+			common.SetContextKey(c, constant.ContextKeyPlatformSiteClientRequestID, clientRequestID)
+		}
 	}
 	if requestID := upstreamHeaderValue(headers, common.RequestIdKey); requestID != "" {
 		c.Set(common.UpstreamRequestIdKey, requestID)
@@ -69,7 +115,8 @@ func ShouldCopyUpstreamHeader(c *gin.Context, k string, v []string) bool {
 	}
 	if strings.EqualFold(k, common.RequestIdKey) ||
 		strings.EqualFold(k, "X-Request-ID") ||
-		strings.EqualFold(k, "X-Request-Id") {
+		strings.EqualFold(k, "X-Request-Id") ||
+		strings.EqualFold(k, "X-Client-Request-ID") {
 		if c != nil && len(v) > 0 {
 			CaptureUpstreamRequestID(c, http.Header{k: v})
 		}

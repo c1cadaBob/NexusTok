@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/c1cadaBob/NexusTok/common"
 	"github.com/c1cadaBob/NexusTok/constant"
 	"github.com/c1cadaBob/NexusTok/i18n"
 	"github.com/c1cadaBob/NexusTok/model"
@@ -106,6 +108,61 @@ func TestSharedEndpointRebindsToSelectedLegacyProvider(t *testing.T) {
 	assert.Equal(t, "vertex-shared", c.GetString("expected_task_plugin_key"))
 	assert.Equal(t, "vertex-shared", c.GetString("task_plugin_key"))
 	assert.True(t, channelMatchesExpectedTaskPlugin(c, geminiChannel, "vertex-shared"), "a retry may select another declared provider")
+}
+
+func TestSetupContextForSelectedChannelScopesPlatformSiteRequestID(t *testing.T) {
+	tests := []struct {
+		name     string
+		channel  model.Channel
+		platform string
+		wantID   bool
+	}{
+		{
+			name: "Sub2API platform site",
+			channel: model.Channel{
+				Id:                 1,
+				Type:               constant.ChannelTypeSub2API,
+				UpstreamKind:       model.UpstreamKindPlatformSite,
+				SelectedRoutingKey: &model.RoutingKeySelection{Secret: "test-key"},
+			},
+			platform: model.PlatformSub2API,
+			wantID:   true,
+		},
+		{
+			name: "NewAPI platform site",
+			channel: model.Channel{
+				Id:                 2,
+				Type:               constant.ChannelTypeNewAPI,
+				UpstreamKind:       model.UpstreamKindPlatformSite,
+				SelectedRoutingKey: &model.RoutingKeySelection{Secret: "test-key"},
+			},
+			platform: model.PlatformNewAPI,
+		},
+		{
+			name: "regular Sub2API channel",
+			channel: model.Channel{
+				Id:           3,
+				Type:         constant.ChannelTypeSub2API,
+				Key:          "test-key",
+				UpstreamKind: model.UpstreamKindKeyChannel,
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			require.Nil(t, SetupContextForSelectedChannel(ctx, &test.channel, "test-model"))
+			assert.Equal(t, test.platform, common.GetContextKeyString(ctx, constant.ContextKeyPlatformSitePlatform))
+			requestID := common.GetContextKeyString(ctx, constant.ContextKeyPlatformSiteClientRequestID)
+			if test.wantID {
+				assert.True(t, strings.HasPrefix(requestID, "client:"))
+			} else {
+				assert.Empty(t, requestID)
+			}
+		})
+	}
 }
 
 func distributorTaskPluginSource(key string, channelType int) string {
