@@ -74,19 +74,20 @@ const (
 )
 
 type PlatformSiteSession struct {
-	BaseURL           string
-	ModelBaseURL      string
-	ManagementBaseURL string
-	Platform          string
-	LastRequestURL    string
-	Client            *http.Client
-	Headers           http.Header
-	CredentialUpdate  *model.PlatformSiteCredential
-	PasswordSession   bool
-	TemporaryToken    string
-	TemporaryRefresh  string
-	TemporarySession  string
-	TemporaryCookie   string
+	BaseURL            string
+	ModelBaseURL       string
+	ManagementBaseURL  string
+	Platform           string
+	LastRequestURL     string
+	Client             *http.Client
+	Headers            http.Header
+	CredentialUpdate   *model.PlatformSiteCredential
+	PasswordSession    bool
+	TemporaryToken     string
+	TemporaryRefresh   string
+	TemporarySession   string
+	TemporaryCookie    string
+	TemporaryExpiresAt int64
 }
 
 type PlatformSiteAdapter interface {
@@ -1795,11 +1796,17 @@ func persistPlatformSiteCredential(account *model.PlatformSiteAccount, credentia
 	if err != nil {
 		return err
 	}
-	return model.DB.Model(account).Updates(map[string]any{
+	if err := model.DB.Model(account).Updates(map[string]any{
 		"credential_ciphertext":  ciphertext,
 		"credential_key_version": "v1",
 		"credential_fingerprint": credential.Fingerprint(),
-	}).Error
+	}).Error; err != nil {
+		return err
+	}
+	account.CredentialCiphertext = ciphertext
+	account.CredentialKeyVersion = "v1"
+	account.CredentialFingerprint = credential.Fingerprint()
+	return nil
 }
 
 func safeUpstreamError(err error) string {

@@ -97,7 +97,8 @@ Redis 也不参与该聚合；普通用户、普通 API Token 和非管理员上
 **变更后**：平台站点请求在统一结算日志路径中即时处理一次成本。成功响应若已由平台
 类型解析阶段确认 `actual_cost` 或 `quota`，直接保存上游成本；否则只调用一次对应的
 Sub2API 优先访问当前登录用户的普通使用日志接口 `/api/v1/usage`，仅在路由返回
-`404/405` 时回退 `/api/v1/admin/usage`；NewAPI 访问 `/api/log/`，并按
+`404/405` 时回退 `/api/v1/admin/usage`；NewAPI 普通账号访问 `/api/log/self`，仅
+`404/405` 时回退 `/api/log/`，并按
 `upstream_request_id`、`upstreamRequestId`、`request_id`、`requestId` 的兼容优先级进行匹配。
 没有可靠请求 ID 时，按同渠道、模型和三秒内唯一的最近时间匹配。Sub2API 的美元
 `actual_cost` 使用 `common.QuotaPerUnit` 转换，
@@ -121,6 +122,11 @@ NewAPI 的 `quota` 使用本项目额度单位。
 **变更后**：普通 Sub2API 账号优先调用 `/api/v1/usage`，只有 `404/405` 路由缺失时才
 回退管理员接口；`403` 不触发回退。模型和时间匹配窗口扩大为三秒，并保持多候选时拒绝
 自动匹配。查询失败日志只记录脱敏诊断，不记录响应正文、凭据或会话信息。
+
+NewAPI 与 Sub2API 成本查询复用按渠道隔离的内存会话并串行访问，密码会话材料不写回凭据；
+已知 Token 过期或认证失效时才重新认证，`429 AUTH_SESSION_ISSUANCE_LIMIT` 使用失败冷却，
+避免登录风暴。响应头捕获保留 `X-Oneapi-Request-Id` 优先级，并兼容标准
+`X-Request-ID`/`X-Request-Id`，以便 usage 记录优先按精确上游请求 ID匹配。
 
 ## 6. 任务计费
 

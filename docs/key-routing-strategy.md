@@ -1,7 +1,7 @@
 # 密钥调度策略与日志可观测性
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-13
+> 事实基线日期：2026-10-16
 > 主要代码来源：`model/routing_key.go`、`model/upstream_routing.go`、`middleware/distributor.go`、`service/channel_select.go`、`controller/channel-test.go`、`model/channel_cache.go`
 > 关联架构文档：[`docs/architecture/relay-routing-and-conversion.md`](architecture/relay-routing-and-conversion.md)、[`docs/architecture/provider-capability-matrix.md`](architecture/provider-capability-matrix.md)、[`docs/architecture/implementation-deviations.md`](architecture/implementation-deviations.md)、[`平台站点资源获取比较`](platform-site-resource-acquisition-comparison.md)
 
@@ -844,7 +844,8 @@ Origin、Capture ID 校验的失败消息。失败不调用完成接口、不创
 - 每条 Sub2API/NewAPI 平台站点请求只处理一次成本。成功响应若带有平台确认的成本
   直接使用；否则 Sub2API 优先查询普通用户接口 `/api/v1/usage` 并解析
   `actual_cost`，仅在路由返回 `404/405` 时兼容回退 `/api/v1/admin/usage`，NewAPI
-  查询 `/api/log/` 并解析 `quota`。错误请求不查询上游，成本固定为 `0 estimated`；
+  普通账号优先查询 `/api/log/self`，仅在路由返回 `404/405` 时回退 `/api/log/` 并解析
+  `quota`。错误请求不查询上游，成本固定为 `0 estimated`；
   权限不足不伪装成路由缺失；
 - 上游请求 ID按 `upstream_request_id`、`upstreamRequestId`、`request_id`、
   `requestId` 兼容解析，并优先精确匹配。缺少可靠 ID时，使用相同渠道、模型和三秒
@@ -857,11 +858,16 @@ Origin、Capture ID 校验的失败消息。失败不调用完成接口、不创
   ClickHouse 和 Redis 不参与成本持久化，成本来源文字不在前端显示，仅用绿色/黄色
   背景区分上游和估算。该规则不改变密钥候选过滤、权重、优先级或恢复测试节奏。
 
-### 14.19 2026-10-16 Sub2API 普通用户成本接口与时间匹配修正
+### 14.19 2026-10-16 平台站点真实上游成本同步修正
 
-**变更前**：普通 `user` 平台账号的成本查询固定访问管理员用量接口，`403` 后全部进入
-本地估算；两秒匹配窗口还可能漏掉比请求时间晚约两秒的真实上游记录。
+**变更前**：普通 `user` 平台账号的 NewAPI 成本查询固定访问管理员日志，`403` 后进入
+本地估算；每条成本查询重新签发密码会话，容易触发会话签发限制；Sub2API/NewAPI 的
+标准 `X-Request-ID` 没有进入本地上游请求 ID，真实 usage 记录只能依赖时间窗口匹配。
 
-**变更后**：Sub2API 优先访问普通用户 `/api/v1/usage`，仅 `404/405` 路由缺失时回退
-`/api/v1/admin/usage`，权限不足不触发回退；模型和时间唯一匹配窗口扩大为三秒，多候选
-仍拒绝自动匹配。该修正不改变密钥候选过滤、权重、优先级或恢复测试节奏。
+**变更后**：Sub2API 优先访问普通用户 `/api/v1/usage`，NewAPI 普通账号优先访问
+`/api/log/self`；两者只有真实 HTTP `404/405` 路由缺失时才回退管理员接口，`401`、`403`、
+`429` 和权限错误不回退。成本查询会话按渠道在进程内缓存并串行保护，认证失效才重认证，
+`AUTH_SESSION_ISSUANCE_LIMIT` 进入失败冷却；密码临时 Token、Cookie、Session ID 不写回
+凭据。响应头保持 `X-Oneapi-Request-Id` 优先并兼容标准 `X-Request-ID`/`X-Request-Id`，
+匹配窗口为三秒，多候选仍拒绝自动匹配。该修正不改变密钥候选过滤、权重、优先级或恢复
+测试节奏。

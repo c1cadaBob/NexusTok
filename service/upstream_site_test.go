@@ -160,6 +160,249 @@ func TestPlatformSiteUsageCostWindowAndUnitConversion(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestCaptureUpstreamRequestIDPrefersCustomHeaderAndSupportsStandardHeader(t *testing.T) {
+	newContext := func() *gin.Context {
+		context, _ := gin.CreateTestContext(httptest.NewRecorder())
+		return context
+	}
+
+	context := newContext()
+	CaptureUpstreamRequestID(context, http.Header{
+		common.RequestIdKey: []string{"custom-request"},
+		"X-Request-ID":      []string{"standard-request"},
+	})
+	assert.Equal(t, "custom-request", context.GetString(common.UpstreamRequestIdKey))
+
+	context = newContext()
+	CaptureUpstreamRequestID(context, http.Header{"X-Request-Id": []string{"standard-request"}})
+	assert.Equal(t, "standard-request", context.GetString(common.UpstreamRequestIdKey))
+	matched := matchPlatformSiteUsageCostRecords(
+		[]model.Log{{RequestId: "local-request", UpstreamRequestId: context.GetString(common.UpstreamRequestIdKey)}},
+		[]platformSiteUsageCostRecord{{requestID: "standard-request", cost: 321}},
+	)
+	assert.Equal(t, int64(321), matched["local-request"].cost)
+
+	context = newContext()
+	assert.False(t, ShouldCopyUpstreamHeader(context, "X-Request-ID", []string{"standard-request"}))
+	assert.Equal(t, "standard-request", context.GetString(common.UpstreamRequestIdKey))
+	assert.False(t, ShouldCopyUpstreamHeader(context, common.RequestIdKey, []string{"custom-request"}))
+	assert.Equal(t, "custom-request", context.GetString(common.UpstreamRequestIdKey))
+}
+
+func TestFetchNewAPIUsageCostsUsesSelfAndOnlyFallsBackForMissingRoute(t *testing.T) {
+	tests := []struct {
+		name             string
+		selfStatus       int
+		wantFallback     bool
+		wantError        bool
+		wantRequestID    string
+		wantRequestedURL []string
+	}{
+		{
+			name:             "self",
+			selfStatus:       http.StatusOK,
+			wantRequestID:    "newapi-self-request",
+			wantRequestedURL: []string{"/api/log/self"},
+		},
+		{
+			name:             "forbidden does not fallback",
+			selfStatus:       http.StatusForbidden,
+			wantError:        true,
+			wantRequestedURL: []string{"/api/log/self"},
+		},
+		{
+			name:             "not found falls back",
+			selfStatus:       http.StatusNotFound,
+			wantFallback:     true,
+			wantRequestID:    "newapi-admin-request",
+			wantRequestedURL: []string{"/api/log/self", "/api/log/"},
+		},
+		{
+			name:             "method not allowed falls back",
+			selfStatus:       http.StatusMethodNotAllowed,
+			wantFallback:     true,
+			wantRequestID:    "newapi-admin-request",
+			wantRequestedURL: []string{"/api/log/self", "/api/log/"},
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			requestedPaths := make([]string, 0, 2)
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				requestedPaths = append(requestedPaths, request.URL.Path)
+				writer.Header().Set("Content-Type", "application/json")
+				switch request.URL.Path {
+				case "/api/log/self":
+					if testCase.selfStatus != http.StatusOK {
+						http.Error(writer, `{"message":"forbidden"}`, testCase.selfStatus)
+						return
+					}
+					_, _ = writer.Write([]byte(`{"code":0,"data":{"items":[{"request_id":"newapi-self-request","model_name":"gpt-test","created_at":"2026-10-16T10:00:01Z","quota":321}],"pages":1}}`))
+				case "/api/log/":
+					if !testCase.wantFallback {
+						http.NotFound(writer, request)
+						return
+					}
+					_, _ = writer.Write([]byte(`{"code":0,"data":{"items":[{"request_id":"newapi-admin-request","model_name":"gpt-test","created_at":"2026-10-16T10:00:01Z","quota":654}],"pages":1}}`))
+				default:
+					http.NotFound(writer, request)
+				}
+			}))
+			t.Cleanup(server.Close)
+
+			session, err := newPlatformSiteSession(server.URL, nil)
+			require.NoError(t, err)
+			session.Platform = model.PlatformNewAPI
+			records, err := fetchNewAPIUsageCostsOnce(
+				context.Background(),
+				session,
+				time.Date(2026, time.October, 16, 10, 0, 1, 0, time.UTC),
+				"newapi-upstream-request",
+				"gpt-test",
+			)
+			if testCase.wantError {
+				require.Error(t, err)
+				assert.ErrorIs(t, err, ErrPlatformSitePermission)
+			} else {
+				require.NoError(t, err)
+				require.Len(t, records, 1)
+				assert.Equal(t, testCase.wantRequestID, records[0].requestID)
+			}
+			assert.Equal(t, testCase.wantRequestedURL, requestedPaths)
+		})
+	}
+}
+
+func TestPlatformSiteUsageCostPasswordSessionReuseExpiryAndSessionLimitCooldown(t *testing.T) {
+	oldDB := model.DB
+	oldMainType := common.MainDatabaseType()
+	oldLogType := common.LogDatabaseType()
+	oldCryptoSecret := common.CryptoSecret
+	common.CryptoSecret = "platform-site-usage-session-test-secret"
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.PlatformSiteAccount{}))
+	model.DB = db
+	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+
+	channelID := 9911
+	setting := "{}"
+	serverLoginRequests := 0
+	usageRequests := 0
+	sessionLimit := false
+	unauthorizedOnce := false
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/user/password/config":
+			http.NotFound(writer, request)
+		case "/api/user/login":
+			serverLoginRequests++
+			if sessionLimit {
+				http.Error(writer, `{"code":"AUTH_SESSION_ISSUANCE_LIMIT","message":"session issuance limit"}`, http.StatusTooManyRequests)
+				return
+			}
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"token":"temporary-login-token","expires_in":3600}}`))
+		case "/api/user/self":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"id":"17","username":"cost-user"}}`))
+		case "/api/log/self":
+			usageRequests++
+			if unauthorizedOnce {
+				unauthorizedOnce = false
+				http.Error(writer, `{"message":"expired"}`, http.StatusUnauthorized)
+				return
+			}
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"items":[{"request_id":"newapi-cost-request","model_name":"gpt-test","created_at":"2026-10-16T10:00:01Z","quota":321}],"pages":1}}`))
+		case "/api/user/auth/logout":
+			_, _ = writer.Write([]byte(`{"success":true}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(func() {
+		clearPlatformSiteUsageCostSessionCache(channelID)
+		server.Close()
+		model.DB = oldDB
+		common.CryptoSecret = oldCryptoSecret
+		common.SetDatabaseTypes(oldMainType, oldLogType)
+		if sqlDB, closeErr := db.DB(); closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	require.NoError(t, db.Create(&model.Channel{
+		Id:      channelID,
+		Name:    "platform-site-usage-session-test",
+		Setting: &setting,
+	}).Error)
+	ciphertext, err := model.EncryptPlatformSiteCredential(model.PlatformSiteCredential{
+		AuthType: model.UpstreamAuthPassword,
+		Username: "cost-user",
+		Password: "cost-password",
+	})
+	require.NoError(t, err)
+	account := &model.PlatformSiteAccount{
+		ChannelID:            channelID,
+		Platform:             model.PlatformNewAPI,
+		BaseURL:              server.URL,
+		AuthType:             model.UpstreamAuthPassword,
+		CredentialCiphertext: ciphertext,
+		CredentialKeyVersion: "v1",
+	}
+	require.NoError(t, db.Create(account).Error)
+	createdAt := time.Date(2026, time.October, 16, 10, 0, 1, 0, time.UTC)
+
+	records, err := fetchPlatformSiteUsageCostRecordsOnce(
+		context.Background(), account, createdAt, "newapi-upstream-request", "gpt-test",
+	)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	_, err = fetchPlatformSiteUsageCostRecordsOnce(
+		context.Background(), account, createdAt, "newapi-upstream-request", "gpt-test",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, 1, serverLoginRequests)
+	assert.Equal(t, 2, usageRequests)
+
+	platformSiteUsageCostSessionCache.Lock()
+	entry := platformSiteUsageCostSessionCache.entries[channelID]
+	platformSiteUsageCostSessionCache.Unlock()
+	require.NotNil(t, entry)
+	entry.mu.Lock()
+	entry.expiresAt = time.Now().Add(-time.Second)
+	entry.mu.Unlock()
+	_, err = fetchPlatformSiteUsageCostRecordsOnce(
+		context.Background(), account, createdAt, "newapi-upstream-request", "gpt-test",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, 2, serverLoginRequests)
+
+	unauthorizedOnce = true
+	_, err = fetchPlatformSiteUsageCostRecordsOnce(
+		context.Background(), account, createdAt, "newapi-upstream-request", "gpt-test",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, 3, serverLoginRequests)
+	assert.Equal(t, 5, usageRequests)
+
+	clearPlatformSiteUsageCostSessionCache(channelID)
+	sessionLimit = true
+	serverLoginRequests = 0
+	_, err = fetchPlatformSiteUsageCostRecordsOnce(
+		context.Background(), account, createdAt, "newapi-upstream-request", "gpt-test",
+	)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPlatformSiteSessionLimit)
+	_, err = fetchPlatformSiteUsageCostRecordsOnce(
+		context.Background(), account, createdAt, "newapi-upstream-request", "gpt-test",
+	)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPlatformSiteSessionLimit)
+	assert.Equal(t, 1, serverLoginRequests)
+}
+
 func TestPlatformSiteUsageCostRequestUsesExactIDOnceAndKeepsErrorAtZero(t *testing.T) {
 	oldDB := model.DB
 	oldCryptoSecret := common.CryptoSecret

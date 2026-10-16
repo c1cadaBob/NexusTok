@@ -533,6 +533,21 @@ NewAPI `GET /api/log/`，只读取当前请求附近的第一页结果。
 `upstream_cost_source`；普通用户和令牌日志接口在格式化阶段移除整个 `admin_info`。
 前端只用绿色背景表示上游成本、黄色背景表示估算成本，不显示来源文字。
 
+### 9.11.2 2026-10-16 NewAPI 请求关联与成本会话复用
+
+**变更前**：NewAPI 成本查询固定访问管理员日志 `GET /api/log/`，普通账号会因权限不足
+失败；每条请求都重新执行密码登录并在查询后注销，容易触发上游
+`AUTH_SESSION_ISSUANCE_LIMIT`。Relay 只捕获 `X-Oneapi-Request-Id`，Sub2API 的标准
+`X-Request-ID` 无法与本地 `upstream_request_id` 精确关联。
+
+**变更后**：NewAPI 普通账号优先读取 `GET /api/log/self`，只有真实 HTTP `404/405` 路由
+缺失才回退 `GET /api/log/`；`401`、`403`、`429`、权限错误和会话限制不触发管理员回退。
+响应请求 ID 保持 `X-Oneapi-Request-Id` 优先，并兼容标准 `X-Request-ID`/`X-Request-Id`。
+成本查询会话按渠道在进程内缓存并串行保护，默认有效期有限且不超过已知 Token 过期时间；
+认证失效才重新认证，`AUTH_SESSION_ISSUANCE_LIMIT` 进入短暂失败冷却，不重复登录。密码
+登录产生的临时 Token、Cookie 和 Session ID 只保存在内存，不写回密码凭据。诊断区分认证、
+权限、路由、空结果、解析失败和无匹配，日志不记录敏感材料；查询失败仍安全回退本地估算。
+
 ### 9.5 2026-09-30 系统维护任务与缓存边界
 
 **变更前**：维护页直连 GitHub，未有更新/回滚任务，旧版回滚会消耗 `.backup`；Docker

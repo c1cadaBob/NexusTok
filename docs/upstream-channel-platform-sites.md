@@ -1349,7 +1349,8 @@ Capture Session 加密凭据、一次性 claim、最近成功快照或浏览器 
 
 - Sub2API：优先 `GET /api/v1/usage`，只有路由返回 `404/405` 时回退
   `GET /api/v1/admin/usage`，只读取当前请求附近的第一页；
-- NewAPI：`GET /api/log/`，只读取当前请求附近的第一页。
+- NewAPI：普通账号优先 `GET /api/log/self`，只有 HTTP `404/405` 路由缺失时回退
+  `GET /api/log/`，只读取当前请求附近的第一页。
 
 请求 ID按 `upstream_request_id`、`upstreamRequestId`、`request_id`、`requestId` 顺序
 解析。有可靠请求 ID时优先精确匹配；没有 ID时按同一渠道、模型和最近时间做唯一匹配，
@@ -1375,3 +1376,17 @@ DSN 或完整 Key。
 `model`、日期和分页参数读取当前用户自己的 `actual_cost`；只有普通接口返回 `404/405`
 路由缺失时才回退 `GET /api/v1/admin/usage`。`403` 权限不足不触发管理员回退，失败日志
 仅保留脱敏诊断信息。
+
+### 10.7.2 2026-10-16 NewAPI 成本接口、请求 ID 与会话复用
+
+**变更前**：NewAPI 普通账号使用管理员日志 `GET /api/log/`，成本查询每次重新签发密码
+会话并在查询后注销；上游标准 `X-Request-ID` 也没有写入本地
+`upstream_request_id`，导致真实成本无法精确匹配。
+
+**变更后**：普通账号优先读取 `GET /api/log/self`，只有 HTTP `404/405` 才回退管理员
+`GET /api/log/`；`401`、`403`、`429`、权限错误和 `AUTH_SESSION_ISSUANCE_LIMIT` 不回退。
+成本查询按渠道隔离复用内存会话并串行保护，已知 Token 到期或认证失效才重新登录，429
+进入短暂失败冷却；临时 Token、Cookie、Session ID 不写回密码凭据。响应头沿用
+`X-Oneapi-Request-Id` 优先，并兼容 `X-Request-ID`/`X-Request-Id`，Sub2API/NewAPI
+usage 记录优先按精确请求 ID匹配。失败日志只记录脱敏阶段、状态码、错误码和匹配结果，
+真实失败仍安全回退本地估算；历史黄色记录不会自动回填。

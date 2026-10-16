@@ -2156,6 +2156,7 @@ func setTemporaryPasswordSessionMaterials(
 	session.TemporaryToken = strings.TrimSpace(credential.AccessToken)
 	session.TemporaryRefresh = strings.TrimSpace(credential.RefreshToken)
 	session.TemporarySession = strings.TrimSpace(credential.SessionID)
+	session.TemporaryExpiresAt = credential.TokenExpiresAt
 	session.TemporaryCookie = mergePlatformSiteCookieHeaders(
 		credential.Cookie,
 		platformSiteJarCookieHeader(session),
@@ -2210,6 +2211,7 @@ func clearPlatformSiteTemporarySession(session *PlatformSiteSession) {
 	session.TemporaryRefresh = ""
 	session.TemporarySession = ""
 	session.TemporaryCookie = ""
+	session.TemporaryExpiresAt = 0
 }
 
 func clearPlatformSitePasswordSession(session *PlatformSiteSession) {

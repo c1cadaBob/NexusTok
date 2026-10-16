@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/c1cadaBob/NexusTok/common"
@@ -21,15 +22,18 @@ import (
 )
 
 const (
-	platformSiteUsageCostWindowSeconds      = int64(5 * 60)
-	platformSiteUsageCostRetrySeconds       = int64(5 * 60)
-	platformSiteUsageCostMaxRetries         = 3
-	platformSiteUsageCostPageSize           = 100
-	platformSiteUsageCostMaxPages           = 1000
-	platformSiteUsageCostBatchWindows       = 24
-	platformSiteUsageCostLookupTimeout      = 8 * time.Second
-	platformSiteUsageCostMatchWindowSeconds = int64(3)
-	platformSiteUsageCostMatchWindow        = 3 * time.Second
+	platformSiteUsageCostWindowSeconds          = int64(5 * 60)
+	platformSiteUsageCostRetrySeconds           = int64(5 * 60)
+	platformSiteUsageCostMaxRetries             = 3
+	platformSiteUsageCostPageSize               = 100
+	platformSiteUsageCostMaxPages               = 1000
+	platformSiteUsageCostBatchWindows           = 24
+	platformSiteUsageCostLookupTimeout          = 8 * time.Second
+	platformSiteUsageCostMatchWindowSeconds     = int64(3)
+	platformSiteUsageCostMatchWindow            = 3 * time.Second
+	platformSiteUsageCostSessionTTL             = 10 * time.Minute
+	platformSiteUsageCostSessionExpirySkew      = 30 * time.Second
+	platformSiteUsageCostSessionFailureCooldown = time.Minute
 )
 
 type platformSiteUsageCostRecord struct {
@@ -69,6 +73,29 @@ type platformSiteUsageCostState struct {
 type platformSiteCarriedCost struct {
 	Platform string
 	Cost     int64
+}
+
+type platformSiteUsageCostSessionCacheEntry struct {
+	mu                    sync.Mutex
+	session               *PlatformSiteSession
+	adapter               PlatformSiteAdapter
+	credentialFingerprint string
+	expiresAt             time.Time
+	authFailure           error
+	authFailureUntil      time.Time
+}
+
+type platformSiteUsageCostSessionLease struct {
+	entry   *platformSiteUsageCostSessionCacheEntry
+	session *PlatformSiteSession
+	adapter PlatformSiteAdapter
+}
+
+var platformSiteUsageCostSessionCache = struct {
+	sync.Mutex
+	entries map[int]*platformSiteUsageCostSessionCacheEntry
+}{
+	entries: make(map[int]*platformSiteUsageCostSessionCacheEntry),
 }
 
 // SetPlatformSiteResponseCost allows a platform-specific response parser to
@@ -178,13 +205,13 @@ func ResolvePlatformSiteUsageCost(ctx *gin.Context, request PlatformSiteUsageCos
 		cancel()
 		if lookupErr == nil {
 			record = matchPlatformSiteUsageCostRequest(request, records)
+			if len(records) == 0 {
+				logPlatformSiteUsageCostDiagnostic(request.ChannelID, account.Platform, "empty_result", nil)
+			} else if record == nil {
+				logPlatformSiteUsageCostDiagnostic(request.ChannelID, account.Platform, "no_match", nil)
+			}
 		} else {
-			common.SysError(fmt.Sprintf(
-				"平台站点请求成本查询失败: channel_id=%d platform=%s reason=%s",
-				request.ChannelID,
-				account.Platform,
-				SafePlatformSiteError(lookupErr),
-			))
+			logPlatformSiteUsageCostDiagnostic(request.ChannelID, account.Platform, "query_failed", lookupErr)
 		}
 	}
 
@@ -444,65 +471,229 @@ func fetchPlatformSiteUsageCostRecords(
 	start int64,
 	end int64,
 ) ([]platformSiteUsageCostRecord, error) {
-	session, adapter, err := authenticatePlatformSiteUsageCostAccount(ctx, account)
-	if err != nil {
-		return nil, err
+	for attempt := 0; attempt < 2; attempt++ {
+		lease, err := acquirePlatformSiteUsageCostSession(ctx, account)
+		if err != nil {
+			return nil, err
+		}
+		var records []platformSiteUsageCostRecord
+		switch account.Platform {
+		case model.PlatformSub2API:
+			records, err = fetchSub2APIUsageCosts(ctx, lease.session, start, end)
+		case model.PlatformNewAPI:
+			records, err = fetchNewAPIUsageCosts(ctx, lease.session, start, end)
+		default:
+			err = ErrUnsupportedPlatformSite
+		}
+		if err != nil && attempt == 0 && platformSiteUsageCostSessionInvalid(err) {
+			lease.invalidate()
+			lease.release()
+			continue
+		}
+		lease.release()
+		return records, err
 	}
-	defer cleanupPlatformSiteUsageCostSession(adapter, session)
-
-	switch account.Platform {
-	case model.PlatformSub2API:
-		return fetchSub2APIUsageCosts(ctx, session, start, end)
-	case model.PlatformNewAPI:
-		return fetchNewAPIUsageCosts(ctx, session, start, end)
-	default:
-		return nil, ErrUnsupportedPlatformSite
-	}
+	return nil, ErrPlatformSiteAuth
 }
 
-func authenticatePlatformSiteUsageCostAccount(
+func acquirePlatformSiteUsageCostSession(
 	ctx context.Context,
 	account *model.PlatformSiteAccount,
-) (*PlatformSiteSession, PlatformSiteAdapter, error) {
+) (*platformSiteUsageCostSessionLease, error) {
 	if account == nil {
-		return nil, nil, ErrPlatformSiteCredential
+		return nil, ErrPlatformSiteCredential
 	}
 	credential, err := model.DecryptPlatformSiteCredential(account.CredentialCiphertext)
 	if err != nil {
-		return nil, nil, ErrPlatformSiteCredential
+		return nil, ErrPlatformSiteCredential
 	}
 	authType := strings.ToLower(strings.TrimSpace(account.AuthType))
 	if !model.IsPlatformSiteAuthType(authType) {
 		authType = model.InferPlatformSiteAuthType(credential)
 	}
 	if !model.IsPlatformSiteAuthType(authType) {
-		return nil, nil, ErrPlatformSiteAuth
+		return nil, ErrPlatformSiteAuth
 	}
 	credential.AuthType = authType
+	fingerprint := strings.Join([]string{
+		strings.ToLower(strings.TrimSpace(account.Platform)),
+		normalizePlatformSiteURLForCache(account.BaseURL),
+		credential.Fingerprint(),
+	}, "\x00")
+
+	platformSiteUsageCostSessionCache.Lock()
+	entry := platformSiteUsageCostSessionCache.entries[account.ChannelID]
+	if entry == nil {
+		entry = &platformSiteUsageCostSessionCacheEntry{}
+		platformSiteUsageCostSessionCache.entries[account.ChannelID] = entry
+	}
+	platformSiteUsageCostSessionCache.Unlock()
+
+	entry.mu.Lock()
+	now := time.Now()
+	if entry.authFailure != nil &&
+		entry.credentialFingerprint == fingerprint &&
+		now.Before(entry.authFailureUntil) {
+		authFailure := entry.authFailure
+		entry.mu.Unlock()
+		return nil, authFailure
+	}
+	if entry.authFailure != nil {
+		entry.authFailure = nil
+		entry.authFailureUntil = time.Time{}
+	}
+	if entry.session != nil && entry.adapter != nil &&
+		entry.credentialFingerprint == fingerprint && now.Before(entry.expiresAt) {
+		return &platformSiteUsageCostSessionLease{
+			entry:   entry,
+			session: entry.session,
+			adapter: entry.adapter,
+		}, nil
+	}
+	if entry.session != nil && entry.adapter != nil {
+		cleanupPlatformSiteUsageCostSession(entry.adapter, entry.session)
+		entry.session = nil
+		entry.adapter = nil
+		entry.credentialFingerprint = ""
+		entry.expiresAt = time.Time{}
+	}
+
 	client, err := platformSiteHTTPClientForChannel(account.ChannelID)
 	if err != nil {
-		return nil, nil, err
+		entry.mu.Unlock()
+		return nil, err
 	}
 	adapter, err := adapterForPlatform(account.Platform, client)
 	if err != nil {
-		return nil, nil, err
+		entry.mu.Unlock()
+		return nil, err
 	}
 	session, authErr := adapter.Authenticate(ctx, account.BaseURL, credential)
 	if session == nil {
+		entry.mu.Unlock()
 		if authErr != nil {
-			return nil, nil, authErr
+			return nil, authErr
 		}
-		return nil, nil, ErrPlatformSiteAuth
+		return nil, ErrPlatformSiteAuth
 	}
 	if authErr != nil {
-		return nil, nil, authErr
+		cleanupPlatformSiteUsageCostSession(adapter, session)
+		if platformSiteSessionLimit(authErr) {
+			entry.credentialFingerprint = fingerprint
+			entry.authFailure = authErr
+			entry.authFailureUntil = time.Now().Add(platformSiteUsageCostSessionFailureCooldown)
+		}
+		entry.mu.Unlock()
+		return nil, authErr
 	}
 	if session.CredentialUpdate != nil {
 		if err := persistPlatformSiteCredential(account, *session.CredentialUpdate); err != nil {
-			return nil, nil, err
+			cleanupPlatformSiteUsageCostSession(adapter, session)
+			entry.mu.Unlock()
+			return nil, err
+		}
+		fingerprint = strings.Join([]string{
+			strings.ToLower(strings.TrimSpace(account.Platform)),
+			normalizePlatformSiteURLForCache(account.BaseURL),
+			account.CredentialFingerprint,
+		}, "\x00")
+	}
+	entry.session = session
+	entry.adapter = adapter
+	entry.credentialFingerprint = fingerprint
+	entry.expiresAt = platformSiteUsageCostSessionExpiresAt(session, credential)
+	entry.authFailure = nil
+	entry.authFailureUntil = time.Time{}
+	return &platformSiteUsageCostSessionLease{
+		entry:   entry,
+		session: session,
+		adapter: adapter,
+	}, nil
+}
+
+func (lease *platformSiteUsageCostSessionLease) release() {
+	if lease == nil || lease.entry == nil {
+		return
+	}
+	lease.entry.mu.Unlock()
+	lease.entry = nil
+}
+
+func (lease *platformSiteUsageCostSessionLease) invalidate() {
+	if lease == nil || lease.entry == nil || lease.entry.session != lease.session {
+		return
+	}
+	cleanupPlatformSiteUsageCostSession(lease.entry.adapter, lease.entry.session)
+	lease.entry.session = nil
+	lease.entry.adapter = nil
+	lease.entry.credentialFingerprint = ""
+	lease.entry.expiresAt = time.Time{}
+	lease.entry.authFailure = nil
+	lease.entry.authFailureUntil = time.Time{}
+}
+
+func platformSiteUsageCostSessionInvalid(err error) bool {
+	if err == nil || platformSiteSessionLimit(err) {
+		return false
+	}
+	if errors.Is(err, ErrPlatformSiteCredentials) {
+		return true
+	}
+	status, ok := platformSiteHTTPStatusCode(err)
+	return ok && status == http.StatusUnauthorized
+}
+
+func platformSiteUsageCostSessionExpiresAt(
+	session *PlatformSiteSession,
+	credential model.PlatformSiteCredential,
+) time.Time {
+	now := time.Now()
+	expiresAt := now.Add(platformSiteUsageCostSessionTTL)
+	tokenExpiresAt := credential.TokenExpiresAt
+	if session != nil && session.TemporaryExpiresAt > 0 {
+		tokenExpiresAt = session.TemporaryExpiresAt
+	}
+	if session != nil && session.CredentialUpdate != nil &&
+		session.CredentialUpdate.TokenExpiresAt > 0 {
+		tokenExpiresAt = session.CredentialUpdate.TokenExpiresAt
+	}
+	if tokenExpiresAt > 0 {
+		tokenExpiry := time.Unix(tokenExpiresAt, 0)
+		if tokenExpiry.Before(expiresAt) {
+			expiresAt = tokenExpiry.Add(-platformSiteUsageCostSessionExpirySkew)
 		}
 	}
-	return session, adapter, nil
+	return expiresAt
+}
+
+func normalizePlatformSiteURLForCache(baseURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil {
+		return strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return strings.TrimRight(parsed.String(), "/")
+}
+
+func clearPlatformSiteUsageCostSessionCache(channelID int) {
+	platformSiteUsageCostSessionCache.Lock()
+	entry := platformSiteUsageCostSessionCache.entries[channelID]
+	delete(platformSiteUsageCostSessionCache.entries, channelID)
+	platformSiteUsageCostSessionCache.Unlock()
+	if entry == nil {
+		return
+	}
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	cleanupPlatformSiteUsageCostSession(entry.adapter, entry.session)
+	entry.session = nil
+	entry.adapter = nil
+	entry.credentialFingerprint = ""
+	entry.expiresAt = time.Time{}
+	entry.authFailure = nil
+	entry.authFailureUntil = time.Time{}
 }
 
 func cleanupPlatformSiteUsageCostSession(adapter PlatformSiteAdapter, session *PlatformSiteSession) {
@@ -521,20 +712,29 @@ func fetchPlatformSiteUsageCostRecordsOnce(
 	upstreamRequestID string,
 	modelName string,
 ) ([]platformSiteUsageCostRecord, error) {
-	session, adapter, err := authenticatePlatformSiteUsageCostAccount(ctx, account)
-	if err != nil {
-		return nil, err
+	for attempt := 0; attempt < 2; attempt++ {
+		lease, err := acquirePlatformSiteUsageCostSession(ctx, account)
+		if err != nil {
+			return nil, err
+		}
+		var records []platformSiteUsageCostRecord
+		switch account.Platform {
+		case model.PlatformSub2API:
+			records, err = fetchSub2APIUsageCostsOnce(ctx, lease.session, createdAt, upstreamRequestID, modelName)
+		case model.PlatformNewAPI:
+			records, err = fetchNewAPIUsageCostsOnce(ctx, lease.session, createdAt, upstreamRequestID, modelName)
+		default:
+			err = ErrUnsupportedPlatformSite
+		}
+		if err != nil && attempt == 0 && platformSiteUsageCostSessionInvalid(err) {
+			lease.invalidate()
+			lease.release()
+			continue
+		}
+		lease.release()
+		return records, err
 	}
-	defer cleanupPlatformSiteUsageCostSession(adapter, session)
-
-	switch account.Platform {
-	case model.PlatformSub2API:
-		return fetchSub2APIUsageCostsOnce(ctx, session, createdAt, upstreamRequestID, modelName)
-	case model.PlatformNewAPI:
-		return fetchNewAPIUsageCostsOnce(ctx, session, createdAt, upstreamRequestID, modelName)
-	default:
-		return nil, ErrUnsupportedPlatformSite
-	}
+	return nil, ErrPlatformSiteAuth
 }
 
 func fetchSub2APIUsageCosts(
@@ -655,6 +855,7 @@ func fetchNewAPIUsageCosts(
 	end int64,
 ) ([]platformSiteUsageCostRecord, error) {
 	result := make([]platformSiteUsageCostRecord, 0)
+	usagePath := "/api/log/self"
 	for page := 1; page <= platformSiteUsageCostMaxPages; page++ {
 		query := url.Values{
 			"type":            {strconv.Itoa(model.LogTypeConsume)},
@@ -663,9 +864,13 @@ func fetchNewAPIUsageCosts(
 			"p":               {strconv.Itoa(page)},
 			"page_size":       {strconv.Itoa(platformSiteUsageCostPageSize)},
 		}
-		payload, err := platformSiteRequest(ctx, session, http.MethodGet, "/api/log/", query, nil)
+		payload, err := platformSiteRequest(ctx, session, http.MethodGet, usagePath, query, nil)
+		if err != nil && usagePath == "/api/log/self" && platformSiteUsageCostRouteFallback(err) {
+			usagePath = "/api/log/"
+			payload, err = platformSiteRequest(ctx, session, http.MethodGet, usagePath, query, nil)
+		}
 		if err != nil {
-			return nil, err
+			return nil, wrapPlatformSiteStage("NewAPI 成本查询 "+usagePath, err)
 		}
 		items, pages, err := usageCostPage(payload)
 		if err != nil {
@@ -712,9 +917,14 @@ func fetchNewAPIUsageCostsOnce(
 	if modelName != "" {
 		query.Set("model_name", modelName)
 	}
-	payload, err := platformSiteRequest(ctx, session, http.MethodGet, "/api/log/", query, nil)
+	usagePath := "/api/log/self"
+	payload, err := platformSiteRequest(ctx, session, http.MethodGet, usagePath, query, nil)
+	if err != nil && platformSiteUsageCostRouteFallback(err) {
+		usagePath = "/api/log/"
+		payload, err = platformSiteRequest(ctx, session, http.MethodGet, usagePath, query, nil)
+	}
 	if err != nil {
-		return nil, err
+		return nil, wrapPlatformSiteStage("NewAPI 成本查询 "+usagePath, err)
 	}
 	items, _, err := usageCostPage(payload)
 	if err != nil {
@@ -757,6 +967,32 @@ func usageCostPage(payload any) ([]any, int, error) {
 		}
 	}
 	return items, pages, nil
+}
+
+func platformSiteUsageCostRouteFallback(err error) bool {
+	statusCode, ok := platformSiteHTTPStatusCode(err)
+	return ok && (statusCode == http.StatusNotFound || statusCode == http.StatusMethodNotAllowed)
+}
+
+func logPlatformSiteUsageCostDiagnostic(channelID int, platform string, stage string, err error) {
+	statusCode, hasStatus := platformSiteHTTPStatusCode(err)
+	errorCode := platformSiteErrorCodeOf(err)
+	parts := []string{
+		"平台站点成本查询诊断",
+		fmt.Sprintf("channel_id=%d", channelID),
+		"platform=" + strings.TrimSpace(platform),
+		"stage=" + stage,
+	}
+	if hasStatus {
+		parts = append(parts, fmt.Sprintf("status=%d", statusCode))
+	}
+	if errorCode != "" {
+		parts = append(parts, "code="+errorCode)
+	}
+	if err != nil && stage == "query_failed" {
+		parts = append(parts, "reason="+SafePlatformSiteError(err))
+	}
+	common.SysError(strings.Join(parts, " "))
 }
 
 func parsePlatformSiteUsageCostRecord(value any, platform string) (platformSiteUsageCostRecord, bool) {
