@@ -36,29 +36,16 @@ func PreparePlatformSiteRelayRequest(c *gin.Context, platform string) {
 		platform = ""
 	}
 	common.SetContextKey(c, constant.ContextKeyPlatformSitePlatform, platform)
-	if platform != model.PlatformSub2API {
-		common.SetContextKey(c, constant.ContextKeyPlatformSiteClientRequestID, "")
-		return
-	}
-	requestID := common.GetContextKeyString(c, constant.ContextKeyPlatformSiteClientRequestID)
-	clientRequestID, valid := strings.CutPrefix(requestID, "client:")
-	if !valid || clientRequestID == "" {
-		requestID = "client:" + common.NewRequestId()
-	}
-	common.SetContextKey(c, constant.ContextKeyPlatformSiteClientRequestID, requestID)
+	common.SetContextKey(c, constant.ContextKeyPlatformSiteClientRequestID, "")
 }
 
-// ApplyPlatformSiteRelayRequestID 仅将 Sub2API 的关联标识写入对应上游请求。
+// ApplyPlatformSiteRelayRequestID 阻止转发 Sub2API 创建 usage 请求 ID 时会忽略的调用方 ID。
 func ApplyPlatformSiteRelayRequestID(c *gin.Context, headers http.Header) {
 	if c == nil || headers == nil ||
 		common.GetContextKeyString(c, constant.ContextKeyPlatformSitePlatform) != model.PlatformSub2API {
 		return
 	}
-	requestID := common.GetContextKeyString(c, constant.ContextKeyPlatformSiteClientRequestID)
-	clientRequestID, found := strings.CutPrefix(requestID, "client:")
-	if found && clientRequestID != "" {
-		headers.Set("X-Client-Request-ID", clientRequestID)
-	}
+	headers.Del("X-Client-Request-ID")
 }
 
 // CaptureUpstreamRequestID captures the upstream request ID while preferring
@@ -67,14 +54,17 @@ func CaptureUpstreamRequestID(c *gin.Context, headers http.Header) {
 	if c == nil || headers == nil {
 		return
 	}
-	if common.GetContextKeyString(c, constant.ContextKeyPlatformSitePlatform) == model.PlatformSub2API &&
-		common.GetContextKeyString(c, constant.ContextKeyPlatformSiteClientRequestID) == "" {
+	if common.GetContextKeyString(c, constant.ContextKeyPlatformSitePlatform) == model.PlatformSub2API {
 		clientRequestID := upstreamHeaderValue(headers, "X-Client-Request-ID")
 		if clientRequestID != "" {
-			if !strings.HasPrefix(strings.ToLower(clientRequestID), "client:") {
+			if strings.HasPrefix(strings.ToLower(clientRequestID), "client:") {
+				clientRequestID = "client:" + clientRequestID[len("client:"):]
+			} else {
 				clientRequestID = "client:" + clientRequestID
 			}
-			common.SetContextKey(c, constant.ContextKeyPlatformSiteClientRequestID, clientRequestID)
+			if clientRequestID != "client:" {
+				common.SetContextKey(c, constant.ContextKeyPlatformSiteClientRequestID, clientRequestID)
+			}
 		}
 	}
 	if requestID := upstreamHeaderValue(headers, common.RequestIdKey); requestID != "" {

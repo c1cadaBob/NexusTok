@@ -5362,6 +5362,7 @@
     "Stripe/Creem requires creating products on the third-party platform and entering the ID": "Stripe/Creem 需在第三方平台创建商品并填入 ID",
     "Structured output": "结构化输出",
     "Sub2API": "Sub2API",
+    "Sub2API did not return a request ID; no unique model/time match was found": "Sub2API 未返回请求 ID，且模型与时间无法唯一匹配",
     "Submit": "提交",
     "Submit directly": "直接提交",
     "Submit request": "提交请求",

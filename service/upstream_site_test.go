@@ -171,20 +171,18 @@ func TestCaptureUpstreamRequestIDPrefersCustomHeaderAndSupportsStandardHeader(t 
 
 	context := newContext()
 	PreparePlatformSiteRelayRequest(context, model.PlatformSub2API)
-	requestID := common.GetContextKeyString(context, constant.ContextKeyPlatformSiteClientRequestID)
-	clientRequestID, found := strings.CutPrefix(requestID, "client:")
-	require.True(t, found)
-	require.NotEmpty(t, clientRequestID)
+	assert.Empty(t, common.GetContextKeyString(context, constant.ContextKeyPlatformSiteClientRequestID))
 	requestHeaders := make(http.Header)
+	requestHeaders.Set("X-Client-Request-ID", "caller-provided-id")
 	ApplyPlatformSiteRelayRequestID(context, requestHeaders)
-	assert.Equal(t, clientRequestID, requestHeaders.Get("X-Client-Request-ID"))
+	assert.Empty(t, requestHeaders.Get("X-Client-Request-ID"))
 	CaptureUpstreamRequestID(context, http.Header{
 		common.RequestIdKey:   []string{"custom-request"},
 		"X-Request-ID":        []string{"standard-request"},
-		"X-Client-Request-ID": []string{"response-echo-must-not-replace-request-id"},
+		"X-Client-Request-ID": []string{"sub2api-generated-id"},
 	})
 	assert.Equal(t, "custom-request", context.GetString(common.UpstreamRequestIdKey))
-	assert.Equal(t, requestID, common.GetContextKeyString(context, constant.ContextKeyPlatformSiteClientRequestID))
+	assert.Equal(t, "client:sub2api-generated-id", common.GetContextKeyString(context, constant.ContextKeyPlatformSiteClientRequestID))
 
 	context = newContext()
 	PreparePlatformSiteRelayRequest(context, model.PlatformNewAPI)
@@ -547,6 +545,8 @@ func TestPlatformSiteUsageCostRequestUsesExactIDOnceAndKeepsErrorAtZero(t *testi
 	})
 
 	usageRequests := 0
+	usageRequestID := "client:sub2api-generated-request"
+	usageModel := "gpt-test"
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
@@ -558,7 +558,12 @@ func TestPlatformSiteUsageCostRequestUsesExactIDOnceAndKeepsErrorAtZero(t *testi
 			usageRequests++
 			assert.Empty(t, request.URL.Query().Get("request_id"))
 			assert.Equal(t, "gpt-test", request.URL.Query().Get("model"))
-			_, _ = writer.Write([]byte(`{"code":0,"data":{"items":[{"request_id":"client:sub2api-client-request","actual_cost":0.02}],"pages":1}}`))
+			responseBody := fmt.Sprintf(
+				`{"code":0,"data":{"items":[{"request_id":%q,"model":%q,"created_at":"2026-10-14T14:10:01Z","actual_cost":0.02}],"pages":1}}`,
+				usageRequestID,
+				usageModel,
+			)
+			_, _ = writer.Write([]byte(responseBody))
 		default:
 			http.NotFound(writer, request)
 		}
@@ -584,13 +589,12 @@ func TestPlatformSiteUsageCostRequestUsesExactIDOnceAndKeepsErrorAtZero(t *testi
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Set(common.RequestIdKey, "local-request")
-	common.SetContextKey(ctx, constant.ContextKeyPlatformSiteClientRequestID, "client:sub2api-client-request")
 	PreparePlatformSiteRelayRequest(ctx, model.PlatformSub2API)
 	CaptureUpstreamRequestID(ctx, http.Header{
 		common.RequestIdKey:   []string{"upstream-request"},
-		"X-Client-Request-ID": []string{"sub2api-client-request"},
+		"X-Client-Request-ID": []string{"sub2api-generated-request"},
 	})
-	assert.Equal(t, "client:sub2api-client-request", common.GetContextKeyString(ctx, constant.ContextKeyPlatformSiteClientRequestID))
+	assert.Equal(t, "client:sub2api-generated-request", common.GetContextKeyString(ctx, constant.ContextKeyPlatformSiteClientRequestID))
 	common.QuotaPerUnit = 500_000
 	other := model.NewLogOther()
 	other.SetAdmin("upstream_key_ratio", 1.5)
@@ -618,6 +622,8 @@ func TestPlatformSiteUsageCostRequestUsesExactIDOnceAndKeepsErrorAtZero(t *testi
 	require.NotNil(t, cost)
 	assert.Equal(t, int64(10_000), cost.Cost)
 	assert.Equal(t, model.PlatformSiteUsageCostSourceUpstream, cost.Source)
+	usageRequestID = "client:another-request"
+	usageModel = "different-model"
 
 	carriedContext, _ := gin.CreateTestContext(httptest.NewRecorder())
 	carriedContext.Set(common.RequestIdKey, "carried-cost-request")
@@ -654,7 +660,7 @@ func TestPlatformSiteUsageCostRequestUsesExactIDOnceAndKeepsErrorAtZero(t *testi
 	assert.Equal(t, model.PlatformSiteUsageCostSourceEstimated, estimatedCost.Source)
 	adminInfo, ok := other.Snapshot()["admin_info"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, model.PlatformSiteUsageCostFallbackModelTimeNoMatch, adminInfo[model.PlatformSiteUsageCostFallbackReasonKey])
+	assert.Equal(t, model.PlatformSiteUsageCostFallbackRequestIDUnavailable, adminInfo[model.PlatformSiteUsageCostFallbackReasonKey])
 
 	SetPlatformSiteResponseCost(estimatedContext, model.PlatformSub2API, 888)
 	err = ResolvePlatformSiteUsageCost(estimatedContext, PlatformSiteUsageCostRequest{
@@ -975,6 +981,44 @@ func TestFetchSub2APIUsageCostsPaginatesAndUsesActualCost(t *testing.T) {
 	assert.Equal(t, []string{"1", "2"}, requestedPages)
 	assert.Equal(t, int64(10_000), records[0].cost)
 	assert.Equal(t, int64(20_000), records[1].cost)
+}
+
+func TestFetchSub2APIUsageCostsOnceFindsAuthoritativeIDOnLaterPage(t *testing.T) {
+	requestedPages := make([]string, 0, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requestedPages = append(requestedPages, request.URL.Query().Get("page"))
+		writer.Header().Set("Content-Type", "application/json")
+		if request.URL.Query().Get("page") == "1" {
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"items":[{"request_id":"client:another-request","model":"gpt-test","created_at":"2026-10-13T14:10:02Z","actual_cost":0.01}],"total":2,"page":1,"page_size":1,"pages":2}}`))
+			return
+		}
+		_, _ = writer.Write([]byte(`{"code":0,"data":{"items":[{"request_id":"client:sub2api-generated-request","model":"gpt-test","created_at":"2026-10-13T14:10:01Z","actual_cost":0.02}],"total":2,"page":2,"page_size":1,"pages":2}}`))
+	}))
+	defer server.Close()
+
+	oldQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 500_000
+	t.Cleanup(func() { common.QuotaPerUnit = oldQuotaPerUnit })
+
+	session := &PlatformSiteSession{
+		BaseURL:  server.URL,
+		Client:   server.Client(),
+		Headers:  make(http.Header),
+		Platform: model.PlatformSub2API,
+	}
+	createdAt := time.Date(2026, time.October, 13, 14, 10, 1, 0, time.UTC)
+	records, err := fetchSub2APIUsageCostsOnce(
+		context.Background(),
+		session,
+		createdAt,
+		"client:sub2api-generated-request",
+		"gpt-test",
+	)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	assert.Equal(t, []string{"1", "2"}, requestedPages)
+	assert.Equal(t, "client:sub2api-generated-request", records[0].requestID)
+	assert.Equal(t, int64(10_000), records[0].cost)
 }
 
 func TestFetchSub2APIUsagePageDoesNotFallbackOnPermission(t *testing.T) {

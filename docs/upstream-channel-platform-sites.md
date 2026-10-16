@@ -1348,7 +1348,8 @@ Capture Session 加密凭据、一次性 claim、最近成功快照或浏览器 
 对应的使用日志接口：
 
 - Sub2API：优先 `GET /api/v1/usage`，只有路由返回 `404/405` 时回退
-  `GET /api/v1/admin/usage`，只读取当前请求附近的第一页；
+  `GET /api/v1/admin/usage`；普通用户接口不支持 `request_id` 过滤，请求级查询按模型和日期
+  排序分页，精确命中即停止，未命中则扫描到越过三秒时间窗、分页结束或达到上限；
 - NewAPI：普通账号优先 `GET /api/log/self`，只有 HTTP `404/405` 路由缺失时回退
   `GET /api/log/`，只读取当前请求附近的第一页。
 
@@ -1393,17 +1394,16 @@ usage 记录优先按精确请求 ID匹配。失败日志只记录脱敏阶段�
 
 ### 10.7.3 2026-10-16 Sub2API 成本关联与兜底原因展示
 
-**变更前**：Sub2API 普通 usage DTO 的 `request_id=client:<X-Client-Request-ID>` 来源于
-请求侧标识，但 Relay 未发送该请求头，只将通用响应 `X-Request-ID` 当成精确日志 ID；估算
-成本虽标黄，但没有本条请求的失败原因。
+**变更前**：Sub2API 普通 usage DTO 的 `request_id=client:<id>` 来自 Sub2API 自己生成的
+客户端请求 ID。NexusTok 错误地发送另一个客户端 ID并保留本地值，没有采用响应头返回的
+上游 ID；普通接口只读取第一页，繁忙时可能漏掉目标日志，最终持续进入估算成本。
 
-**变更后**：仅在选中平台站点 Sub2API 渠道时生成独立 ID，并在出站请求发送
-`X-Client-Request-ID`；上下文保留 `client:<id>` 供 usage 精确关联，响应回显不覆盖请求侧
-ID，且不改变 `X-Oneapi-Request-Id`/`X-Request-ID` 通用上游 ID。NewAPI 匹配忽略此客户端 ID。
-仅没有可用精确关联 ID
-时才尝试唯一模型/时间匹配；精确 ID 存在但未命中时明确显示 ID 不匹配。实时成本兜底将
-稳定原因码及可选 HTTP 状态/平台错误码写入已有日志 `other.admin_info`，普通用户/Token
-日志仍删除整个该字段；日志查询仅在内存中附加成本来源，成功上游成本不会显示旧兜底原因。
-黄色估算成本由共享组件在悬停、键盘聚焦和触屏激活时显示原因；旧估算日志无原因时显示
-历史记录兼容说明。NewAPI `429 AUTH_SESSION_ISSUANCE_LIMIT` 仍需要站点管理员清理会话，
-NexusTok 不重试登录以绕过上游限制。
+**变更后**：Sub2API 请求不发送 `X-Client-Request-ID`；Relay 采用 Sub2API 响应头返回的
+客户端 ID并规范化为 `client:<id>`，通用 `X-Oneapi-Request-Id`/`X-Request-ID` 仍独立保存。
+成本查询按模型和日期分页直到精确匹配、跨过三秒窗口或达到超时/页数上限。仅未收到上游
+客户端 ID时才尝试唯一模型/时间匹配；已收到 ID但查无匹配记录时不模糊关联，并显示明确
+原因。实时成本兜底将稳定原因码及可选 HTTP 状态/平台错误码写入已有日志
+`other.admin_info`，普通用户/Token 日志仍删除整个该字段；日志查询仅在内存中附加成本来源，
+成功上游成本不会显示旧兜底原因。黄色估算成本由共享组件在悬停、键盘聚焦和触屏激活时显示
+原因；旧估算日志无原因时显示历史记录兼容说明。NewAPI `429 AUTH_SESSION_ISSUANCE_LIMIT`
+仍需要站点管理员清理会话，NexusTok 不重试登录以绕过上游限制。

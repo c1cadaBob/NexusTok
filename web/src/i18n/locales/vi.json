@@ -5362,6 +5362,7 @@
     "Stripe/Creem requires creating products on the third-party platform and entering the ID": "Stripe/Creem yêu cầu tạo sản phẩm trên nền tảng bên thứ ba và nhập ID",
     "Structured output": "Đầu ra có cấu trúc",
     "Sub2API": "Sub2API",
+    "Sub2API did not return a request ID; no unique model/time match was found": "Sub2API không trả về ID yêu cầu và không thể đối chiếu duy nhất theo mô hình và thời gian",
     "Submit": "Gửi",
     "Submit directly": "Gửi trực tiếp",
     "Submit request": "Gửi yêu cầu",

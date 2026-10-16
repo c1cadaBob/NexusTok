@@ -236,9 +236,17 @@ func ResolvePlatformSiteUsageCost(ctx *gin.Context, request PlatformSiteUsageCos
 			record, diagnostic = matchPlatformSiteUsageCostRequestWithDiagnostic(matchRequest, records)
 			if len(records) == 0 {
 				diagnostic = platformSiteUsageCostDiagnostic{reason: model.PlatformSiteUsageCostFallbackEmptyResult}
+				if account.Platform == model.PlatformSub2API && request.PlatformSiteRequestID == "" {
+					diagnostic.reason = model.PlatformSiteUsageCostFallbackRequestIDUnavailable
+				}
 			} else if record == nil {
 				if diagnostic.reason == "" {
 					diagnostic.reason = model.PlatformSiteUsageCostFallbackModelTimeNoMatch
+				}
+				if account.Platform == model.PlatformSub2API &&
+					request.PlatformSiteRequestID == "" &&
+					diagnostic.reason == model.PlatformSiteUsageCostFallbackModelTimeNoMatch {
+					diagnostic.reason = model.PlatformSiteUsageCostFallbackRequestIDUnavailable
 				}
 			}
 			if record == nil {
@@ -868,7 +876,6 @@ func fetchSub2APIUsageCostsOnce(
 		"start_date": {createdAt.Add(-platformSiteUsageCostMatchWindow).UTC().Format("2006-01-02")},
 		"end_date":   {createdAt.Add(platformSiteUsageCostMatchWindow).UTC().Format("2006-01-02")},
 		"timezone":   {"UTC"},
-		"page":       {"1"},
 		"page_size":  {strconv.Itoa(platformSiteUsageCostPageSize)},
 		"sort_by":    {"created_at"},
 		"sort_order": {"desc"},
@@ -876,21 +883,50 @@ func fetchSub2APIUsageCostsOnce(
 	if modelName != "" {
 		query.Set("model", modelName)
 	}
-	payload, err := fetchSub2APIUsagePage(ctx, session, query, platformSiteRequestID)
-	if err != nil {
-		return nil, err
-	}
-	items, _, err := usageCostPage(payload)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]platformSiteUsageCostRecord, 0, len(items))
-	for _, item := range items {
-		if record, ok := parsePlatformSiteUsageCostRecord(item, model.PlatformSub2API); ok {
-			result = append(result, record)
+	windowStart := createdAt.Add(-platformSiteUsageCostMatchWindow)
+	windowEnd := createdAt.Add(platformSiteUsageCostMatchWindow)
+	result := make([]platformSiteUsageCostRecord, 0, platformSiteUsageCostPageSize)
+	validRecords := 0
+	itemsSeen := false
+	for page := 1; page <= platformSiteUsageCostMaxPages; page++ {
+		query.Set("page", strconv.Itoa(page))
+		payload, err := fetchSub2APIUsagePage(ctx, session, query, platformSiteRequestID)
+		if err != nil {
+			return nil, err
+		}
+		items, pages, err := usageCostPage(payload)
+		if err != nil {
+			return nil, err
+		}
+		itemsSeen = itemsSeen || len(items) > 0
+		oldestAt := time.Time{}
+		for _, item := range items {
+			if object, ok := item.(map[string]any); ok {
+				itemCreatedAt := parsePlatformSiteUsageTimestamp(firstMapValue(object, "created_at", "createdAt", "created_at_unix"))
+				if !itemCreatedAt.IsZero() && (oldestAt.IsZero() || itemCreatedAt.Before(oldestAt)) {
+					oldestAt = itemCreatedAt
+				}
+			}
+			record, ok := parsePlatformSiteUsageCostRecord(item, model.PlatformSub2API)
+			if !ok {
+				continue
+			}
+			validRecords++
+			if platformSiteRequestID != "" && record.requestID == platformSiteRequestID {
+				return []platformSiteUsageCostRecord{record}, nil
+			}
+			if !record.createdAt.Before(windowStart) && !record.createdAt.After(windowEnd) {
+				result = append(result, record)
+			}
+		}
+		if len(items) == 0 ||
+			(pages > 0 && page >= pages) ||
+			(pages == 0 && len(items) < platformSiteUsageCostPageSize) ||
+			(!oldestAt.IsZero() && oldestAt.Before(windowStart)) {
+			break
 		}
 	}
-	if len(items) > 0 && len(result) == 0 {
+	if itemsSeen && validRecords == 0 {
 		return nil, errPlatformSiteUsageCostInvalidRecord
 	}
 	return result, nil

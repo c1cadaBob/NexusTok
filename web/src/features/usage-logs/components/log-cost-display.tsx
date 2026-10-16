@@ -242,6 +242,10 @@ function getUpstreamCostFallbackReason(
       return t('No usage records were returned')
     case 'request_id_no_match':
       return t('No usage record matched the request ID')
+    case 'request_id_unavailable':
+      return t(
+        'Sub2API did not return a request ID; no unique model/time match was found'
+      )
     case 'model_or_time_no_match':
       return t('No usage record matched the model and time')
     case 'ambiguous_match':

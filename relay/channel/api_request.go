@@ -393,9 +393,12 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	}
 	service.ApplyPlatformSiteRelayRequestID(c, targetHeader)
 	targetHeader.Set("Content-Type", c.Request.Header.Get("Content-Type"))
-	targetConn, _, err := websocket.DefaultDialer.Dial(fullRequestURL, targetHeader)
+	targetConn, response, err := websocket.DefaultDialer.Dial(fullRequestURL, targetHeader)
 	if err != nil {
 		return nil, fmt.Errorf("dial failed to %s: %w", common.SanitizeURLForLog(fullRequestURL), err)
+	}
+	if response != nil {
+		service.CaptureUpstreamRequestID(c, response.Header)
 	}
 	// send request body
 	//all, err := io.ReadAll(requestBody)

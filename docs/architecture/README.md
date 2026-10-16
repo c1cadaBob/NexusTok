@@ -215,15 +215,16 @@ Preview 或 `ChannelAccount` 同步链路。
 
 ### 2026-10-16 平台站点成本关联与兜底原因
 
-**变更前**：Sub2API 使用日志 `request_id=client:<X-Client-Request-ID>` 来源于请求侧关联头，
-Relay 未发送该请求头，只依赖不同语义的通用响应 ID；黄色估算成本也没有显示具体失败原因。
+**变更前**：实现误以为 Sub2API 会采用 Relay 发送的 `X-Client-Request-ID`，但本机源码中
+Sub2API 中间件会自行生成 ID 并通过响应头返回；Relay 保留预生成 ID，导致 usage 精确匹配
+必然失败。Sub2API 普通使用日志查询也只读取第一页，繁忙时可能漏掉目标记录。
 
-**变更后**：仅选中平台站点 Sub2API 渠道时生成并发送 `X-Client-Request-ID`，在上下文
-保留 `client:<id>` 精确匹配 usage；响应回显不覆盖请求侧 ID，通用上游响应 ID仍独立保存。
-NewAPI 匹配忽略该客户端 ID。只有没有精确关联 ID时才尝试唯一模型/时间匹配。实时估算原因、HTTP 状态和安全错误码
-放入 `other.admin_info`，仅管理员可见；共享成本组件为估算值提供可聚焦/触屏 Tooltip，
-旧记录没有原因时显示历史兼容说明。NewAPI `429 AUTH_SESSION_ISSUANCE_LIMIT` 仍由上游
-管理员清理会话，NexusTok 不绕过限流。
+**变更后**：不向 Sub2API 发送伪造客户端 ID；读取响应 `X-Client-Request-ID` 作为权威值，
+规范化为 `client:<id>`，通用上游响应 ID仍独立保存。普通 usage 接口没有 request_id 过滤器，
+故按模型/日期排序分页直到精确命中、跨过三秒时间窗口或到达页数/超时上限；只有未收到
+权威 ID时才允许唯一模型/时间匹配。估算原因明确区分未返回 ID与 ID 无匹配，仍只写入
+管理员 `other.admin_info` 并由共享 Tooltip 展示。NewAPI `429 AUTH_SESSION_ISSUANCE_LIMIT`
+仍由上游管理员处理，NexusTok 不绕过限流。
 
 ## 变更记录
 

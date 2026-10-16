@@ -5362,6 +5362,7 @@
     "Stripe/Creem requires creating products on the third-party platform and entering the ID": "Stripe/Creem はサードパーティプラットフォームで商品を作成し、IDを入力する必要があります",
     "Structured output": "構造化出力",
     "Sub2API": "Sub2API",
+    "Sub2API did not return a request ID; no unique model/time match was found": "Sub2APIからリクエストIDが返されず、モデルと時刻でも一意に照合できませんでした",
     "Submit": "送信",
     "Submit directly": "直接送信",
     "Submit request": "リクエストを送信",

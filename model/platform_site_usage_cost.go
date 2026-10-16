@@ -23,6 +23,7 @@ const (
 	PlatformSiteUsageCostFallbackHTTPFailed           = "http_request_failed"
 	PlatformSiteUsageCostFallbackEmptyResult          = "empty_result"
 	PlatformSiteUsageCostFallbackRequestIDNoMatch     = "request_id_no_match"
+	PlatformSiteUsageCostFallbackRequestIDUnavailable = "request_id_unavailable"
 	PlatformSiteUsageCostFallbackModelTimeNoMatch     = "model_or_time_no_match"
 	PlatformSiteUsageCostFallbackAmbiguousMatch       = "ambiguous_match"
 	PlatformSiteUsageCostFallbackInvalidRecord        = "invalid_cost_record"

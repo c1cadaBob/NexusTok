@@ -100,10 +100,11 @@ Sub2API 优先访问当前登录用户的普通使用日志接口 `/api/v1/usage
 `404/405` 时回退 `/api/v1/admin/usage`；NewAPI 普通账号访问 `/api/log/self`，仅
 `404/405` 时回退 `/api/log/`，并按
 `upstream_request_id`、`upstreamRequestId`、`request_id`、`requestId` 的兼容优先级进行匹配。
-Sub2API 平台站点在出站请求中发送独立生成的 `X-Client-Request-ID`，并以
-`client:<id>` 精确匹配其普通使用日志 `request_id`；响应头回显只作兼容，不覆盖已发送 ID。
-NewAPI 使用标准上游请求 ID。没有可用精确关联 ID 时，按同渠道、模型和
-三秒内唯一的最近时间匹配。Sub2API 的美元
+Sub2API 平台站点不发送会被上游忽略的客户端 ID，而采用响应头返回的
+`X-Client-Request-ID` 并规范化为 `client:<id>` 精确匹配使用日志；NewAPI 使用标准上游
+请求 ID。Sub2API 普通使用日志接口不支持按请求 ID过滤，故按模型/日期分页直到精确命中、
+越过三秒时间窗或达到查询上限。只有缺少权威关联 ID时，才按同渠道、模型和三秒内唯一的
+最近时间匹配。Sub2API 的美元
 `actual_cost` 使用 `common.QuotaPerUnit` 转换，
 NewAPI 的 `quota` 使用本项目额度单位。
 
@@ -130,18 +131,19 @@ NewAPI 的 `quota` 使用本项目额度单位。
 NewAPI 与 Sub2API 成本查询复用按渠道隔离的内存会话并串行访问，密码会话材料不写回凭据；
 已知 Token 过期或认证失效时才重新认证，`429 AUTH_SESSION_ISSUANCE_LIMIT` 使用失败冷却，
 避免登录风暴。响应头捕获保留 `X-Oneapi-Request-Id` 优先级，并兼容标准
-`X-Request-ID`/`X-Request-Id`；Sub2API 出站时另发专用客户端关联 ID，NewAPI 匹配时忽略该字段。
+`X-Request-ID`/`X-Request-Id`；Sub2API 客户端关联 ID来自响应头，NewAPI 匹配不使用该字段。
 
 ### 5.2.2 2026-10-16 Sub2API 请求关联与估算原因
 
-**变更前**：Sub2API usage 的 `request_id` 使用 `client:<X-Client-Request-ID>`，Relay
-没有向上游发送该关联头，只捕获通用响应 ID；错误 ID 会阻止按模型/时间安全回退。估算成本仅有颜色，
-管理员无法从该日志看出是认证失败、无记录还是关联失败。
+**变更前**：Sub2API usage 的 `request_id` 使用上游自行生成的
+`client:<X-Client-Request-ID>`。Relay 曾发送无效的自生成请求头并保留本地值，忽略响应头中
+真正的上游 ID，导致精确匹配失败；估算成本也未明确区分缺少上游 ID与已有 ID无匹配。
 
-**变更后**：仅选中平台站点 Sub2API 渠道时生成独立请求 ID，出站请求发送
-`X-Client-Request-ID` 并在上下文保留 `client:<id>`，精确匹配 usage；响应回显不覆盖请求侧
-ID，标准上游响应 ID独立保存。NewAPI 匹配忽略平台客户端 ID。只有精确关联 ID 不可用时
-才尝试唯一模型/时间匹配。实时失败原因码及可选 HTTP
+**变更后**：Sub2API 不再发送会被上游忽略的 `X-Client-Request-ID`；从响应头读取上游
+生成的 `X-Client-Request-ID` 并规范化为 `client:<id>`，通用上游响应 ID独立保存。普通
+`/api/v1/usage` 不支持按请求 ID筛选，因此按模型和日期分页，精确命中即停止，未命中则
+继续到越过三秒时间窗或达到超时/页数上限。仅响应未提供权威 ID时才尝试唯一模型/时间匹配；
+NewAPI 仍使用其自身精确请求 ID。实时失败原因码及可选 HTTP
 状态/平台错误码保存在原始日志 `other.admin_info`，不新增日志表字段，不写请求 ID、凭据、
 Cookie、Token 或响应正文；普通用户和 Token 日志仍剥离 `admin_info`。黄色成本 Tooltip
 支持鼠标、键盘和触屏，旧记录无原因时标注为历史估算。NewAPI `429

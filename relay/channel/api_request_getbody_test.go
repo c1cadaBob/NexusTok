@@ -252,16 +252,16 @@ func TestDoTaskApiRequest_KeepsReplayableGetBody(t *testing.T) {
 	}
 }
 
-func TestDoTaskApiRequestSendsSub2APIClientRequestID(t *testing.T) {
+func TestDoTaskApiRequestUsesSub2APIResponseClientRequestID(t *testing.T) {
 	service.InitHttpClient()
 	gin.SetMode(gin.TestMode)
 
 	tests := []struct {
-		name     string
-		platform string
-		wantID   bool
+		name                  string
+		platform              string
+		wantSub2APIResponseID bool
 	}{
-		{name: "Sub2API platform site", platform: model.PlatformSub2API, wantID: true},
+		{name: "Sub2API platform site", platform: model.PlatformSub2API, wantSub2APIResponseID: true},
 		{name: "NewAPI platform site", platform: model.PlatformNewAPI},
 		{name: "regular channel"},
 	}
@@ -289,13 +289,11 @@ func TestDoTaskApiRequestSendsSub2APIClientRequestID(t *testing.T) {
 			require.NoError(t, err)
 			defer response.Body.Close()
 
-			if test.wantID {
-				require.NotEmpty(t, storedID)
-				clientID, found := strings.CutPrefix(storedID, "client:")
-				require.True(t, found)
-				assert.Equal(t, clientID, <-receivedID)
-				assert.Equal(t, storedID, common.GetContextKeyString(ctx, constant.ContextKeyPlatformSiteClientRequestID))
-				assert.Equal(t, clientID, adaptor.capturedReq.Header.Get("X-Client-Request-ID"))
+			if test.wantSub2APIResponseID {
+				assert.Empty(t, storedID)
+				assert.Empty(t, <-receivedID)
+				assert.Equal(t, "client:response-echo", common.GetContextKeyString(ctx, constant.ContextKeyPlatformSiteClientRequestID))
+				assert.Empty(t, adaptor.capturedReq.Header.Get("X-Client-Request-ID"))
 				return
 			}
 

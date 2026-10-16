@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/c1cadaBob/NexusTok/common"
@@ -110,12 +109,11 @@ func TestSharedEndpointRebindsToSelectedLegacyProvider(t *testing.T) {
 	assert.True(t, channelMatchesExpectedTaskPlugin(c, geminiChannel, "vertex-shared"), "a retry may select another declared provider")
 }
 
-func TestSetupContextForSelectedChannelScopesPlatformSiteRequestID(t *testing.T) {
+func TestSetupContextForSelectedChannelClearsPlatformSiteRequestID(t *testing.T) {
 	tests := []struct {
 		name     string
 		channel  model.Channel
 		platform string
-		wantID   bool
 	}{
 		{
 			name: "Sub2API platform site",
@@ -126,7 +124,6 @@ func TestSetupContextForSelectedChannelScopesPlatformSiteRequestID(t *testing.T)
 				SelectedRoutingKey: &model.RoutingKeySelection{Secret: "test-key"},
 			},
 			platform: model.PlatformSub2API,
-			wantID:   true,
 		},
 		{
 			name: "NewAPI platform site",
@@ -155,12 +152,7 @@ func TestSetupContextForSelectedChannelScopesPlatformSiteRequestID(t *testing.T)
 			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 			require.Nil(t, SetupContextForSelectedChannel(ctx, &test.channel, "test-model"))
 			assert.Equal(t, test.platform, common.GetContextKeyString(ctx, constant.ContextKeyPlatformSitePlatform))
-			requestID := common.GetContextKeyString(ctx, constant.ContextKeyPlatformSiteClientRequestID)
-			if test.wantID {
-				assert.True(t, strings.HasPrefix(requestID, "client:"))
-			} else {
-				assert.Empty(t, requestID)
-			}
+			assert.Empty(t, common.GetContextKeyString(ctx, constant.ContextKeyPlatformSiteClientRequestID))
 		})
 	}
 }

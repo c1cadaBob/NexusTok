@@ -51,6 +51,8 @@ describe('log cost display', () => {
       'No usage records were returned': 'No usage records were returned',
       'No usage record matched the request ID':
         'No usage record matched the request ID',
+      'Sub2API did not return a request ID; no unique model/time match was found':
+        'Sub2API did not return a request ID; no unique model/time match was found',
       'No usage record matched the model and time':
         'No usage record matched the model and time',
       'Multiple usage records matched this request':
@@ -173,6 +175,10 @@ describe('log cost display', () => {
     ['http_request_failed', 'Platform usage-log request failed'],
     ['empty_result', 'No usage records were returned'],
     ['request_id_no_match', 'No usage record matched the request ID'],
+    [
+      'request_id_unavailable',
+      'Sub2API did not return a request ID; no unique model/time match was found',
+    ],
     ['model_or_time_no_match', 'No usage record matched the model and time'],
     ['ambiguous_match', 'Multiple usage records matched this request'],
     ['invalid_cost_record', 'Usage record did not contain a valid cost'],
