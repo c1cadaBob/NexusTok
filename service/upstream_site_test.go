@@ -195,11 +195,10 @@ func TestPlatformSiteUsageCostRequestUsesExactIDOnceAndKeepsErrorAtZero(t *testi
 			http.NotFound(writer, request)
 		case "/api/v1/auth/me":
 			_, _ = writer.Write([]byte(`{"code":0,"data":{"id":17,"username":"operator"}}`))
-		case "/api/v1/admin/usage":
+		case "/api/v1/usage":
 			usageRequests++
-			if requestID := request.URL.Query().Get("request_id"); requestID != "" {
-				assert.Equal(t, "upstream-request", requestID)
-			}
+			assert.Empty(t, request.URL.Query().Get("request_id"))
+			assert.Equal(t, "gpt-test", request.URL.Query().Get("model"))
 			_, _ = writer.Write([]byte(`{"code":0,"data":{"items":[{"request_id":"upstream-request","actual_cost":0.02}],"pages":1}}`))
 		default:
 			http.NotFound(writer, request)
@@ -402,7 +401,7 @@ func TestEstimatePlatformSiteUsageCostRequiresRatioSnapshot(t *testing.T) {
 	assert.Zero(t, freeEstimate)
 }
 
-func TestPlatformSiteUsageCostMatchingRejectsTimeOffsetsOverTwoSeconds(t *testing.T) {
+func TestPlatformSiteUsageCostMatchingRejectsTimeOffsetsOverThreeSeconds(t *testing.T) {
 	matched := matchPlatformSiteUsageCostRecords(
 		[]model.Log{{
 			RequestId: "local-request",
@@ -411,7 +410,7 @@ func TestPlatformSiteUsageCostMatchingRejectsTimeOffsetsOverTwoSeconds(t *testin
 		}},
 		[]platformSiteUsageCostRecord{{
 			model:     "gpt-test",
-			createdAt: time.Unix(102, 1),
+			createdAt: time.Unix(103, 1),
 			cost:      50,
 		}},
 	)
@@ -426,7 +425,7 @@ func TestPlatformSiteUsageCostMatchingRejectsTimeOffsetsOverTwoSeconds(t *testin
 		}},
 		[]platformSiteUsageCostRecord{{
 			model:     "gpt-test",
-			createdAt: time.Unix(101, 999_999_999),
+			createdAt: time.Unix(102, 999_999_999),
 			cost:      50,
 		}},
 	)
@@ -576,6 +575,7 @@ func TestFetchSub2APIUsageCostsPaginatesAndUsesActualCost(t *testing.T) {
 	requestedPages := make([]string, 0, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		requestedPages = append(requestedPages, request.URL.Query().Get("page"))
+		assert.Equal(t, "/api/v1/usage", request.URL.Path)
 		assert.Equal(t, "UTC", request.URL.Query().Get("timezone"))
 		assert.Equal(t, "100", request.URL.Query().Get("page_size"))
 		writer.Header().Set("Content-Type", "application/json")
@@ -604,6 +604,30 @@ func TestFetchSub2APIUsageCostsPaginatesAndUsesActualCost(t *testing.T) {
 	assert.Equal(t, []string{"1", "2"}, requestedPages)
 	assert.Equal(t, int64(10_000), records[0].cost)
 	assert.Equal(t, int64(20_000), records[1].cost)
+}
+
+func TestFetchSub2APIUsagePageDoesNotFallbackOnPermission(t *testing.T) {
+	requestedPaths := make([]string, 0, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requestedPaths = append(requestedPaths, request.URL.Path)
+		if request.URL.Path == "/api/v1/usage" {
+			http.Error(writer, `{"message":"forbidden"}`, http.StatusForbidden)
+			return
+		}
+		http.NotFound(writer, request)
+	}))
+	defer server.Close()
+
+	session := &PlatformSiteSession{
+		BaseURL:  server.URL,
+		Client:   server.Client(),
+		Headers:  make(http.Header),
+		Platform: model.PlatformSub2API,
+	}
+	_, err := fetchSub2APIUsagePage(context.Background(), session, url.Values{}, "")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPlatformSitePermission)
+	assert.Equal(t, []string{"/api/v1/usage"}, requestedPaths)
 }
 
 func TestValidatePlatformSiteURLAllowsHTTPAndPrivateTargets(t *testing.T) {

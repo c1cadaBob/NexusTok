@@ -498,16 +498,27 @@ TTL 为 5 分钟，取消、过期、失败和消费后均不能继续读取。
 
 **变更后**：每条 Sub2API/NewAPI 平台站点请求在成功结算或失败记日志时只执行一次成本
 处理。成功响应如果已经由平台类型解析阶段携带并确认 `actual_cost` 或 `quota`，直接
-写入上游成本；没有携带成本时，使用同一认证会话访问一次 Sub2API
-`GET /api/v1/admin/usage` 或 NewAPI `GET /api/log/`，只读取当前请求附近的第一页结果。
+写入上游成本；没有携带成本时，使用同一认证会话访问一次 Sub2API 普通用户
+`GET /api/v1/usage`，仅在路由返回 `404/405` 时回退 `GET /api/v1/admin/usage`，或访问
+NewAPI `GET /api/log/`，只读取当前请求附近的第一页结果。
 查询失败、空结果、权限/认证失败、日志尚未生成、非法成本或匹配歧义都立即进入本地
 估算路径，不再创建延迟重试。
 
 上游请求 ID按以下顺序兼容解析：
 `upstream_request_id`、`upstreamRequestId`、`request_id`、`requestId`。有可靠 ID 时优先
-精确匹配；缺少 ID 时只按渠道、模型和最近时间唯一匹配，容差最多两秒。Sub2API 的
+精确匹配；缺少 ID 时只按渠道、模型和最近时间唯一匹配，容差最多三秒。Sub2API 的
 `actual_cost` 按 `common.QuotaPerUnit` 转换，NewAPI 的 `quota` 沿用本项目额度单位；
 所有转换拒绝负数、NaN、无穷、溢出和非法值。
+
+### 9.11.1 2026-10-16 Sub2API 普通用户成本接口兼容
+
+**变更前**：请求级 Sub2API 成本查询固定访问 `GET /api/v1/admin/usage`。平台账号身份为
+普通 `user` 时该接口返回 `403`，认证成功但成本查询失败，随后全部使用本地倍率估算。
+
+**变更后**：请求级和历史窗口兼容查询都优先访问当前登录用户可访问的
+`GET /api/v1/usage`；只有该路由返回 `404/405` 时才回退 `GET /api/v1/admin/usage`。
+`403` 权限不足不触发管理员回退，避免把权限错误掩盖为路由兼容；成本查询失败日志只记录
+脱敏后的阶段、HTTP 状态和错误码，不记录响应正文、凭据或会话信息。
 
 请求错误不访问上游费用接口，直接写入 `upstream_cost=0` 和
 `upstream_cost_source=estimated`；成功请求没有可靠密钥倍率快照时也写入

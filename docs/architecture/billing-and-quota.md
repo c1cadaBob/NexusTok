@@ -96,9 +96,11 @@ Redis 也不参与该聚合；普通用户、普通 API Token 和非管理员上
 
 **变更后**：平台站点请求在统一结算日志路径中即时处理一次成本。成功响应若已由平台
 类型解析阶段确认 `actual_cost` 或 `quota`，直接保存上游成本；否则只调用一次对应的
-管理员使用日志接口，并按 `upstream_request_id`、`upstreamRequestId`、`request_id`、
-`requestId` 的兼容优先级进行匹配。没有可靠请求 ID 时，按同渠道、模型和两秒内唯一的
-最近时间匹配。Sub2API 的美元 `actual_cost` 使用 `common.QuotaPerUnit` 转换，
+Sub2API 优先访问当前登录用户的普通使用日志接口 `/api/v1/usage`，仅在路由返回
+`404/405` 时回退 `/api/v1/admin/usage`；NewAPI 访问 `/api/log/`，并按
+`upstream_request_id`、`upstreamRequestId`、`request_id`、`requestId` 的兼容优先级进行匹配。
+没有可靠请求 ID 时，按同渠道、模型和三秒内唯一的最近时间匹配。Sub2API 的美元
+`actual_cost` 使用 `common.QuotaPerUnit` 转换，
 NewAPI 的 `quota` 使用本项目额度单位。
 
 认证/权限/网络失败、空结果、日志尚未生成、非法成本或歧义匹配不影响本地计费，直接
@@ -109,6 +111,16 @@ NewAPI 的 `quota` 使用本项目额度单位。
 成本映射继续只保存在主数据库，独立日志数据库和 ClickHouse 日志表不变，Redis 不参与
 成本持久化。管理员日志通过 `other.admin_info` 查看成本；普通用户和普通令牌日志移除
 整个 `admin_info`。前端仅通过绿色/黄色背景区分上游和估算来源，不显示来源文字。
+
+### 5.2.1 2026-10-16 Sub2API 普通用户成本接口修正
+
+**变更前**：成本查询统一调用仅管理员可访问的 `/api/v1/admin/usage`，普通 `user`
+身份返回 `403` 后，成功请求全部使用本地倍率估算；原有两秒匹配窗口还可能漏掉实际晚约
+两秒的上游使用记录。
+
+**变更后**：普通 Sub2API 账号优先调用 `/api/v1/usage`，只有 `404/405` 路由缺失时才
+回退管理员接口；`403` 不触发回退。模型和时间匹配窗口扩大为三秒，并保持多候选时拒绝
+自动匹配。查询失败日志只记录脱敏诊断，不记录响应正文、凭据或会话信息。
 
 ## 6. 任务计费
 

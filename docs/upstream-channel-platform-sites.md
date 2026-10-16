@@ -1345,14 +1345,15 @@ Capture Session 加密凭据、一次性 claim、最近成功快照或浏览器 
 **变更后**：每条平台站点请求在成功结算或失败记日志时只处理一次成本。成功响应阶段
 如果明确识别并确认了平台成本，直接使用 Sub2API 的 `actual_cost` 或 NewAPI 的
 `quota`；否则复用平台站点认证、HTTP 客户端、渠道代理和 Cleanup 流程，只访问一次
-对应的管理员接口：
+对应的使用日志接口：
 
-- Sub2API：`GET /api/v1/admin/usage`，只读取当前请求附近的第一页；
+- Sub2API：优先 `GET /api/v1/usage`，只有路由返回 `404/405` 时回退
+  `GET /api/v1/admin/usage`，只读取当前请求附近的第一页；
 - NewAPI：`GET /api/log/`，只读取当前请求附近的第一页。
 
 请求 ID按 `upstream_request_id`、`upstreamRequestId`、`request_id`、`requestId` 顺序
 解析。有可靠请求 ID时优先精确匹配；没有 ID时按同一渠道、模型和最近时间做唯一匹配，
-时间容差最多两秒。Sub2API 的美元成本乘以 `common.QuotaPerUnit`，NewAPI 的 quota
+时间容差最多三秒。Sub2API 的美元成本乘以 `common.QuotaPerUnit`，NewAPI 的 quota
 沿用本项目额度单位。查询失败、认证或权限失败、空结果、日志尚未生成、非法成本或
 歧义匹配均立即执行本地兜底，不再进行窗口重试；有密钥倍率快照时用“本地费用 ×
 倍率”，缺少可靠快照时仍写入 `0 estimated`。
@@ -1364,3 +1365,13 @@ Capture Session 加密凭据、一次性 claim、最近成功快照或浏览器 
 `other.admin_info` 获取成本，普通用户和 Token 日志继续移除该字段，前端只用绿色/
 黄色背景区分上游和估算，不显示来源文字。全过程不记录密码、Cookie、Token、Admin Key、
 DSN 或完整 Key。
+
+### 10.7.1 2026-10-16 Sub2API 普通用户成本接口兼容
+
+**变更前**：请求级 Sub2API 成本查询固定调用 `GET /api/v1/admin/usage`。当前平台账号是
+普通 `user` 身份时，认证成功但该管理员接口返回 `403`，所以成本全部显示为本地估算。
+
+**变更后**：Sub2API 请求级和窗口查询优先调用普通用户接口 `GET /api/v1/usage`，并按
+`model`、日期和分页参数读取当前用户自己的 `actual_cost`；只有普通接口返回 `404/405`
+路由缺失时才回退 `GET /api/v1/admin/usage`。`403` 权限不足不触发管理员回退，失败日志
+仅保留脱敏诊断信息。

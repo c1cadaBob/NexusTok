@@ -1,7 +1,7 @@
 # NexusTok 功能原理与实现偏差文档
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-14
+> 事实基线日期：2026-10-16
 > 主要代码来源：`main.go`、`router/`、`middleware/`、`controller/`、`service/`、`model/`、`relay/`、`pkg/`、`constant/`
 > 关联详细文档：[`docs/authentication.md`](../authentication.md)、[`docs/rate-limiting.md`](../rate-limiting.md)、[`docs/key-routing-strategy.md`](../key-routing-strategy.md)、[`docs/upstream-channel-platform-sites.md`](../upstream-channel-platform-sites.md)、[`docs/plugin-api/`](../plugin-api/)
 
@@ -203,6 +203,15 @@ Sub2API `auth_token`/`auth/me` 管理认证、`custom_endpoints` 页面声明复
 `https://tk.shour.bond` 管理地址与 `https://api-image.shour.bond` Relay 拆分、请求头
 隔离、最近成功快照或浏览器 Cleanup；仍只保存当前加密 Capture 凭据，不恢复旧版账号池、
 Preview 或 `ChannelAccount` 同步链路。
+
+### 2026-10-16 Sub2API 普通用户成本接口修正
+
+**变更前**：平台站点成本查询统一调用仅管理员可访问的 `/api/v1/admin/usage`，普通
+`user` 身份返回 `403` 后，成功请求全部进入本地估算。
+
+**变更后**：Sub2API 优先调用当前登录用户可访问的 `/api/v1/usage`，仅在路由返回
+`404/405` 时回退 `/api/v1/admin/usage`；权限不足不视为路由缺失。查询失败日志只记录
+脱敏原因，不记录响应正文、凭据或会话信息。
 
 ## 变更记录
 

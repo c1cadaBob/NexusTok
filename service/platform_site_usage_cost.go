@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"net/http"
 	"net/url"
@@ -20,13 +21,15 @@ import (
 )
 
 const (
-	platformSiteUsageCostWindowSeconds = int64(5 * 60)
-	platformSiteUsageCostRetrySeconds  = int64(5 * 60)
-	platformSiteUsageCostMaxRetries    = 3
-	platformSiteUsageCostPageSize      = 100
-	platformSiteUsageCostMaxPages      = 1000
-	platformSiteUsageCostBatchWindows  = 24
-	platformSiteUsageCostLookupTimeout = 8 * time.Second
+	platformSiteUsageCostWindowSeconds      = int64(5 * 60)
+	platformSiteUsageCostRetrySeconds       = int64(5 * 60)
+	platformSiteUsageCostMaxRetries         = 3
+	platformSiteUsageCostPageSize           = 100
+	platformSiteUsageCostMaxPages           = 1000
+	platformSiteUsageCostBatchWindows       = 24
+	platformSiteUsageCostLookupTimeout      = 8 * time.Second
+	platformSiteUsageCostMatchWindowSeconds = int64(3)
+	platformSiteUsageCostMatchWindow        = 3 * time.Second
 )
 
 type platformSiteUsageCostRecord struct {
@@ -177,9 +180,10 @@ func ResolvePlatformSiteUsageCost(ctx *gin.Context, request PlatformSiteUsageCos
 			record = matchPlatformSiteUsageCostRequest(request, records)
 		} else {
 			common.SysError(fmt.Sprintf(
-				"平台站点请求成本查询失败: channel_id=%d platform=%s",
+				"平台站点请求成本查询失败: channel_id=%d platform=%s reason=%s",
 				request.ChannelID,
 				account.Platform,
+				SafePlatformSiteError(lookupErr),
 			))
 		}
 	}
@@ -525,7 +529,7 @@ func fetchPlatformSiteUsageCostRecordsOnce(
 
 	switch account.Platform {
 	case model.PlatformSub2API:
-		return fetchSub2APIUsageCostsOnce(ctx, session, createdAt, upstreamRequestID)
+		return fetchSub2APIUsageCostsOnce(ctx, session, createdAt, upstreamRequestID, modelName)
 	case model.PlatformNewAPI:
 		return fetchNewAPIUsageCostsOnce(ctx, session, createdAt, upstreamRequestID, modelName)
 	default:
@@ -539,8 +543,8 @@ func fetchSub2APIUsageCosts(
 	start int64,
 	end int64,
 ) ([]platformSiteUsageCostRecord, error) {
-	firstDate := time.Unix(start-2, 0).UTC().Format("2006-01-02")
-	lastDate := time.Unix(end+2, 0).UTC().Format("2006-01-02")
+	firstDate := time.Unix(start-platformSiteUsageCostMatchWindowSeconds, 0).UTC().Format("2006-01-02")
+	lastDate := time.Unix(end+platformSiteUsageCostMatchWindowSeconds, 0).UTC().Format("2006-01-02")
 	result := make([]platformSiteUsageCostRecord, 0)
 	for page := 1; page <= platformSiteUsageCostMaxPages; page++ {
 		query := url.Values{
@@ -552,7 +556,7 @@ func fetchSub2APIUsageCosts(
 			"sort_by":    {"created_at"},
 			"sort_order": {"desc"},
 		}
-		payload, err := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/admin/usage", query, nil)
+		payload, err := fetchSub2APIUsagePage(ctx, session, query, "")
 		if err != nil {
 			return nil, err
 		}
@@ -572,15 +576,15 @@ func fetchSub2APIUsageCosts(
 			if !ok {
 				continue
 			}
-			if !record.createdAt.Before(time.Unix(start-2, 0).UTC()) &&
-				!record.createdAt.After(time.Unix(end+2, 0).UTC()) {
+			if !record.createdAt.Before(time.Unix(start-platformSiteUsageCostMatchWindowSeconds, 0).UTC()) &&
+				!record.createdAt.After(time.Unix(end+platformSiteUsageCostMatchWindowSeconds, 0).UTC()) {
 				result = append(result, record)
 			}
 		}
 		if len(items) == 0 ||
 			(page >= pages && pages > 0) ||
 			(pages == 0 && len(items) < platformSiteUsageCostPageSize) ||
-			(!oldestAt.IsZero() && oldestAt.Before(time.Unix(start-2, 0).UTC())) {
+			(!oldestAt.IsZero() && oldestAt.Before(time.Unix(start-platformSiteUsageCostMatchWindowSeconds, 0).UTC())) {
 			return result, nil
 		}
 	}
@@ -592,23 +596,24 @@ func fetchSub2APIUsageCostsOnce(
 	session *PlatformSiteSession,
 	createdAt time.Time,
 	upstreamRequestID string,
+	modelName string,
 ) ([]platformSiteUsageCostRecord, error) {
 	if session == nil {
 		return nil, ErrPlatformSiteSessionLimit
 	}
 	query := url.Values{
-		"start_date": {createdAt.Add(-2 * time.Second).UTC().Format("2006-01-02")},
-		"end_date":   {createdAt.Add(2 * time.Second).UTC().Format("2006-01-02")},
+		"start_date": {createdAt.Add(-platformSiteUsageCostMatchWindow).UTC().Format("2006-01-02")},
+		"end_date":   {createdAt.Add(platformSiteUsageCostMatchWindow).UTC().Format("2006-01-02")},
 		"timezone":   {"UTC"},
 		"page":       {"1"},
 		"page_size":  {strconv.Itoa(platformSiteUsageCostPageSize)},
 		"sort_by":    {"created_at"},
 		"sort_order": {"desc"},
 	}
-	if upstreamRequestID != "" {
-		query.Set("request_id", upstreamRequestID)
+	if modelName != "" {
+		query.Set("model", modelName)
 	}
-	payload, err := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/admin/usage", query, nil)
+	payload, err := fetchSub2APIUsagePage(ctx, session, query, upstreamRequestID)
 	if err != nil {
 		return nil, err
 	}
@@ -625,6 +630,24 @@ func fetchSub2APIUsageCostsOnce(
 	return result, nil
 }
 
+func fetchSub2APIUsagePage(
+	ctx context.Context,
+	session *PlatformSiteSession,
+	query url.Values,
+	upstreamRequestID string,
+) (any, error) {
+	payload, err := platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/usage", query, nil)
+	if err == nil || !platformSiteRouteMissing(err) {
+		return payload, err
+	}
+	adminQuery := make(url.Values, len(query))
+	maps.Copy(adminQuery, query)
+	if upstreamRequestID != "" {
+		adminQuery.Set("request_id", upstreamRequestID)
+	}
+	return platformSiteRequest(ctx, session, http.MethodGet, "/api/v1/admin/usage", adminQuery, nil)
+}
+
 func fetchNewAPIUsageCosts(
 	ctx context.Context,
 	session *PlatformSiteSession,
@@ -635,8 +658,8 @@ func fetchNewAPIUsageCosts(
 	for page := 1; page <= platformSiteUsageCostMaxPages; page++ {
 		query := url.Values{
 			"type":            {strconv.Itoa(model.LogTypeConsume)},
-			"start_timestamp": {strconv.FormatInt(start-2, 10)},
-			"end_timestamp":   {strconv.FormatInt(end+2, 10)},
+			"start_timestamp": {strconv.FormatInt(start-platformSiteUsageCostMatchWindowSeconds, 10)},
+			"end_timestamp":   {strconv.FormatInt(end+platformSiteUsageCostMatchWindowSeconds, 10)},
 			"p":               {strconv.Itoa(page)},
 			"page_size":       {strconv.Itoa(platformSiteUsageCostPageSize)},
 		}
@@ -650,8 +673,8 @@ func fetchNewAPIUsageCosts(
 		}
 		for _, item := range items {
 			if record, ok := parsePlatformSiteUsageCostRecord(item, model.PlatformNewAPI); ok &&
-				!record.createdAt.Before(time.Unix(start-2, 0).UTC()) &&
-				!record.createdAt.After(time.Unix(end+2, 0).UTC()) {
+				!record.createdAt.Before(time.Unix(start-platformSiteUsageCostMatchWindowSeconds, 0).UTC()) &&
+				!record.createdAt.After(time.Unix(end+platformSiteUsageCostMatchWindowSeconds, 0).UTC()) {
 				result = append(result, record)
 			}
 		}
@@ -674,8 +697,8 @@ func fetchNewAPIUsageCostsOnce(
 	if session == nil {
 		return nil, ErrPlatformSiteSessionLimit
 	}
-	start := createdAt.Add(-2 * time.Second).Unix()
-	end := createdAt.Add(2 * time.Second).Unix()
+	start := createdAt.Add(-platformSiteUsageCostMatchWindow).Unix()
+	end := createdAt.Add(platformSiteUsageCostMatchWindow).Unix()
 	query := url.Values{
 		"type":            {strconv.Itoa(model.LogTypeConsume)},
 		"start_timestamp": {strconv.FormatInt(start, 10)},
@@ -1025,7 +1048,7 @@ func matchPlatformSiteUsageCostRecords(
 				continue
 			}
 			distance := record.createdAt.Sub(time.Unix(log.CreatedAt, 0).UTC())
-			if distance < -2*time.Second || distance > 2*time.Second {
+			if distance < -platformSiteUsageCostMatchWindow || distance > platformSiteUsageCostMatchWindow {
 				continue
 			}
 			if distance < 0 {
