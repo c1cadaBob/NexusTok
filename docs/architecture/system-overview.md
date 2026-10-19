@@ -302,7 +302,8 @@ DSN、密码、Token、Cookie、API Key、Authorization 和上游 URL。定向�
 文件；PostgreSQL/Redis 未重启、容器 ID 与启动时间保持不变。部署后应用容器为 `v0.2.10`
 且健康检查通过，`/api/status` 返回 HTTP 200，`docker compose config --quiet` 通过。使用
 `v0.2.10` 镜像对相同宿主 Compose 目录执行隔离的读取、写入与同目录重命名测试通过，临时
-文件已清理；这验证了 Docker Engine 目录挂载能力，但未从管理员维护 UI 创建真实更新任务，
+文件已清理；同时验证缺失的 bind 源目录会被 Docker Engine 拒绝且不会自动创建。上述验证
+覆盖 Docker Engine 目录挂载边界，但未从管理员维护 UI 创建真实更新任务，
 因此生产 SystemTask/helper 的完整接管、更新和失败恢复链路仍待管理员验收。
 
 ### 7.3 平台站点管理入口与管理员钱包余额（2026-10-14）
