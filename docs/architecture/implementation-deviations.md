@@ -1,7 +1,7 @@
 # 实现偏差登记
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-14
+> 事实基线日期：2026-10-19
 > 主要代码来源：`router/relay-router.go`、`common/api_type.go`、`relay/relay_adaptor.go`、`relay/channel/*/adaptor.go`、`router/task-plugin-protocol-router.go`、`docs/architecture/*.md`
 > 关联详细文档：[`README.md`](./README.md)、[`relay-routing-and-conversion.md`](./relay-routing-and-conversion.md)、[`provider-capability-matrix.md`](./provider-capability-matrix.md)、[`../plugin-api/README.md`](../plugin-api/README.md)
 
@@ -64,6 +64,7 @@
 | DEV-029 | 平台站点使用日志成本 | 平台站点上游用量日志和 NexusTok 消费日志没有请求级成本映射，管理员只能看到本地费用；将成本写入日志数据库会扩大 ClickHouse/独立日志库迁移范围 | 每条平台站点请求完成时只处理一次成本；响应阶段的已确认平台成本优先，否则 Sub2API 优先读取普通用户可访问的 `/api/v1/usage`，只有 `404/405` 路由缺失才回退 `/api/v1/admin/usage`，NewAPI 普通账号优先读取 `/api/log/self`，只有 `404/405` 才回退 `/api/log/`；兼容 `X-Oneapi-Request-Id` 优先、标准 `X-Request-ID`/`X-Request-Id` 回退以及 usage 记录字段，并在三秒内唯一匹配；认证/权限/空结果/非法成本/歧义直接按倍率快照估算，缺少快照写 `0 estimated`；按渠道复用并串行保护成本查询会话，认证失效才重认证，429 会话签发限制进入失败冷却；临时会话材料不写回密码凭据；错误请求固定写 `0 estimated`，上游值可覆盖估算值；历史窗口模型保留但不再由新的生产任务更新；管理员查询时将成本注入 `other.admin_info`，普通用户和 Token 接口不返回；不修改日志数据库、ClickHouse 或公开 API | 已实现/待真实站点持续核查 | `model/platform_site_usage_cost.go`、`service/platform_site_usage_cost.go`、`service/http.go`、`relay/channel/api_request.go`、`service/upstream_site_adapters.go`、`controller/relay.go`、`controller/channel-test.go`、`controller/log.go`、`web/src/features/usage-logs/`、Sub2API `usage_handler.go`、Sub2API `admin/usage_handler.go`、NewAPI `controller/log.go` | 2026-10-16 |
 | DEV-030 | 平台站点管理跳转与管理员余额 | 渠道行没有直接进入上游管理页面的入口，钱包只展示 NexusTok 用户自身额度和用量 | 平台站点状态返回经过服务端校验的 `management_url`，管理员从渠道行打开新标签页且不携带凭据；管理员 `/api/user/self` 按 NewAPI/Sub2API 平台账号汇总本地余额快照，禁用账号仍计入，不触发上游同步，普通用户不可见 | 已实现/待真实站点持续核查 | `service/upstream_site.go`、`controller/upstream_channel.go`、`model/platform_site_balance.go`、`controller/user.go`、`web/src/features/channels/`、`web/src/features/wallet/` | 2026-10-14 |
 | DEV-031 | 平台站点请求成本关联与兜底原因 | Sub2API 忽略入站 `X-Client-Request-ID` 并自行生成 ID回传；NexusTok 曾发送无效关联 ID并保留本地值，同时普通 usage 查询仅读第一页，精确匹配漏失时持续估算 | 不发送伪客户端 ID；以响应 `X-Client-Request-ID` 为 Sub2API usage 权威 ID并规范化为 `client:<id>`；`/api/v1/usage` 按模型/日期分页到精确命中、越过三秒窗或查询上限；缺少响应 ID时才唯一模型/时间回退，有 ID未匹配时不模糊匹配；缺 ID与 ID未匹配分别显示安全原因，写入管理员 `other.admin_info`；NewAPI关联、会话与权限行为不变 | 已实现/待真实站点验收 | `service/http.go`、`service/platform_site_usage_cost.go`、`relay/channel/api_request.go`、`model/platform_site_usage_cost.go`、`web/src/features/usage-logs/components/log-cost-display.tsx`、Sub2API中间件与 usage handler 源码及回归测试 | 2026-10-16 |
+| DEV-032 | 密钥健康状态的失败样本可观测性 | 失败样本的首字延迟固定为 0，且没有错误概括；管理接口只有成功数/延迟统计，无法从状态 Tooltip 核对导致失效的最近 5 条请求 | 失败请求按统一 `routing_key_id` 保存实际失败耗时/首字延迟和脱敏截断 `error_summary`；旧样本 JSON 缺少该字段时兼容读取；管理接口返回 `health_samples`，前端最多展示最新 5 条样本；不修改五样本判定、10 秒阈值或数据库结构 | 已实现 | `model/routing_key_health.go`、`service/upstream_key_usage.go`、`controller/relay.go`、`controller/channel-test.go`、`controller/channel.go`、`controller/upstream_channel.go`、`web/src/features/channels/`；SQLite 3.50.4、MySQL 8.2.0、PostgreSQL 15.19 样本 TEXT JSON 写入/读取、旧格式读取和重复 AutoMigrate 均通过 | 2026-10-19 |
 
 ### 3.2 2026-09-26 实现核对结果
 

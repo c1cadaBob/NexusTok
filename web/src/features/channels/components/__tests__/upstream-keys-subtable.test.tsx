@@ -172,6 +172,87 @@ test('平台站点展开区按密钥级字段展示且不暴露明文密钥', ()
   expect(screen.queryByText('sk-secret-real')).not.toBeInTheDocument()
 })
 
+test('密钥状态 Tooltip 展示最近五条健康样本并区分状态', async () => {
+  const user = userEvent.setup()
+  const key = upstreamKey({
+    health_samples: [
+      {
+        success: false,
+        first_latency_ms: 120,
+        created_at: 1_699_999_995,
+        error_summary: 'old failure',
+      },
+      {
+        success: true,
+        first_latency_ms: 120,
+        created_at: 1_700_000_001,
+      },
+      {
+        success: false,
+        first_latency_ms: 10_000,
+        created_at: 1_700_000_002,
+        error_summary: '503 upstream unavailable',
+      },
+      {
+        success: true,
+        first_latency_ms: 10_000,
+        created_at: 1_700_000_003,
+      },
+      {
+        success: true,
+        first_latency_ms: 80,
+        created_at: 1_700_000_004,
+      },
+      {
+        success: false,
+        first_latency_ms: 360,
+        created_at: 1_700_000_005,
+        error_summary:
+          'latest failure with a very long message that should wrap inside the tooltip without making the page wider',
+      },
+    ],
+  })
+
+  renderWithProviders(<UpstreamKeysSubTable channel={platformChannel(key)} />)
+
+  await user.hover(screen.getByText('Normal'))
+
+  expect(await screen.findByText(/Success - 80 ms - -/)).toBeInTheDocument()
+  expect(
+    screen.getByText(/Failure - 360 ms - latest failure/)
+  ).toBeInTheDocument()
+  expect(screen.getByText(/High latency - 10,000 ms - -/)).toBeInTheDocument()
+  expect(
+    screen.getByText(/Failure - 10,000 ms - 503 upstream unavailable/)
+  ).toBeInTheDocument()
+  expect(screen.getAllByText(/ms -/)).toHaveLength(5)
+  expect(screen.queryByText(/old failure/)).not.toBeInTheDocument()
+  expect(
+    screen.getByText(/latest failure with a very long message/)
+  ).toHaveClass('w-full')
+})
+
+test('没有健康样本时 Tooltip 继续显示原因', async () => {
+  const user = userEvent.setup()
+  renderWithProviders(
+    <UpstreamKeysSubTable
+      channel={platformChannel(
+        upstreamKey({
+          health_status: 'invalid',
+          health_reason: 'recent_failures',
+          health_samples: [],
+        })
+      )}
+    />
+  )
+
+  await user.hover(screen.getByText('Invalid'))
+
+  expect(
+    await screen.findByText('Recent failures exceeded threshold')
+  ).toBeInTheDocument()
+})
+
 test('平台站点子密钥紧凑展示密钥相关列并隐藏权重括号', () => {
   renderWithProviders(<UpstreamKeysSubTable channel={platformChannel()} />)
 

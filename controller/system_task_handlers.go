@@ -205,6 +205,7 @@ func (routingKeyRecoveryHandler) Run(ctx context.Context, task *model.SystemTask
 			return
 		}
 		candidate := candidates[index]
+		testStartedAt := time.Now()
 		testResult := testChannelWithOptions(
 			ctx,
 			candidate.Channel,
@@ -227,13 +228,18 @@ func (routingKeyRecoveryHandler) Run(ctx context.Context, task *model.SystemTask
 		} else {
 			result.Failed++
 		}
+		firstLatencyMs := testResult.firstLatencyMs
+		if !success && firstLatencyMs <= 0 {
+			firstLatencyMs = time.Since(testStartedAt).Milliseconds()
+		}
 		if err := model.RecordRoutingKeyRecoverySample(
 			candidate.RoutingKeyID,
 			candidate.ChannelID,
 			candidate.Source,
 			success,
-			testResult.firstLatencyMs,
+			firstLatencyMs,
 			time.Now(),
+			channelTestErrorSummary(testResult),
 		); err != nil {
 			common.SysLog(fmt.Sprintf(
 				"记录密钥恢复测试样本失败: key_id=%d channel_id=%d error=%v",

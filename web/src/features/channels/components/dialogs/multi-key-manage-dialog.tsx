@@ -69,9 +69,10 @@ import {
 import type { KeyStatus, MultiKeyConfirmAction } from '../../types'
 import { useChannels } from '../channels-provider'
 import { NumericSpinnerInput } from '../numeric-spinner-input'
+import { RoutingKeyHealthTooltip } from '../routing-key-health-tooltip'
+import { RoutingKeyRecoveryBadge } from '../routing-key-recovery-badge'
 import { StatisticsCard } from './multi-key-statistics-card'
 import { MultiKeyTableRowActions } from './multi-key-table-row-actions'
-import { RoutingKeyRecoveryBadge } from '../routing-key-recovery-badge'
 
 type MultiKeyManageDialogProps = {
   open: boolean
@@ -473,12 +474,17 @@ export function MultiKeyManageDialog({
     const config = getMultiKeyHealthStatusConfig(keyStatus)
     return (
       <div className='flex flex-wrap items-center justify-center gap-1'>
-        <StatusBadge
-          label={t(config.label)}
-          variant={config.variant}
-          showDot
-          copyable={false}
-        />
+        <RoutingKeyHealthTooltip
+          samples={keyStatus.health_samples}
+          reason={keyStatus.health_reason}
+        >
+          <StatusBadge
+            label={t(config.label)}
+            variant={config.variant}
+            showDot
+            copyable={false}
+          />
+        </RoutingKeyHealthTooltip>
         <RoutingKeyRecoveryBadge
           recoveryPhase={keyStatus.recovery_phase}
           recoveryNextTestAt={keyStatus.recovery_next_test_at}

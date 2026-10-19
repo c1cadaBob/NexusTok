@@ -19,6 +19,7 @@ For commercial licensing, please contact support@c1cadabob.dev
 package service
 
 import (
+	"strings"
 	"time"
 
 	"github.com/c1cadaBob/NexusTok/common"
@@ -40,14 +41,23 @@ func RoutingKeyFirstLatencyMs(info *relaycommon.RelayInfo) int64 {
 	return time.Since(info.StartTime).Milliseconds()
 }
 
-func recordSelectedRoutingKeyHealth(ctx *gin.Context, info *relaycommon.RelayInfo, success bool) {
+func recordSelectedRoutingKeyHealth(
+	ctx *gin.Context,
+	info *relaycommon.RelayInfo,
+	success bool,
+	errorSummary string,
+	latencyOverrideMs ...int64,
+) {
 	routingKeyID := common.GetContextKeyInt(ctx, constant.ContextKeyRoutingKeyId)
 	if routingKeyID <= 0 {
 		return
 	}
-	latencyMs := int64(0)
-	if success {
-		latencyMs = RoutingKeyFirstLatencyMs(info)
+	latencyMs := RoutingKeyFirstLatencyMs(info)
+	if len(latencyOverrideMs) > 0 {
+		latencyMs = latencyOverrideMs[0]
+	}
+	if selectedSecret := common.GetContextKeyString(ctx, constant.ContextKeyChannelKey); selectedSecret != "" {
+		errorSummary = strings.ReplaceAll(errorSummary, selectedSecret, "***")
 	}
 	err := model.RecordRoutingKeyHealthSample(
 		uint(routingKeyID),
@@ -56,6 +66,7 @@ func recordSelectedRoutingKeyHealth(ctx *gin.Context, info *relaycommon.RelayInf
 		success,
 		latencyMs,
 		common.GetTimestamp(),
+		errorSummary,
 	)
 	if err != nil {
 		logger.LogWarn(ctx, "记录路由密钥健康样本失败: "+err.Error())
@@ -68,7 +79,7 @@ func TouchSelectedUpstreamKeyLastUsed(ctx *gin.Context, info *relaycommon.RelayI
 		if err := model.TouchRoutingKeyLastUsed(uint(routingKeyID), common.GetTimestamp()); err != nil {
 			logger.LogWarn(ctx, "更新路由密钥最后使用时间失败: "+err.Error())
 		}
-		recordSelectedRoutingKeyHealth(ctx, info, true)
+		recordSelectedRoutingKeyHealth(ctx, info, true, "")
 		return
 	}
 	keyID := common.GetContextKeyInt(ctx, constant.ContextKeyUpstreamKeyId)
@@ -80,6 +91,11 @@ func TouchSelectedUpstreamKeyLastUsed(ctx *gin.Context, info *relaycommon.RelayI
 	}
 }
 
-func RecordSelectedRoutingKeyFailure(ctx *gin.Context, info *relaycommon.RelayInfo) {
-	recordSelectedRoutingKeyHealth(ctx, info, false)
+func RecordSelectedRoutingKeyFailure(
+	ctx *gin.Context,
+	info *relaycommon.RelayInfo,
+	errorSummary string,
+	latencyOverrideMs ...int64,
+) {
+	recordSelectedRoutingKeyHealth(ctx, info, false, errorSummary, latencyOverrideMs...)
 }

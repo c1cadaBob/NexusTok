@@ -429,6 +429,129 @@ func TestRoutingKeyHealthSummaryWindow(t *testing.T) {
 	assert.False(t, RoutingKeyHealthAllowsRouting(103, common.ChannelStatusEnabled, UpstreamAvailabilityMissing, now))
 }
 
+func TestRoutingKeyHealthSamplePersistenceDatabaseMatrix(t *testing.T) {
+	databaseTests := []struct {
+		name      string
+		env       string
+		dbType    common.DatabaseType
+		dialector func(string) gorm.Dialector
+	}{
+		{
+			name:   "sqlite",
+			dbType: common.DatabaseTypeSQLite,
+			dialector: func(dsn string) gorm.Dialector {
+				return sqlite.Open(dsn)
+			},
+		},
+		{
+			name:   "mysql",
+			env:    "TEST_MYSQL_DSN",
+			dbType: common.DatabaseTypeMySQL,
+			dialector: func(dsn string) gorm.Dialector {
+				return mysql.Open(dsn)
+			},
+		},
+		{
+			name:   "postgres",
+			env:    "TEST_POSTGRES_DSN",
+			dbType: common.DatabaseTypePostgreSQL,
+			dialector: func(dsn string) gorm.Dialector {
+				return postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true})
+			},
+		},
+	}
+
+	for _, databaseTest := range databaseTests {
+		t.Run(databaseTest.name, func(t *testing.T) {
+			dsn := ""
+			if databaseTest.name == "sqlite" {
+				dsn = filepath.Join(t.TempDir(), "routing-key-health.db")
+			} else {
+				dsn = strings.TrimSpace(os.Getenv(databaseTest.env))
+				if dsn == "" {
+					t.Skip(databaseTest.env + " is not configured")
+				}
+			}
+
+			previousDB := DB
+			previousMainType := common.MainDatabaseType()
+			previousLogType := common.LogDatabaseType()
+			prefix := fmt.Sprintf("routing_health_%d_", time.Now().UnixNano())
+			db, err := gorm.Open(databaseTest.dialector(dsn), &gorm.Config{
+				NamingStrategy: schema.NamingStrategy{TablePrefix: prefix},
+			})
+			require.NoError(t, err)
+			sqlDB, err := db.DB()
+			require.NoError(t, err)
+			DB = db
+			common.SetDatabaseTypes(databaseTest.dbType, previousLogType)
+			t.Cleanup(func() {
+				_ = db.Migrator().DropTable(&RoutingKeyHealth{})
+				DB = previousDB
+				common.SetDatabaseTypes(previousMainType, previousLogType)
+				_ = sqlDB.Close()
+			})
+
+			require.NoError(t, db.AutoMigrate(&RoutingKeyHealth{}))
+			require.NoError(t, db.AutoMigrate(&RoutingKeyHealth{}))
+
+			now := time.Unix(2_100_000_000, 0)
+			for index := range 6 {
+				errorSummary := ""
+				if index == 1 {
+					errorSummary = "status_code=503 Authorization: Bearer secret-token api_key:secret-key sk-very-secret-key Cookie: session=secret-cookie; X-Session: raw-cookie {\"access_token\":\"json-secret\"} " + strings.Repeat("x", 300)
+				}
+				require.NoError(t, RecordRoutingKeyHealthSample(
+					201,
+					1,
+					RoutingKeySourceKeyChannel,
+					index == 5,
+					100+int64(index),
+					now.Unix()+int64(index),
+					errorSummary,
+				))
+			}
+
+			summary := GetRoutingKeyHealthSummary(201, common.ChannelStatusEnabled, UpstreamAvailabilityRoutable, now.Add(5*time.Second))
+			require.Len(t, summary.HealthSamples, routingKeyHealthWindowSize)
+			assert.Equal(t, RoutingKeyHealthInvalid, summary.Status)
+			assert.Equal(t, int64(2_100_000_001), summary.HealthSamples[0].CreatedAt)
+			assert.Equal(t, int64(2_100_000_005), summary.HealthSamples[4].CreatedAt)
+			assert.Equal(t, 1, summary.SuccessCount)
+			assert.Contains(t, summary.HealthSamples[0].ErrorSummary, "status_code=503")
+			assert.Contains(t, summary.HealthSamples[0].ErrorSummary, "Authorization: Bearer ***")
+			assert.Contains(t, summary.HealthSamples[0].ErrorSummary, "Cookie: ***")
+			assert.Contains(t, summary.HealthSamples[0].ErrorSummary, "api_key:***")
+			assert.LessOrEqual(t, len([]rune(summary.HealthSamples[0].ErrorSummary)), routingKeyHealthErrorSummaryMaxLength)
+			assert.NotContains(t, summary.HealthSamples[0].ErrorSummary, "secret")
+
+			var health RoutingKeyHealth
+			require.NoError(t, db.First(&health, 201).Error)
+			assert.NotContains(t, health.SamplesJSON, "secret-token")
+			assert.NotContains(t, health.SamplesJSON, "secret-cookie")
+			assert.NotContains(t, health.SamplesJSON, "raw-cookie")
+			assert.NotContains(t, health.SamplesJSON, "secret-key")
+			assert.NotContains(t, health.SamplesJSON, "very-secret-key")
+			assert.NotContains(t, health.SamplesJSON, "json-secret")
+
+			require.NoError(t, db.Create(&RoutingKeyHealth{
+				RoutingKeyID:       202,
+				ChannelID:          1,
+				Source:             RoutingKeySourceKeyChannel,
+				SamplesJSON:        `[{"success":true,"first_latency_ms":80,"created_at":2100000000}]`,
+				SampleCount:        1,
+				SuccessCount:       1,
+				LastFirstLatencyMs: 80,
+				LastSampleAt:       2_100_000_000,
+			}).Error)
+			legacySummary := GetRoutingKeyHealthSummary(202, common.ChannelStatusEnabled, UpstreamAvailabilityRoutable, now.Add(time.Second))
+			require.Len(t, legacySummary.HealthSamples, 1)
+			assert.True(t, legacySummary.HealthSamples[0].Success)
+			assert.Empty(t, legacySummary.HealthSamples[0].ErrorSummary)
+		})
+	}
+}
+
 func TestRoutingKeyHealthFiltersRoutableChannelKeys(t *testing.T) {
 	previousDB := DB
 	previousSecret := common.CryptoSecret

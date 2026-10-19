@@ -2008,26 +2008,27 @@ type MultiKeyStatusResponse struct {
 }
 
 type KeyStatus struct {
-	Index                      int    `json:"index"`
-	KeyID                      uint   `json:"key_id"`
-	Status                     int    `json:"status"` // 1: enabled, 2: disabled
-	DisabledTime               int64  `json:"disabled_time,omitempty"`
-	Reason                     string `json:"reason,omitempty"`
-	KeyPreview                 string `json:"key_preview"` // first 10 chars of key for identification
-	KeyPriority                int64  `json:"key_priority"`
-	Weight                     int    `json:"weight"`
-	AutoWeight                 int    `json:"auto_weight"`
-	HealthStatus               string `json:"health_status,omitempty"`
-	HealthReason               string `json:"health_reason,omitempty"`
-	HealthSampleCount          int    `json:"health_sample_count,omitempty"`
-	HealthSuccessCount         int    `json:"health_success_count,omitempty"`
-	HealthFirstLatencyMs       int64  `json:"health_first_latency_ms,omitempty"`
-	RecoveryPhase              string `json:"recovery_phase,omitempty"`
-	RecoveryNextTestAt         int64  `json:"recovery_next_test_at,omitempty"`
-	RecoveryLastTestAt         int64  `json:"recovery_last_test_at,omitempty"`
-	RecoveryConfirmationsDone  int    `json:"recovery_confirmations_done,omitempty"`
-	RecoveryConfirmationsTotal int    `json:"recovery_confirmations_total,omitempty"`
-	LastUsedAt                 int64  `json:"last_used_at,omitempty"`
+	Index                      int                            `json:"index"`
+	KeyID                      uint                           `json:"key_id"`
+	Status                     int                            `json:"status"` // 1: enabled, 2: disabled
+	DisabledTime               int64                          `json:"disabled_time,omitempty"`
+	Reason                     string                         `json:"reason,omitempty"`
+	KeyPreview                 string                         `json:"key_preview"` // first 10 chars of key for identification
+	KeyPriority                int64                          `json:"key_priority"`
+	Weight                     int                            `json:"weight"`
+	AutoWeight                 int                            `json:"auto_weight"`
+	HealthStatus               string                         `json:"health_status,omitempty"`
+	HealthReason               string                         `json:"health_reason,omitempty"`
+	HealthSampleCount          int                            `json:"health_sample_count,omitempty"`
+	HealthSuccessCount         int                            `json:"health_success_count,omitempty"`
+	HealthFirstLatencyMs       int64                          `json:"health_first_latency_ms,omitempty"`
+	HealthSamples              []model.RoutingKeyHealthSample `json:"health_samples,omitempty"`
+	RecoveryPhase              string                         `json:"recovery_phase,omitempty"`
+	RecoveryNextTestAt         int64                          `json:"recovery_next_test_at,omitempty"`
+	RecoveryLastTestAt         int64                          `json:"recovery_last_test_at,omitempty"`
+	RecoveryConfirmationsDone  int                            `json:"recovery_confirmations_done,omitempty"`
+	RecoveryConfirmationsTotal int                            `json:"recovery_confirmations_total,omitempty"`
+	LastUsedAt                 int64                          `json:"last_used_at,omitempty"`
 }
 
 func channelKeyPreview(key *model.ChannelKey) string {
@@ -2079,6 +2080,7 @@ func keyStatusFromChannelKey(key *model.ChannelKey) KeyStatus {
 		HealthSampleCount:          health.SampleCount,
 		HealthSuccessCount:         health.SuccessCount,
 		HealthFirstLatencyMs:       health.FirstLatencyMs,
+		HealthSamples:              health.HealthSamples,
 		RecoveryPhase:              recovery.Phase,
 		RecoveryNextTestAt:         recovery.NextTestAt,
 		RecoveryLastTestAt:         recovery.LastTestAt,

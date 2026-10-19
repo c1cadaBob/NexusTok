@@ -79,6 +79,7 @@ import {
 import type { Channel, UpstreamKey } from '../types'
 import { useChannels } from './channels-provider'
 import { NumericSpinnerInput } from './numeric-spinner-input'
+import { RoutingKeyHealthTooltip } from './routing-key-health-tooltip'
 import { RoutingKeyRecoveryBadge } from './routing-key-recovery-badge'
 
 const SENSITIVE_MASK = '••••'
@@ -130,43 +131,6 @@ function getUpstreamKeyHealthStatusConfig(upstreamKey: UpstreamKey): {
       return { label: 'Invalid', variant: 'danger' }
     default:
       return getUpstreamKeyStatusConfig(upstreamKey.status)
-  }
-}
-
-function getUpstreamKeyHealthReasonLabel(reason?: string): string | null {
-  switch (reason) {
-    case 'credential_unavailable':
-      return 'Credential unavailable'
-    case 'models_unavailable':
-      return 'Model capability unavailable'
-    case 'snapshot_only':
-      return 'Historical snapshot'
-    case 'missing':
-      return 'Missing'
-    case 'expired':
-      return 'Expired'
-    case 'quota_exhausted':
-      return 'Quota exhausted'
-    case 'upstream_disabled':
-      return 'Upstream disabled'
-    case 'manual_disabled':
-      return 'Manually disabled'
-    case 'site_sync_unavailable':
-      return 'Platform snapshot unavailable'
-    case 'not_enough_samples':
-      return 'Not enough recent samples'
-    case 'stale_samples':
-      return 'No recent key usage'
-    case 'no_health_record':
-      return 'No health samples yet'
-    case 'recent_failures':
-      return 'Recent failures exceeded threshold'
-    case 'recent_degraded':
-      return 'Recent success rate degraded'
-    case 'high_first_latency':
-      return 'First response latency exceeded threshold'
-    default:
-      return null
   }
 }
 
@@ -227,27 +191,20 @@ function LastSyncCell({ timestamp }: { timestamp: number }) {
 function UpstreamKeyStatusBadge({ upstreamKey }: { upstreamKey: UpstreamKey }) {
   const { t } = useTranslation()
   const config = getUpstreamKeyHealthStatusConfig(upstreamKey)
-  const reasonLabel = getUpstreamKeyHealthReasonLabel(
-    upstreamKey.health_reason || upstreamKey.availability_reason
-  )
 
   return (
     <div className='flex flex-wrap items-center justify-center gap-1'>
-      <TooltipProvider delay={100}>
-        <Tooltip>
-          <TooltipTrigger render={<span />}>
-            <StatusBadge
-              label={t(config.label)}
-              variant={config.variant}
-              size='sm'
-              copyable={false}
-            />
-          </TooltipTrigger>
-          {reasonLabel && (
-            <TooltipContent side='top'>{t(reasonLabel)}</TooltipContent>
-          )}
-        </Tooltip>
-      </TooltipProvider>
+      <RoutingKeyHealthTooltip
+        samples={upstreamKey.health_samples}
+        reason={upstreamKey.health_reason || upstreamKey.availability_reason}
+      >
+        <StatusBadge
+          label={t(config.label)}
+          variant={config.variant}
+          size='sm'
+          copyable={false}
+        />
+      </RoutingKeyHealthTooltip>
       {upstreamKey.snapshot_only && (
         <StatusBadge
           label={t('Historical snapshot')}

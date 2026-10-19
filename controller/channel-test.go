@@ -286,6 +286,10 @@ func testChannelWithOptions(
 		}
 		channel = selectedChannel
 	}
+	if channel.SelectedRoutingKey != nil {
+		common.SetContextKey(c, constant.ContextKeyRoutingKeyId, int(channel.SelectedRoutingKey.KeyID))
+		common.SetContextKey(c, constant.ContextKeyRoutingKeySource, channel.SelectedRoutingKey.Source)
+	}
 
 	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, testModel)
 	if newAPIError != nil {
@@ -705,7 +709,12 @@ func recordManualChannelTestError(result testResult, channel *model.Channel, tes
 	if ctx == nil {
 		return
 	}
-	service.RecordSelectedRoutingKeyFailure(ctx, nil)
+	service.RecordSelectedRoutingKeyFailure(
+		ctx,
+		nil,
+		channelTestErrorSummary(result),
+		time.Since(startedAt).Milliseconds(),
+	)
 	other := model.NewLogOther()
 	if ctx.Request != nil && ctx.Request.URL != nil {
 		other.SetPublic("request_path", ctx.Request.URL.Path)
@@ -741,6 +750,16 @@ func recordManualChannelTestError(result testResult, channel *model.Channel, tes
 		ctx.GetString("group"),
 		other,
 	)
+}
+
+func channelTestErrorSummary(result testResult) string {
+	if result.newAPIError != nil {
+		return result.newAPIError.MaskSensitiveErrorWithStatusCode()
+	}
+	if result.localErr != nil {
+		return result.localErr.Error()
+	}
+	return ""
 }
 
 func coerceTestUsage(usageAny any, isStream bool, estimatePromptTokens int) (*dto.Usage, error) {

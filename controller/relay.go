@@ -407,7 +407,7 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 			service.DisableChannel(channelError, err.ErrorWithStatusCode())
 		})
 	}
-	service.RecordSelectedRoutingKeyFailure(c, relayInfo)
+	service.RecordSelectedRoutingKeyFailure(c, relayInfo, err.MaskSensitiveErrorWithStatusCode())
 
 	if constant.ErrorLogEnabled && types.IsRecordErrorLog(err) {
 		// 保存错误日志到mysql中

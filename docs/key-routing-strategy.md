@@ -1,7 +1,7 @@
 # 密钥调度策略与日志可观测性
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-10-16
+> 事实基线日期：2026-10-19
 > 主要代码来源：`model/routing_key.go`、`model/upstream_routing.go`、`middleware/distributor.go`、`service/channel_select.go`、`controller/channel-test.go`、`model/channel_cache.go`
 > 关联架构文档：[`docs/architecture/relay-routing-and-conversion.md`](architecture/relay-routing-and-conversion.md)、[`docs/architecture/provider-capability-matrix.md`](architecture/provider-capability-matrix.md)、[`docs/architecture/implementation-deviations.md`](architecture/implementation-deviations.md)、[`平台站点资源获取比较`](platform-site-resource-acquisition-comparison.md)
 
@@ -162,7 +162,9 @@ effective_priority = channel_priority * 100 + key_priority
 - `max_first_latency_ms`、`last_first_latency_ms`：窗口内最大首字/首包延迟和最近一次延迟；
 - `last_sample_at`、`updated_at`：最近样本时间和记录更新时间。
 
-样本来自普通 API 请求和已经选中具体 `key_id` 的管理员手动模型测试。成功样本记录首字/首包延迟；失败样本记录失败结果。已有密钥没有健康记录时默认显示“启用”，保持兼容并继续参与调度。
+样本来自普通 API 请求、已经选中具体 `key_id` 的管理员手动模型测试和周期恢复测试。每个样本记录成功/失败、首字/首包延迟和时间；失败样本还记录经过脱敏与截断的错误概括。没有收到首字/首包时，失败样本的延迟表示请求发出至失败的实际耗时。`samples_json` 新增的 `error_summary` 为可选字段，旧 JSON 可直接读取且不增加数据库列。健康接口将最近最多 5 条样本以 `health_samples` 返回，状态 Tooltip 按最新优先展示。
+
+成功测试只向对应 `routing_key_id` 的窗口追加一条成功样本，不清空历史记录，也不保证一次成功后立即恢复。排查时应先核对 `key_id`：不同密钥的成功和失败样本分别判定，不能把另一条密钥的成功测试视为当前密钥已恢复。已有密钥没有健康记录时默认显示“启用”，保持兼容并继续参与调度。
 
 健康状态定义如下：
 
@@ -885,3 +887,17 @@ Origin、Capture ID 校验的失败消息。失败不调用完成接口、不创
 渠道/密钥候选过滤、优先级、权重、重试或结算规则。实时兜底原因和可选 HTTP 状态/错误码置于管理员专属
 `other.admin_info`，前端共用成本组件展示可访问 Tooltip；老记录显示历史原因未保存，
 真实上游成本不显示旧原因。NewAPI 会话签发 `429` 仍需上游管理员处理，不由 NexusTok 绕过。
+
+### 14.21 2026-10-19 密钥健康样本可观测性
+
+**变更前**：失败健康样本的 `first_latency_ms` 固定为 `0`，样本没有错误概括；健康接口
+只返回统计字段，状态 Tooltip 只能显示“近期失败”等原因，无法判断参与最近 5 条窗口的
+具体请求，也容易把不同 `routing_key_id` 的测试结果混淆。
+
+**变更后**：普通请求、管理员手动测试和恢复测试都按已选中的统一 `routing_key_id` 记录
+实际失败耗时/首字延迟；错误概括在写入 `samples_json` 前经过敏感信息脱敏和长度截断，
+旧样本缺少 `error_summary` 时按空值兼容读取。健康接口在保留原状态与统计字段的同时返回
+`health_samples`，前端状态 Tooltip 使用浏览器本地时间、最新优先展示最多 5 条样本，格式
+为“时间-成功/失败/高延迟-首字延迟（ms）/错误内容概括”；成功样本错误位置显示 `-`，
+无样本时继续显示原有原因。五样本成功数阈值、10 秒高延迟阈值和单次成功不清空窗口的
+调度规则不变，也不新增数据库列或迁移。

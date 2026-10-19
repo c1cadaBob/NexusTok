@@ -150,3 +150,44 @@ test('多密钥管理表展示全局 key_id 并用 key_id 保存编辑', async (
     )
   })
 })
+
+test('多密钥管理状态 Tooltip 展示健康失败样本概括', async () => {
+  const user = userEvent.setup()
+  vi.mocked(channelsApi.getMultiKeyStatus).mockResolvedValue({
+    success: true,
+    data: {
+      keys: [
+        {
+          index: 0,
+          key_id: 1201,
+          status: 1,
+          health_status: 'invalid',
+          health_reason: 'recent_failures',
+          health_samples: [
+            {
+              success: false,
+              first_latency_ms: 503,
+              created_at: 1_700_000_005,
+              error_summary: 'upstream returned HTTP 503',
+            },
+          ],
+        },
+      ],
+      total: 1,
+      page: 1,
+      page_size: 10,
+      total_pages: 1,
+      enabled_count: 1,
+      manual_disabled_count: 0,
+      auto_disabled_count: 0,
+    },
+  })
+
+  renderWithProviders(<MultiKeyHarness channel={multiKeyChannel()} />)
+
+  await user.hover(await screen.findByText('Invalid'))
+
+  expect(
+    await screen.findByText(/Failure - 503 ms - upstream returned HTTP 503/)
+  ).toBeInTheDocument()
+})

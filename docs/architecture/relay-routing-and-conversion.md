@@ -1,7 +1,7 @@
 # Relay 路由、渠道选择与协议转换
 
 > 文档状态：代码事实基线
-> 事实基线日期：2026-09-25
+> 事实基线日期：2026-10-19
 > 主要代码来源：`router/relay-router.go`、`router/video-router.go`、`router/task-router.go`、`router/task-plugin-protocol-router.go`、`middleware/distributor.go`、`service/channel_select.go`、`model/channel_cache.go`、`model/upstream_routing.go`、`relay/relay_adaptor.go`、`relay/common/relay_info.go`、`relaykit/`
 > 关联详细文档：[`../key-routing-strategy.md`](../key-routing-strategy.md)、[`../upstream-channel-platform-sites.md`](../upstream-channel-platform-sites.md)、[`provider-capability-matrix.md`](./provider-capability-matrix.md)
 
@@ -23,6 +23,19 @@ Relay 层将多个上游供应商统一到 OpenAI、Claude、Gemini、Responses�
 `routing_key_healths` 样本窗口，确认阶段按 5 次/5 分钟推进。是否恢复调度资格仍由
 既有健康策略决定；当自动禁用密钥的健康样本恢复为可路由状态时，业务状态同步恢复并
 重算父渠道可用性。恢复任务不使用 Redis，不改变业务请求协议和 Relay 转换接口。
+
+### 2026-10-19 密钥健康失败样本诊断
+
+普通请求失败由 `controller/relay.go` 传递 `RelayInfo` 和错误摘要给
+`service.RecordSelectedRoutingKeyFailure`；成功或尚未收到首字响应时，样本延迟分别表示
+首字/首包延迟或截至失败的实际耗时。管理员手动测试和恢复测试也将失败耗时与脱敏截断
+错误概括保存到 `routing_key_healths.samples_json`。错误概括不存储原始上游响应正文、凭据、
+Token 或 Cookie；历史样本缺少 `error_summary` 时保持兼容读取。
+
+健康摘要在旧状态和统计字段外返回最多 5 条 `health_samples`，接口不新增数据库列。管理端
+密钥状态 Tooltip 按样本时间倒序，以浏览器本地时间展示成功、失败或成功且首字延迟达到
+10 秒的高延迟样本。状态判定仍按相同 `routing_key_id` 最近 5 条样本统计；单次成功仅追加
+窗口，不清除先前失败。
 
 ## 2. 对外入口
 
@@ -138,3 +151,4 @@ NewAPI 与 Sub2API 的管理地址和 Relay 地址分开保存：
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-25 | 初次建立 | 仓库中没有统一功能原理基线 | 建立入口、分发、密钥选择、转换、流式和 Usage 的实现说明 | `router/`、`middleware/distributor.go`、`model/*routing*`、`relay/`、`relaykit/` | 路由、Adaptor 注册、流式列表和路由选择代码静态核对 |
 | 2026-09-30 | 平台站点 NewAPI 路由与地址校准 | 平台站点 `key_id`、错误 RoutingKey 关系、管理/Relay 地址和别名模型判断边界不统一，存在错误 Key 或重复 `/v1` 的风险 | 以 `RoutingKey.ID` 为规范身份并按渠道/来源/来源记录修复关系；兼容同渠道历史 `UpstreamKey.ID`；管理/Relay 地址分离并规范化 Relay 根地址；模型映射后统一判断真实上游能力；使用完整子密钥 Bearer 认证 | `model/routing_key.go`、`model/upstream_channel.go`、`model/channel.go`、`service/upstream_site.go`、NewAPI/Sub2API 平台站点 | `go test ./model ./controller ./service ./relay/channel/newapi ./relay/common`、脱敏 HTTP fixture 和 SQLite |
+| 2026-10-19 | 密钥健康样本与失败诊断 | 失败健康样本固定保存 `first_latency_ms=0` 且没有错误概括；健康接口只给出统计字段，前端无法核对导致状态的最近 5 条请求 | 按已选中的统一 `routing_key_id` 保存失败实际耗时/首字延迟和脱敏截断 `error_summary`；兼容旧 `samples_json`；健康接口返回 `health_samples`，状态 Tooltip 最新优先展示最多 5 条样本；五样本判定和单次测试不清空窗口规则不变 | `model/routing_key_health.go`、`service/upstream_key_usage.go`、`controller/relay.go`、`controller/channel-test.go`、`controller/channel.go`、`controller/upstream_channel.go`、`web/src/features/channels/` | `go test ./model ./service ./controller`；SQLite 3.49.1、MySQL 8.2.0、PostgreSQL 15.19 样本 JSON、旧 JSON 和重复 AutoMigrate 验证；密钥状态相关 Vitest 40 项、typecheck、lint、生产构建通过 |

@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"regexp"
 	"strings"
 	"time"
 
@@ -9,6 +10,20 @@ import (
 
 	"gorm.io/gorm"
 )
+
+const routingKeyHealthErrorSummaryMaxLength = 240
+
+var routingKeyHealthSensitivePatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)(authorization["']?\s*[:=]\s*(?:bearer\s+)?)[^\s,;"}]+`),
+	regexp.MustCompile(`(?i)(\b(?:bearer|token)\s+)[^\s,;]+`),
+	regexp.MustCompile(`(?i)((?:cookie|set-cookie)["']?\s*[:=]\s*)[^\r\n}]+`),
+	regexp.MustCompile(`(?i)((?:access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|token|secret|password|passwd|credential)["']?\s*[:=]\s*["']?)[^"',;\s}]+`),
+	regexp.MustCompile(`(?i)(\b)sk-[a-z0-9_-]{8,}\b`),
+	regexp.MustCompile(`(\b)eyJ[a-z0-9_-]{10,}\.[a-z0-9_-]{10,}\.[a-z0-9_-]{10,}\b`),
+	regexp.MustCompile(`(?i)(\b)AIza[a-z0-9_-]{20,}\b`),
+	regexp.MustCompile(`(?i)(\b)AKIA[0-9A-Z]{16}\b`),
+	regexp.MustCompile(`(?i)(\b)(?:ghp|github_pat)_[a-z0-9_]{12,}\b`),
+}
 
 const (
 	RoutingKeyHealthDisabled = "disabled"
@@ -48,18 +63,20 @@ type RoutingKeyHealth struct {
 }
 
 type RoutingKeyHealthSample struct {
-	Success        bool  `json:"success"`
-	FirstLatencyMs int64 `json:"first_latency_ms"`
-	CreatedAt      int64 `json:"created_at"`
+	Success        bool   `json:"success"`
+	FirstLatencyMs int64  `json:"first_latency_ms"`
+	CreatedAt      int64  `json:"created_at"`
+	ErrorSummary   string `json:"error_summary,omitempty"`
 }
 
 type RoutingKeyHealthSummary struct {
-	Status         string `json:"status"`
-	Reason         string `json:"reason,omitempty"`
-	SampleCount    int    `json:"sample_count"`
-	SuccessCount   int    `json:"success_count"`
-	FirstLatencyMs int64  `json:"first_latency_ms,omitempty"`
-	LastSampleAt   int64  `json:"last_sample_at,omitempty"`
+	Status         string                   `json:"status"`
+	Reason         string                   `json:"reason,omitempty"`
+	SampleCount    int                      `json:"sample_count"`
+	SuccessCount   int                      `json:"success_count"`
+	FirstLatencyMs int64                    `json:"first_latency_ms,omitempty"`
+	LastSampleAt   int64                    `json:"last_sample_at,omitempty"`
+	HealthSamples  []RoutingKeyHealthSample `json:"health_samples,omitempty"`
 }
 
 type RoutingKeyRecoveryState struct {
@@ -103,9 +120,27 @@ func healthSummaryFromBase(status int, availabilityReason string) (RoutingKeyHea
 	return RoutingKeyHealthSummary{}, false
 }
 
-func routingKeyHealthSummaryFromRecord(health *RoutingKeyHealth, now time.Time) RoutingKeyHealthSummary {
-	if health == nil || health.SampleCount < routingKeyHealthWindowSize {
+func routingKeyHealthSummaryFromRecord(
+	health *RoutingKeyHealth,
+	now time.Time,
+	includeSamples bool,
+) RoutingKeyHealthSummary {
+	if health == nil {
 		return RoutingKeyHealthSummary{Status: RoutingKeyHealthEnabled, Reason: "not_enough_samples"}
+	}
+	var samples []RoutingKeyHealthSample
+	if includeSamples {
+		samples, _ = healthSamplesFromJSON(health.SamplesJSON)
+		if len(samples) > routingKeyHealthWindowSize {
+			samples = samples[len(samples)-routingKeyHealthWindowSize:]
+		}
+	}
+	if health.SampleCount < routingKeyHealthWindowSize {
+		return RoutingKeyHealthSummary{
+			Status:        RoutingKeyHealthEnabled,
+			Reason:        "not_enough_samples",
+			HealthSamples: samples,
+		}
 	}
 	if health.LastSampleAt <= 0 ||
 		now.Sub(time.Unix(health.LastSampleAt, 0)) > routingKeyHealthFreshDuration {
@@ -116,6 +151,7 @@ func routingKeyHealthSummaryFromRecord(health *RoutingKeyHealth, now time.Time) 
 			SuccessCount:   health.SuccessCount,
 			FirstLatencyMs: health.LastFirstLatencyMs,
 			LastSampleAt:   health.LastSampleAt,
+			HealthSamples:  samples,
 		}
 	}
 
@@ -138,6 +174,7 @@ func routingKeyHealthSummaryFromRecord(health *RoutingKeyHealth, now time.Time) 
 		SuccessCount:   health.SuccessCount,
 		FirstLatencyMs: health.LastFirstLatencyMs,
 		LastSampleAt:   health.LastSampleAt,
+		HealthSamples:  samples,
 	}
 }
 
@@ -147,17 +184,44 @@ func GetRoutingKeyHealthSummary(
 	availabilityReason string,
 	now time.Time,
 ) RoutingKeyHealthSummary {
-	if summary, done := healthSummaryFromBase(status, availabilityReason); done {
-		return summary
-	}
+	return getRoutingKeyHealthSummary(routingKeyID, status, availabilityReason, now, true)
+}
+
+func getRoutingKeyHealthSummary(
+	routingKeyID uint,
+	status int,
+	availabilityReason string,
+	now time.Time,
+	includeSamples bool,
+) RoutingKeyHealthSummary {
+	baseSummary, hasBaseSummary := healthSummaryFromBase(status, availabilityReason)
 	if routingKeyID == 0 || DB == nil || !routingKeyHealthTableReady(DB) {
+		if hasBaseSummary {
+			return baseSummary
+		}
 		return RoutingKeyHealthSummary{Status: RoutingKeyHealthEnabled, Reason: "no_health_record"}
 	}
 	var health RoutingKeyHealth
-	if err := DB.Where("routing_key_id = ?", routingKeyID).First(&health).Error; err != nil {
+	query := DB
+	if !includeSamples {
+		query = query.Omit("SamplesJSON")
+	}
+	if err := query.Where("routing_key_id = ?", routingKeyID).First(&health).Error; err != nil {
+		if hasBaseSummary {
+			return baseSummary
+		}
 		return RoutingKeyHealthSummary{Status: RoutingKeyHealthEnabled, Reason: "no_health_record"}
 	}
-	return routingKeyHealthSummaryFromRecord(&health, now)
+	if hasBaseSummary {
+		if includeSamples {
+			baseSummary.HealthSamples, _ = healthSamplesFromJSON(health.SamplesJSON)
+			if len(baseSummary.HealthSamples) > routingKeyHealthWindowSize {
+				baseSummary.HealthSamples = baseSummary.HealthSamples[len(baseSummary.HealthSamples)-routingKeyHealthWindowSize:]
+			}
+		}
+		return baseSummary
+	}
+	return routingKeyHealthSummaryFromRecord(&health, now, includeSamples)
 }
 
 func RoutingKeyHealthAllowsRouting(
@@ -166,7 +230,7 @@ func RoutingKeyHealthAllowsRouting(
 	availabilityReason string,
 	now time.Time,
 ) bool {
-	summary := GetRoutingKeyHealthSummary(routingKeyID, status, availabilityReason, now)
+	summary := getRoutingKeyHealthSummary(routingKeyID, status, availabilityReason, now, false)
 	return summary.Status != RoutingKeyHealthDisabled && summary.Status != RoutingKeyHealthInvalid
 }
 
@@ -334,6 +398,19 @@ func summarizeHealthSamples(samples []RoutingKeyHealthSample) (int, int, int64, 
 	return len(samples), successCount, maxFirstLatencyMs, lastFirstLatencyMs, lastSampleAt
 }
 
+func sanitizeRoutingKeyHealthErrorSummary(summary string) string {
+	text := strings.Join(strings.Fields(summary), " ")
+	text = common.MaskSensitiveInfo(text)
+	for _, pattern := range routingKeyHealthSensitivePatterns {
+		text = pattern.ReplaceAllString(text, "$1***")
+	}
+	text = strings.TrimSpace(text)
+	if len([]rune(text)) <= routingKeyHealthErrorSummaryMaxLength {
+		return text
+	}
+	return string([]rune(text)[:routingKeyHealthErrorSummaryMaxLength-1]) + "…"
+}
+
 func RecordRoutingKeyHealthSample(
 	routingKeyID uint,
 	channelID int,
@@ -341,6 +418,7 @@ func RecordRoutingKeyHealthSample(
 	success bool,
 	firstLatencyMs int64,
 	unixTime int64,
+	errorSummary ...string,
 ) error {
 	if routingKeyID == 0 || DB == nil {
 		return nil
@@ -350,6 +428,10 @@ func RecordRoutingKeyHealthSample(
 	}
 	if firstLatencyMs < 0 {
 		firstLatencyMs = 0
+	}
+	sanitizedErrorSummary := ""
+	if len(errorSummary) > 0 {
+		sanitizedErrorSummary = sanitizeRoutingKeyHealthErrorSummary(errorSummary[0])
 	}
 	source = strings.TrimSpace(source)
 
@@ -376,6 +458,7 @@ func RecordRoutingKeyHealthSample(
 				Success:        success,
 				FirstLatencyMs: firstLatencyMs,
 				CreatedAt:      unixTime,
+				ErrorSummary:   sanitizedErrorSummary,
 			})
 			if len(samples) > routingKeyHealthWindowSize {
 				samples = samples[len(samples)-routingKeyHealthWindowSize:]
@@ -432,6 +515,7 @@ func RecordRoutingKeyRecoverySample(
 	success bool,
 	firstLatencyMs int64,
 	now time.Time,
+	errorSummary ...string,
 ) error {
 	if routingKeyID == 0 || DB == nil {
 		return nil
@@ -442,6 +526,10 @@ func RecordRoutingKeyRecoverySample(
 	nowUnix := now.Unix()
 	if firstLatencyMs < 0 {
 		firstLatencyMs = 0
+	}
+	sanitizedErrorSummary := ""
+	if len(errorSummary) > 0 {
+		sanitizedErrorSummary = sanitizeRoutingKeyHealthErrorSummary(errorSummary[0])
 	}
 
 	var lastErr error
@@ -470,6 +558,7 @@ func RecordRoutingKeyRecoverySample(
 				Success:        success,
 				FirstLatencyMs: firstLatencyMs,
 				CreatedAt:      nowUnix,
+				ErrorSummary:   sanitizedErrorSummary,
 			})
 			if len(samples) > routingKeyHealthWindowSize {
 				samples = samples[len(samples)-routingKeyHealthWindowSize:]

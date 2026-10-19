@@ -256,12 +256,20 @@ export interface KeyStatus {
   health_sample_count?: number
   health_success_count?: number
   health_first_latency_ms?: number
+  health_samples?: RoutingKeyHealthSample[]
   recovery_phase?: 'probing' | 'confirming'
   recovery_next_test_at?: number
   recovery_last_test_at?: number
   recovery_confirmations_done?: number
   recovery_confirmations_total?: number
   last_used_at?: number
+}
+
+export interface RoutingKeyHealthSample {
+  success: boolean
+  first_latency_ms: number
+  created_at: number
+  error_summary?: string
 }
 
 export type MultiKeyConfirmAction = {
@@ -666,6 +674,7 @@ export interface UpstreamKey {
   health_sample_count?: number
   health_success_count?: number
   health_first_latency_ms?: number
+  health_samples?: RoutingKeyHealthSample[]
   recovery_phase?: 'probing' | 'confirming'
   recovery_next_test_at?: number
   recovery_last_test_at?: number
