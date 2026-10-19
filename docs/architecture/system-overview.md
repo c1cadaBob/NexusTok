@@ -116,7 +116,7 @@ HTTP
 Redis 兼容模式。SQLite 文件不会自动迁移到 PostgreSQL；已有生产数据切换前必须备份，
 并单独执行经过验证的数据迁移。
 
-当前发布镜像为 `c1cadabob/nexustok:v0.2.9` 和 `c1cadabob/nexustok:latest`，Dockerfile
+当前发布镜像为 `c1cadabob/nexustok:v0.2.10` 和 `c1cadabob/nexustok:latest`，Dockerfile
 通过当前 `web/` 的 Bun/Rsbuild `bun run build` 生成并嵌入新版前端，不新增路由、DTO、
 数据库模型或字段。本次发布包含按 GitHub Release 选择系统维护版本、更新前数据备份、
 Docker 临时容器切换和失败恢复；同时保留 v0.2.7 的 Sub2API 浏览器登录态采集、页面公开
@@ -289,6 +289,17 @@ helper 在主容器停止前接管系统任务租约，启动失败时把租约�
 任务错误、日志和手动命令不包含 `SESSION_SECRET`、`SQL_DSN`、`REDIS_CONN_STRING`、
 Cookie、Token 或完整 Key。
 
+**2026-10-19 Compose helper 挂载修复**：变更前 helper 仅复用应用容器的数据/日志挂载和
+Docker Socket；即使 Compose 标签含宿主机配置路径，helper 也看不到 `/opt/NexusTok`，
+任务在读取 `docker-compose.yml` 时失败。通用域名脱敏还会把文件名误显示为 `***.yml`。
+变更后创建 helper 前校验 Compose `working_dir`、`config_files` 标签并解析相对路径，按
+配置文件父目录去重，通过 Docker Engine `Mounts` 以相同宿主绝对路径和读写权限挂载目录；
+不存在的宿主源路径由 Engine 在 helper 创建时拒绝，不会由传统 `Binds` 自动创建目录；不复制
+数据库、Redis 或凭据，非 Compose 模式不增加该挂载。目录挂载支持同目录临时文件、原子
+重命名和回滚；helper 在该挂载中再验证配置文件为普通文件。错误脱敏保留本地 YAML 文件路径，同时继续掩码
+DSN、密码、Token、Cookie、API Key、Authorization 和上游 URL。定向与 service 全量测试通过；
+生产部署和 Docker Engine helper 实机验收结果以本次发布后的部署记录为准。
+
 ### 7.3 平台站点管理入口与管理员钱包余额（2026-10-14）
 
 **变更前**：平台站点渠道行的“更多”菜单没有直接进入上游管理页面的入口；钱包只
@@ -322,6 +333,7 @@ Cookie、Token 或完整 Key。
 | 2026-10-13 | 按发布版本选择回滚与数据备份恢复 | 维护页不能选择任意已发布版本，裸机使用 `.backup` 文件、Docker 使用稳定备份容器；更新失败后的数据恢复边界未统一 | 后端分页读取 Release 并校验目标版本；镜像拉取和 preflight 后再备份数据、日志和主数据库，Redis 不恢复；裸机不再创建 `.backup`，Docker 只保留正式目标容器，切换失败按状态恢复旧实例和数据并记录 `data_restore_failed` | `controller/system_update.go`、`service/system_update.go`、`service/system_update_backup.go`、`service/system_update_docker.go`、维护页 | Go service 定向测试、Docker 备份/恢复边界测试和前端定向测试；未进行生产切换、Docker 真实工具容器和完整三数据库矩阵 |
 | 2026-10-14 | 平台站点请求级使用日志成本 | 之前按 UTC 五分钟窗口查询上游成本并在之后三个周期重试，且请求 ID 字段兼容不完整，部分成功请求只能看到本地费用 | 每条平台站点请求完成时只处理一次成本；优先使用平台确认的响应成本，否则一次性读取 Sub2API `/api/v1/admin/usage` 或 NewAPI `/api/log/`，兼容四种请求 ID并在三秒内唯一匹配；查询失败直接使用一次性倍率估算，错误请求固定为 `0 estimated`，不再注册窗口同步任务 | `controller/system_task_handlers.go`、`service/platform_site_usage_cost.go`、`model/platform_site_usage_cost.go`、`controller/log.go`、使用日志前端 | Go 服务/模型/控制器定向测试、前端成本展示测试、真实站点管理员接口待部署环境核验；未修改日志库、ClickHouse、Redis 或数据库结构 |
 | 2026-10-16 | 平台站点真实上游成本同步修正 | NewAPI 普通账号访问管理员日志接口并每次重新登录；Sub2API 标准 `X-Request-ID` 未被捕获，真实 usage 记录容易退回本地估算 | NewAPI 优先 `/api/log/self`，仅 `404/405` 回退 `/api/log/`；Sub2API 保持普通 usage 优先；按渠道串行复用内存会话，认证失效才重认证，429 使用失败冷却；保留自定义请求 ID优先并兼容标准请求 ID；查询失败安全估算且诊断脱敏 | `service/platform_site_usage_cost.go`、`service/http.go`、`relay/channel/api_request.go`、`service/upstream_site_adapters.go`、`service/upstream_site_test.go` | `go test ./service ./relay/channel`；无数据库 Schema、迁移、日志库或 ClickHouse 变更 |
+| 2026-10-19 | Docker Compose 更新 helper 配置挂载 | helper 没有宿主 Compose 目录挂载，无法读取/原子改写配置；错误脱敏将 `docker-compose.yml` 显示为 `***.yml` | 根据 Compose 标签校验并解析配置路径，把去重后的配置父目录按同一绝对路径 `rw` 挂载；非 Compose 不增加挂载，配置改写/失败恢复沿用原子写入；本地路径保留且敏感值继续脱敏 | `service/system_update_docker.go`、`service/system_update.go`、`service/system_update_test.go` | Docker helper/Compose 定向测试和 `go test ./service -count=1`；生产首次切换及 helper 实机验证待发布后记录 |
 | 2026-10-14 | 平台站点管理跳转与管理员余额 | 渠道行没有直接进入上游管理页面的入口，钱包不展示平台站点账号余额 | 平台站点状态返回经服务端校验的 `management_url`，管理员可在新标签页打开；`/api/user/self` 的管理员分支按平台账号汇总 NewAPI/Sub2API 本地余额快照，禁用账号仍计入且不触发上游同步 | `service/upstream_site.go`、`controller/upstream_channel.go`、`model/platform_site_balance.go`、`controller/user.go`、渠道和钱包前端 | Go 定向模型/控制器/服务测试、前端定向组件测试、`bun run typecheck`、`bun run lint`、i18n 同步；未新增数据库 Schema 或迁移 |
 | 2026-10-02 | Docker 自动更新端口预检 | 更新流程在旧容器仍发布 `3030` 时直接启动同端口 staging 容器，Docker 会返回 `port is already allocated` | bridge/Compose 网络先用无宿主端口、无 Compose 标签/别名的 preflight 容器探活，再停旧并启动保留原端口的正式容器；`host`/`container:<id>` 网络走受控降级 | `service/system_update_docker.go`、系统任务 Docker helper、维护页错误展示 | `go test ./service -run 'Docker(Update\|Updated\|Readiness\|Helper\|Pull\|Staging)' -count=1` |
 | 2026-09-30 | v0.2.2 生产默认部署 | Compose 使用浮动依赖、明文默认密码和相对目录，服务依赖未按健康状态编排；单容器示例未明确不包含外部数据库/缓存 | Compose 固定 PostgreSQL 15 + Redis 7，密码由 `.env`/部署脚本生成，应用端口为 `3030`，数据/日志使用 `/opt/nexustok` 持久化目录，单容器仅保留 SQLite/无 Redis 兼容模式 | `docker-compose.yml`、`scripts/deploy.sh`、`Dockerfile`、`VERSION`、Docker 发布工作流和中文部署文档 | `docker compose config`、`bash -n scripts/deploy.sh`、隔离三服务栈和真实 SQLite 3.50.4/MySQL 8.2.0/PostgreSQL 15.19 矩阵已通过；生产 Dockerfile 完整构建因 `proxy.golang.org` 超时未完成，远端发布以标签工作流为准 |

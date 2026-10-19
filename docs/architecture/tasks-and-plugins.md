@@ -101,6 +101,14 @@ Capability URL 不是上游 URL。读取时 Host 仍要加载任务、用户和�
   的容器；source/development build、Windows 正在运行的二进制和无 socket 容器只提供
   手动提示。Docker 容器更新在 bridge/Compose 网络下先用不发布宿主端口的 preflight
   容器探活，再停旧并启动正式容器；`host` 和 `container:<id>` 网络走停旧后探活的降级路径。
+- Compose 更新 helper 依据 `com.docker.compose.project.working_dir` 和
+  `com.docker.compose.project.config_files` 元数据，将各配置文件父目录去重后以同一宿主绝对
+  路径读写挂载；相对配置路径仅在绝对 `working_dir` 存在时解析。Compose 配置目录使用
+  Docker Engine `Mounts` 请求而不是 `Binds`，因此宿主源路径不存在时 Engine 会在 helper 创建
+  阶段报错而不会自动创建空目录。应用容器本身不必能访问该宿主路径；普通文件类型及 YAML
+  内容由 helper 在挂载后检查。目录挂载支持同目录临时文件、原子 `Rename` 和失败恢复；已有
+  同目标挂载若源路径不一致或只读则拒绝创建 helper。数据、日志、Docker Socket 挂载保持原样，不额外挂载数据库或 Redis；
+  Docker Run 模式不增加 Compose 配置挂载。更新错误显示本地 Compose 路径，但继续掩码凭据。
 
 ## 9. 维护时需要同步的关联模块
 
@@ -116,3 +124,4 @@ Capability URL 不是上游 URL。读取时 Host 仍要加载任务、用户和�
 | 2026-10-14 | 平台站点请求级使用日志成本 | 平台站点成本由独立 SystemTask 按 UTC 五分钟窗口查询，无法及时匹配时还会延迟重试 | 移除新的平台成本窗口任务注册；请求成功或失败记日志时只处理一次，响应携带成本优先，否则一次性读取 Sub2API `/api/v1/admin/usage` 或 NewAPI `/api/log/`，失败立即写估算值；保留历史窗口模型和表结构，日志数据库、ClickHouse、Redis 不参与成本持久化 | `controller/system_task_handlers.go`、`service/platform_site_usage_cost.go`、`model/platform_site_usage_cost.go`、`controller/log.go` | Go 定向服务/模型/控制器测试、前端成本展示测试；真实上游管理员接口及完整三数据库矩阵需按最终报告核对 |
 | 2026-10-16 | 平台站点成本查询会话与请求关联修正 | 成本查询每次重新登录，NewAPI 普通账号固定访问管理员日志，标准 `X-Request-ID` 无法参与精确匹配，429 会话签发限制可能造成重复登录 | NewAPI 优先 `/api/log/self`，仅 `404/405` 回退 `/api/log/`；Sub2API 保持普通 usage 优先；按渠道缓存并串行复用成本查询会话，认证失效才重认证，429 使用失败冷却；兼容标准请求 ID并保持自定义头优先；不新增 SystemTask、数据库表或迁移 | `service/platform_site_usage_cost.go`、`service/http.go`、`relay/channel/api_request.go`、`service/upstream_site_test.go` | `go test ./service ./relay/channel`；无数据库 Schema 变更 |
 | 2026-10-02 | Docker 更新任务端口预检 | 更新任务在旧容器仍绑定宿主端口时启动同端口 staging 容器，可能因端口占用失败 | 增加无端口 preflight 探活和正式容器停旧后启动流程；失败时恢复旧容器并保留稳定 backup | `service/system_update_docker.go`、系统更新任务状态和失败终态 | `go test ./service -run 'Docker(Update\|Updated\|Readiness\|Helper\|Pull\|Staging)' -count=1` |
+| 2026-10-19 | Docker Compose 更新 helper 挂载 | helper 只继承数据/日志和 Docker Socket，宿主 Compose 配置不可见，故无法读取并更新 YAML；通用脱敏还会遮蔽文件名 | 创建 helper 前校验 Compose 路径元数据并挂载去重后的配置父目录为同路径 `rw`；应用容器无需预先可见宿主目录；helper 内继续验证文件并原子改写/恢复；非 Compose 无额外挂载，冲突或只读挂载提前拒绝 | `service/system_update_docker.go`、`service/system_update.go` | Compose/helper 定向测试、service 全量测试通过；生产切换和 helper 实机验收待本次发布后更新 |

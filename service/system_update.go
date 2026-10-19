@@ -95,7 +95,8 @@ var (
 )
 
 var (
-	systemUpdateSensitiveValuePattern = regexp.MustCompile(`(?i)(["']?\b(?:SESSION_SECRET(?:_FILE)?|SQL_DSN|REDIS_CONN_STRING|DATABASE_URL|MYSQL_DSN|POSTGRES(?:QL)?_DSN|ACCESS[_-]?TOKEN|REFRESH[_-]?TOKEN|API[_-]?KEY|ADMIN[_-]?KEY|AUTHORIZATION|SET[_-]?COOKIE|COOKIE|PASSWORD|PASSPHRASE|SECRET|KEY)\b["']?\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;\]\}]+)`)
+	systemUpdateSensitiveValuePattern = regexp.MustCompile(`(?i)(["']?\b(?:SESSION_SECRET(?:_FILE)?|SQL_DSN|REDIS_CONN_STRING|DATABASE_URL|MYSQL_DSN|POSTGRES(?:QL)?_DSN|ACCESS[_-]?TOKEN|REFRESH[_-]?TOKEN|API[_-]?KEY|ADMIN[_-]?KEY|AUTHORIZATION|SET[_-]?COOKIE|COOKIE|PASSWORD|PASSPHRASE|SECRET|KEY)\b["']?\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|Bearer\s+[^\s,;\]\}]+|[^\s,;\]\}]+)`)
+	systemUpdateComposePathPattern    = regexp.MustCompile(`(?i)/(?:[A-Za-z0-9._~%+\-]+/)*[A-Za-z0-9._~%+\-]+\.ya?ml`)
 	systemUpdateGitHubRepoPattern     = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 	systemUpdateRename                = os.Rename
 )
@@ -1298,9 +1299,48 @@ func maskSystemUpdateSensitiveInfo(text string) string {
 	if text == "" {
 		return ""
 	}
-	text = common.MaskSensitiveInfo(text)
-	text = systemUpdateSensitiveValuePattern.ReplaceAllString(text, "$1***")
-	return text
+	protectedText, protectedPaths := protectSystemUpdateComposePaths(text)
+	protectedText = common.MaskSensitiveInfo(protectedText)
+	protectedText = systemUpdateSensitiveValuePattern.ReplaceAllString(protectedText, "$1***")
+	for index, path := range protectedPaths {
+		token := fmt.Sprintf("__NEXUSTOK_COMPOSE_PATH_%d__", index)
+		protectedText = strings.ReplaceAll(protectedText, token, path)
+	}
+	return protectedText
+}
+
+func protectSystemUpdateComposePaths(text string) (string, []string) {
+	matches := systemUpdateComposePathPattern.FindAllStringIndex(text, -1)
+	if len(matches) == 0 {
+		return text, nil
+	}
+	protectedPaths := make([]string, 0, len(matches))
+	var builder strings.Builder
+	lastIndex := 0
+	for _, match := range matches {
+		if !isSystemUpdateLocalComposePath(text, match[0]) {
+			continue
+		}
+		builder.WriteString(text[lastIndex:match[0]])
+		builder.WriteString(fmt.Sprintf("__NEXUSTOK_COMPOSE_PATH_%d__", len(protectedPaths)))
+		protectedPaths = append(protectedPaths, text[match[0]:match[1]])
+		lastIndex = match[1]
+	}
+	if len(protectedPaths) == 0 {
+		return text, nil
+	}
+	builder.WriteString(text[lastIndex:])
+	return builder.String(), protectedPaths
+}
+
+func isSystemUpdateLocalComposePath(text string, pathIndex int) bool {
+	start := strings.LastIndexAny(text[:pathIndex], " \t\r\n\"'=:([{")
+	if start >= 0 {
+		start++
+	} else {
+		start = 0
+	}
+	return !strings.Contains(text[start:pathIndex], "://")
 }
 
 func (c *systemUpdateHTTPClient) FetchLatestRelease(ctx context.Context, repo string) (*systemUpdateGitHubRelease, error) {

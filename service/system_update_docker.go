@@ -83,6 +83,7 @@ type dockerContainerConfig struct {
 
 type dockerHostConfig struct {
 	Binds         []string                       `json:"Binds,omitempty"`
+	Mounts        []dockerMountSpec              `json:"Mounts,omitempty"`
 	PortBindings  map[string][]dockerPortBinding `json:"PortBindings,omitempty"`
 	RestartPolicy dockerRestartPolicy            `json:"RestartPolicy,omitempty"`
 	NetworkMode   string                         `json:"NetworkMode,omitempty"`
@@ -93,6 +94,13 @@ type dockerHostConfig struct {
 	CapAdd        []string                       `json:"CapAdd,omitempty"`
 	CapDrop       []string                       `json:"CapDrop,omitempty"`
 	SecurityOpt   []string                       `json:"SecurityOpt,omitempty"`
+}
+
+type dockerMountSpec struct {
+	Type     string `json:"Type"`
+	Source   string `json:"Source,omitempty"`
+	Target   string `json:"Target"`
+	ReadOnly bool   `json:"ReadOnly,omitempty"`
 }
 
 type dockerPortBinding struct {
@@ -198,6 +206,16 @@ type systemUpdateComposeFileBackup struct {
 	Path string
 	Mode os.FileMode
 	Data []byte
+}
+
+type systemUpdateComposeFileUpdate struct {
+	Backup  systemUpdateComposeFileBackup
+	Updated []byte
+}
+
+type dockerHelperMountConfig struct {
+	Binds  []string
+	Mounts []dockerMountSpec
 }
 
 func systemUpdateDockerSocketPath() string {
@@ -1042,6 +1060,10 @@ func (s *SystemUpdateService) startDockerHelper(ctx context.Context, task *model
 	if options.Mode == "" {
 		options.Mode = systemUpdateDeploymentDockerRun
 	}
+	helperMounts, err := dockerHelperMountsForMode(inspect, socketPath, options.Mode)
+	if err != nil {
+		return fmt.Errorf("prepare Docker update helper mounts failed: %w", err)
+	}
 	helperRunnerID := fmt.Sprintf("%s-helper-%s", runnerID, common.GetRandomString(6))
 	helperName := fmt.Sprintf("%s-update-helper-%s", containerName, common.GetRandomString(6))
 	helperImage := firstNonEmptySystemUpdateString(inspect.Config.Image, options.TargetImage, systemUpdateDefaultDockerImage)
@@ -1058,7 +1080,8 @@ func (s *SystemUpdateService) startDockerHelper(ctx context.Context, task *model
 			"dev.c1cada.nexustok.system_update_task":   task.TaskID,
 		},
 		HostConfig: dockerHostConfig{
-			Binds:       dockerHelperBinds(inspect, socketPath),
+			Binds:       helperMounts.Binds,
+			Mounts:      helperMounts.Mounts,
 			NetworkMode: inspect.HostConfig.NetworkMode,
 		},
 	}
@@ -1160,12 +1183,23 @@ func dockerMergeEnv(base []string, overrides []string) []string {
 	return result
 }
 
-func dockerHelperBinds(inspect *dockerInspectContainer, socketPath string) []string {
+func dockerHelperMountsForMode(inspect *dockerInspectContainer, socketPath string, deploymentMode string) (dockerHelperMountConfig, error) {
+	if inspect == nil {
+		return dockerHelperMountConfig{}, errors.New("Docker container metadata is unavailable")
+	}
 	binds := append([]string(nil), inspect.HostConfig.Binds...)
+	mounts := make([]dockerMountSpec, 0)
 	seenDestinations := map[string]struct{}{}
+	composeMounts := map[string]dockerHelperMount{}
 	for _, bind := range binds {
 		if destination := dockerBindDestination(bind); destination != "" {
 			seenDestinations[destination] = struct{}{}
+			parts := strings.Split(bind, ":")
+			writable := true
+			if len(parts) > 2 && strings.HasPrefix(parts[2], "ro") {
+				writable = false
+			}
+			composeMounts[destination] = dockerHelperMount{Source: parts[0], Writable: writable}
 		}
 	}
 	for _, mount := range inspect.Mounts {
@@ -1188,12 +1222,42 @@ func dockerHelperBinds(inspect *dockerInspectContainer, socketPath string) []str
 		}
 		binds = append(binds, source+":"+mount.Destination+":"+mode)
 		seenDestinations[mount.Destination] = struct{}{}
+		composeMounts[mount.Destination] = dockerHelperMount{Source: source, Writable: mount.RW}
+	}
+	if deploymentMode == systemUpdateDeploymentDockerCompose {
+		composeDirectories, err := dockerComposeConfigDirectories(inspect)
+		if err != nil {
+			return dockerHelperMountConfig{}, err
+		}
+		for _, directory := range composeDirectories {
+			if existingMount, exists := composeMounts[directory]; exists {
+				if existingMount.Source != directory || !existingMount.Writable {
+					return dockerHelperMountConfig{}, fmt.Errorf("Docker Compose configuration directory %q is already mounted incompatibly", directory)
+				}
+				continue
+			}
+			if _, exists := seenDestinations[directory]; exists {
+				return dockerHelperMountConfig{}, fmt.Errorf("Docker Compose configuration directory %q conflicts with an existing helper mount", directory)
+			}
+			mounts = append(mounts, dockerMountSpec{
+				Type:   "bind",
+				Source: directory,
+				Target: directory,
+			})
+			seenDestinations[directory] = struct{}{}
+			composeMounts[directory] = dockerHelperMount{Source: directory, Writable: true}
+		}
 	}
 	socketPath = firstNonEmptySystemUpdateString(socketPath, systemUpdateDockerSockDefault)
 	if _, exists := seenDestinations[socketPath]; !exists {
 		binds = append(binds, socketPath+":"+socketPath)
 	}
-	return binds
+	return dockerHelperMountConfig{Binds: binds, Mounts: mounts}, nil
+}
+
+type dockerHelperMount struct {
+	Source   string
+	Writable bool
 }
 
 func dockerBindDestination(bind string) string {
@@ -1501,37 +1565,25 @@ func (s *SystemUpdateService) restoreSystemUpdateDataAfterDockerFailure(
 }
 
 func prepareSystemUpdateComposeImage(current *dockerInspectContainer, targetImage string) ([]systemUpdateComposeFileBackup, error) {
+	paths, err := dockerComposeConfigFiles(current)
+	if err != nil {
+		return nil, err
+	}
 	if current == nil || current.Config.Labels == nil {
 		return nil, errors.New("Docker Compose metadata is unavailable")
-	}
-	configFiles := strings.TrimSpace(current.Config.Labels["com.docker.compose.project.config_files"])
-	if configFiles == "" {
-		return nil, errors.New("Docker Compose configuration file is unavailable")
 	}
 	serviceName := strings.TrimSpace(current.Config.Labels["com.docker.compose.service"])
 	if serviceName == "" {
 		return nil, errors.New("Docker Compose service name is unavailable")
 	}
-	workingDir := strings.TrimSpace(current.Config.Labels["com.docker.compose.project.working_dir"])
-	paths := strings.FieldsFunc(configFiles, func(char rune) bool {
-		return char == ',' || (os.PathListSeparator == ';' && char == os.PathListSeparator)
-	})
-	backups := make([]systemUpdateComposeFileBackup, 0, len(paths))
-	for _, rawPath := range paths {
-		path := strings.TrimSpace(rawPath)
-		if path == "" {
-			continue
-		}
-		if !filepath.IsAbs(path) && workingDir != "" {
-			path = filepath.Join(workingDir, path)
-		}
-		path, err := filepath.Abs(path)
-		if err != nil {
-			return nil, err
-		}
+	updates := make([]systemUpdateComposeFileUpdate, 0, len(paths))
+	for _, path := range paths {
 		fileInfo, err := os.Lstat(path)
 		if err != nil {
 			return nil, fmt.Errorf("stat Docker Compose configuration failed: %w", err)
+		}
+		if fileInfo.Mode()&os.ModeSymlink != 0 || !fileInfo.Mode().IsRegular() {
+			return nil, errors.New("Docker Compose configuration must be a regular file and must not be a symbolic link")
 		}
 		if fileInfo.Mode()&os.ModeSymlink != 0 || !fileInfo.Mode().IsRegular() {
 			return nil, errors.New("Docker Compose configuration must be a regular file and must not be a symbolic link")
@@ -1551,16 +1603,98 @@ func prepareSystemUpdateComposeImage(current *dockerInspectContainer, targetImag
 		if err != nil {
 			return nil, fmt.Errorf("encode Docker Compose configuration failed: %w", err)
 		}
-		if err := atomicWriteSystemUpdateFile(path, updated, fileInfo.Mode().Perm()); err != nil {
-			_ = restoreSystemUpdateComposeFiles(backups)
-			return nil, err
-		}
-		backups = append(backups, systemUpdateComposeFileBackup{Path: path, Mode: fileInfo.Mode().Perm(), Data: data})
+		updates = append(updates, systemUpdateComposeFileUpdate{
+			Backup:  systemUpdateComposeFileBackup{Path: path, Mode: fileInfo.Mode().Perm(), Data: data},
+			Updated: updated,
+		})
 	}
-	if len(backups) == 0 {
+	if len(updates) == 0 {
 		return nil, fmt.Errorf("Docker Compose service %q image field was not found", serviceName)
 	}
+	backups := make([]systemUpdateComposeFileBackup, 0, len(updates))
+	for _, update := range updates {
+		if err := atomicWriteSystemUpdateFile(update.Backup.Path, update.Updated, update.Backup.Mode); err != nil {
+			if restoreErr := restoreSystemUpdateComposeFiles(backups); restoreErr != nil {
+				return nil, fmt.Errorf("%w; restore Docker Compose configuration failed: %v", err, restoreErr)
+			}
+			return nil, err
+		}
+		backups = append(backups, update.Backup)
+	}
 	return backups, nil
+}
+
+func dockerComposeConfigFiles(current *dockerInspectContainer) ([]string, error) {
+	if current == nil || current.Config.Labels == nil {
+		return nil, errors.New("Docker Compose metadata is unavailable")
+	}
+	configFiles := strings.TrimSpace(current.Config.Labels["com.docker.compose.project.config_files"])
+	if configFiles == "" {
+		return nil, errors.New("Docker Compose configuration file is unavailable")
+	}
+	workingDir := strings.TrimSpace(current.Config.Labels["com.docker.compose.project.working_dir"])
+	if workingDir != "" {
+		if !filepath.IsAbs(workingDir) {
+			return nil, errors.New("Docker Compose working directory must be an absolute path")
+		}
+		absoluteWorkingDir, err := filepath.Abs(workingDir)
+		if err != nil {
+			return nil, fmt.Errorf("resolve Docker Compose working directory failed: %w", err)
+		}
+		workingDir = absoluteWorkingDir
+	}
+	paths := strings.FieldsFunc(configFiles, func(char rune) bool {
+		return char == ',' || (os.PathListSeparator == ';' && char == os.PathListSeparator)
+	})
+	resolved := make([]string, 0, len(paths))
+	seen := make(map[string]struct{}, len(paths))
+	for _, rawPath := range paths {
+		path := strings.TrimSpace(rawPath)
+		if path == "" {
+			continue
+		}
+		if !filepath.IsAbs(path) {
+			if workingDir == "" {
+				return nil, errors.New("Docker Compose working directory is unavailable for a relative configuration file")
+			}
+			path = filepath.Join(workingDir, path)
+		}
+		path, err := filepath.Abs(path)
+		if err != nil {
+			return nil, fmt.Errorf("resolve Docker Compose configuration failed: %w", err)
+		}
+		path = filepath.Clean(path)
+		if _, exists := seen[path]; exists {
+			continue
+		}
+		seen[path] = struct{}{}
+		resolved = append(resolved, path)
+	}
+	if len(resolved) == 0 {
+		return nil, errors.New("Docker Compose configuration file is unavailable")
+	}
+	return resolved, nil
+}
+
+func dockerComposeConfigDirectories(current *dockerInspectContainer) ([]string, error) {
+	paths, err := dockerComposeConfigFiles(current)
+	if err != nil {
+		return nil, err
+	}
+	directories := make([]string, 0, len(paths))
+	seen := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		directory, err := filepath.Abs(filepath.Dir(path))
+		if err != nil {
+			return nil, fmt.Errorf("resolve Docker Compose configuration directory failed: %w", err)
+		}
+		if _, exists := seen[directory]; exists {
+			continue
+		}
+		seen[directory] = struct{}{}
+		directories = append(directories, directory)
+	}
+	return directories, nil
 }
 
 func replaceComposeServiceImage(document *yaml.Node, serviceName string, targetImage string) bool {

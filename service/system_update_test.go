@@ -1669,13 +1669,16 @@ services:
 
 func TestPrepareComposeImageUpdatesAtomicallyAndCanRestore(t *testing.T) {
 	dir := t.TempDir()
-	composePath := filepath.Join(dir, "compose.yml")
+	absoluteComposePath := filepath.Join(dir, "compose.yml")
 	original := []byte("services:\n  nexustok:\n    image: c1cadabob/nexustok:old\n")
-	require.NoError(t, os.WriteFile(composePath, original, 0640))
+	require.NoError(t, os.WriteFile(absoluteComposePath, original, 0640))
+	composePath, err := filepath.Rel(dir, absoluteComposePath)
+	require.NoError(t, err)
 	current := &dockerInspectContainer{
 		Config: dockerContainerConfig{
 			Labels: map[string]string{
 				"com.docker.compose.service":              "nexustok",
+				"com.docker.compose.project.working_dir":  dir,
 				"com.docker.compose.project.config_files": composePath,
 			},
 		},
@@ -1683,15 +1686,35 @@ func TestPrepareComposeImageUpdatesAtomicallyAndCanRestore(t *testing.T) {
 
 	backups, err := prepareSystemUpdateComposeImage(current, "c1cadabob/nexustok:v0.2.7")
 	require.NoError(t, err)
-	updated, err := os.ReadFile(composePath)
+	updated, err := os.ReadFile(absoluteComposePath)
 	require.NoError(t, err)
 	assert.Contains(t, string(updated), "c1cadabob/nexustok:v0.2.7")
 	assert.NotEqual(t, string(original), string(updated))
 	require.NoError(t, restoreSystemUpdateComposeFiles(backups))
-	restored, err := os.ReadFile(composePath)
+	restored, err := os.ReadFile(absoluteComposePath)
 	require.NoError(t, err)
 	assert.Equal(t, string(original), string(restored))
-	assert.Equal(t, os.FileMode(0640), fileModePerm(t, composePath))
+	assert.Equal(t, os.FileMode(0640), fileModePerm(t, absoluteComposePath))
+}
+
+func TestPrepareComposeImageValidatesAllFilesBeforeUpdatingAny(t *testing.T) {
+	directory := t.TempDir()
+	composePath := filepath.Join(directory, "docker-compose.yml")
+	original := []byte("services:\n  nexustok:\n    image: c1cadabob/nexustok:old\n")
+	require.NoError(t, os.WriteFile(composePath, original, 0640))
+	invalidPath := filepath.Join(directory, "invalid.yml")
+	require.NoError(t, os.Mkdir(invalidPath, 0750))
+	current := &dockerInspectContainer{Config: dockerContainerConfig{Labels: map[string]string{
+		"com.docker.compose.service":              "nexustok",
+		"com.docker.compose.project.working_dir":  directory,
+		"com.docker.compose.project.config_files": "docker-compose.yml,invalid.yml",
+	}}}
+
+	_, err := prepareSystemUpdateComposeImage(current, "c1cadabob/nexustok:v0.2.10")
+	require.Error(t, err)
+	actual, readErr := os.ReadFile(composePath)
+	require.NoError(t, readErr)
+	assert.Equal(t, original, actual)
 }
 
 func TestDockerUpdateFailureRestoresCurrentAndRemovesStaging(t *testing.T) {
@@ -2211,12 +2234,111 @@ func TestDockerHelperBindsConfiguredSocketWithoutExposingSensitiveEnv(t *testing
 		},
 	}
 
-	binds := dockerHelperBinds(inspect, "/run/custom-docker.sock")
+	mounts, err := dockerHelperMountsForMode(inspect, "/run/custom-docker.sock", systemUpdateDeploymentDockerRun)
+	require.NoError(t, err)
 
-	assert.Contains(t, binds, "/data:/data")
-	assert.Contains(t, binds, "/logs:/app/logs:rw")
-	assert.Contains(t, binds, "/run/custom-docker.sock:/run/custom-docker.sock")
-	assert.NotContains(t, strings.Join(binds, "\n"), "SESSION_SECRET")
+	assert.Contains(t, mounts.Binds, "/data:/data")
+	assert.Contains(t, mounts.Binds, "/logs:/app/logs:rw")
+	assert.Contains(t, mounts.Binds, "/run/custom-docker.sock:/run/custom-docker.sock")
+	assert.NotContains(t, strings.Join(mounts.Binds, "\n"), "SESSION_SECRET")
+}
+
+func TestDockerHelperBindsComposeConfigDirectoriesReadWrite(t *testing.T) {
+	workingDir := t.TempDir()
+	configDir := filepath.Join(workingDir, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0755))
+	for _, name := range []string{"docker-compose.yml", "docker-compose.override.yml"} {
+		require.NoError(t, os.WriteFile(filepath.Join(workingDir, name), []byte("services: {}\n"), 0640))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "compose.extra.yaml"), []byte("services: {}\n"), 0640))
+	inspect := &dockerInspectContainer{
+		HostConfig: dockerHostConfig{Binds: []string{"/opt/nexustok/data:/data"}},
+		Mounts:     []dockerMount{{Source: "/opt/nexustok/logs", Destination: "/app/logs", RW: true}},
+		Config: dockerContainerConfig{Labels: map[string]string{
+			"com.docker.compose.project.working_dir": workingDir,
+			"com.docker.compose.project.config_files": strings.Join([]string{
+				"docker-compose.yml",
+				"./docker-compose.override.yml",
+				"config/compose.extra.yaml",
+			}, ","),
+		}},
+	}
+
+	mounts, err := dockerHelperMountsForMode(inspect, "/run/custom-docker.sock", systemUpdateDeploymentDockerCompose)
+	require.NoError(t, err)
+	assert.Contains(t, mounts.Binds, "/opt/nexustok/data:/data")
+	assert.Contains(t, mounts.Binds, "/opt/nexustok/logs:/app/logs:rw")
+	assert.Contains(t, mounts.Binds, "/run/custom-docker.sock:/run/custom-docker.sock")
+	assert.Contains(t, mounts.Mounts, dockerMountSpec{Type: "bind", Source: configDir, Target: configDir})
+	assert.Contains(t, mounts.Mounts, dockerMountSpec{Type: "bind", Source: workingDir, Target: workingDir})
+	assert.Equal(t, 1, countDockerHelperMountTarget(mounts.Mounts, workingDir))
+	assert.Equal(t, 1, countDockerHelperMountTarget(mounts.Mounts, configDir))
+
+	runModeMounts, err := dockerHelperMountsForMode(inspect, "/run/custom-docker.sock", systemUpdateDeploymentDockerRun)
+	require.NoError(t, err)
+	assert.Empty(t, runModeMounts.Mounts)
+}
+
+func countDockerHelperMountTarget(mounts []dockerMountSpec, target string) int {
+	count := 0
+	for _, mount := range mounts {
+		if mount.Target == target {
+			count++
+		}
+	}
+	return count
+}
+
+func TestDockerHelperComposeMountsRequireResolvableMetadata(t *testing.T) {
+	inspect := &dockerInspectContainer{Config: dockerContainerConfig{Labels: map[string]string{
+		"com.docker.compose.project.config_files": "docker-compose.yml",
+	}}}
+
+	_, err := dockerHelperMountsForMode(inspect, "/run/custom-docker.sock", systemUpdateDeploymentDockerCompose)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "working directory")
+}
+
+func TestDockerHelperComposeMountRejectsConflictingBind(t *testing.T) {
+	workingDir := t.TempDir()
+	composePath := filepath.Join(workingDir, "docker-compose.yml")
+	require.NoError(t, os.WriteFile(composePath, []byte("services: {}\n"), 0640))
+	inspect := &dockerInspectContainer{
+		HostConfig: dockerHostConfig{Binds: []string{"/unrelated/source:" + workingDir + ":rw"}},
+		Config: dockerContainerConfig{Labels: map[string]string{
+			"com.docker.compose.project.working_dir":  workingDir,
+			"com.docker.compose.project.config_files": composePath,
+		}},
+	}
+
+	_, err := dockerHelperMountsForMode(inspect, "/run/custom-docker.sock", systemUpdateDeploymentDockerCompose)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mounted incompatibly")
+}
+
+func TestDockerHelperComposeMountDoesNotRequireHostPathVisibleToApplication(t *testing.T) {
+	composeDirectory := filepath.Join(t.TempDir(), "host-compose")
+	inspect := &dockerInspectContainer{Config: dockerContainerConfig{Labels: map[string]string{
+		"com.docker.compose.project.working_dir":  composeDirectory,
+		"com.docker.compose.project.config_files": "docker-compose.yml",
+	}}}
+
+	mounts, err := dockerHelperMountsForMode(inspect, "/run/custom-docker.sock", systemUpdateDeploymentDockerCompose)
+	require.NoError(t, err)
+	assert.Contains(t, mounts.Mounts, dockerMountSpec{Type: "bind", Source: composeDirectory, Target: composeDirectory})
+}
+
+func TestSystemUpdateErrorPreservesComposePathAndMasksSecrets(t *testing.T) {
+	message := SystemUpdateErrorMessage(errors.New(
+		`stat Docker Compose configuration failed: lstat /opt/NexusTok/docker-compose.yml: no such file or directory; SQL_DSN=dsn-placeholder Authorization=Bearer auth-placeholder upstream URL https://provider.example/v1`,
+	))
+
+	assert.Contains(t, message, "/opt/NexusTok/docker-compose.yml")
+	assert.NotContains(t, message, "dsn-placeholder")
+	assert.NotContains(t, message, "auth-placeholder")
+	assert.NotContains(t, message, "https://provider.example")
+	assert.Contains(t, message, "SQL_DSN=***")
+	assert.Contains(t, message, "Authorization=***")
 }
 
 func TestDockerHelperCleanupRemovesContainerWithoutDatabase(t *testing.T) {
@@ -2326,11 +2448,18 @@ func TestDockerHelperStartupFailureReturnsTaskLeaseToOriginalRunner(t *testing.T
 	setupSystemTaskServiceTestDB(t)
 	fake := newFakeDockerEngine()
 	fake.failStartAll = 1
+	composeDirectory := t.TempDir()
+	composePath := filepath.Join(composeDirectory, "docker-compose.yml")
+	require.NoError(t, os.WriteFile(composePath, []byte("services: {}\n"), 0640))
 	current := &dockerInspectContainer{
 		ID:   "current-id",
 		Name: "/nexustok",
 		Config: dockerContainerConfig{
 			Image: "c1cadabob/nexustok:old",
+			Labels: map[string]string{
+				"com.docker.compose.project.working_dir":  composeDirectory,
+				"com.docker.compose.project.config_files": composePath,
+			},
 		},
 		State: dockerContainerState{Running: true, Status: "running"},
 	}
@@ -2360,11 +2489,17 @@ func TestDockerHelperStartupFailureReturnsTaskLeaseToOriginalRunner(t *testing.T
 		"runner-a",
 		dockerHelperOptions{
 			Action: systemUpdateDockerHelperActionUpdate,
-			Mode:   systemUpdateDeploymentDockerRun,
+			Mode:   systemUpdateDeploymentDockerCompose,
 		},
 	)
 
 	require.Error(t, err)
+	require.Len(t, fake.createRequests, 1)
+	assert.Contains(t, fake.createRequests[0].Request.HostConfig.Mounts, dockerMountSpec{
+		Type:   "bind",
+		Source: composeDirectory,
+		Target: composeDirectory,
+	})
 	reloaded, queryErr := model.GetSystemTaskByTaskID(claimed.TaskID)
 	require.NoError(t, queryErr)
 	require.NotNil(t, reloaded)
