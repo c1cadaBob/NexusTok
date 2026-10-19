@@ -3868,6 +3868,7 @@
     "Open source": "オープンソース",
     "Open Source": "オープンソース",
     "Open the io.net console API Keys page": "io.netコンソールAPIキーページを開く",
+    "Open the upstream capture page first.": "先に上流サイトのページを開いてください。",
     "Open the upstream page, then run the page bridge again.": "上流ページを開いてから、もう一度ページブリッジを実行してください。",
     "Open the upstream site and let the Capture Helper choose the best available authentication method. Tokens, cookies, and Admin Keys are never entered here.": "上流サイトを開き、取得ヘルパーに最適な認証方法を自動選択させます。トークン、Cookie、Admin Key をここで入力する必要はありません。",
     "Open the upstream site and let the Capture Helper collect the selected authentication method. Tokens, cookies, and Admin Keys are never entered here.": "上流サイトを開き、Capture Helper に選択した認証方式を取得させます。ここでトークン、Cookie、Admin Key を手入力することはありません。",

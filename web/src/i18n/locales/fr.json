@@ -3868,6 +3868,7 @@
     "Open source": "Open source",
     "Open Source": "Open source",
     "Open the io.net console API Keys page": "Ouvrir la page Clés API de la console io.net",
+    "Open the upstream capture page first.": "Ouvrez d’abord la page du site source.",
     "Open the upstream page, then run the page bridge again.": "Ouvrez la page amont, puis relancez le pont de page.",
     "Open the upstream site and let the Capture Helper choose the best available authentication method. Tokens, cookies, and Admin Keys are never entered here.": "Ouvrez le site amont et laissez l’assistant choisir la meilleure méthode d’authentification disponible. Les jetons, cookies et Admin Keys ne sont jamais saisis ici.",
     "Open the upstream site and let the Capture Helper collect the selected authentication method. Tokens, cookies, and Admin Keys are never entered here.": "Ouvrez le site amont et laissez Capture Helper collecter la méthode choisie. Les jetons, cookies et Admin Keys ne sont jamais saisis ici.",

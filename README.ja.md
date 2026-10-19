@@ -165,7 +165,7 @@ docker run --name NexusTok -d --restart always \
 > [!TIP]
 > **最新のDockerイメージ:** `c1cadabob/nexustok:latest`
 >
-> **v0.2.8イメージ:** `c1cadabob/nexustok:v0.2.8`
+> **v0.2.9イメージ:** `c1cadabob/nexustok:v0.2.9`
 
 ### 📋 デプロイ要件
 
@@ -261,7 +261,7 @@ docker run --name nexustok -d --restart always \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  c1cadabob/nexustok:v0.2.8
+  c1cadabob/nexustok:v0.2.9
 ```
 
 PostgreSQL と Redis は起動しません。更新前に `.env`、`/opt/nexustok/data`、
@@ -317,7 +317,7 @@ docker run --name nexustok-node-1 -d --restart always \
   -v /opt/nexustok/data:/data \
   -v /opt/nexustok/logs:/app/logs \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  c1cadabob/nexustok:v0.2.8
+  c1cadabob/nexustok:v0.2.9
 ```
 
 `node.env` には少なくとも `SQL_DSN`、`REDIS_CONN_STRING`、`SESSION_SECRET`、

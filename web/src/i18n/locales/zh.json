@@ -3868,6 +3868,7 @@
     "Open source": "开源",
     "Open Source": "开源项目",
     "Open the io.net console API Keys page": "打开 io.net 控制台 API 密钥页面",
+    "Open the upstream capture page first.": "请先打开上游站点页面。",
     "Open the upstream page, then run the page bridge again.": "请先打开上游页面，然后再次运行页面桥接。",
     "Open the upstream site and let the Capture Helper choose the best available authentication method. Tokens, cookies, and Admin Keys are never entered here.": "打开上游站点，让采集助手自动选择最佳可用认证方式。令牌、Cookie 和 Admin Key 都不需要在这里输入。",
     "Open the upstream site and let the Capture Helper collect the selected authentication method. Tokens, cookies, and Admin Keys are never entered here.": "打开上游站点，让采集助手收集所选认证方式。这里不会手动输入令牌、Cookie 或 Admin Key。",
